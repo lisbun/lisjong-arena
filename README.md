@@ -243,7 +243,7 @@ artifactは次をlosslessに保持します。
 load時はfield型だけでなく、seed・rotation・seat順、A/B assignment、各gameの順位が
 1〜4の順列であること、raw resultの件数、game mode、raw resultから再集計したmetrics
 との一致まで検証します。truncated JSONや内部的に矛盾したrecordをdefault値で補完して
-受理しません。
+受理しません。top-level / nested objectのduplicate keyもlast-winsで解釈せず拒否します。
 
 ### Reproducibilityの意味と限界
 

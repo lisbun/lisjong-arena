@@ -598,6 +598,18 @@ def _reject_json_constant(value: str) -> None:
     raise ComparisonArtifactError(f"non-finite JSON number is not allowed: {value}")
 
 
+def _reject_duplicate_object_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    """JSON objectのduplicate keyをlast-winsで解釈せず拒否する。"""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ComparisonArtifactError(f"duplicate JSON object key: {key!r}")
+        result[key] = value
+    return result
+
+
 def load_comparison_artifact(path: str | Path) -> ComparisonArtifact:
     """JSON fileをfail-closedに検証してimmutable artifact snapshotを返す。"""
     source = Path(path)
@@ -606,7 +618,11 @@ def load_comparison_artifact(path: str | Path) -> ComparisonArtifact:
     except UnicodeError as exc:
         raise ComparisonArtifactError("artifact is not valid UTF-8") from exc
     try:
-        value = json.loads(serialized, parse_constant=_reject_json_constant)
+        value = json.loads(
+            serialized,
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_object_keys,
+        )
         return _parse_artifact(value)
     except ComparisonArtifactError:
         raise

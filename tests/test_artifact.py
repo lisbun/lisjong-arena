@@ -196,6 +196,25 @@ class FailClosedLoadTest(unittest.TestCase):
         with self.assertRaises(ComparisonArtifactError):
             load_comparison_artifact(self.path)
 
+    def test_rejects_duplicate_keys_at_top_level_and_nested_plan(self) -> None:
+        valid = self.path.read_text(encoding="utf-8")
+        duplicate_top_level = valid.replace(
+            '"schema_version": 1,',
+            '"schema_version": 999,\n  "schema_version": 1,',
+            1,
+        )
+        duplicate_plan = valid.replace(
+            '"max_steps": 321,',
+            '"max_steps": 999,\n    "max_steps": 321,',
+            1,
+        )
+
+        for serialized in (duplicate_top_level, duplicate_plan):
+            with self.subTest(serialized=serialized):
+                self.path.write_text(serialized, encoding="utf-8")
+                with self.assertRaises(ComparisonArtifactError):
+                    load_comparison_artifact(self.path)
+
     def test_rejects_unsupported_schema_and_protocol(self) -> None:
         for field, value in (
             ("schema_version", 2),
