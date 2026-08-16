@@ -3,7 +3,7 @@ import unittest
 
 from lisjong.policy_contract import Seat
 
-from lisjong_arena.model import ComparisonPlan, PolicySpec, SeatResult
+from lisjong_arena.model import ComparisonPlan, PolicyMetrics, PolicySpec, SeatResult
 
 
 class _StubPolicy:
@@ -189,6 +189,54 @@ class SeatResultTest(unittest.TestCase):
             _seat_result(seat=0)
         with self.assertRaises(TypeError):
             _seat_result(score="24000")
+
+
+def _metrics(**overrides: object) -> PolicyMetrics:
+    fields = {
+        "policy_identity": "minimal",
+        "game_count": 4,
+        "seat_result_count": 8,
+        "average_rank": 2.5,
+        "average_score": 25_000.0,
+        "first_count": 2,
+        "second_count": 2,
+        "third_count": 2,
+        "fourth_count": 2,
+    }
+    fields.update(overrides)
+    return PolicyMetrics(**fields)
+
+
+class PolicyMetricsTest(unittest.TestCase):
+    def test_is_immutable_and_keeps_valid_metrics(self) -> None:
+        metrics = _metrics()
+
+        self.assertEqual(metrics.seat_result_count, 8)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            metrics.average_rank = 1.0
+
+    def test_rejects_invalid_identity_counts_and_averages(self) -> None:
+        invalid_values = (
+            ("policy_identity", ""),
+            ("game_count", 0),
+            ("seat_result_count", -1),
+            ("average_rank", 0.9),
+            ("average_rank", float("nan")),
+            ("average_score", float("inf")),
+            ("first_count", -1),
+        )
+        for field, value in invalid_values:
+            with self.subTest(field=field, value=value):
+                with self.assertRaises(ValueError):
+                    _metrics(**{field: value})
+
+    def test_rejects_incorrect_types_and_rank_count_mismatch(self) -> None:
+        with self.assertRaises(TypeError):
+            _metrics(game_count=True)
+        with self.assertRaises(TypeError):
+            _metrics(average_rank=2)
+        with self.assertRaises(ValueError):
+            _metrics(first_count=1)
 
 
 if __name__ == "__main__":

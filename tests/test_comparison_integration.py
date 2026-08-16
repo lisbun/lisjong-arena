@@ -14,10 +14,18 @@ discard候補ごとに多数の向聴数計算を行い実行時間が大きい�
 """
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from lisjong.policies import MinimalPolicy, ShantenPolicy
 
-from lisjong_arena import ComparisonPlan, PolicySpec, run_comparison
+from lisjong_arena import (
+    ComparisonPlan,
+    PolicySpec,
+    load_comparison_artifact,
+    run_comparison,
+    save_comparison_artifact,
+)
 from lisjong_arena.comparison import ROTATION_COUNT
 
 _SEED = 12345
@@ -74,6 +82,20 @@ class ComparisonIntegrationTest(unittest.TestCase):
         self.assertEqual(
             first.metrics_a.average_score + first.metrics_b.average_score,
             50_000.0,
+        )
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "comparison.json"
+            save_comparison_artifact(first, path)
+            artifact = load_comparison_artifact(path)
+
+        self.assertEqual(artifact.seat_results, first.seat_results)
+        self.assertEqual(artifact.metrics_a, first.metrics_a)
+        self.assertEqual(artifact.metrics_b, first.metrics_b)
+        self.assertEqual(artifact.provenance.execution_environment, "riichienv")
+        self.assertEqual(
+            artifact.provenance.lisjong_revision,
+            "b11841e287e8f11d55fe0fdaa5127ad16e00aa01",
         )
 
 
