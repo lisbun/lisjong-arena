@@ -3,6 +3,7 @@ import inspect
 import unittest
 
 import lisjong_arena
+import lisjong_arena.artifact
 import lisjong_arena.comparison
 import lisjong_arena.model
 
@@ -26,14 +27,22 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(
             sorted(lisjong_arena.__all__),
             [
+                "ARTIFACT_SCHEMA_VERSION",
+                "ArtifactPlan",
+                "COMPARISON_PROTOCOL",
+                "ComparisonArtifact",
+                "ComparisonArtifactError",
                 "ComparisonExecutionError",
                 "ComparisonPlan",
                 "ComparisonResult",
+                "ExecutionProvenance",
                 "PolicyMetrics",
                 "PolicySpec",
                 "ROTATION_COUNT",
                 "SeatResult",
+                "load_comparison_artifact",
                 "run_comparison",
+                "save_comparison_artifact",
             ],
         )
         for name in lisjong_arena.__all__:
@@ -46,7 +55,12 @@ class PackageTest(unittest.TestCase):
         RiichiEnv固有の型・Observation / Action変換はlisjongが所有するため、
         Arena自身のmoduleはRiichiEnvのpackageを直接importしない。
         """
-        for module in (lisjong_arena, lisjong_arena.comparison, lisjong_arena.model):
+        for module in (
+            lisjong_arena,
+            lisjong_arena.artifact,
+            lisjong_arena.comparison,
+            lisjong_arena.model,
+        ):
             with self.subTest(module=module.__name__):
                 self.assertNotIn("riichienv", _imported_root_modules(module))
 

@@ -12,6 +12,7 @@ game進行・Policy判断・RiichiEnv固有表現は所有しない。``Seat``�
 
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from math import isfinite
 
 from lisjong.policy_contract import Policy, Seat
 
@@ -179,6 +180,48 @@ class PolicyMetrics:
     second_count: int
     third_count: int
     fourth_count: int
+
+    def __post_init__(self) -> None:
+        if type(self.policy_identity) is not str:
+            raise TypeError("policy_identity must be a str")
+        if not self.policy_identity:
+            raise ValueError("policy_identity must not be empty")
+
+        for name in (
+            "game_count",
+            "seat_result_count",
+            "first_count",
+            "second_count",
+            "third_count",
+            "fourth_count",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int:
+                raise TypeError(f"{name} must be an int")
+            if value < 0:
+                raise ValueError(f"{name} must not be negative")
+
+        if self.game_count == 0:
+            raise ValueError("game_count must be positive")
+        if self.seat_result_count == 0:
+            raise ValueError("seat_result_count must be positive")
+        if self.game_count > self.seat_result_count:
+            raise ValueError("game_count must not exceed seat_result_count")
+
+        for name in ("average_rank", "average_score"):
+            value = getattr(self, name)
+            if type(value) is not float:
+                raise TypeError(f"{name} must be a float")
+            if not isfinite(value):
+                raise ValueError(f"{name} must be finite")
+        if not 1.0 <= self.average_rank <= 4.0:
+            raise ValueError("average_rank must be between 1.0 and 4.0")
+
+        rank_count = (
+            self.first_count + self.second_count + self.third_count + self.fourth_count
+        )
+        if rank_count != self.seat_result_count:
+            raise ValueError("rank counts must sum to seat_result_count")
 
 
 @dataclass(frozen=True, slots=True)

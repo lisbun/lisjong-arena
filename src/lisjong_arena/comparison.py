@@ -162,7 +162,10 @@ def _build_seat_results(
     )
 
 
-def _aggregate(identity: str, seat_results: tuple[SeatResult, ...]) -> PolicyMetrics:
+def aggregate_policy_metrics(
+    identity: str,
+    seat_results: tuple[SeatResult, ...],
+) -> PolicyMetrics:
     """1つのPolicy identityのseat resultから基本metricsを集計する。
 
     ``game_count``は``(seed, rotation)``の異なり数、それ以外はすべてseat result
@@ -234,13 +237,14 @@ def run_comparison(plan: ComparisonPlan) -> ComparisonResult:
     return ComparisonResult(
         plan=plan,
         seat_results=frozen_results,
-        metrics_a=_aggregate(plan.policy_a.identity, frozen_results),
-        metrics_b=_aggregate(plan.policy_b.identity, frozen_results),
+        metrics_a=aggregate_policy_metrics(plan.policy_a.identity, frozen_results),
+        metrics_b=aggregate_policy_metrics(plan.policy_b.identity, frozen_results),
     )
 
 
 __all__ = [
     "ROTATION_COUNT",
     "ComparisonExecutionError",
+    "aggregate_policy_metrics",
     "run_comparison",
 ]

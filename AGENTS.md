@@ -24,6 +24,7 @@ Arenaが所有するもの:
 - raw comparison result
 - 平均順位・平均得点・順位回数等の基本metrics
 - 再現可能なPolicy comparison protocol
+- comparison条件・raw result・metrics・provenanceのversion付きartifact契約
 
 Arenaが所有しないもの:
 
@@ -46,7 +47,7 @@ Arenaが所有しないもの:
 ```text
 lisjong-arena
     |
-    | matchup / seeds / seat rotation / aggregation
+    | matchup / seeds / seat rotation / aggregation / artifact
     v
 lisjong
     |
@@ -118,8 +119,10 @@ abstraction hierarchy等の将来を推測したabstractionを先行導入しな
 - comparisonは全体としてfail closedにする。1 gameでも失敗した場合、成功したgameだけの
   結果を返さず、失敗gameをskipするfallbackも導入しない
 - 実行順序（seed入力順 -> rotation -> seat）とraw resultの順序をdeterministicな契約として扱う
+- artifactは実行用modelと分離したimmutable snapshotとし、factory・callable・任意codeを
+  保存・復元しない。既存artifactを上書きせず、内部矛盾をload時にfail closedする
 - 調査前に将来の構造を過剰設計しない。module分割も最初から細かくしすぎない
-- 信頼区間、統計検定、Elo / rating、visualization、database、persistence、distributed
+- 信頼区間、統計検定、Elo / rating、visualization、database、distributed
   execution、job schedulerは、最小comparisonの実測データを得てから別Issueで扱う
 - 外部libraryを追加する場合は、必要性、license、version、保守状況を確認する
 

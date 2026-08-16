@@ -30,6 +30,7 @@ Arenaが所有するもの:
 - raw comparison result
 - 平均順位・平均得点・順位回数等の基本metrics
 - 再現可能なPolicy comparison protocol
+- 1 comparisonを1 fileとして保存するversion付きJSON artifact契約
 
 Arenaが所有しないもの:
 
@@ -47,7 +48,7 @@ RiichiEnv integrationを使ってPolicy比較を成立させます。
 ```text
 lisjong-arena
     |
-    | matchup / seeds / seat rotation / aggregation
+    | matchup / seeds / seat rotation / aggregation / artifact
     v
 lisjong
     |
@@ -199,12 +200,78 @@ plan = ComparisonPlan(
 `UkeirePolicy` はdiscard候補ごとに多数の向聴数計算を行うため1局あたりの実行時間が
 大きく、CIのintegration testには含めていません。
 
+## Comparison artifact
+
+成功した `ComparisonResult` は、呼び出し側が明示したpathへversion付きJSON artifact
+として保存できます。comparison実行自体が暗黙にfileを生成することはありません。
+
+```python
+from pathlib import Path
+
+from lisjong_arena import load_comparison_artifact, save_comparison_artifact
+
+path = Path("comparison.json")
+save_comparison_artifact(result, path)
+artifact = load_comparison_artifact(path)
+
+print(artifact.plan.policy_a_identity, artifact.plan.policy_b_identity)
+print(artifact.plan.seeds)
+print(artifact.provenance.lisjong_revision)
+print(artifact.metrics_a.average_rank)
+```
+
+`save_comparison_artifact()` は `1 comparison = 1 immutable artifact` の方針で
+既存fileを上書きせず、pathが存在する場合は `FileExistsError` で失敗します。
+JSONはUTF-8、key順序固定、2-space indent、末尾newlineで保存し、非有限floatを
+許可しません。
+
+### Schemaと保持情報
+
+初期schemaは `schema_version = 1`、comparison methodは独立したidentity
+`fixed-seed-seat-rotation-v1` として記録します。readerは未知のschema versionや
+comparison protocolを現在仕様として推測せずfail closedします。
+
+artifactは次をlosslessに保持します。
+
+- Policy A/B identity、ordered seeds、`game_mode`、`max_steps`
+- `seed -> rotation -> seat` 順のraw `SeatResult`
+- Policy A/Bの `PolicyMetrics`
+- execution environment identity（現在は `riichienv`）
+- `lisjong-arena` / `lisjong` / RiichiEnv / Pythonのversion
+- VCS install metadataから確認した `lisjong` full commit ID
+
+load時はfield型だけでなく、seed・rotation・seat順、A/B assignment、各gameの順位が
+1〜4の順列であること、raw resultの件数、game mode、raw resultから再集計したmetrics
+との一致まで検証します。truncated JSONや内部的に矛盾したrecordをdefault値で補完して
+受理しません。top-level / nested objectのduplicate keyもlast-winsで解釈せず拒否します。
+
+### Reproducibilityの意味と限界
+
+artifactは「どの比較条件・Policy identity・execution provenanceで何が得られたか」を
+監査し、対応するsourceとPolicy実装が利用可能なら同条件を再構成するためのrecordです。
+過去のsourceやdependency自体を埋め込むものではなく、artifactだけからPolicyを自動実行
+するものでもありません。
+
+実行用 `ComparisonResult` と読込用 `ComparisonArtifact` は分離されています。
+artifactへ `PolicySpec.factory`、Python callable、import path、dynamic codeを保存・復元
+しません。secret、credential、environment variable、username、hostname、home directory、
+absolute local path等の再現性に不要なmachine-local情報も保存しません。
+
+現在のexecution pathは従来どおり `lisjong-arena -> lisjong -> RiichiEnv` です。
+provenance取得にはpackage metadataを使い、ArenaからRiichiEnvへのdirect dependencyや
+direct importを追加していません。未完成の `lisjong-engine` integrationやbackend
+abstractionも先取りしません。
+
+artifactを保存できることとrepositoryで管理することは別です。test fixture以外の実測
+artifactをrepositoryへ大量commitする運用、既定保存先、retention policy、artifact
+repositoryは本機能の対象外です。
+
 ## 現時点で持たないもの
 
 - 信頼区間、統計検定、bootstrap statistics
 - Elo / rating system
 - graph / visualization / dashboard
-- database / persistence layer / result file format
+- database / artifact repository / retention policy
 - distributed execution / multiprocessing / job scheduler
 - RiichiLab rankedを使った強さ比較
 - `lisjong-engine` integration
