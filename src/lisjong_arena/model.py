@@ -225,6 +225,140 @@ class PolicyMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class SingleRoundEvaluationPlan:
+    """candidate 1体 + baseline 3体によるsingle-round評価を完全に決める不変条件。
+
+    ``[A, B, B, B]``のABBB seat rotationはこの契約が意味を持つ理由そのもの
+    なので、既存``ComparisonPlan``へoption追加せず独立した型として持つ。
+
+    ``game_mode``はfieldとして公開しない。single-round評価は
+    ``lisjong_arena.single_round_evaluation``のprotocol invariantとして
+    常に``4p-red-single``を使い、callerが他のgame modeへ切り替えられる
+    余地を持たせない。
+    """
+
+    candidate: PolicySpec
+    baseline: PolicySpec
+    seeds: tuple[int, ...]
+    max_steps: int = 10_000
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.candidate, PolicySpec):
+            raise TypeError("candidate must be a PolicySpec")
+        if not isinstance(self.baseline, PolicySpec):
+            raise TypeError("baseline must be a PolicySpec")
+        if self.candidate.identity == self.baseline.identity:
+            raise ValueError("candidate and baseline must have distinct identities")
+        if type(self.max_steps) is not int:
+            raise TypeError("max_steps must be an int")
+        if self.max_steps <= 0:
+            raise ValueError("max_steps must be positive")
+
+        object.__setattr__(self, "seeds", _normalize_seeds(self.seeds))
+
+
+@dataclass(frozen=True, slots=True)
+class SingleRoundGameResult:
+    """1 seed・1 rotation分のflatなraw single-round evaluation record。
+
+    candidate scoreを別fieldへ縮約せず、4 seat分のfinal scoresを正本として
+    保持する。``candidate_score``はここから導出できる。
+    """
+
+    seed: int
+    rotation: int
+    game_mode: str
+    candidate_seat: Seat
+    scores: tuple[int, int, int, int]
+
+    def __post_init__(self) -> None:
+        if type(self.seed) is not int:
+            raise TypeError("seed must be an int")
+        if type(self.rotation) is not int:
+            raise TypeError("rotation must be an int")
+        if self.rotation < 0:
+            raise ValueError("rotation must not be negative")
+        if type(self.game_mode) is not str:
+            raise TypeError("game_mode must be a str")
+        if not self.game_mode:
+            raise ValueError("game_mode must not be empty")
+        if not isinstance(self.candidate_seat, Seat):
+            raise TypeError("candidate_seat must be a Seat")
+
+        if isinstance(self.scores, (str, bytes, bytearray)):
+            raise TypeError("scores must be an ordered collection of ints")
+        try:
+            scores = tuple(self.scores)
+        except TypeError:
+            raise TypeError("scores must be an ordered collection of ints") from None
+        if len(scores) != 4:
+            raise ValueError("scores must contain exactly four values")
+        if any(type(score) is not int for score in scores):
+            raise TypeError("scores must contain only ints")
+        object.__setattr__(self, "scores", scores)
+
+    @property
+    def candidate_score(self) -> int:
+        """``scores[candidate_seat]``から導出したcandidateのfinal score。"""
+        return self.scores[self.candidate_seat]
+
+
+@dataclass(frozen=True, slots=True)
+class SingleRoundCandidateMetrics:
+    """candidateについてのsingle-round評価の基本metrics。
+
+    ``seat_mean_scores``はSeat 0..3順のtupleであり、``seat_mean_scores[seat]``
+    がそのseatを担当した時のcandidate平均scoreになる。開始点``25000``を
+    hard-codeしたpoint deltaはここでは扱わず、final score自体を正本とする。
+    """
+
+    candidate_identity: str
+    game_count: int
+    mean_candidate_score: float
+    seat_mean_scores: tuple[float, float, float, float]
+
+    def __post_init__(self) -> None:
+        if type(self.candidate_identity) is not str:
+            raise TypeError("candidate_identity must be a str")
+        if not self.candidate_identity:
+            raise ValueError("candidate_identity must not be empty")
+        if type(self.game_count) is not int:
+            raise TypeError("game_count must be an int")
+        if self.game_count <= 0:
+            raise ValueError("game_count must be positive")
+        if type(self.mean_candidate_score) is not float:
+            raise TypeError("mean_candidate_score must be a float")
+        if not isfinite(self.mean_candidate_score):
+            raise ValueError("mean_candidate_score must be finite")
+
+        if isinstance(self.seat_mean_scores, (str, bytes, bytearray)):
+            raise TypeError("seat_mean_scores must be an ordered collection of floats")
+        try:
+            seat_mean_scores = tuple(self.seat_mean_scores)
+        except TypeError:
+            raise TypeError(
+                "seat_mean_scores must be an ordered collection of floats"
+            ) from None
+        if len(seat_mean_scores) != 4:
+            raise ValueError("seat_mean_scores must contain exactly four values")
+        for value in seat_mean_scores:
+            if type(value) is not float:
+                raise TypeError("seat_mean_scores must contain only floats")
+            if not isfinite(value):
+                raise ValueError("seat_mean_scores must contain only finite floats")
+        object.__setattr__(self, "seat_mean_scores", seat_mean_scores)
+
+
+@dataclass(frozen=True, slots=True)
+class SingleRoundEvaluationResult:
+    """1回のsingle-round評価の実行条件、raw result、candidate metrics。"""
+
+    plan: SingleRoundEvaluationPlan
+    game_results: tuple[SingleRoundGameResult, ...]
+    candidate_metrics: SingleRoundCandidateMetrics
+
+
+@dataclass(frozen=True, slots=True)
 class ComparisonResult:
     """1回のcomparisonの実行条件、raw result、Policy別metrics。
 
@@ -245,4 +379,8 @@ __all__ = [
     "PolicyMetrics",
     "PolicySpec",
     "SeatResult",
+    "SingleRoundCandidateMetrics",
+    "SingleRoundEvaluationPlan",
+    "SingleRoundEvaluationResult",
+    "SingleRoundGameResult",
 ]
