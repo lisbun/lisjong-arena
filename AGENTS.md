@@ -79,8 +79,8 @@ baseline群へ投入して評価するような、意味の異なるevaluation p
   既存のPlan / Resultへoption追加で無理に統合しない。必要に応じて独立した
   Plan / Result契約を持つ
 - `4p-red-single` のようにprotocol identityそのものを構成する条件は、単なる
-  caller-configurable defaultにせず、そのprotocol自身のinvariantとして固定
-  してよい。invariantはPlanのfieldとして公開しない
+  caller-configurable defaultにせず、そのprotocol自身のinvariantとして固定する。
+  callerが任意変更できるPlan APIとして公開しない
 - publicなResult valueは、construction時点で件数、順序、seat / candidate
   assignment、protocol条件（seed・rotation・game mode等）、metricsの母数が
   対応するplanと整合することをfail closedで検証する
