@@ -25,6 +25,20 @@ from lisjong_arena.model import (
     PolicyMetrics,
     PolicySpec,
     SeatResult,
+    SingleRoundCandidateMetrics,
+    SingleRoundEvaluationPlan,
+    SingleRoundEvaluationResult,
+    SingleRoundGameResult,
+)
+from lisjong_arena.single_round_evaluation import (
+    GAME_MODE as SINGLE_ROUND_GAME_MODE,
+)
+from lisjong_arena.single_round_evaluation import (
+    ROTATION_COUNT as SINGLE_ROUND_ROTATION_COUNT,
+)
+from lisjong_arena.single_round_evaluation import (
+    SingleRoundEvaluationError,
+    run_single_round_evaluation,
 )
 
 __version__ = "0.1.0"
@@ -36,14 +50,22 @@ __all__ = [
     "ComparisonArtifact",
     "ComparisonArtifactError",
     "ROTATION_COUNT",
+    "SINGLE_ROUND_GAME_MODE",
+    "SINGLE_ROUND_ROTATION_COUNT",
     "ComparisonExecutionError",
     "ComparisonPlan",
     "ComparisonResult",
     "PolicyMetrics",
     "PolicySpec",
     "SeatResult",
+    "SingleRoundCandidateMetrics",
+    "SingleRoundEvaluationError",
+    "SingleRoundEvaluationPlan",
+    "SingleRoundEvaluationResult",
+    "SingleRoundGameResult",
     "ExecutionProvenance",
     "load_comparison_artifact",
     "run_comparison",
+    "run_single_round_evaluation",
     "save_comparison_artifact",
 ]

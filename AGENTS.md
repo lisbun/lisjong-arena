@@ -25,6 +25,9 @@ Arenaが所有するもの:
 - 平均順位・平均得点・順位回数等の基本metrics
 - 再現可能なPolicy comparison protocol
 - comparison条件・raw result・metrics・provenanceのversion付きartifact契約
+- A/B対等comparisonに限らない、candidate vs baseline群のevaluation protocol
+  （例: ABBB single-round evaluation）、そのraw evaluation result、candidate
+  単位の基本evaluation metrics
 
 Arenaが所有しないもの:
 
@@ -65,6 +68,22 @@ RiichiEnvと `lisjong-engine` という2つの実経路が実際に揃うまで�
 `EvaluationBackend` / backend registry / 汎用runner protocol / environment
 abstraction hierarchy等の将来を推測したabstractionを先行導入しない。共通化は実経路の
 差異を確認してから判断する。
+
+## Evaluation protocolの設計方針
+
+Arenaは同等Policy同士のA/B対等comparisonだけでなく、candidate 1体を固定
+baseline群へ投入して評価するような、意味の異なるevaluation protocolも所有
+できる（例: 既存AABB comparisonとABBB single-round evaluation）。
+
+- matchupの意味（対等比較か、candidate vs baseline群か）が異なるprotocolを、
+  既存のPlan / Resultへoption追加で無理に統合しない。必要に応じて独立した
+  Plan / Result契約を持つ
+- `4p-red-single` のようにprotocol identityそのものを構成する条件は、単なる
+  caller-configurable defaultにせず、そのprotocol自身のinvariantとして固定する。
+  callerが任意変更できるPlan APIとして公開しない
+- publicなResult valueは、construction時点で件数、順序、seat / candidate
+  assignment、protocol条件（seed・rotation・game mode等）、metricsの母数が
+  対応するplanと整合することをfail closedで検証する
 
 ## デフォルトの作業分担
 
@@ -118,7 +137,9 @@ abstraction hierarchy等の将来を推測したabstractionを先行導入しな
 - Policy instanceは各game・各seatごとにfactoryから新規生成し、seat間・game間で共有しない
 - comparisonは全体としてfail closedにする。1 gameでも失敗した場合、成功したgameだけの
   結果を返さず、失敗gameをskipするfallbackも導入しない
-- 実行順序（seed入力順 -> rotation -> seat）とraw resultの順序をdeterministicな契約として扱う
+- 実行順序は全protocol共通で `seed入力順 -> rotation` をdeterministicな契約とし、
+  raw resultの順序もそのまま同じ契約とする。seat単位のraw resultを持つprotocol
+  （既存AABB comparison等）ではさらにseat順も固定する
 - artifactは実行用modelと分離したimmutable snapshotとし、factory・callable・任意codeを
   保存・復元しない。既存artifactを上書きせず、内部矛盾をload時にfail closedする
 - 調査前に将来の構造を過剰設計しない。module分割も最初から細かくしすぎない

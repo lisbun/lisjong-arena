@@ -6,6 +6,7 @@ import lisjong_arena
 import lisjong_arena.artifact
 import lisjong_arena.comparison
 import lisjong_arena.model
+import lisjong_arena.single_round_evaluation
 
 
 def _imported_root_modules(module: object) -> set[str]:
@@ -39,9 +40,17 @@ class PackageTest(unittest.TestCase):
                 "PolicyMetrics",
                 "PolicySpec",
                 "ROTATION_COUNT",
+                "SINGLE_ROUND_GAME_MODE",
+                "SINGLE_ROUND_ROTATION_COUNT",
                 "SeatResult",
+                "SingleRoundCandidateMetrics",
+                "SingleRoundEvaluationError",
+                "SingleRoundEvaluationPlan",
+                "SingleRoundEvaluationResult",
+                "SingleRoundGameResult",
                 "load_comparison_artifact",
                 "run_comparison",
+                "run_single_round_evaluation",
                 "save_comparison_artifact",
             ],
         )
@@ -60,6 +69,7 @@ class PackageTest(unittest.TestCase):
             lisjong_arena.artifact,
             lisjong_arena.comparison,
             lisjong_arena.model,
+            lisjong_arena.single_round_evaluation,
         ):
             with self.subTest(module=module.__name__):
                 self.assertNotIn("riichienv", _imported_root_modules(module))
