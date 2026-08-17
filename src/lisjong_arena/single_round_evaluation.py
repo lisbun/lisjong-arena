@@ -21,6 +21,8 @@ from lisjong.local_game_runner import LocalGameResult, LocalGameRunner
 from lisjong.policy_contract import Policy, Seat
 
 from lisjong_arena.model import (
+    SINGLE_ROUND_GAME_MODE,
+    SINGLE_ROUND_ROTATION_COUNT,
     PolicySpec,
     SingleRoundCandidateMetrics,
     SingleRoundEvaluationPlan,
@@ -28,10 +30,10 @@ from lisjong_arena.model import (
     SingleRoundGameResult,
 )
 
-ROTATION_COUNT = 4
+ROTATION_COUNT = SINGLE_ROUND_ROTATION_COUNT
 """1 seedあたりのcandidate seat rotation数。"""
 
-GAME_MODE = "4p-red-single"
+GAME_MODE = SINGLE_ROUND_GAME_MODE
 """single-round評価protocolが所有する固定game mode。callerから変更できない。"""
 
 

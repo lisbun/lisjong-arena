@@ -18,6 +18,12 @@ from lisjong.policy_contract import Policy, Seat
 
 _RANKS = (1, 2, 3, 4)
 
+SINGLE_ROUND_GAME_MODE = "4p-red-single"
+"""single-round評価protocolが所有する固定game mode。callerから変更できない。"""
+
+SINGLE_ROUND_ROTATION_COUNT = 4
+"""1 seedあたりのcandidate seat rotation数。"""
+
 
 @dataclass(frozen=True, slots=True)
 class PolicySpec:
@@ -351,11 +357,84 @@ class SingleRoundCandidateMetrics:
 
 @dataclass(frozen=True, slots=True)
 class SingleRoundEvaluationResult:
-    """1回のsingle-round評価の実行条件、raw result、candidate metrics。"""
+    """1回のsingle-round評価の実行条件、raw result、candidate metrics。
+
+    construction時点で、``game_results``が``plan``に対して意味的に整合した
+    single-round評価の結果であることをfail closedで検証する。ここで拒否しない
+    不正な組み合わせは、後段の読み手がraw resultの母数や意味を静かに誤読する
+    ため、validationはこのvalue自身へ寄せる。
+    """
 
     plan: SingleRoundEvaluationPlan
     game_results: tuple[SingleRoundGameResult, ...]
     candidate_metrics: SingleRoundCandidateMetrics
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan, SingleRoundEvaluationPlan):
+            raise TypeError("plan must be a SingleRoundEvaluationPlan")
+
+        if isinstance(self.game_results, (str, bytes, bytearray)):
+            raise TypeError("game_results must be an ordered collection")
+        try:
+            game_results = tuple(self.game_results)
+        except TypeError:
+            raise TypeError("game_results must be an ordered collection") from None
+        if any(not isinstance(item, SingleRoundGameResult) for item in game_results):
+            raise TypeError("game_results must contain only SingleRoundGameResult")
+        object.__setattr__(self, "game_results", game_results)
+
+        expected_count = SINGLE_ROUND_ROTATION_COUNT * len(self.plan.seeds)
+        if len(game_results) != expected_count:
+            raise ValueError(
+                f"game_results must contain exactly {expected_count} records "
+                f"(seeds={len(self.plan.seeds)} x "
+                f"rotations={SINGLE_ROUND_ROTATION_COUNT}) but got {len(game_results)}"
+            )
+
+        expected_order = [
+            (seed, rotation)
+            for seed in self.plan.seeds
+            for rotation in range(SINGLE_ROUND_ROTATION_COUNT)
+        ]
+        for game_result, (expected_seed, expected_rotation) in zip(
+            game_results, expected_order
+        ):
+            if game_result.seed != expected_seed:
+                raise ValueError(
+                    "game_results must be ordered by plan.seeds input order "
+                    f"but expected seed={expected_seed!r}, got "
+                    f"seed={game_result.seed!r}"
+                )
+            if game_result.rotation != expected_rotation:
+                raise ValueError(
+                    "game_results must be ordered by rotation 0..3 within each "
+                    f"seed but expected rotation={expected_rotation!r}, got "
+                    f"rotation={game_result.rotation!r}"
+                )
+            if game_result.candidate_seat != Seat(expected_rotation):
+                raise ValueError(
+                    "game_results candidate_seat must equal Seat(rotation) but "
+                    f"expected {Seat(expected_rotation)!r}, got "
+                    f"{game_result.candidate_seat!r}"
+                )
+            if game_result.game_mode != SINGLE_ROUND_GAME_MODE:
+                raise ValueError(
+                    f"game_results must all use game_mode {SINGLE_ROUND_GAME_MODE!r} "
+                    f"but got {game_result.game_mode!r}"
+                )
+
+        if not isinstance(self.candidate_metrics, SingleRoundCandidateMetrics):
+            raise TypeError("candidate_metrics must be a SingleRoundCandidateMetrics")
+        if self.candidate_metrics.candidate_identity != self.plan.candidate.identity:
+            raise ValueError(
+                "candidate_metrics.candidate_identity must match "
+                "plan.candidate.identity"
+            )
+        if self.candidate_metrics.game_count != expected_count:
+            raise ValueError(
+                f"candidate_metrics.game_count must equal {expected_count} but "
+                f"got {self.candidate_metrics.game_count}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +453,8 @@ class ComparisonResult:
 
 
 __all__ = [
+    "SINGLE_ROUND_GAME_MODE",
+    "SINGLE_ROUND_ROTATION_COUNT",
     "ComparisonPlan",
     "ComparisonResult",
     "PolicyMetrics",

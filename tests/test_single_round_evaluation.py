@@ -348,6 +348,25 @@ class FailClosedTest(unittest.TestCase):
         self.assertEqual(raised.exception.rotation, 0)
         self.assertEqual(fake.calls, [])
 
+    def test_baseline_factory_failure_fails_the_whole_evaluation(self) -> None:
+        cause = RuntimeError("baseline factory exploded")
+
+        def _failing_factory() -> _StubPolicy:
+            raise cause
+
+        plan = _plan(
+            (11, 22), baseline=PolicySpec(identity="b", factory=_failing_factory)
+        )
+        fake = _FakeSingleGame()
+
+        with self.assertRaises(SingleRoundEvaluationError) as raised:
+            _run(plan, fake)
+
+        self.assertIs(raised.exception.__cause__, cause)
+        self.assertEqual(raised.exception.seed, 11)
+        self.assertEqual(raised.exception.rotation, 0)
+        self.assertEqual(fake.calls, [])
+
     def test_runner_failure_does_not_return_partial_results(self) -> None:
         cause = LocalGameRunnerError("runner exploded")
         fake = _FakeSingleGame(failure=cause, fail_on_call=5)

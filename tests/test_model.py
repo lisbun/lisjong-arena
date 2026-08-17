@@ -10,6 +10,7 @@ from lisjong_arena.model import (
     SeatResult,
     SingleRoundCandidateMetrics,
     SingleRoundEvaluationPlan,
+    SingleRoundEvaluationResult,
     SingleRoundGameResult,
 )
 
@@ -411,6 +412,186 @@ class SingleRoundCandidateMetricsTest(unittest.TestCase):
             _single_round_metrics(seat_mean_scores=(1.0, 1.0, 1.0))
         with self.assertRaises(TypeError):
             _single_round_metrics(seat_mean_scores=(1, 1.0, 1.0, 1.0))
+
+
+def _single_round_plan(seeds: tuple[int, ...] = (11, 22)) -> SingleRoundEvaluationPlan:
+    return SingleRoundEvaluationPlan(
+        candidate=_spec("candidate"), baseline=_spec("baseline"), seeds=seeds
+    )
+
+
+def _valid_game_results(
+    plan: SingleRoundEvaluationPlan,
+) -> tuple[SingleRoundGameResult, ...]:
+    return tuple(
+        SingleRoundGameResult(
+            seed=seed,
+            rotation=rotation,
+            game_mode="4p-red-single",
+            candidate_seat=Seat(rotation),
+            scores=(25_000, 25_000, 25_000, 25_000),
+        )
+        for seed in plan.seeds
+        for rotation in range(4)
+    )
+
+
+def _valid_metrics(plan: SingleRoundEvaluationPlan) -> SingleRoundCandidateMetrics:
+    return SingleRoundCandidateMetrics(
+        candidate_identity=plan.candidate.identity,
+        game_count=4 * len(plan.seeds),
+        mean_candidate_score=25_000.0,
+        seat_mean_scores=(25_000.0, 25_000.0, 25_000.0, 25_000.0),
+    )
+
+
+class SingleRoundEvaluationResultTest(unittest.TestCase):
+    """Result construction時点のfail closed contractを固定する。
+
+    正しい組み合わせ以外を静かに受理しないことを、``run_single_round_evaluation``
+    経由ではなく``SingleRoundEvaluationResult``を直接構築して検証する。
+    """
+
+    def test_accepts_a_consistent_result(self) -> None:
+        plan = _single_round_plan()
+        game_results = _valid_game_results(plan)
+        metrics = _valid_metrics(plan)
+
+        result = SingleRoundEvaluationResult(
+            plan=plan, game_results=game_results, candidate_metrics=metrics
+        )
+
+        self.assertIs(result.plan, plan)
+        self.assertEqual(result.game_results, game_results)
+        self.assertIsInstance(result.game_results, tuple)
+
+    def test_game_results_is_coerced_to_an_immutable_tuple(self) -> None:
+        plan = _single_round_plan()
+        game_results = list(_valid_game_results(plan))
+        metrics = _valid_metrics(plan)
+
+        result = SingleRoundEvaluationResult(
+            plan=plan, game_results=game_results, candidate_metrics=metrics
+        )
+
+        self.assertIsInstance(result.game_results, tuple)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            result.game_results = ()
+
+    def test_rejects_non_plan(self) -> None:
+        plan = _single_round_plan()
+        with self.assertRaises(TypeError):
+            SingleRoundEvaluationResult(
+                plan=object(),
+                game_results=_valid_game_results(plan),
+                candidate_metrics=_valid_metrics(plan),
+            )
+
+    def test_rejects_game_results_containing_non_game_result_items(self) -> None:
+        plan = _single_round_plan()
+        game_results = list(_valid_game_results(plan))
+        game_results[0] = object()
+
+        with self.assertRaises(TypeError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=tuple(game_results),
+                candidate_metrics=_valid_metrics(plan),
+            )
+
+    def test_rejects_wrong_game_result_count(self) -> None:
+        plan = _single_round_plan()
+        game_results = _valid_game_results(plan)[:-1]
+
+        with self.assertRaises(ValueError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=game_results,
+                candidate_metrics=_valid_metrics(plan),
+            )
+
+    def test_rejects_seed_order_that_does_not_match_the_plan(self) -> None:
+        plan = _single_round_plan((11, 22))
+        game_results = _valid_game_results(_single_round_plan((22, 11)))
+
+        with self.assertRaises(ValueError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=game_results,
+                candidate_metrics=_valid_metrics(plan),
+            )
+
+    def test_rejects_out_of_order_rotation(self) -> None:
+        plan = _single_round_plan()
+        game_results = list(_valid_game_results(plan))
+        game_results[0], game_results[1] = game_results[1], game_results[0]
+
+        with self.assertRaises(ValueError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=tuple(game_results),
+                candidate_metrics=_valid_metrics(plan),
+            )
+
+    def test_rejects_candidate_seat_inconsistent_with_rotation(self) -> None:
+        plan = _single_round_plan()
+        game_results = list(_valid_game_results(plan))
+        game_results[0] = dataclasses.replace(
+            game_results[0], candidate_seat=Seat.SEAT_1
+        )
+
+        with self.assertRaises(ValueError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=tuple(game_results),
+                candidate_metrics=_valid_metrics(plan),
+            )
+
+    def test_rejects_a_non_single_round_game_mode(self) -> None:
+        plan = _single_round_plan()
+        game_results = list(_valid_game_results(plan))
+        game_results[0] = dataclasses.replace(game_results[0], game_mode="4p-red-half")
+
+        with self.assertRaises(ValueError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=tuple(game_results),
+                candidate_metrics=_valid_metrics(plan),
+            )
+
+    def test_rejects_non_candidate_metrics(self) -> None:
+        plan = _single_round_plan()
+
+        with self.assertRaises(TypeError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=_valid_game_results(plan),
+                candidate_metrics=object(),
+            )
+
+    def test_rejects_candidate_metrics_identity_mismatch(self) -> None:
+        plan = _single_round_plan()
+        metrics = dataclasses.replace(
+            _valid_metrics(plan), candidate_identity="someone-else"
+        )
+
+        with self.assertRaises(ValueError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=_valid_game_results(plan),
+                candidate_metrics=metrics,
+            )
+
+    def test_rejects_candidate_metrics_game_count_mismatch(self) -> None:
+        plan = _single_round_plan()
+        metrics = dataclasses.replace(_valid_metrics(plan), game_count=999)
+
+        with self.assertRaises(ValueError):
+            SingleRoundEvaluationResult(
+                plan=plan,
+                game_results=_valid_game_results(plan),
+                candidate_metrics=metrics,
+            )
 
 
 if __name__ == "__main__":
