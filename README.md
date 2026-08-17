@@ -142,7 +142,7 @@ failure、`LocalGameRunner` failure、結果の不整合はいずれも
 `seed` と `rotation` を保持し、元例外を `raise ... from` で連結します。失敗gameを
 skipするfallbackは導入しません。
 
-## 使い方
+## AABB comparison protocolの使い方
 
 ```python
 from lisjong.policies import MinimalPolicy, ShantenPolicy
@@ -200,7 +200,120 @@ plan = ComparisonPlan(
 `UkeirePolicy` はdiscard候補ごとに多数の向聴数計算を行うため1局あたりの実行時間が
 大きく、CIのintegration testには含めていません。
 
+## ABBB single-round evaluation protocol
+
+`lisjong-arena` はA/B対等comparisonだけでなく、candidate Policy 1体を固定
+baseline Policy 3体へ投入し、fixed seedの最初の1局だけを評価する **ABBB
+single-round evaluation** protocolも持ちます。既存AABB comparisonの
+`ComparisonPlan` / `ComparisonResult` はA/B対等比較を意味する契約なので、
+ABBBはそこへoption追加せず、独立した `SingleRoundEvaluationPlan` /
+`SingleRoundEvaluationResult` として実装しています。
+
+### ABBB rotation
+
+各fixed seedについて、candidate `A` と固定baseline `B` を次の4通りへ
+rotationします。
+
+```text
+rotation 0: [A, B, B, B]
+rotation 1: [B, A, B, B]
+rotation 2: [B, B, A, B]
+rotation 3: [B, B, B, A]
+```
+
+- 実行順序は `seed入力順 -> rotation 0..3` で決定的です
+- seed数をNとすると、total gamesは `4N` です
+- candidateは各seatをちょうどN回ずつ担当します
+- Policy instanceは既存AABBと同様、各game・各seatごとにfactoryからfreshに
+  生成し、baseline 3seat間でもinstanceを共有しません
+
+### `4p-red-single` invariant
+
+ABBB single-round evaluationのgame modeは常に `4p-red-single` です。これは
+既存AABB `ComparisonPlan.game_mode` のようなcaller-configurableなoptionや
+default値ではなく、このprotocol自身のinvariantとして固定されています。
+`SingleRoundEvaluationPlan` は `game_mode` fieldを持たず、呼び出し側が別の
+game modeへ切り替えることはできません。
+
+### ABBB raw result
+
+raw resultはgame単位の不変record（`SingleRoundGameResult`）の列です。
+
+```text
+seed / rotation / game_mode / candidate_seat / scores（4 seat分のfinal score）
+```
+
+candidate scoreだけへ縮約せず、4 seat分の `scores` を正本として保持します。
+candidate scoreは `scores[candidate_seat]` から導出します
+（`SingleRoundGameResult.candidate_score`）。rankはこのprotocolのprimary
+contractではないため保持しません。
+
+### ABBB metrics
+
+`SingleRoundCandidateMetrics` として次を集計します。
+
+- `mean_candidate_score`: 全 seed × 4 rotationのcandidate final score平均
+- `seat_mean_scores`: candidateがSeat 0〜3それぞれを担当した時のfinal score平均
+
+開始score `25000` をArena側でhard-codeしたpoint deltaは使いません。和了率・
+放銃率・聴牌率・順位率・composite reward等はこのprotocolのscope外です。
+
+### ABBB fail closed
+
+既存comparisonと同様、1 gameでも失敗した場合は成功したgameだけの
+`SingleRoundEvaluationResult` を返さず、`SingleRoundEvaluationError` として
+評価全体を失敗させます。例外は失敗した `seed` と `rotation` を保持します。
+
+`SingleRoundEvaluationResult` はconstruction時点でも、`game_results` の件数が
+`4N` であること、`seed入力順 -> rotation 0..3` の順序、各recordの
+`candidate_seat` がrotationと一致すること、`game_mode` が `4p-red-single` で
+あること、`candidate_metrics.candidate_identity` / `game_count` が `plan` と
+一致することをfail closedで検証します。
+
+### 使用例
+
+```python
+from lisjong.policies import MinimalPolicy, ShantenPolicy
+
+from lisjong_arena import (
+    PolicySpec,
+    SingleRoundEvaluationPlan,
+    run_single_round_evaluation,
+)
+
+plan = SingleRoundEvaluationPlan(
+    candidate=PolicySpec(identity="minimal", factory=MinimalPolicy),
+    baseline=PolicySpec(identity="shanten", factory=ShantenPolicy),
+    seeds=(12345,),
+)
+
+result = run_single_round_evaluation(plan)
+
+print(
+    result.candidate_metrics.candidate_identity,
+    result.candidate_metrics.game_count,
+    result.candidate_metrics.mean_candidate_score,
+    result.candidate_metrics.seat_mean_scores,
+)
+
+for game_result in result.game_results:
+    print(
+        game_result.seed,
+        game_result.rotation,
+        game_result.candidate_seat,
+        game_result.scores,
+        game_result.candidate_score,
+    )
+```
+
+`max_steps` は既定で `10_000` です。
+
 ## Comparison artifact
+
+既存のversion付きJSON artifact契約は、AABB comparison protocol（
+`ComparisonPlan` / `ComparisonResult`）のみを対象とします。ABBB single-round
+evaluation result（`SingleRoundEvaluationResult`）のartifact保存は現時点では
+未実装で、必要になった時点で後続Issueとして独立に設計します。
 
 成功した `ComparisonResult` は、呼び出し側が明示したpathへversion付きJSON artifact
 として保存できます。comparison実行自体が暗黙にfileを生成することはありません。
@@ -288,9 +401,15 @@ repositoryは本機能の対象外です。
 だけで、`lisjong-engine` 経由の経路はまだ動いていません。1本しかない経路から共通
 interfaceを推測すると、2本目が現れた時点でほぼ確実に作り直しになります。
 
-`lisjong-arena` にとっての単一game実行境界は
-`lisjong_arena.comparison._run_single_game()` という1関数だけです。2つの実経路が
-実際に揃い、差異を実測できた段階で、必要な抽象化を判断します。
+AABB comparisonとABBB single-round evaluationは、それぞれ
+`lisjong_arena.comparison._run_single_game()` /
+`lisjong_arena.single_round_evaluation._run_single_game()` という小さな
+private single-game execution boundaryを個別に持ち、いずれも単一gameの進行は
+`lisjong.LocalGameRunner` へ委譲します。両者が同じ
+`lisjong-arena -> lisjong -> RiichiEnv` の実経路を使うという類似だけを理由に、
+共通のgeneric backend abstractionは導入しません。RiichiEnv経由と
+`lisjong-engine` 経由という2つの実経路が実際に揃い、差異を実測できた段階で、
+必要な抽象化を判断します。
 
 ## 開発環境
 
@@ -333,8 +452,9 @@ python -m unittest discover -s tests -v
 
 unit testでは実RiichiEnvを起動せず、単一game実行境界を差し替えてrotation、実行
 順序、Policy lifecycle、raw result、metrics、fail closedを検証します。実RiichiEnvを
-使うintegration testは `MinimalPolicy` と `ShantenPolicy` の固定seed comparisonを
-2回実行し、raw resultとmetricsが再現することを確認します。
+使うintegration testは、AABB comparison / ABBB single-round evaluationのそれぞれで
+`MinimalPolicy` と `ShantenPolicy` の固定seedを2回実行し、raw resultとmetrics
+（ABBBではgame_resultsとcandidate_metrics）が再現することを確認します。
 
 ## License
 
