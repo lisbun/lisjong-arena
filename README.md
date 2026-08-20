@@ -9,14 +9,16 @@ Reproducible policy comparison arena for the lisjong ecosystem.
 
 ## 概要
 
-`lisjong-arena` は、複数のlisjong Policyを再現可能な条件で対局させ、Policy全体の
-強さを比較するためのrepositoryです。
+`lisjong-arena` は、複数のlisjong Policyをcontrolled / reproducibleな条件で評価し、
+Policy間のperformance differenceを比較・検証するためのrepositoryです。
 
 現在の到達目標は高度な統計処理ではなく、**同じ条件で再実行すれば同じ結果が得られる
 最小のPolicy comparison protocol**を成立させることです。
 
 lisjong ecosystem全体のrepository責務、repository間依存方向、長期ロードマップは
 [`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
+`lisjong-arena` 固有の長期evaluation strategyは[Policy evaluation roadmap](docs/roadmap.md)を
+参照してください。
 
 ## 責務
 
