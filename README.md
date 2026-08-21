@@ -9,11 +9,12 @@ Reproducible policy comparison arena for the lisjong ecosystem.
 
 ## 概要
 
-`lisjong-arena` は、複数のlisjong Policyをcontrolled / reproducibleな条件で評価し、
-Policy間のperformance differenceを比較・検証するためのrepositoryです。
+`lisjong-arena` は、lisjongのPolicy / agentをcontrolled / reproducibleな条件で評価し、
+Policy間のperformance differenceやgame performanceを比較・検証するためのrepositoryです。
 
 現在の到達目標は高度な統計処理ではなく、**同じ条件で再実行すれば同じ結果が得られる
-最小のPolicy comparison protocol**を成立させることです。
+最小のPolicy comparison protocol**を成立させることです。将来的には、Mortal等の
+external competitorを利用したexternal benchmarkもArenaのevaluation責務として扱います。
 
 lisjong ecosystem全体のrepository責務、repository間依存方向、長期ロードマップは
 [`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
@@ -24,27 +25,35 @@ lisjong ecosystem全体のrepository責務、repository間依存方向、長期�
 
 Arenaが所有するもの:
 
-- Policy同士のmatchup定義
+- Policy / agentのmatchup定義
 - fixed seed set
 - deterministicなseat rotation
 - 複数gameの実行計画
-- Policy assignmentの記録
+- Policy / agent assignmentの記録
 - raw comparison result
 - 平均順位・平均得点・順位回数等の基本metrics
 - 再現可能なPolicy comparison protocol
 - 1 comparisonを1 fileとして保存するversion付きJSON artifact契約
+- evaluation目的のexternal benchmark / external competitor orchestration
 
 Arenaが所有しないもの:
 
 - Policy / AI戦略、Action / state evaluation、向聴数・受け入れ等のAIロジック
 - Policy contract
-- RiichiEnv Adapter、Observation / Action変換、legal action validation
+- lisjong用RiichiEnv Adapter、Observation / Action変換、legal action validationの再実装
 - 麻雀ルール、単一gameのgame state transition
+- lisjong自身のRiichiLab client / standalone participation
 - 学習model実装
+- generic external-player runtime / generic process host
 
 ## 実行経路
 
-初期Arenaは `lisjong-engine` の完成を待たず、すでに利用できる `lisjong` の
+Arenaの実行経路は、現在実装済みのPolicy-vs-Policy evaluationと、将来許容する
+mixed-agent external benchmarkを区別します。
+
+### Current implementation: Policy-vs-Policy evaluation
+
+現在のAABB / ABBBは `lisjong-engine` の完成を待たず、すでに利用できる `lisjong` の
 RiichiEnv integrationを使ってPolicy比較を成立させます。
 
 ```text
@@ -61,7 +70,30 @@ RiichiEnv
 
 単一gameの実行は既存の `lisjong.local_game_runner.LocalGameRunner` へ委譲します。
 `Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、
-`lisjong-arena` からRiichiEnvへは直接依存しません。
+**現行実装では** `lisjong-arena` からRiichiEnvへ直接依存しません。
+
+### Planned / allowed path: mixed-agent external benchmark
+
+Mortal等のexternal competitorを含むevaluationでは、将来のconcrete implementationで
+ArenaがOSS execution environmentを直接orchestrateしてよいものとします。
+
+```text
+                  lisjong-arena
+                       |
+              execution environment
+                   /         \
+                  v           v
+          lisjong seat   external competitor
+```
+
+これはplanned / allowed pathであり、現時点で実装済みのpathではありません。本Issueの
+文書同期だけを理由にRiichiEnvへのdirect dependency、mixed-agent runner、Mortal wrapperを
+追加しません。
+
+また、この経路を実装する場合も、Arenaがlisjong用のObservation / legal Action /
+selected Action mapping / seat-visible information semanticsを独自に複製することは避け、
+`lisjong`のPolicy contract / execution semanticsと公開integration capabilities / contractsを
+可能な範囲で再利用します。具体的なreuse APIはconcrete implementation Issueで決定します。
 
 ## 最小comparison protocol
 
@@ -372,10 +404,11 @@ artifactへ `PolicySpec.factory`、Python callable、import path、dynamic code�
 しません。secret、credential、environment variable、username、hostname、home directory、
 absolute local path等の再現性に不要なmachine-local情報も保存しません。
 
-現在のexecution pathは従来どおり `lisjong-arena -> lisjong -> RiichiEnv` です。
-provenance取得にはpackage metadataを使い、ArenaからRiichiEnvへのdirect dependencyや
-direct importを追加していません。未完成の `lisjong-engine` integrationやbackend
-abstractionも先取りしません。
+現在のPolicy-vs-Policy execution pathは従来どおり `lisjong-arena -> lisjong -> RiichiEnv`
+です。provenance取得にはpackage metadataを使い、ArenaからRiichiEnvへのdirect dependencyや
+direct importを追加していません。planned mixed-agent external benchmark pathは別のconcrete
+implementation Issueで扱い、本README更新だけでは実装しません。未完成の
+`lisjong-engine` integrationやbackend abstractionも先取りしません。
 
 artifactを保存できることとrepositoryで管理することは別です。test fixture以外の実測
 artifactをrepositoryへ大量commitする運用、既定保存先、retention policy、artifact
@@ -389,6 +422,7 @@ repositoryは本機能の対象外です。
 - database / artifact repository / retention policy
 - distributed execution / multiprocessing / job scheduler
 - RiichiLab rankedを使った強さ比較
+- Mortalとのmixed-agent benchmark実装 / external competitor wrapper
 - `lisjong-engine` integration
 - CLI
 
@@ -399,9 +433,10 @@ repositoryは本機能の対象外です。
 ### backend abstractionをまだ持たない理由
 
 `GameBackend` / `EvaluationBackend` / backend registry / 汎用runner protocol
-のような抽象化は導入していません。現時点で実在する実行経路はRiichiEnv経由の1本
-だけで、`lisjong-engine` 経由の経路はまだ動いていません。1本しかない経路から共通
-interfaceを推測すると、2本目が現れた時点でほぼ確実に作り直しになります。
+のような抽象化は導入していません。現時点で実装済みのPolicy-vs-Policy実行経路は
+RiichiEnv経由の1本だけで、planned mixed-agent external benchmarkも
+`lisjong-engine` 経由の経路もまだ動いていません。実経路の差異を確認する前に共通
+interfaceを推測すると、後続実装で作り直しになる可能性が高いためです。
 
 AABB comparisonとABBB single-round evaluationは、それぞれ
 `lisjong_arena.comparison._run_single_game()` /
@@ -409,9 +444,8 @@ AABB comparisonとABBB single-round evaluationは、それぞれ
 private single-game execution boundaryを個別に持ち、いずれも単一gameの進行は
 `lisjong.LocalGameRunner` へ委譲します。両者が同じ
 `lisjong-arena -> lisjong -> RiichiEnv` の実経路を使うという類似だけを理由に、
-共通のgeneric backend abstractionは導入しません。RiichiEnv経由と
-`lisjong-engine` 経由という2つの実経路が実際に揃い、差異を実測できた段階で、
-必要な抽象化を判断します。
+共通のgeneric backend abstractionは導入しません。mixed-agent benchmark等のconcrete
+execution pathが実際に増え、差異を実測できた段階で必要な抽象化を判断します。
 
 ## 開発環境
 
@@ -439,8 +473,10 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 lisjong @ git+https://github.com/lisbun/lisjong.git@b11841e287e8f11d55fe0fdaa5127ad16e00aa01
 ```
 
-RiichiEnvは `lisjong` の依存として入ります。`lisjong-arena` 自身はRiichiEnvへ
-直接依存しません。
+RiichiEnvは `lisjong` の依存として入ります。**現行実装では** `lisjong-arena` 自身は
+RiichiEnvへ直接依存しません。将来のmixed-agent external benchmarkではevaluation-specific
+external dependencyとしてArenaからRiichiEnv等へ直接依存することを許容しますが、
+そのdependency追加は本Issueの対象外です。
 
 ### 品質確認
 
