@@ -1,12 +1,181 @@
-# Policy evaluation roadmap
+# lisjong-arena roadmap
 
 ## 目的
 
-`lisjong-arena` は、Policy / agentのdecision qualityやgame performanceをcontrolled / reproducibleな条件で測定し、lisjongの高速なPolicy development feedback loopとexternal benchmarkを支える評価基盤である。
+`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、そのdecision qualityやgame performanceをcontrolled / reproducibleな条件で測定する基盤である。
 
-Arenaが提供するのは、特定の評価条件における比較・regression・further validationのためのevidenceであり、Arena単独の結果からAI全体のstrength improvementを直接断定するものではない。評価対象に対して最小十分なevaluation scopeを選び、目的に応じてround-level development evaluationとexternal benchmarkを使い分ける。
+長期的には、Arena内の能力を次の2 trackとして発展させる。
 
-lisjong ecosystem全体のrepository責務、評価階層、OSS / external ecosystem、Visualization / Analysis等のproject-wide原則は[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。本書は、それらを`lisjong-arena`のevaluation基盤として具体化する。
+```text
+lisjong Policy contract
+        ^
+        |
+Execution / Observation Track
+        |
+        +------------------+
+        |                  |
+        v                  v
+Evaluation Track      analysis / viewer consumer
+```
+
+Execution / observationは「何が起きたか」を取得する。Evaluationはそのraw execution dataを利用して比較・検証する。Policy内部の「なぜそのActionを選んだか」というanalysis semanticsはlisjongが所有する。
+
+lisjong ecosystem全体のrepository責務、依存方向、OSS / external ecosystem、Visualization / Analysis等のproject-wide原則は[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。Arena固有の詳細なownership decisionは[`docs/architecture.md`](architecture.md)を正本とする。
+
+現在実装されているAABB / ABBBの具体的schema、seed contract、seat rotation、metric contract、artifact contract、使用方法は[`README.md`](../README.md)とimplementationを正本とする。本書はそれらを変更せず、長期的なcapability developmentを示す。
+
+## Roadmap principles
+
+- execution / observationとevaluationを同一repository内でも分離する
+- evaluationからexecution / observationを利用し、逆方向へcomparison semanticsを漏らさない
+- `DecisionContext` / `InternalAction`等のAI-side contract semanticsはlisjongに残す
+- external environment固有の型・protocol・session lifecycleをPolicy contractへ漏らさない
+- objective execution observationとPolicy-internal analysisを別contractとして扱う
+- ArenaがPolicy-internal analysisをtransport / persistenceしても、そのpayload semanticsを所有しない
+- current physical placementとtarget ownershipを区別し、big-bang migrationを避ける
+- deterministic reproducibilityとstatistical strength claimを分離する
+- evaluation対象に対してminimum sufficient scopeを選ぶ
+- concrete execution pathを観測する前にgeneric backend / runtime abstractionを先行設計しない
+- secret / credential / privileged observer informationをtrace / artifact / Policy decision pathへ逆流させない
+
+## Execution / Observation Track
+
+このtrackは、lisjongをconcrete environmentへ接続し、objective execution informationを取得する能力を発展させる。
+
+概念上:
+
+```text
+external / local environment
+          |
+          v
+execution / observation
+          |
+          +--> DecisionContext -> lisjong Policy -> InternalAction
+          |
+          +--> objective raw execution data
+```
+
+主な能力:
+
+- environment-specific integration
+- local / external runner / client
+- RiichiLab live participation
+- matchmaking / queue participation
+- session lifecycle
+- repeated / continuous participation
+- retry / reconnect / backoff
+- execution profile / credential source resolution
+- protocol trace
+- raw game record
+- objective execution event
+- external environmentへ実際に送信・適用したActionの記録
+- external representationからlisjong-owned contractへのprojection
+- external legal Action mapping / revalidation
+
+このtrackはAI判断ロジック、AABB / ABBB、evaluation seed / rotation、Policy performance metric、comparison artifact semanticsを所有しない。
+
+### Current implementation
+
+Issue #13時点では、AABB / ABBBは次のcurrent pathを使う。
+
+```text
+lisjong-arena evaluation
+        |
+        v
+lisjong.LocalGameRunner
+        |
+        v
+RiichiEnv
+```
+
+RiichiLab client / Adapter、RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`もphysical codeはまだ`lisjong`にある。
+
+### Target ownership
+
+上記integration / runner / objective trace responsibilityはArena execution / observationへ段階移管する。
+
+```text
+Arena execution / observation
+    -> RiichiLab client / Adapter
+    -> RiichiEnv Adapter
+    -> LocalGameRunner相当のlocal execution
+    -> GameTrace objective observation contract
+```
+
+ただし`DecisionContext` / `InternalAction`のcontract semanticsやshanten / ukeire / HandBelief / risk / value等のAI logicはlisjongに残す。
+
+### RiichiLab migration lane
+
+最初のconcrete migrationはRiichiLab integrationを優先する。
+
+```text
+existing lisjong RiichiLab client / Adapter
+        |
+        v
+Arena execution / observationへ段階移管
+        |
+        v
+Arena one-game ranked execution
+        |
+        v
+resilient / continuous participation
+        |
+        v
+raw online game record / protocol observation
+```
+
+migrationではWebSocket、session lifecycle、profile / credential source、protocol trace、possible-action validation等をArena側へ寄せる。Policy contractをconsumerとして利用するが、AI-side semanticsをArenaへ複製しない。
+
+### RiichiEnv migration lane
+
+RiichiEnv Adapter / LocalGameRunner / GameTraceは、既存AABB / ABBB consumerを壊さないようRiichiLab laneとは独立に段階移管する。
+
+```text
+current
+Arena evaluation
+    -> lisjong.LocalGameRunner
+    -> RiichiEnv
+
+migration
+Arena evaluation
+    -> Arena execution / observation
+    -> RiichiEnv
+    -> lisjong Policy contract
+```
+
+actual dependency version、package layout、temporary compatibility / re-exportはconcrete migration Issueで決定する。
+
+## Objective data and Policy-internal analysis
+
+Arenaが所有するのはobjective execution dataである。
+
+例:
+
+- game / round event
+- actual applied Action
+- score / result
+- seat-visible external observation
+- protocol event
+- session / disconnect / retry information
+
+一方、次のようなPolicy-internal analysis semanticsはlisjongが所有する。
+
+- shanten
+- ukeire
+- HandBelief
+- danger estimate
+- value / utility estimate
+- candidate Action evaluation
+- selection reason
+- learned estimator output
+
+Arenaが将来lisjong-produced analysisを保存する場合も、opaque payloadと最小envelope metadataをtransportする側に留まる。Arena自身がHandBelief等を再計算したり、component calibration oracleになったりしない。
+
+既存`GameTrace`へPolicy-internal analysisを混在させず、RiichiEnv / RiichiLab / future environment共通のgeneric canonical traceへ先行一般化しない。
+
+## Evaluation Track
+
+Evaluation trackは、execution / observationをconsumerとしてPolicy / game performanceのcontrolled evidenceを提供する。
 
 ```text
 Arena evaluation
@@ -14,76 +183,47 @@ Arena evaluation
     +-- Round-level development evaluation
     |       rapid feedback / regression detection
     |
+    +-- Game-level validation when needed
+    |
     +-- External benchmark
             external competitor / game performance
 ```
 
-現在実装されているAABB / ABBBの具体的schema、seed contract、seat rotation、metric contract、artifact contract、使用方法は[`README.md`](../README.md)を正本とする。本書は現在のcontractを変更せず、長期的なevaluation strategyを示す。
+Arenaが提供するのは特定の評価条件における比較・regression・further validationのためのevidenceであり、Arena単独の結果からAI全体のstrength improvementを直接断定しない。
 
 ## Evaluation lanes and scope strategy
 
-評価scopeは特定protocolを永久にprimaryと固定せず、評価対象に対して最小十分なものを選ぶ。development evaluationとexternal benchmarkは厳格な直列gateではなく、目的の異なるlaneとして扱う。
-
-```text
-Arena evaluation
-    |
-    +-- Development lane
-    |      fast / cheap
-    |          |
-    |          v
-    |      single-round evaluation
-    |          |
-    |          v
-    |      stronger round-level evidence
-    |          |
-    |          v
-    |      game-level validation when needed
-    |
-    +-- External benchmark lane
-           choose minimum sufficient scope
-           round / east-only / hanchan / decision-specific / ...
-```
+評価scopeは特定protocolを永久にprimaryと固定せず、評価対象に対してminimum sufficientなものを選ぶ。development evaluationとexternal benchmarkは厳格な直列gateではなく、目的の異なるlaneとして扱う。
 
 ### Lane 1: Round-level development evaluation
 
-局内decision qualityを主対象とする現在のPolicy強化段階では、single-round evaluationを主要な高速feedback loopとして利用する。
+局内decision qualityを主対象とするPolicy強化段階では、single-round evaluationを主要な高速feedback loopとして利用できる。
 
-主な理由は次のとおりである。
+主な理由:
 
-- game-level evaluationより低コストである
+- game-level evaluationより低コスト
 - 多数sampleを取得しやすい
 - fixed seed等による再現性を確保しやすい
 - seat差をcontrolled protocolで扱いやすい
 - 小さなPolicy変更を高速に比較できる
 - regressionした局を局単位で特定しやすい
-- 原因調査・再実行が容易である
+- 原因調査・再実行が容易
 
-向聴数、受け入れ枚数、lookahead、HandBelief、offensive value、defensive risk、鳴き等の局内能力を強化する段階では、このlaneをdevelopment / self-improvement / rapid feedbackの中心として利用する。
+向聴数、受け入れ、lookahead、HandBelief、offensive value、defensive risk、鳴き等の局内能力を強化する段階では、このlaneをdevelopment / self-improvement / rapid feedbackの中心として利用する。
 
-ただし、`single-round = permanently primary`とは規定しない。Policyが点棒状況や順位条件等のgame-level contextを意思決定へ利用するようになれば、評価scopeもそれに合わせて拡張する。
+ただし`single-round = permanently primary`とは規定しない。
 
 ### Game-level validation within development
 
-将来的に次のような要因を評価する場合は、hanchan / match-level等のgame-level evaluationが必要になる。
-
-- 点棒状況
-- 順位条件
-- 親番価値
-- 連荘価値
-- オーラス判断
-- トップ取り
-- ラス回避
-- game-level utility
-
-そのためgame-level evaluationは廃止せず、必要になった時点で利用するより高コストなfurther validation layerとして位置付ける。
+点棒状況、順位条件、親番価値、連荘価値、オーラス判断、トップ取り、ラス回避、game-level utility等を評価する場合は、hanchan / match-level等の高コストなvalidationへ広げる。
 
 ### Lane 2: External benchmark
 
-成熟したexternal AI等に対するlisjongのgame performanceを評価する。external benchmark全体について特定のscopeを固定せず、評価対象に応じてround、east-only game、hanchan、decision-specific benchmark等から最小十分なscopeを選ぶ。
+成熟したexternal AI等に対するlisjongのgame performanceを評価する。external benchmark全体について特定scopeを固定せず、round、east-only、hanchan、decision-specific benchmark等から評価目的に必要なscopeを選ぶ。
 
 #### Preferred / planned Mortal benchmark path
 
-現在のMortal benchmark方針では、lisjongの総合的なgame performanceを確認するprimary pathとして、hanchan-level comparisonとcontrolled seat rotationを優先する。
+Mortalを総合的なgame-performance referenceとして利用する場合は、hanchan-level comparisonとcontrolled seat rotationをprimary candidateとする。
 
 ```text
 lisjong
@@ -94,66 +234,7 @@ Mortal
 × controlled seat rotation
 ```
 
-これは、点棒状況、順位、親番、連荘、南場、オーラス、トップ取り、ラス回避、game-level utility等を含む総合的な意思決定を評価できるためである。
-
-ただし、次を意味しない。
-
-- Mortal benchmarkをgame-level strategy完成後まで禁止すること
-- diagnostic目的のMortal round-level comparisonを禁止すること
-- 他のexternal benchmarkまでhanchanへ固定すること
-
-Policy成熟度を確認するexternal referenceとして、開発途中でもMortal benchmarkを利用できる余地を持たせる。
-
-## Execution paths
-
-Arenaのexecution pathは用途別に扱う。
-
-### Current Policy-vs-Policy development path
-
-現在実装済みのAABB / ABBB等では、`lisjong`の既存integration / runnerを利用する。
-
-```text
-lisjong-arena
-      |
-      v
-   lisjong
-      |
-      v
-  RiichiEnv
-```
-
-Arenaはmatchup、seed、seat rotation、trial、result / metrics / artifactに集中し、単一game executionは`lisjong`側へ委譲する。現行実装ではArena自身はRiichiEnvへ直接dependencyを持たない。
-
-external benchmark対応のために、この既存Policy comparison pathを全面置換しない。
-
-### Planned / allowed mixed-agent external benchmark path
-
-Mortal等のexternal competitorを含むevaluationでは、将来のconcrete implementationでArenaがOSS execution environmentを直接orchestrateしてよい。
-
-```text
-                  lisjong-arena
-                       |
-              execution environment
-                   /         \
-                  v           v
-          lisjong seat   external competitor
-```
-
-これはplanned / allowed pathであり、現時点で実装済みのpathではない。本roadmap更新だけを理由にRiichiEnvへのdirect dependency、mixed-agent runner、Mortal wrapper等を追加しない。
-
-lisjong側については、次のenvironment-facing semanticsをArenaへ独自に複製しない。
-
-- external Observationからlisjong decision inputへの変換
-- legal Action conversion
-- selected Action mapping
-- seat-visible information boundary
-- action identity / legality validation
-
-Policy実行では`lisjong`が所有するPolicy contract / execution semanticsを利用する。Arenaが`lisjong`のstandalone runner全体を必ず再利用することは要求しないが、`lisjong`が公開するintegration capabilities / contractsを可能な範囲で再利用し、同じenvironment conversion semanticsを独自実装しない。具体的なreuse APIはconcrete integration Issueで決定する。
-
-external competitor側のwrapper / lifecycle / session orchestrationは、evaluationだけを目的とする間はArena-private implementation detailとして開始してよい。
-
-最初からuniversal Agent API、generic external process host、generic match runtime、新shared repositoryを設計しない。同じintegrationをArena外の複数concrete consumerが必要とすることが実際に確認された場合にのみ、共通runtime / repositoryへの抽出を再検討する。
+ただしMortal benchmarkをgame-level strategy完成後まで禁止しない。diagnostic目的のround-level comparisonも妨げず、他external benchmarkまでhanchanへ固定しない。
 
 ## Protocol roles
 
@@ -161,7 +242,7 @@ external competitor側のwrapper / lifecycle / session orchestrationは、evalua
 
 AABBは、2 Policyを同一対局内へ配置して相対比較するhead-to-head comparison protocolとして位置付ける。
 
-Policy A / B間の相対比較やregression comparisonに利用できる。ただし同一対局への配置やseat rotationが、統計的公平性やstrength differenceを自動的に証明するとは扱わない。
+Policy A / B間の相対比較やregression comparisonへ利用できる。ただし同一対局配置やseat rotationが統計的公平性やstrength differenceを自動的に証明するとは扱わない。
 
 ### ABBB
 
@@ -169,24 +250,22 @@ ABBB single-round evaluationは、candidate Policyを固定baseline環境へ投�
 
 ```text
 candidate A
-     │
-     ▼
+     |
+     v
 baseline B B B
-     │
-     ▼
+     |
+     v
 fixed / controlled conditions
-     │
-     ▼
+     |
+     v
 candidate performance evidence
 ```
 
-現在の局内Policy強化では、ABBB single-round evaluationが高速feedback loopとして特に適している。
-
-AABB / ABBBの具体的なrotation、schema、seed、game mode、metric contractはREADMEとimplementationを正本とする。本roadmapでは変更せず、将来別protocolが最小十分な評価方法となる可能性も妨げない。
+AABB / ABBBの具体rotation、schema、seed、game mode、metric contractはREADMEとimplementationを正本とする。本roadmapでは変更しない。
 
 ## Evidence and statistical roadmap
 
-deterministic reproducibilityと、candidate Aがbaseline Bより高いperformanceを持つという統計的主張を分離する。
+Deterministic reproducibilityとstatistical strength claimを分離する。
 
 ```text
 same conditions -> reproducible result
@@ -194,7 +273,7 @@ same conditions -> reproducible result
 Policy A > Policy B as a statistical claim
 ```
 
-長期的には次を検討対象とする。
+長期的な検討対象:
 
 - sample size
 - variance
@@ -205,29 +284,9 @@ Policy A > Policy B as a statistical claim
 - effect size
 - comparison / further-validation threshold
 
-ただし、fixed seedやrotationが存在することだけを理由に各resultを独立sampleやpaired sampleとして扱わない。各protocolで何をstatistical unit / pairとみなせるか、Policy差によってtrajectoryが分岐すること、同一game内resultの相関等を確認してから統計手法を設計する。
+fixed seedやrotationが存在することだけを理由に各resultを独立sample / paired sampleとして扱わない。Policy差によるtrajectory divergence、同一game内resultの相関、protocolごとのstatistical unitを確認してから統計手法を設計する。
 
-当面は具体的な統計手法やthresholdを固定しない。少数sampleの勝敗だけでPolicy improvementを断定しないことを原則とする。
-
-概念的には次のような段階評価へ発展できる余地を持たせる。
-
-```text
-candidate
-    ↓
-small evaluation
-    ↓
-obvious regression?
-   yes -> investigate / reject change
-   no
-    ↓
-larger sample
-    ↓
-sufficient evidence
-    ↓
-candidate for further validation
-```
-
-この図は正式なPolicy promotion lifecycleの存在を前提としない。
+少数sampleの勝敗だけでPolicy improvementを断定しない。
 
 ## Metrics roadmap
 
@@ -259,117 +318,121 @@ candidate for further validation
 - candidate-action comparison
 - estimator-related analysis summary
 
-ArenaはPolicy内部のdomain calculationを再実装しない。shanten、HandBelief、danger、score / value等のcomponent-specific correctness / calibrationは、それらを所有するrepositoryを正本とする。
-
-Decision / analysis dataをArenaで扱う場合も、Policyやevaluation inputから明示的に提供されたanalysis dataを集計・相関する形を基本とする。Arena自身がHandBeliefを再構築したり、component-specific calibration oracleになったりしない。具体的なanalysis data contractやmetric追加は別Issueで扱う。
+Decision / analysis metricsをArenaで扱う場合も、lisjongが明示的に提供したanalysis dataをaggregation / correlationする形を基本とする。Arena自身がshanten / HandBelief / danger等を再実装しない。
 
 ## Artifact / provenance and regression analysis
 
-evaluation resultを一時的なconsole outputだけでなく、Policy間のperformance differenceやPolicy evolutionを検証するための再現可能なevidenceとして扱う。
+Evaluation resultを一時的なconsole outputだけでなく、Policy evolutionを検証するreproducible evidenceとして扱う。
 
 ```text
 baseline
-   ↓
+   |
 Policy change
-   ↓
+   |
 evaluation
-   ↓
+   |
 artifact / provenance
-   ↓
+   |
 comparison / regression analysis
 ```
 
-現在、version付きartifact contractはAABB comparisonに実装されている。ABBB single-round evaluationのartifact保存は未実装であり、本roadmapは実装済みであるかのように一般化しない。
+現在version付きartifact contractはAABB comparisonに実装されている。ABBB single-round evaluationのartifact保存は未実装であり、実装済みであるかのように一般化しない。
 
-長期的には各evaluationについて、どのPolicy / configuration / protocol / seed / seat条件 / metrics / implementation provenanceに基づく結果かを追跡できる状態を目指す。ただし具体的なartifact schema変更は別Issueで扱う。
+長期的には各evaluationについてPolicy / configuration / protocol / seed / seat / metrics / implementation provenanceを追跡できる状態を目指す。
 
-Evaluation artifactが完全な牌譜やgame event streamを所有・内包することは要求しない。必要になれば、関連game dataへのreferenceを保持する設計も検討できる。
+Evaluation artifactへ完全な牌譜やgame event streamの内包を要求しない。必要ならobjective game dataへのreferenceを持つ設計を検討できる。
 
 ```text
 evaluation artifact
-    ├─ result / metrics
-    ├─ provenance
-    └─ optional game-data reference
-                 ↓
-             game log / related data
+    +-- result / metrics
+    +-- provenance
+    +-- optional game-data reference
+                 |
+                 v
+             game record
 ```
 
-Arena自身はviewer / GUI / replay UIを所有しない。evaluation artifactやprovenanceは将来的なanalysis toolingから利用できる余地を保つが、viewer format、canonical game event schema、replay protocol、GUI、visualization architectureをArena側で定義しない。Arena artifactをviewer唯一の入力経路とも規定しない。
+Arena自身はviewer / GUI / replay UIを所有しない。viewer formatやproject-wide canonical event schemaも具体consumer requirementなしに定義しない。
 
-## OSS-first external benchmark strategy
+## OSS-first strategy
 
-external benchmark、game execution、protocol interoperability等に必要な能力を成熟したOSSが既に提供している場合は、それを優先的に評価・利用する。同等機能をArena内へ無目的に重複実装しない。
+External benchmark、game execution、protocol interoperability等に必要な能力を成熟したOSSが既に提供する場合は優先的に評価・利用する。同等機能をArena内へ無目的に重複実装しない。
 
-現在のconcrete pathではRiichiEnvを、local game execution、reproducible evaluation、external-agent interoperability、MJAI / Mortal interoperabilityの有力なexecution environmentとして優先検討する。
+RiichiEnvは現在のlocal execution / reproducible evaluation / MJAI / Mortal interoperabilityの有力なconcrete environmentである。ただしArenaの永久public contractではない。
 
-Mortal benchmarkのために、MJAI event generator、MJAI parser、legal Action mapper、game progression等をArena内へ最初から再実装することを前提にしない。
+Mortal benchmarkのためだけにMJAI generator/parser、麻雀game progression、generic process runtimeを先行再実装しない。
 
-ただし、RiichiEnv / Mortalは現在のpreferred execution / benchmark pathであり、Arenaの永久public contractではない。version、dependency details、wrapper API、process lifecycle、model placement、sample size、statistical protocol / threshold等はconcrete implementation Issueで決定する。
+## Runtime extraction trigger
 
-## External benchmark and live participation boundary
+現時点では独立した`lisjong-runtime` repositoryを作成しない。
 
-external benchmarkとlisjong自身のlive / standalone participationを区別する。
+次のようなconcrete requirementが成立した場合に再検討する。
+
+- 24/7 production bot hosting
+- evaluationとは独立したdeployment
+- generic process / agent hosting
+- Arena以外の複数consumerが同じruntimeを必要とする
+- execution infrastructureがArena固有責務から独立して大きく成長する
+- Arena repository内のpackage-level分離では責務境界を維持しにくくなる
+
+## Migration ordering
+
+重要な順序は次とする。
 
 ```text
-External benchmark for evaluation
-    -> lisjong-arena
-
-Live / standalone participation of lisjong itself
-    -> lisjong self-integration
+repository-local architecture
+        |
+RiichiLab execution integration migration
+        |
+Arena one-game online execution
+        |
+resilient / continuous participation
+        |
+RiichiEnv / LocalGameRunner / GameTrace migration
+        |
+temporary compatibility removal
 ```
 
-Mortal等との対戦をlisjongの強さを測るbenchmarkとして実施する場合はArena責務とする。一方、RiichiLab等へlisjong自身が参加する能力はArena責務へ移さない。
+migration途中でもexisting AABB / ABBBを壊さず、main branchをbroken stateにしない。
 
 ## Repository boundaries and source of truth
 
-Arenaはcomponent-specific correctnessの正本ではない。
-
 ```text
-Component validation
-    -> component owning repository
+Component semantics / Policy internals
+    -> lisjong
+
+External execution / objective observation
+    -> lisjong-arena execution / observation
 
 Policy / game evaluation
-    -> lisjong-arena
+    -> lisjong-arena evaluation
 
-External benchmark for evaluation
-    -> lisjong-arena
-
-Live / standalone participation of lisjong itself
-    -> lisjong self-integration
+Game rules / state transition
+    -> lisjong-engine
 ```
 
-たとえばshanten計算、HandBelief accuracy / calibration、score evaluator correctnessは、それらを所有するrepositoryで検証する。Arenaでは、それらをPolicyへ統合した結果としてのdecision / game performanceを主に評価する。
+`lisjong-arena -> lisjong`を維持し、`lisjong -> lisjong-arena`を導入しない。
 
-first-party dependencyとして`lisjong-arena -> lisjong`を維持する。一方、将来のconcrete external benchmarkではevaluation-specific external dependencyとしてArenaがRiichiEnv等のOSS execution environmentへ直接依存してよい。これはArenaがlisjong用Adapter / conversion semanticsや麻雀ルールを再実装してよいことを意味しない。
+Current implementationではArenaからRiichiEnvへのdirect dependencyはない。Target architectureではArena execution / observationからexternal environmentへ直接依存してよいが、actual dependency追加はconcrete migration Issueで決定する。
 
-現行実装ではArenaからRiichiEnvへのdirect dependencyは存在せず、本roadmap更新でもdependencyを追加しない。
-
-project-wideな次の原則は`lisjong-project`を正本とし、本roadmapでは再定義しない。
-
-- OSS / external ecosystemの一般的な活用方針
-- correctness / differential validation / performance optimizationの一般原則
-- component / decision / game performanceのproject-wideな責務分離
-- Visualization / Analysis Track全体
-- cross-repository event / snapshot architecture
-- Learning Policy全体の発展方針
-- Human Play
-
-`lisjong-arena` roadmapは、これらをevaluation基盤として具体化することに集中する。
+Historical Issue #9で採用した「live / standalone participation -> lisjong self-integration」は、`lisjong-project` Issue #10によってtarget ownershipが変更された。現在のtargetはArena execution / observationである。
 
 ## 現在このroadmapで固定しないもの
 
-- AABB / ABBBの既存protocol contractの変更
-- 具体的な統計手法、sample size、confidence threshold
-- 正式なPolicy promotion lifecycle
-- 新しいmetric schema / analysis data contract
+- AABB / ABBB existing protocol contractの変更
+- concrete statistical method / sample size / confidence threshold
+- formal Policy promotion lifecycle
+- new metric schema
 - ABBB artifact schema
-- game-log linkage contract
 - viewer / replay / GUI protocol
-- canonical game event schema
+- project-wide canonical game event schema
+- DecisionTrace / AnalysisEnvelope / correlation ID
+- generic canonical GameTrace
 - external competitor wrapper API / process lifecycle
 - Mortal model placement
 - RiichiEnv / Mortalの永久dependency
 - generic external-player runtime / process host
-- backend abstraction
+- `GameBackend` / `EvaluationBackend`
+- first-party engine integration API
 
-これらは実測・具体的consumer requirement・実装必要性が確認された時点で個別Issueとして設計する。
+これらは実測、concrete consumer requirement、implementation necessityが確認された時点で個別Issueとして設計する。
