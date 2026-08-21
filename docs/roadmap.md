@@ -398,17 +398,20 @@ migration途中でもexisting AABB / ABBBを壊さず、main branchをbroken sta
 ## Repository boundaries and source of truth
 
 ```text
-Component semantics / Policy internals
+AI component semantics / Policy internals
     -> lisjong
+
+Rule / engine semantics
+    -> lisjong-engine
+
+Component correctness / calibration
+    -> component owning repository
 
 External execution / objective observation
     -> lisjong-arena execution / observation
 
 Policy / game evaluation
     -> lisjong-arena evaluation
-
-Game rules / state transition
-    -> lisjong-engine
 ```
 
 `lisjong-arena -> lisjong`を維持し、`lisjong -> lisjong-arena`を導入しない。

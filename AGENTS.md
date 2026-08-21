@@ -258,7 +258,7 @@ python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-- 文書だけの変更では最低限`git diff --check`相当のwhitespace / patch validationを実施する
+- 文書だけの変更では最低限`git diff --check`を実行する
 - unit testでは実RiichiEnvを毎回起動せず、単一game実行境界を差し替えて高速に検証する。ただしtestのためだけにproduction側へgeneric backend abstractionを導入しない
 - testは正常系だけでなく、rotationとPolicy assignment、実行順序、metricsの母数、異常入力、失敗時のfail closed、再現性を優先して固定する
 - 実RiichiEnvを使うintegration testは重くしすぎず、環境差でflakyになる厳密なwall-clock thresholdを入れない
