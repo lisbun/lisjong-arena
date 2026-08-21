@@ -2,47 +2,49 @@
 
 ## 目的
 
-`lisjong-arena` は、candidate Policy間のperformance differenceをcontrolled / reproducibleな条件で測定し、lisjongの高速なPolicy development feedback loopを支える評価基盤である。
+`lisjong-arena` は、Policy / agentのdecision qualityやgame performanceをcontrolled / reproducibleな条件で測定し、lisjongの高速なPolicy development feedback loopとexternal benchmarkを支える評価基盤である。
 
-Arenaが提供するのは、特定の評価条件における比較・regression・further validationのためのevidenceであり、Arena単独の結果からAI全体のstrength improvementを直接断定するものではない。評価対象に対して最小十分なevaluation scopeを選び、必要になった時点でより広く高コストなscopeへ進む。
+Arenaが提供するのは、特定の評価条件における比較・regression・further validationのためのevidenceであり、Arena単独の結果からAI全体のstrength improvementを直接断定するものではない。評価対象に対して最小十分なevaluation scopeを選び、目的に応じてround-level development evaluationとexternal benchmarkを使い分ける。
 
-lisjong ecosystem全体のrepository責務、評価階層、OSS / external ecosystem、Visualization / Analysis等のproject-wide原則は[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。本書は、それらを`lisjong-arena`のPolicy evaluation基盤として具体化する。
+lisjong ecosystem全体のrepository責務、評価階層、OSS / external ecosystem、Visualization / Analysis等のproject-wide原則は[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。本書は、それらを`lisjong-arena`のevaluation基盤として具体化する。
 
 ```text
-candidate Policies
-       ↓
-controlled evaluation
-       ↓
-reproducible evidence
-       ↓
-comparison / regression detection / further validation
+Arena evaluation
+    |
+    +-- Round-level development evaluation
+    |       rapid feedback / regression detection
+    |
+    +-- External benchmark
+            external competitor / game performance
 ```
 
 現在実装されているAABB / ABBBの具体的schema、seed contract、seat rotation、metric contract、artifact contract、使用方法は[`README.md`](../README.md)を正本とする。本書は現在のcontractを変更せず、長期的なevaluation strategyを示す。
 
-## Evaluation scope strategy
+## Evaluation lanes and scope strategy
 
-評価scopeは特定protocolを永久にprimaryと固定せず、評価対象に対して最小十分なものを選ぶ。
+評価scopeは特定protocolを永久にprimaryと固定せず、評価対象に対して最小十分なものを選ぶ。development evaluationとexternal benchmarkは厳格な直列gateではなく、目的の異なるlaneとして扱う。
 
 ```text
-fast / cheap
-    │
-    ▼
-single-round evaluation
-    │
-    │ larger sample
-    ▼
-stronger round-level evidence
-    │
-    │ when game context matters
-    ▼
-game-level validation
-    │
-    ▼
-external validation
+Arena evaluation
+    |
+    +-- Development lane
+    |      fast / cheap
+    |          |
+    |          v
+    |      single-round evaluation
+    |          |
+    |          v
+    |      stronger round-level evidence
+    |          |
+    |          v
+    |      game-level validation when needed
+    |
+    +-- External benchmark lane
+           choose minimum sufficient scope
+           round / east-only / hanchan / decision-specific / ...
 ```
 
-### Current focus: single-round
+### Lane 1: Round-level development evaluation
 
 局内decision qualityを主対象とする現在のPolicy強化段階では、single-round evaluationを主要な高速feedback loopとして利用する。
 
@@ -56,9 +58,11 @@ external validation
 - regressionした局を局単位で特定しやすい
 - 原因調査・再実行が容易である
 
+向聴数、受け入れ枚数、lookahead、HandBelief、offensive value、defensive risk、鳴き等の局内能力を強化する段階では、このlaneをdevelopment / self-improvement / rapid feedbackの中心として利用する。
+
 ただし、`single-round = permanently primary`とは規定しない。Policyが点棒状況や順位条件等のgame-level contextを意思決定へ利用するようになれば、評価scopeもそれに合わせて拡張する。
 
-### Future: game-level validation
+### Game-level validation within development
 
 将来的に次のような要因を評価する場合は、hanchan / match-level等のgame-level evaluationが必要になる。
 
@@ -71,7 +75,85 @@ external validation
 - ラス回避
 - game-level utility
 
-そのためgame-level evaluationは廃止せず、より高コストなfurther validation layerとして位置付ける。
+そのためgame-level evaluationは廃止せず、必要になった時点で利用するより高コストなfurther validation layerとして位置付ける。
+
+### Lane 2: External benchmark
+
+成熟したexternal AI等に対するlisjongのgame performanceを評価する。external benchmark全体について特定のscopeを固定せず、評価対象に応じてround、east-only game、hanchan、decision-specific benchmark等から最小十分なscopeを選ぶ。
+
+#### Preferred / planned Mortal benchmark path
+
+現在のMortal benchmark方針では、lisjongの総合的なgame performanceを確認するprimary pathとして、hanchan-level comparisonとcontrolled seat rotationを優先する。
+
+```text
+lisjong
+  vs
+Mortal
+
+× hanchan
+× controlled seat rotation
+```
+
+これは、点棒状況、順位、親番、連荘、南場、オーラス、トップ取り、ラス回避、game-level utility等を含む総合的な意思決定を評価できるためである。
+
+ただし、次を意味しない。
+
+- Mortal benchmarkをgame-level strategy完成後まで禁止すること
+- diagnostic目的のMortal round-level comparisonを禁止すること
+- 他のexternal benchmarkまでhanchanへ固定すること
+
+Policy成熟度を確認するexternal referenceとして、開発途中でもMortal benchmarkを利用できる余地を持たせる。
+
+## Execution paths
+
+Arenaのexecution pathは用途別に扱う。
+
+### Current Policy-vs-Policy development path
+
+現在実装済みのAABB / ABBB等では、`lisjong`の既存integration / runnerを利用する。
+
+```text
+lisjong-arena
+      |
+      v
+   lisjong
+      |
+      v
+  RiichiEnv
+```
+
+Arenaはmatchup、seed、seat rotation、trial、result / metrics / artifactに集中し、単一game executionは`lisjong`側へ委譲する。現行実装ではArena自身はRiichiEnvへ直接dependencyを持たない。
+
+external benchmark対応のために、この既存Policy comparison pathを全面置換しない。
+
+### Planned / allowed mixed-agent external benchmark path
+
+Mortal等のexternal competitorを含むevaluationでは、将来のconcrete implementationでArenaがOSS execution environmentを直接orchestrateしてよい。
+
+```text
+                  lisjong-arena
+                       |
+              execution environment
+                   /         \
+                  v           v
+          lisjong seat   external competitor
+```
+
+これはplanned / allowed pathであり、現時点で実装済みのpathではない。本roadmap更新だけを理由にRiichiEnvへのdirect dependency、mixed-agent runner、Mortal wrapper等を追加しない。
+
+lisjong側については、次のenvironment-facing semanticsをArenaへ独自に複製しない。
+
+- external Observationからlisjong decision inputへの変換
+- legal Action conversion
+- selected Action mapping
+- seat-visible information boundary
+- action identity / legality validation
+
+Policy実行では`lisjong`が所有するPolicy contract / execution semanticsを利用する。Arenaが`lisjong`のstandalone runner全体を必ず再利用することは要求しないが、`lisjong`が公開するintegration capabilities / contractsを可能な範囲で再利用し、同じenvironment conversion semanticsを独自実装しない。具体的なreuse APIはconcrete integration Issueで決定する。
+
+external competitor側のwrapper / lifecycle / session orchestrationは、evaluationだけを目的とする間はArena-private implementation detailとして開始してよい。
+
+最初からuniversal Agent API、generic external process host、generic match runtime、新shared repositoryを設計しない。同じintegrationをArena外の複数concrete consumerが必要とすることが実際に確認された場合にのみ、共通runtime / repositoryへの抽出を再検討する。
 
 ## Protocol roles
 
@@ -214,21 +296,29 @@ evaluation artifact
 
 Arena自身はviewer / GUI / replay UIを所有しない。evaluation artifactやprovenanceは将来的なanalysis toolingから利用できる余地を保つが、viewer format、canonical game event schema、replay protocol、GUI、visualization architectureをArena側で定義しない。Arena artifactをviewer唯一の入力経路とも規定しない。
 
-## External validation
+## OSS-first external benchmark strategy
 
-Arena内部のcontrolled evaluationとexternal validationを区別する。
+external benchmark、game execution、protocol interoperability等に必要な能力を成熟したOSSが既に提供している場合は、それを優先的に評価・利用する。同等機能をArena内へ無目的に重複実装しない。
+
+現在のconcrete pathではRiichiEnvを、local game execution、reproducible evaluation、external-agent interoperability、MJAI / Mortal interoperabilityの有力なexecution environmentとして優先検討する。
+
+Mortal benchmarkのために、MJAI event generator、MJAI parser、legal Action mapper、game progression等をArena内へ最初から再実装することを前提にしない。
+
+ただし、RiichiEnv / Mortalは現在のpreferred execution / benchmark pathであり、Arenaの永久public contractではない。version、dependency details、wrapper API、process lifecycle、model placement、sample size、statistical protocol / threshold等はconcrete implementation Issueで決定する。
+
+## External benchmark and live participation boundary
+
+external benchmarkとlisjong自身のlive / standalone participationを区別する。
 
 ```text
-controlled Arena evaluation
-          ↓
-candidate with sufficient internal evidence
-          ↓
-external benchmark / live validation
+External benchmark for evaluation
+    -> lisjong-arena
+
+Live / standalone participation of lisjong itself
+    -> lisjong self-integration
 ```
 
-外部の強いagent、benchmark、live environment等は、Arena内部baseline比較だけでは測れないperformanceを確認する手段となり得る。
-
-ただし特定external agent、OSS、service、integration methodをroadmap上の必須dependencyとして固定しない。具体的な採否・integrationは別Issueまたはrelevant repositoryで扱う。
+Mortal等との対戦をlisjongの強さを測るbenchmarkとして実施する場合はArena責務とする。一方、RiichiLab等へlisjong自身が参加する能力はArena責務へ移さない。
 
 ## Repository boundaries and source of truth
 
@@ -241,11 +331,18 @@ Component validation
 Policy / game evaluation
     -> lisjong-arena
 
-External / live validation
-    -> relevant integration boundary
+External benchmark for evaluation
+    -> lisjong-arena
+
+Live / standalone participation of lisjong itself
+    -> lisjong self-integration
 ```
 
 たとえばshanten計算、HandBelief accuracy / calibration、score evaluator correctnessは、それらを所有するrepositoryで検証する。Arenaでは、それらをPolicyへ統合した結果としてのdecision / game performanceを主に評価する。
+
+first-party dependencyとして`lisjong-arena -> lisjong`を維持する。一方、将来のconcrete external benchmarkではevaluation-specific external dependencyとしてArenaがRiichiEnv等のOSS execution environmentへ直接依存してよい。これはArenaがlisjong用Adapter / conversion semanticsや麻雀ルールを再実装してよいことを意味しない。
+
+現行実装ではArenaからRiichiEnvへのdirect dependencyは存在せず、本roadmap更新でもdependencyを追加しない。
 
 project-wideな次の原則は`lisjong-project`を正本とし、本roadmapでは再定義しない。
 
@@ -257,7 +354,7 @@ project-wideな次の原則は`lisjong-project`を正本とし、本roadmapで�
 - Learning Policy全体の発展方針
 - Human Play
 
-`lisjong-arena` roadmapは、これらをPolicy evaluation基盤として具体化することに集中する。
+`lisjong-arena` roadmapは、これらをevaluation基盤として具体化することに集中する。
 
 ## 現在このroadmapで固定しないもの
 
@@ -269,7 +366,10 @@ project-wideな次の原則は`lisjong-project`を正本とし、本roadmapで�
 - game-log linkage contract
 - viewer / replay / GUI protocol
 - canonical game event schema
-- 特定external agent / OSS / service
+- external competitor wrapper API / process lifecycle
+- Mortal model placement
+- RiichiEnv / Mortalの永久dependency
+- generic external-player runtime / process host
 - backend abstraction
 
 これらは実測・具体的consumer requirement・実装必要性が確認された時点で個別Issueとして設計する。
