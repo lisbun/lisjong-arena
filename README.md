@@ -470,7 +470,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 なくfull commit SHAへpinしています（`pyproject.toml`）。
 
 ```text
-lisjong @ git+https://github.com/lisbun/lisjong.git@b11841e287e8f11d55fe0fdaa5127ad16e00aa01
+lisjong @ git+https://github.com/lisbun/lisjong.git@c5adcdee9eaa59dad3f6b589b39238cd57e08dcd
 ```
 
 RiichiEnvは `lisjong` の依存として入ります。**現行実装では** `lisjong-arena` 自身は
