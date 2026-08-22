@@ -18,12 +18,12 @@ from dataclasses import FrozenInstanceError, fields
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import lisjong_arena
 from lisjong.policies import MinimalPolicy, TwoStepUkeirePolicy
 from lisjong.policy_contract.seat import Seat
 from lisjong.riichilab_client import DEFAULT_RANKED_URL
 from lisjong.riichilab_client.errors import ProtocolError, RiichiLabClientError
 
+import lisjong_arena
 from lisjong_arena.riichilab.ranked import (
     RankedGameResult,
     _run_cli,
