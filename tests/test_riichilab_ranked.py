@@ -26,6 +26,7 @@ from lisjong_arena.riichilab.ranked import _run_cli
 _DEV_TOKEN_VAR = "LISJONG_DEV_BOT_TOKEN"
 _BASELINE_TOKEN_VAR = "LISJONG_BASELINE_BOT_TOKEN"
 _PROD_TOKEN_VAR = "LISJONG_BOT_TOKEN"
+_TRACE_PATH_VAR = "RIICHILAB_TRACE_PATH"
 _ALL_TOKEN_VARS = (_DEV_TOKEN_VAR, _BASELINE_TOKEN_VAR, _PROD_TOKEN_VAR)
 
 
@@ -109,7 +110,13 @@ class CompositionForwardingTest(unittest.TestCase):
             return _fake_result()
 
         with (
-            patch.dict(os.environ, {_PROD_TOKEN_VAR: "unit-test-dummy-token"}),
+            patch.dict(
+                os.environ,
+                {
+                    _PROD_TOKEN_VAR: "unit-test-dummy-token",
+                    _TRACE_PATH_VAR: "",
+                },
+            ),
             patch(
                 "lisjong_arena.riichilab.ranked.run_ranked_game",
                 _fake_run_ranked_game,
@@ -157,7 +164,10 @@ class TraceForwardingTest(unittest.TestCase):
             captured.update(kwargs)
             return _fake_result()
 
-        env = {_PROD_TOKEN_VAR: "unit-test-dummy-token"}
+        env = {
+            _PROD_TOKEN_VAR: "unit-test-dummy-token",
+            _TRACE_PATH_VAR: "",
+        }
         if env_overrides:
             env.update(env_overrides)
 
@@ -187,7 +197,7 @@ class TraceForwardingTest(unittest.TestCase):
     def test_trace_path_env_var_is_forwarded(self) -> None:
         captured = self._run_capturing_trace_path(
             ["--profile", "lisjong"],
-            env_overrides={"RIICHILAB_TRACE_PATH": "env-trace.jsonl"},
+            env_overrides={_TRACE_PATH_VAR: "env-trace.jsonl"},
         )
         self.assertEqual(captured.get("trace_path"), "env-trace.jsonl")
 
