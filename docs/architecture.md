@@ -213,8 +213,8 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | shanten / ukeire / HandBelief / risk / value / utility | lisjong | lisjong | lisjong | KEEP |
 | Policy-internal analysis schema / semantics | lisjong | lisjong | lisjong | KEEP |
 | RiichiLab ranked one-game orchestration (`RankedGameResult` / `run_ranked_game`) | Arena | Arena canonical / lisjong legacy removed (#86) | Arena | canonical moved; legacy cleanup done |
-| RiichiLab validation one-game orchestration (`ValidationResult` / `run_validation`) | Arena | Arena canonical / lisjong legacy pending lisjong#89 | Arena | canonical moved; legacy cleanup pending |
-| RiichiLab execution profile / credential / common CLI composition | Arena | Arena canonical / lisjong legacy pending lisjong#89 | Arena | canonical moved; legacy cleanup pending |
+| RiichiLab validation one-game orchestration (`ValidationResult` / `run_validation`) | Arena | Arena canonical / lisjong legacy removed (lisjong#89 / PR #90) | Arena | canonical moved; legacy cleanup done |
+| RiichiLab execution profile / credential / common CLI composition | Arena | Arena canonical / lisjong legacy removed (lisjong#89 / PR #90) | Arena | canonical moved; legacy cleanup done |
 | RiichiLab WebSocket / transport | Arena | lisjong | Arena | TEMPORARY |
 | RiichiLab session (`ValidationSession` / `RankedSession`) | Arena | lisjong | Arena | TEMPORARY |
 | RiichiLab protocol trace writer | Arena | lisjong | Arena | TEMPORARY |
@@ -226,7 +226,7 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | AABB / ABBB evaluation protocol | Arena | Arena | Arena | KEEP |
 | evaluation metrics / artifact / provenance | Arena | Arena | Arena | KEEP |
 
-`contract owner != current physical location`はmigration中の正常な状態である。TEMPORARYはtarget ownershipが確定済みで、actual migration待ちであることを表す。ranked one-game orchestrationはIssue #17でArena側canonical implementationへ移し、lisjong側legacy copyは`lisbun/lisjong#86`で除去済みである。validation one-game orchestrationおよびexecution profile / credential / common CLI compositionはIssue #19でArena側canonical implementationへ移した一方、lisjong側legacy copyはcross-repository migration windowとして`lisbun/lisjong#89` cleanupまで一時的に残る。
+`contract owner != current physical location`はmigration中の正常な状態である。TEMPORARYはtarget ownershipが確定済みで、actual migration待ちであることを表す。ranked one-game orchestrationはIssue #17でArena側canonical implementationへ移し、lisjong側legacy copyは`lisbun/lisjong#86`で除去済みである。validation one-game orchestrationおよびexecution profile / credential / common CLI compositionはIssue #19でArena側canonical implementationへ移し、lisjong側legacy copyも`lisbun/lisjong#89` / PR #90で除去済みである。Issue #21で、Arenaのlisjong dependency pinをこの#90 merge commit(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新し、Arenaが実際に#90後のlisjong public surfaceをconsumerとして利用する状態にした。
 
 ### Why RiichiEnv Adapter moves as a target
 
@@ -288,7 +288,19 @@ user
 
 Arena-local `run_ranked_game()` / `run_validation()`はpin済みlisjong revisionのpackage-level public primitivesをconsumerとして利用し、1 connection / 1 game / terminal event / returnという既存contractをbehavior-preservingに維持する。profile identity・credential環境変数名・Policy mapping・trace path優先順位・Session・transport・trace schema・possible-action validationは本migrationで複製・再定義しない。ranked / validationはprofile定義を共有し、重複保持しない。
 
-lisjong側のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperはcleanup follow-up `lisbun/lisjong#89` まで一時的に残る。Arena implementationをcanonicalとし、lisjong legacy copyへ新機能を追加せず、両者を長期並行発展させない。
+lisjong側のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperは`lisbun/lisjong#89` / PR #90で除去済みである。Arena implementationをcanonicalとし、lisjong legacy copyへ新機能を追加せず、両者を長期並行発展させなかった。
+
+### lisjong dependency pin synchronization (Issue #21)
+
+Issue #19 / PR #20時点では、Arenaのlisjong dependency pinはまだ#90 cleanup前のrevision(`c5adcdee9eaa59dad3f6b589b39238cd57e08dcd`)を指しており、Arena-local `run_ranked_game()` / `run_validation()`はconsumerとして実際には#90 cleanup前のlisjong public surfaceを参照していた。Issue #21で、`lisjong-arena/pyproject.toml`のlisjong dependencyを#90 merge commit:
+
+```text
+7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18
+```
+
+へ更新した。current pinからこのrevisionまでのintervening commitsには、#90 cleanupに加えて`GameTrace`追加、`LocalGameRunner`への`trace_sink`オプション追加、`HandBelief` wait belief、exact wait ground truth builder等の変更が含まれるが、確認の結果Arena consumerへのbreaking影響はない。`LocalGameRunner`の変更はoptional keyword引数の追加だけであり、Arenaの既存呼び出し(`comparison.py` / `single_round_evaluation.py`)は`trace_sink`を渡さないため挙動は変わらない。`HandBelief` / exact wait ground truth / `GameTrace`はArenaのどこからも直接importされていない。
+
+これにより、Arenaのcanonical implementationとdependency pinの両方が#90後のlisjong stateと一致した状態になった。
 
 ## Target architecture
 
@@ -404,7 +416,7 @@ RiichiEnv等のexternal dependencyをArenaへ追加することはtarget archite
 
 必要ならold import pathからtarget implementationへのtemporary compatibility / re-exportを許容する。ただしimplementationを複製せず、恒久public contractにせず、removal conditionをfollow-up Issueで明記する。
 
-Issue #17ではcross-repository physical migrationのため、Arena canonical implementation成立からlisjong #86 cleanupまでの短期間だけlegacy orchestration copyが両repositoryに存在した(cleanup完了済み)。Issue #19でも同様に、Arena canonical implementation成立から`lisjong#89` cleanupまでの短期間、legacy validation orchestration / profile / CLI composition copyが両repositoryに存在する。この状態はcompatibility mechanismとして恒久化せず、Arenaをcanonicalとし、`lisjong#89`を明示的なremoval conditionとするcontrolled migration windowとして扱う。
+Issue #17ではcross-repository physical migrationのため、Arena canonical implementation成立からlisjong #86 cleanupまでの短期間だけlegacy orchestration copyが両repositoryに存在した(cleanup完了済み)。Issue #19でも同様に、Arena canonical implementation成立から`lisjong#89` / PR #90 cleanupまでの短期間、legacy validation orchestration / profile / CLI composition copyが両repositoryに存在したが、`lisjong#89` / PR #90で除去済みである。この状態はcompatibility mechanismとして恒久化せず、Arenaをcanonicalとし、`lisjong#89`を明示的なremoval conditionとするcontrolled migration windowとして扱った。Issue #21では、このcleanup後revisionへArenaのdependency pinを更新し、canonical implementationとdependency pinの整合を取った。
 
 ## What this architecture does not define
 
