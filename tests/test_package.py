@@ -6,6 +6,7 @@ import lisjong_arena
 import lisjong_arena.artifact
 import lisjong_arena.comparison
 import lisjong_arena.model
+import lisjong_arena.riichilab.ranked
 import lisjong_arena.single_round_evaluation
 
 
@@ -69,6 +70,7 @@ class PackageTest(unittest.TestCase):
             lisjong_arena.artifact,
             lisjong_arena.comparison,
             lisjong_arena.model,
+            lisjong_arena.riichilab.ranked,
             lisjong_arena.single_round_evaluation,
         ):
             with self.subTest(module=module.__name__):
