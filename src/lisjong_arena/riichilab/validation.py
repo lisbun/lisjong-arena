@@ -3,9 +3,9 @@ first-party CLI(Issue #19)。
 
 `ValidationResult` / `run_validation()`はlisjongのIssue #39/#44/#45で確立した
 contractをbehavior-preservingにArenaへcanonical migrationしたものである。
-`ValidationSession`、transport、protocol trace writer、profile / credential
-resolution、RiichiLab Adapter等のlower-level runtimeはまだ`lisjong`に物理的に
-存在し、そのpublic APIをtemporaryに再利用する。
+`ValidationSession`、transport、protocol trace writer、RiichiLab Adapter等の
+lower-level runtimeはまだ`lisjong`に物理的に存在し、そのpublic APIをtemporaryに
+再利用する。profile / credential resolutionはArena-local compositionが所有する。
 
 Usage:
     python -m lisjong_arena.riichilab.validation --profile lisjong-dev
