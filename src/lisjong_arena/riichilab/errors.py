@@ -6,8 +6,8 @@
 
 このhierarchyは、lisjong Issue #39/#44/#45で確立したcontractをbehavior-
 preservingにArenaへcanonical physical migrationしたものである(Arena Issue
-#23)。lisjong側`lisjong.riichilab_client.errors`は`lisbun/lisjong#91`まで
-一時的なlegacy copyとして残る。
+#23)。lisjong側legacy copyは`lisbun/lisjong#91` / PR #92で削除され、
+Arena Issue #25でcleanup merge SHAへのdependency pin syncも完了した。
 """
 
 

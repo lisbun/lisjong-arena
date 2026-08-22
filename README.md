@@ -164,7 +164,7 @@ user
   -> RiichiLab
 ```
 
-ranked / validation one-game orchestration、execution profile・credential resolution・common CLI / trace-path composition、そしてSession / Transport / protocol trace / client errors等のlower-level runtimeのcanonical implementationは、いずれもArenaです。`lisjong`側のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperは`lisbun/lisjong#89` / PR #90で除去済みです（rankedのlegacy copyも既に`lisbun/lisjong#86`でcleanup済みです）。Session / Transport / protocol trace / client errorsのlegacy physical copyは、Issue #23のPRがArena mainへmergeされた後に着手する[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91)でcleanupします。cleanup PR merge後、Arenaのlisjong dependency pinをそのcleanup後revisionへ更新するfollow-upが完了して初めて、physical duplicateが完全解消したと扱います。いずれの段階でも、両実装を長期並行発展させることは意図していません。
+ranked / validation one-game orchestration、execution profile・credential resolution・common CLI / trace-path composition、そしてSession / Transport / protocol trace / client errors等のlower-level runtimeのcanonical + physical implementationは、いずれもArenaです。`lisjong`側のlegacy ranked orchestrationは`lisbun/lisjong#86`、validation / profile / CLI copyは`lisbun/lisjong#89` / PR #90、lower-level runtime copyは[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91) / PR #92でそれぞれ削除済みです。Issue #25でArenaのlisjong dependency pinもPR #92のactual merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期し、RiichiLab lower-level runtimeのphysical duplicateは完全解消済みです。一方、`RiichiLabSeatAdapter` / possible-action validationのphysical implementationは引き続き`lisjong`に残り、将来のmigration待ちです。
 
 Arena-local `run_ranked_game()` / `run_validation()` はArena-local `RankedSession` / `ValidationSession`、`JsonlProtocolTraceWriter`、`DEFAULT_RANKED_URL` / `DEFAULT_VALIDATION_URL`、`connect_ranked_transport()` / `connect_validation_transport()`、`drive_ranked_session()` / `drive_validation_session()`をconsumerとして利用します。Arena-local Sessionは、Policy呼び出し・Observation変換・`possible_actions` semantic validationを担当する`lisjong`側`RiichiLabSeatAdapter`を引き続きtemporary consumerとして利用し、Adapterが送出する例外はwrapせずそのまま伝播させます。
 
@@ -468,7 +468,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 ### lisjong dependency
 
-`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。
+`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは`lisbun/lisjong#91` / PR #92のactual cleanup merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`です。
 
 RiichiEnvは現在 `lisjong` の依存として入ります。**現行実装では** `lisjong-arena` 自身はRiichiEnvへ直接依存しません。target architectureではArena execution / observationからRiichiEnv等へ直接依存することを許容しますが、actual dependency追加はconcrete migration Issueで行います。
 

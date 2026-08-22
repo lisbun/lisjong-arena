@@ -34,11 +34,11 @@ project-wideなrepository責務は[`lisjong-project`](https://github.com/lisbun/
 Adapterをtemporary consumerとして利用する。
 
 `lisjong`側`lisjong.riichilab_client`(errors / session / transport /
-trace)は、Issue #23完了後もcleanup follow-up
-[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91)が
-mergeされるまでlegacy physical copyとして残る。`lisjong#91`のcleanup PR
-merge後、Arenaのlisjong dependency pinをcleanup後revisionへ更新する
-follow-upが完了して初めて、physical duplicateが完全解消したと扱う。
+trace)は[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91) /
+PR #92で削除された。Arena Issue #25でdependency pinもPR #92のactual
+merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期したため、
+lower-level runtimeのphysical duplicateは完全解消済みである。
+`RiichiLabSeatAdapter`のphysical migrationは引き続きfuture workである。
 
 現在の境界は次のとおりである。
 
@@ -349,17 +349,14 @@ lower-level runtime testはArena側で保持する。
   Arena-owned orchestration / CLI / profile
 - `tests/test_riichilab_validation.py`: 同上(validation)
 
-`lisjong`側`tests/test_riichilab_client_*.py`は`lisbun/lisjong#91`
-cleanupまでlegacy copyとして残るが、Arena側coverageのmigration source
-としての役割は完了している。
+`lisjong`側のArena-owned `tests/test_riichilab_client_*.py`は
+`lisbun/lisjong#91` / PR #92で削除済みである。Adapter-owned regressionは
+lisjong側`tests/test_riichilab_adapter.py`等に維持される。
 
 ## 今後のmigration
 
 - `lisjong.riichilab_client`(errors / session / transport / trace)の
-  legacy physical copy除去は`lisbun/lisjong#91`が担当する
-- `lisbun/lisjong#91`のcleanup PR merge後、Arenaのlisjong dependency pin
-  をcleanup後revisionへ更新するfollow-upを別途行う。このpin sync完了後
-  に初めてphysical duplicate完全解消と記録する
+  legacy physical copy除去とexact dependency pin syncは完了済み
 - `RiichiLabSeatAdapter` / possible-action validationのphysical
   migrationは本書のscope外であり、別Issueで扱う
 

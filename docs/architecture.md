@@ -215,10 +215,10 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | RiichiLab ranked one-game orchestration (`RankedGameResult` / `run_ranked_game`) | Arena | Arena canonical / lisjong legacy removed (#86) | Arena | canonical moved; legacy cleanup done |
 | RiichiLab validation one-game orchestration (`ValidationResult` / `run_validation`) | Arena | Arena canonical / lisjong legacy removed (lisjong#89 / PR #90) | Arena | canonical moved; legacy cleanup done |
 | RiichiLab execution profile / credential / common CLI composition | Arena | Arena canonical / lisjong legacy removed (lisjong#89 / PR #90) | Arena | canonical moved; legacy cleanup done |
-| RiichiLab WebSocket / transport | Arena | Arena canonical / lisjong legacy cleanup pending (lisjong#91) | Arena | canonical moved; legacy cleanup pending |
-| RiichiLab session (`ValidationSession` / `RankedSession`) | Arena | Arena canonical / lisjong legacy cleanup pending (lisjong#91) | Arena | canonical moved; legacy cleanup pending |
-| RiichiLab protocol trace writer | Arena | Arena canonical / lisjong legacy cleanup pending (lisjong#91) | Arena | canonical moved; legacy cleanup pending |
-| RiichiLab client error hierarchy | Arena | Arena canonical / lisjong legacy cleanup pending (lisjong#91) | Arena | canonical moved; legacy cleanup pending |
+| RiichiLab WebSocket / transport | Arena | Arena / lisjong legacy removed (lisjong#91 / PR #92) | Arena | migration complete; pin synced (#25) |
+| RiichiLab session (`ValidationSession` / `RankedSession`) | Arena | Arena / lisjong legacy removed (lisjong#91 / PR #92) | Arena | migration complete; pin synced (#25) |
+| RiichiLab protocol trace writer | Arena | Arena / lisjong legacy removed (lisjong#91 / PR #92) | Arena | migration complete; pin synced (#25) |
+| RiichiLab client error hierarchy | Arena | Arena / lisjong legacy removed (lisjong#91 / PR #92) | Arena | migration complete; pin synced (#25) |
 | RiichiLab protocol-facing Adapter / possible-action validation | Arena | lisjong | Arena | TEMPORARY |
 | RiichiEnv acquisition / materialization / projection Adapter | Arena | lisjong | Arena | TEMPORARY |
 | RiichiEnv external Action mapping / revalidation | Arena | lisjong | Arena | TEMPORARY |
@@ -229,7 +229,7 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 
 `contract owner != current physical location`はmigration中の正常な状態である。TEMPORARYはtarget ownershipが確定済みで、actual migration待ちであることを表す。ranked one-game orchestrationはIssue #17でArena側canonical implementationへ移し、lisjong側legacy copyは`lisbun/lisjong#86`で除去済みである。validation one-game orchestrationおよびexecution profile / credential / common CLI compositionはIssue #19でArena側canonical implementationへ移し、lisjong側legacy copyも`lisbun/lisjong#89` / PR #90で除去済みである。Issue #21で、Arenaのlisjong dependency pinをこの#90 merge commit(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新し、Arenaが実際に#90後のlisjong public surfaceをconsumerとして利用する状態にした。
 
-Issue #23で、RiichiLab lower-level runtime(errors / Session / Transport / protocol trace writer)もArena側canonical implementationへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は、Issue #23のPRがArena mainへmergeされた後に着手する[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91)でcleanupする。`lisjong#91`のcleanup PR merge後、Arenaのlisjong dependency pinをそのcleanup後revisionへ更新するfollow-upが完了して初めて、physical duplicate完全解消と記録する。`RiichiLabSeatAdapter`はIssue #23のnon-goalであり、引き続きlisjongにphysical実装がある。
+Issue #23で、RiichiLab lower-level runtime(errors / Session / Transport / protocol trace writer)もArena側canonical implementationへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91) / PR #92で削除され、Issue #25でArenaのdependency pinもPR #92のactual merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期した。これによりlower-level runtimeのphysical duplicateは完全解消済みである。`RiichiLabSeatAdapter`はIssue #23 / #25のnon-goalであり、引き続きlisjongにphysical実装がある。
 
 ### Why RiichiEnv Adapter moves as a target
 
@@ -300,7 +300,7 @@ Issue #23で、errors(`RiichiLabClientError` / `ProtocolError` / `TransportError
 
 `RiichiLabSeatAdapter`はAdapterとPolicy contractへのprojection、Action mapping、possible-action validationを含むため、Session / Transport lifecycleとは別migration unitとして本Issueでは移さない。Arena-local Sessionは引き続き`lisjong.riichilab_adapter.RiichiLabSeatAdapter`をtemporary consumerとして利用し、Adapterが送出する例外はArena client errorへwrapせずそのまま伝播させる。
 
-lisjong側のlegacy `lisjong.riichilab_client`(errors / session / transport / trace)は、Issue #23のPRがArena mainへmergeされた後に着手する[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91)でcleanupする。cleanup PR merge後、Arenaのlisjong dependency pinをそのcleanup後revisionへ更新するfollow-upを必須工程として追跡する。詳細な現行contractは[`docs/riichilab-client.md`](riichilab-client.md)を正本とする。
+lisjong側のlegacy `lisjong.riichilab_client`(errors / session / transport / trace)は[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91) / PR #92でcleanupされ、Issue #25でArenaのlisjong dependency pinもactual cleanup merge SHAへ同期済みである。詳細な現行contractは[`docs/riichilab-client.md`](riichilab-client.md)を正本とする。
 
 ### lisjong dependency pin synchronization (Issue #21)
 
@@ -313,6 +313,27 @@ Issue #19 / PR #20時点では、Arenaのlisjong dependency pinはまだ#90 clea
 へ更新した。current pinからこのrevisionまでのintervening commitsには、#90 cleanupに加えて`GameTrace`追加、`LocalGameRunner`への`trace_sink`オプション追加、`HandBelief` wait belief、exact wait ground truth builder等の変更が含まれるが、確認の結果Arena consumerへのbreaking影響はない。`LocalGameRunner`の変更はoptional keyword引数の追加だけであり、Arenaの既存呼び出し(`comparison.py` / `single_round_evaluation.py`)は`trace_sink`を渡さないため挙動は変わらない。`HandBelief` / exact wait ground truth / `GameTrace`はArenaのどこからも直接importされていない。
 
 これにより、Arenaのcanonical implementationとdependency pinの両方が#90後のlisjong stateと一致した状態になった。
+
+### RiichiLab lower-level runtime cleanup pin synchronization (Issue #25)
+
+Issue #25で、Arenaのlisjong dependency pinを`lisbun/lisjong#91` / PR #92の
+actual squash merge commit:
+
+```text
+dfaf494ac819da01eef4681ff9041a057fa313bc
+```
+
+へ更新した。旧pin `7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`から
+新pinまでのintervening commitはPR #92のcleanup merge 1件だけである。このcommitは
+legacy `lisjong.riichilab_client` packageとArena-owned runtime tests、lisjong側でconsumerが
+消滅した`websockets`依存を削除し、ownership docsを同期する。Policy contract、
+`RiichiLabSeatAdapter`、RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`、
+`HandBelief`は変更しない。
+
+Arenaが使用するlower-level runtimeはすでにArena-localであり、pin更新後も
+lisjong側からconsumerするのは`RiichiLabSeatAdapter` / Policy contractである。
+このexact pin syncにより、RiichiLab lower-level runtimeのphysical duplicateは
+完全解消した。Adapterのphysical migrationは引き続きfuture workである。
 
 ## Target architecture
 
@@ -429,6 +450,12 @@ RiichiEnv等のexternal dependencyをArenaへ追加することはtarget archite
 必要ならold import pathからtarget implementationへのtemporary compatibility / re-exportを許容する。ただしimplementationを複製せず、恒久public contractにせず、removal conditionをfollow-up Issueで明記する。
 
 Issue #17ではcross-repository physical migrationのため、Arena canonical implementation成立からlisjong #86 cleanupまでの短期間だけlegacy orchestration copyが両repositoryに存在した(cleanup完了済み)。Issue #19でも同様に、Arena canonical implementation成立から`lisjong#89` / PR #90 cleanupまでの短期間、legacy validation orchestration / profile / CLI composition copyが両repositoryに存在したが、`lisjong#89` / PR #90で除去済みである。この状態はcompatibility mechanismとして恒久化せず、Arenaをcanonicalとし、`lisjong#89`を明示的なremoval conditionとするcontrolled migration windowとして扱った。Issue #21では、このcleanup後revisionへArenaのdependency pinを更新し、canonical implementationとdependency pinの整合を取った。
+
+Issue #23のlower-level runtime migrationも同じcontrolled migrationとして行い、
+lisjong #91 / PR #92でlegacy packageを削除した。Issue #25でPR #92のactual merge SHAへ
+Arenaのdependency pinを同期したことで、lower-level runtimeのphysical duplicateは
+完全解消した。`RiichiLabSeatAdapter`はこのremoval unitに含まれず、引き続き
+lisjong側に残る。
 
 ## What this architecture does not define
 

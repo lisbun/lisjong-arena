@@ -95,7 +95,7 @@ class ComparisonIntegrationTest(unittest.TestCase):
         self.assertEqual(artifact.provenance.execution_environment, "riichienv")
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18",
+            "dfaf494ac819da01eef4681ff9041a057fa313bc",
         )
 
 
