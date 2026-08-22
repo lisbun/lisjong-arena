@@ -6,7 +6,7 @@
 
 project-wideなrepository responsibilityとdependency directionは[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。本書は、その方針を`lisjong-arena`内部の責務・依存方向・migration boundaryへ具体化するrepository-local architectureの正本である。
 
-本書では、現在のphysical code locationとtarget ownershipを区別する。Issue #13完了時点では、target ownershipがArenaへ決まっていても実装が一時的に`lisjong`へ残っていてよい。actual file migrationは後続Issueで行う。
+本書では、現在のphysical code locationとtarget ownershipを区別する。target ownershipがArenaへ決まっていても、段階migration中は一部implementationが一時的に`lisjong`へ残ってよい。actual file migrationはconcrete Issueごとに進める。
 
 ## Core responsibility split
 
@@ -203,7 +203,7 @@ InternalActionが
 
 ## Ownership matrix
 
-Issue #13で確認したtarget ownershipは次のとおりとする。
+Issue #13で確認したtarget ownershipと、その後の段階migrationを含むcurrent placementは次のとおりとする。
 
 | Responsibility / component | Contract owner | Current physical location | Target physical location | Migration state |
 | --- | --- | --- | --- | --- |
@@ -212,8 +212,9 @@ Issue #13で確認したtarget ownershipは次のとおりとする。
 | `InternalAction` semantics / AI-side validation | lisjong | lisjong | lisjong | KEEP |
 | shanten / ukeire / HandBelief / risk / value / utility | lisjong | lisjong | lisjong | KEEP |
 | Policy-internal analysis schema / semantics | lisjong | lisjong | lisjong | KEEP |
+| RiichiLab ranked one-game orchestration (`RankedGameResult` / `run_ranked_game`) | Arena | Arena canonical / lisjong legacy pending #86 | Arena | canonical moved; legacy cleanup pending |
 | RiichiLab WebSocket / transport | Arena | lisjong | Arena | TEMPORARY |
-| RiichiLab session / ranked participation / profile / credential resolution | Arena | lisjong | Arena | TEMPORARY |
+| RiichiLab session / profile / credential resolution | Arena | lisjong | Arena | TEMPORARY |
 | RiichiLab protocol trace | Arena | lisjong | Arena | TEMPORARY |
 | RiichiLab protocol-facing Adapter / possible-action validation | Arena | lisjong | Arena | TEMPORARY |
 | RiichiEnv acquisition / materialization / projection Adapter | Arena | lisjong | Arena | TEMPORARY |
@@ -223,7 +224,7 @@ Issue #13で確認したtarget ownershipは次のとおりとする。
 | AABB / ABBB evaluation protocol | Arena | Arena | Arena | KEEP |
 | evaluation metrics / artifact / provenance | Arena | Arena | Arena | KEEP |
 
-`contract owner != current physical location`はmigration中の正常な状態である。TEMPORARYはtarget ownershipが確定済みで、actual migration待ちであることを表す。
+`contract owner != current physical location`はmigration中の正常な状態である。TEMPORARYはtarget ownershipが確定済みで、actual migration待ちであることを表す。ranked one-game orchestrationはIssue #17でArena側canonical implementationへ移した一方、lisjong側legacy copyはcross-repository migration windowとして#86 cleanupまで一時的に残る。
 
 ### Why RiichiEnv Adapter moves as a target
 
@@ -241,7 +242,7 @@ RiichiLab client / AdapterはWebSocket、request lifecycle、session、credentia
 
 ## Current implementation
 
-Issue #13時点のAABB / ABBB execution pathは次である。
+AABB / ABBB execution pathは次である。
 
 ```text
 lisjong-arena evaluation
@@ -255,29 +256,31 @@ RiichiEnv
 
 `lisjong-arena`の`pyproject.toml`にはRiichiEnv direct dependencyがなく、RiichiEnvはpinされた`lisjong` dependency経由で利用される。
 
-RiichiLab client / Adapter、RiichiEnv Adapter、LocalGameRunner、GameTraceも現在は`lisjong`にある。
+RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationだけをArenaへ移した。WebSocket / transport、`RankedSession`、protocol trace、profile / credential helpers、protocol-facing Adapter / possible-action validationは引き続きpin済み`lisjong`のpublic APIをtemporaryに利用する。RiichiEnv Adapter、LocalGameRunner、GameTraceも現在は`lisjong`にある。
 
 このcurrent stateはtarget ownershipを表さない。migration完了まではdocumentation上でcurrent / targetを明示的に区別する。
 
-### RiichiLab ranked first-party entry point (Issue #15)
+### RiichiLab ranked first-party entry point and one-game orchestration (Issues #15 / #17)
 
-Issue #13で確定したtarget ownershipに従い、RiichiLab ranked 1半荘を起動するfirst-party entry point(`lisjong_arena.riichilab.ranked`)をArenaへ追加した。これはcomposition / invocation entry pointの追加であり、RiichiLab implementation全体のphysical migrationではない。
+Issue #15でRiichiLab ranked 1半荘を起動するfirst-party entry point(`lisjong_arena.riichilab.ranked`)をArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した。
 
 ```text
-Before Issue #15:
-
-user
-  -> lisjong RiichiLab CLI
-  -> lisjong RiichiLab implementation
-
-After Issue #15:
+current
 
 user
   -> Arena first-party RiichiLab entry point
-  -> temporary lisjong RiichiLab implementation
+  -> Arena-local RankedGameResult / run_ranked_game()
+  -> temporary lisjong lower-level RiichiLab runtime
+       RankedSession
+       transport
+       protocol trace
+       profile / credential helpers
+       RiichiLab Adapter
 ```
 
-`lisjong_arena.riichilab.ranked`は`lisjong.riichilab_client`のpublic helpers/primitives(`run_ranked_game`、`cli.build_arg_parser` / `resolve_trace_path`、`profile.resolve_profile` / `resolve_credential` / `build_runtime_summary` / `format_runtime_summary`)をtemporaryに再利用するだけの薄いcomposition layerであり、profile定義・credential解決・trace path優先順位・transport・`RankedSession`・possible-action validationを複製しない。実行はconnection 1回・ranked hanchan 1半荘・`end_game`・returnで終わる one-game contractに限り、requeue・複数game・retry・reconnectは行わない。
+Arena-local `run_ranked_game()`はpin済みlisjong revisionのpackage-level public primitivesをconsumerとして利用し、1 connection / 1 ranked hanchan / `end_game` / returnという既存contractをbehavior-preservingに維持する。profile定義・credential解決・trace path優先順位・Session・transport・trace schema・possible-action validationは本migrationで複製・再定義しない。
+
+lisjong側のlegacy `RankedGameResult` / `run_ranked_game()` / ranked CLIはcleanup follow-up `lisbun/lisjong#86` まで一時的に残る。Arena implementationをcanonicalとし、lisjong legacy copyへ新機能を追加せず、両者を長期並行発展させない。
 
 ## Target architecture
 
@@ -393,6 +396,8 @@ RiichiEnv等のexternal dependencyをArenaへ追加することはtarget archite
 
 必要ならold import pathからtarget implementationへのtemporary compatibility / re-exportを許容する。ただしimplementationを複製せず、恒久public contractにせず、removal conditionをfollow-up Issueで明記する。
 
+Issue #17ではcross-repository physical migrationのため、Arena canonical implementation成立からlisjong #86 cleanupまでの短期間だけlegacy orchestration copyが両repositoryに存在する。この状態はcompatibility mechanismとして恒久化せず、Arenaをcanonicalとし、#86を明示的なremoval conditionとするcontrolled migration windowとして扱う。
+
 ## What this architecture does not define
 
 本書だけを理由に次を先行設計しない。
@@ -417,5 +422,3 @@ RiichiEnv等のexternal dependencyをArenaへ追加することはtarget archite
 - long-term Arena capability development: `docs/roadmap.md`
 - repository-wide implementation / review rules: `AGENTS.md`
 - current work / migration progress: GitHub Issues / PRs
-
-Historical Issue #9 remains a record of the previous boundary where live / standalone participation belonged to lisjong. Current target ownership follows `lisjong-project` Issue #10 and this architecture.
