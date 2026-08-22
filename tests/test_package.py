@@ -60,10 +60,10 @@ class PackageTest(unittest.TestCase):
                 self.assertTrue(hasattr(lisjong_arena, name))
 
     def test_arena_modules_do_not_import_riichienv(self) -> None:
-        """Arenaの実行経路はlisjong-arena -> lisjong -> RiichiEnvである。
+        """現行physical implementationではArenaはRiichiEnvを直接importしない。
 
-        RiichiEnv固有の型・Observation / Action変換はlisjongが所有するため、
-        Arena自身のmoduleはRiichiEnvのpackageを直接importしない。
+        RiichiEnv integration / Adapterはtarget ownershipとしてArenaへ移管予定だが、
+        現時点ではまだlisjongにあり、Arena自身のmoduleから直接importしない。
         """
         for module in (
             lisjong_arena,
