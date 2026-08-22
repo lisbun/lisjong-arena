@@ -76,7 +76,7 @@ execution / observation
 
 ### Current implementation
 
-Issue #13時点では、AABB / ABBBは次のcurrent pathを使う。
+AABB / ABBBは次のcurrent pathを使う。
 
 ```text
 lisjong-arena evaluation
@@ -88,7 +88,9 @@ lisjong.LocalGameRunner
 RiichiEnv
 ```
 
-RiichiLab client / Adapter、RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`もphysical codeはまだ`lisjong`にある。
+RiichiLabは段階migration中である。Issue #15でfirst-party ranked entry pointをArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した。一方、WebSocket / transport、`RankedSession`、protocol trace、profile / credential helpers、protocol-facing Adapter / possible-action validationはまだpin済み`lisjong`のpublic APIをtemporaryに利用する。lisjong側legacy orchestration copyは`lisbun/lisjong#86`でcleanup予定である。
+
+RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`もphysical codeはまだ`lisjong`にある。
 
 ### Target ownership
 
@@ -112,10 +114,16 @@ Arena execution / observation
 existing lisjong RiichiLab client / Adapter
         |
         v
-Arena execution / observationへ段階移管
+Arena first-party ranked entry point          [done: #15]
         |
         v
-Arena one-game ranked execution
+Arena one-game ranked orchestration           [done: #17]
+        |
+        v
+lisjong legacy orchestration cleanup          [follow-up: lisjong #86]
+        |
+        v
+remaining lower-level RiichiLab migration
         |
         v
 resilient / continuous participation
@@ -124,7 +132,7 @@ resilient / continuous participation
 raw online game record / protocol observation
 ```
 
-migrationではWebSocket、session lifecycle、profile / credential source、protocol trace、possible-action validation等をArena側へ寄せる。Policy contractをconsumerとして利用するが、AI-side semanticsをArenaへ複製しない。
+Issue #17時点では`run_ranked_game()`だけをArena canonical implementationへ移し、WebSocket、session lifecycle、profile / credential source、protocol trace、possible-action validation等は引き続きlisjong側に残す。これらもtarget ownership上はArenaへ段階移管するが、AI-side semanticsをArenaへ複製しない。
 
 ### RiichiEnv migration lane
 
@@ -382,9 +390,13 @@ Mortal benchmarkのためだけにMJAI generator/parser、麻雀game progression
 ```text
 repository-local architecture
         |
-RiichiLab execution integration migration
+RiichiLab first-party entry point             [done: #15]
         |
-Arena one-game online execution
+Arena ranked one-game orchestration           [done: #17]
+        |
+lisjong legacy orchestration cleanup          [follow-up: lisjong #86]
+        |
+remaining RiichiLab lower-level migration
         |
 resilient / continuous participation
         |

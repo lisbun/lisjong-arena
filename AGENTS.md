@@ -84,7 +84,10 @@ RiichiEnv
 
 - `Seat` 等のAI-side contractは `lisjong.policy_contract` を使用する
 - 現行実装ではArenaからRiichiEnvへdirect dependency / direct importを持たない
-- RiichiLab client / Adapter、RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はまだ`lisjong`に存在する
+- RiichiLab ranked first-party CLIと`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestrationはArenaにある
+- RiichiLab WebSocket / transport、`RankedSession`、protocol trace、profile / credential helpers、Adapter / possible-action validationはまだ`lisjong`に存在し、pin済みpublic APIをtemporaryに利用する
+- lisjong側legacy ranked orchestration copyは`lisbun/lisjong#86` cleanupまで一時的に残す
+- RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はまだ`lisjong`に存在する
 - `lisjong` dependencyは再現可能性のためrelease tagが出るまでfull commit SHAへpinする
 
 これは**current physical placement**であり、恒久ownershipではない。
@@ -244,6 +247,7 @@ Arenaは同等Policy同士のA/B対等comparisonだけでなく、candidate 1体
 - artifactは実行用modelと分離したimmutable snapshotとし、factory・callable・任意codeを保存・復元しない。既存artifactを上書きせず、内部矛盾をload時にfail closedする
 - migrationではexisting AABB / ABBBを壊さず、main branchをbroken stateにしない
 - temporary compatibility / re-exportを使う場合はimplementationを複製せず、removal conditionをfollow-up Issueへ明記する
+- cross-repository physical migrationで短期間のlegacy implementation copyが不可避な場合は、concrete Issueでcanonical side・legacy side・removal Issueを明示し、長期並行発展させない
 - 調査前に将来の構造を過剰設計しない。module分割も最初から細かくしすぎない
 - 信頼区間、統計検定、Elo / rating、visualization、database、distributed execution、job schedulerは必要性を実測してから別Issueで扱う
 - 外部libraryを追加する場合は、必要性、license、version、保守状況を確認する

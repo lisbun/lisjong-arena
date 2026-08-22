@@ -76,6 +76,24 @@ class PackageTest(unittest.TestCase):
             with self.subTest(module=module.__name__):
                 self.assertNotIn("riichienv", _imported_root_modules(module))
 
+    def test_ranked_module_does_not_import_lisjong_legacy_orchestration(self) -> None:
+        tree = ast.parse(inspect.getsource(lisjong_arena.riichilab.ranked))
+        forbidden = {"RankedGameResult", "run_ranked_game"}
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.module is None:
+                continue
+            if node.module not in {
+                "lisjong.riichilab_client",
+                "lisjong.riichilab_client.ranked",
+            }:
+                continue
+            imported = {alias.name for alias in node.names}
+            self.assertTrue(
+                forbidden.isdisjoint(imported),
+                f"Arena ranked module imports legacy orchestration: {imported & forbidden}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
