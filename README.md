@@ -136,6 +136,37 @@ RiichiEnv
 
 RiichiLab client / Adapter、RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はtarget ownershipをArena execution / observationへ置き、後続Issueで段階移管します。`DecisionContext`等のcontract semanticsはlisjongに残します。
 
+## RiichiLab ranked first-party entry point
+
+`lisjong-arena`は、RiichiLab ranked 1半荘を起動するfirst-party entry pointを持ちます（Issue #15）。
+
+```powershell
+python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
+```
+
+このentry pointはArena自身がfirst-party composition / invocationとして所有しますが、**underlying RiichiLab implementation自体はまだ`lisjong`に一時的に存在します**。target ownershipとcurrent physical locationは区別してください。
+
+```text
+Before Issue #15:
+
+user
+  -> lisjong RiichiLab CLI
+  -> lisjong RiichiLab implementation
+
+After Issue #15:
+
+user
+  -> lisjong-arena RiichiLab first-party entry point
+  -> temporary lisjong RiichiLab implementation
+  -> RiichiLab
+```
+
+`lisjong_arena.riichilab.ranked`は`lisjong.riichilab_client`のpublic helpers/primitives（`run_ranked_game`、`cli.build_arg_parser` / `resolve_trace_path`、`profile.resolve_profile` / `resolve_credential` / `build_runtime_summary` / `format_runtime_summary`）を組み合わせるだけの薄いcomposition layerです。profile定義、credential解決、trace path優先順位、transport、`RankedSession`、possible-action validationはコピー・再実装せず、既存lisjong実装をそのまま再利用します。
+
+利用できるprofileは既存の3種類（`lisjong-dev` / `lisjong-baseline` / `lisjong`）で、profile未指定・unknown profile・対応credential未設定はいずれもfail closedします。protocol traceは既定OFFで、`--trace-path` > `RIICHILAB_TRACE_PATH`環境変数 > `--trace`（profile既定path）> 無効、の優先順位はlisjong側の`resolve_trace_path()`をそのまま利用します。
+
+この実行は必ず「1 connection → 1 ranked hanchan → `end_game` → return / disconnect」で終了します。automatic requeue、複数game、retry、reconnect、continuous participationは後続Issueの対象です。
+
 ## 最小comparison protocol
 
 ### Matchup と PolicySpec

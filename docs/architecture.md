@@ -259,6 +259,26 @@ RiichiLab client / Adapter、RiichiEnv Adapter、LocalGameRunner、GameTraceも�
 
 このcurrent stateはtarget ownershipを表さない。migration完了まではdocumentation上でcurrent / targetを明示的に区別する。
 
+### RiichiLab ranked first-party entry point (Issue #15)
+
+Issue #13で確定したtarget ownershipに従い、RiichiLab ranked 1半荘を起動するfirst-party entry point(`lisjong_arena.riichilab.ranked`)をArenaへ追加した。これはcomposition / invocation entry pointの追加であり、RiichiLab implementation全体のphysical migrationではない。
+
+```text
+Before Issue #15:
+
+user
+  -> lisjong RiichiLab CLI
+  -> lisjong RiichiLab implementation
+
+After Issue #15:
+
+user
+  -> Arena first-party RiichiLab entry point
+  -> temporary lisjong RiichiLab implementation
+```
+
+`lisjong_arena.riichilab.ranked`は`lisjong.riichilab_client`のpublic helpers/primitives(`run_ranked_game`、`cli.build_arg_parser` / `resolve_trace_path`、`profile.resolve_profile` / `resolve_credential` / `build_runtime_summary` / `format_runtime_summary`)をtemporaryに再利用するだけの薄いcomposition layerであり、profile定義・credential解決・trace path優先順位・transport・`RankedSession`・possible-action validationを複製しない。実行はconnection 1回・ranked hanchan 1半荘・`end_game`・returnで終わる one-game contractに限り、requeue・複数game・retry・reconnectは行わない。
+
 ## Target architecture
 
 ```text

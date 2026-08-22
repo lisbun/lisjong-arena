@@ -1,7 +1,8 @@
 """lisjong-arena package.
 
-複数のlisjong Policyを、fixed seed setとdeterministicなseat rotationのもとで
-再現可能に比較するための最小Arena。単一gameの進行は``lisjong``へ委譲する。
+lisjong Policyをconcrete environmentで実行・観測し、controlled /
+reproducibleな条件で評価するArena。execution / observationとevaluationを
+別責務として扱い、単一gameの進行は現行実装では``lisjong``へ委譲する。
 """
 
 from lisjong_arena.artifact import (
