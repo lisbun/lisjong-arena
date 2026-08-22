@@ -263,7 +263,9 @@ class RunRankedGameTest(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             self._run_with_status(_status(seat=None))
 
-    def test_non_string_and_empty_token_are_rejected_before_session_creation(self) -> None:
+    def test_non_string_and_empty_token_are_rejected_before_session_creation(
+        self,
+    ) -> None:
         for token in (None, b"token", True, 0, ""):
             with self.subTest(token=token):
                 with patch(
