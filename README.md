@@ -162,7 +162,7 @@ user
   -> RiichiLab
 ```
 
-ranked / validation one-game orchestrationと、execution profile・credential resolution・common CLI / trace-path compositionのcanonical implementationは、いずれもArenaです。`lisjong`側にはmigration window中のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperが一時的に残り、follow-up `lisbun/lisjong#89` でcleanupします（rankedのlegacy copyは既に`lisbun/lisjong#86`でcleanup済みです）。両実装を長期並行発展させることは意図していません。
+ranked / validation one-game orchestrationと、execution profile・credential resolution・common CLI / trace-path compositionのcanonical implementationは、いずれもArenaです。`lisjong`側のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperは`lisbun/lisjong#89` / PR #90で除去済みです（rankedのlegacy copyも既に`lisbun/lisjong#86`でcleanup済みです）。両実装を長期並行発展させることは意図していませんでした。Arenaのlisjong dependency pinもIssue #21でこのcleanup後revisionへ更新済みです。
 
 Arena-local `run_ranked_game()` / `run_validation()` はpin済みlisjongのpackage-level public primitives（`RankedSession` / `ValidationSession`、`JsonlProtocolTraceWriter`、`DEFAULT_RANKED_URL` / `DEFAULT_VALIDATION_URL`、`connect_ranked_transport()` / `connect_validation_transport()`、`drive_ranked_session()` / `drive_validation_session()`等）をtemporaryにconsumerとして利用します。Session / transport / trace / Adapter semantics自体はまだArenaへコピー・再実装しません。
 
