@@ -20,15 +20,15 @@ from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy, TwoStepUkeirePolicy
 from lisjong.policy_contract.seat import Seat
-from lisjong.riichilab_client import DEFAULT_RANKED_URL
-from lisjong.riichilab_client.errors import ProtocolError, RiichiLabClientError
 
 import lisjong_arena
+from lisjong_arena.riichilab.errors import ProtocolError, RiichiLabClientError
 from lisjong_arena.riichilab.ranked import (
     RankedGameResult,
     _run_cli,
     run_ranked_game,
 )
+from lisjong_arena.riichilab.transport import DEFAULT_RANKED_URL
 
 _DEV_TOKEN_VAR = "LISJONG_DEV_BOT_TOKEN"
 _BASELINE_TOKEN_VAR = "LISJONG_BASELINE_BOT_TOKEN"
@@ -199,7 +199,7 @@ class RunRankedGameTest(unittest.TestCase):
         self.assertEqual(result.ack_history, {7: ("accepted",)})
         self.assertEqual(result.scores, scores)
 
-    def test_default_url_uses_pinned_lisjong_public_constant(self) -> None:
+    def test_default_url_uses_arena_local_canonical_constant(self) -> None:
         captured: dict[str, object] = {}
 
         class _FakeSession:
@@ -527,8 +527,8 @@ class SecretSafetyTest(unittest.TestCase):
 
 
 class OwnershipRegressionTest(unittest.TestCase):
-    """Arena ranked productionがlisjong側legacy profile / CLI helperへ依存
-    していないことを確認する(Issue #19)。
+    """Arena ranked productionがlisjong側legacy profile / CLI / lower-level
+    runtime helperへ依存していないことを確認する(Issue #19、#23)。
     """
 
     def test_ranked_module_does_not_import_legacy_lisjong_profile_or_cli(self) -> None:
@@ -540,6 +540,23 @@ class OwnershipRegressionTest(unittest.TestCase):
         self.assertNotIn("lisjong.riichilab_client.profile", dependency_names)
         self.assertNotIn("lisjong.riichilab_client.cli", dependency_names)
 
+    def test_ranked_module_does_not_import_legacy_lisjong_riichilab_client(
+        self,
+    ) -> None:
+        import lisjong_arena.riichilab.ranked as ranked_module
+
+        dependency_names = {
+            getattr(value, "__module__", None) for value in vars(ranked_module).values()
+        }
+        for name in dependency_names:
+            if name is None:
+                continue
+            self.assertFalse(
+                name == "lisjong.riichilab_client"
+                or name.startswith("lisjong.riichilab_client."),
+                f"unexpected legacy lisjong.riichilab_client dependency: {name}",
+            )
+
     def test_ranked_module_uses_arena_local_profile_and_cli_composition(self) -> None:
         import lisjong_arena.riichilab.ranked as ranked_module
 
@@ -548,6 +565,29 @@ class OwnershipRegressionTest(unittest.TestCase):
         )
         self.assertEqual(
             ranked_module.build_arg_parser.__module__, "lisjong_arena.riichilab.cli"
+        )
+
+    def test_ranked_module_uses_arena_local_lower_level_runtime(self) -> None:
+        import lisjong_arena.riichilab.ranked as ranked_module
+
+        self.assertEqual(
+            ranked_module.RankedSession.__module__, "lisjong_arena.riichilab.session"
+        )
+        self.assertEqual(
+            ranked_module.JsonlProtocolTraceWriter.__module__,
+            "lisjong_arena.riichilab.trace",
+        )
+        self.assertEqual(
+            ranked_module.RiichiLabClientError.__module__,
+            "lisjong_arena.riichilab.errors",
+        )
+        self.assertEqual(
+            ranked_module.connect_ranked_transport.__module__,
+            "lisjong_arena.riichilab.transport",
+        )
+        self.assertEqual(
+            ranked_module.drive_ranked_session.__module__,
+            "lisjong_arena.riichilab.transport",
         )
 
 

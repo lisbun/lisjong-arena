@@ -4,8 +4,10 @@
 implementationを移した。Issue #19では、profile / credential / CLI
 compositionもlisjong側helperへの依存からArena-local実装
 (`lisjong_arena.riichilab.profile` / `lisjong_arena.riichilab.cli`)へ切り替えた。
-`RankedSession`、transport、protocol trace、RiichiLab Adapter等のlower-level
-runtimeはまだ`lisjong`に物理的に存在し、そのpublic APIをtemporaryに再利用する。
+Issue #23では、`RankedSession`、transport、protocol trace、client errors等の
+lower-level runtimeもArena-local実装(`lisjong_arena.riichilab.session` /
+`transport` / `trace` / `errors`)へcanonical physical migrationした。
+`RiichiLabSeatAdapter`等Policy契約に近いAdapterはlisjongに残る。
 
 Usage:
     python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
@@ -21,23 +23,22 @@ from dataclasses import dataclass
 
 from lisjong.policy_contract.policy import Policy
 from lisjong.policy_contract.seat import Seat
-from lisjong.riichilab_client import (
-    DEFAULT_RANKED_URL,
-    JsonlProtocolTraceWriter,
-    ProtocolError,
-    RankedSession,
-    RiichiLabClientError,
-    connect_ranked_transport,
-    drive_ranked_session,
-)
 
 from lisjong_arena.riichilab.cli import build_arg_parser, resolve_trace_path
+from lisjong_arena.riichilab.errors import ProtocolError, RiichiLabClientError
 from lisjong_arena.riichilab.profile import (
     ProfileError,
     build_runtime_summary,
     format_runtime_summary,
     resolve_credential,
     resolve_profile,
+)
+from lisjong_arena.riichilab.session import RankedSession
+from lisjong_arena.riichilab.trace import JsonlProtocolTraceWriter
+from lisjong_arena.riichilab.transport import (
+    DEFAULT_RANKED_URL,
+    connect_ranked_transport,
+    drive_ranked_session,
 )
 
 

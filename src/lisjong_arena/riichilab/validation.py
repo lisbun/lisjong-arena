@@ -3,9 +3,11 @@ first-party CLI(Issue #19)。
 
 `ValidationResult` / `run_validation()`はlisjongのIssue #39/#44/#45で確立した
 contractをbehavior-preservingにArenaへcanonical migrationしたものである。
-`ValidationSession`、transport、protocol trace writer、RiichiLab Adapter等の
-lower-level runtimeはまだ`lisjong`に物理的に存在し、そのpublic APIをtemporaryに
-再利用する。profile / credential resolutionはArena-local compositionが所有する。
+Issue #23では、`ValidationSession`、transport、protocol trace writer、client
+errors等のlower-level runtimeもArena-local実装(`lisjong_arena.riichilab.session`
+/ `transport` / `trace` / `errors`)へcanonical physical migrationした。
+`RiichiLabSeatAdapter`等Policy契約に近いAdapterはlisjongに残る。profile /
+credential resolutionはArena-local compositionが所有する。
 
 Usage:
     python -m lisjong_arena.riichilab.validation --profile lisjong-dev
@@ -20,22 +22,22 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from lisjong.policy_contract.policy import Policy
-from lisjong.riichilab_client import (
-    DEFAULT_VALIDATION_URL,
-    JsonlProtocolTraceWriter,
-    RiichiLabClientError,
-    ValidationSession,
-    connect_validation_transport,
-    drive_validation_session,
-)
 
 from lisjong_arena.riichilab.cli import build_arg_parser, resolve_trace_path
+from lisjong_arena.riichilab.errors import RiichiLabClientError
 from lisjong_arena.riichilab.profile import (
     ProfileError,
     build_runtime_summary,
     format_runtime_summary,
     resolve_credential,
     resolve_profile,
+)
+from lisjong_arena.riichilab.session import ValidationSession
+from lisjong_arena.riichilab.trace import JsonlProtocolTraceWriter
+from lisjong_arena.riichilab.transport import (
+    DEFAULT_VALIDATION_URL,
+    connect_validation_transport,
+    drive_validation_session,
 )
 
 
