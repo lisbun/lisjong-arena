@@ -85,8 +85,9 @@ RiichiEnv
 - `Seat` 等のAI-side contractは `lisjong.policy_contract` を使用する
 - 現行実装ではArenaからRiichiEnvへdirect dependency / direct importを持たない
 - RiichiLab ranked first-party CLIと`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestrationはArenaにある
-- RiichiLab WebSocket / transport、`RankedSession`、protocol trace、profile / credential helpers、Adapter / possible-action validationはまだ`lisjong`に存在し、pin済みpublic APIをtemporaryに利用する
-- lisjong側legacy ranked orchestration copyは`lisbun/lisjong#86` cleanupまで一時的に残す
+- RiichiLab ranked / validation orchestration、profile / credential / CLI composition、client errors / Session / Transport / protocol traceはArena-local canonical + physical implementationである
+- lisjong側legacy lower-level runtime copyは`lisbun/lisjong#91` / PR #92で削除済みであり、Issue #25でArenaのdependency pinもcleanup merge SHAへ同期済みである
+- `RiichiLabSeatAdapter` / possible-action validationは引き続き`lisjong`に存在し、pin済みpublic APIをtemporaryに利用する
 - RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はまだ`lisjong`に存在する
 - `lisjong` dependencyは再現可能性のためrelease tagが出るまでfull commit SHAへpinする
 
