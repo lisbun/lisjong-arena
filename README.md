@@ -136,36 +136,39 @@ RiichiEnv
 
 RiichiLab client / Adapter、RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はtarget ownershipをArena execution / observationへ置き、後続Issueで段階移管します。`DecisionContext`等のcontract semanticsはlisjongに残します。
 
-## RiichiLab ranked one-game execution
+## RiichiLab ranked / validation one-game execution
 
-`lisjong-arena`は、RiichiLab ranked 1半荘を起動するfirst-party entry pointに加えて、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationをArena側へ移しました。
+`lisjong-arena`は、RiichiLab ranked 1半荘 / validation 1 gameを起動するfirst-party entry pointに加えて、`RankedGameResult` / `run_ranked_game()`（Issue #17）と`ValidationResult` / `run_validation()`（Issue #19）のcanonical one-game orchestration implementationをArena側に持ちます。
 
 ```powershell
 python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
+python -m lisjong_arena.riichilab.validation --profile lisjong-dev
 ```
 
 現在の実行経路は次です。
 
 ```text
 user
-  -> lisjong-arena first-party ranked CLI
+  -> lisjong-arena first-party ranked / validation CLI
+  -> Arena-local profile / credential / CLI composition
+       (lisjong_arena.riichilab.profile / lisjong_arena.riichilab.cli)
   -> Arena-local RankedGameResult / run_ranked_game()
+     または ValidationResult / run_validation()
   -> temporary lisjong lower-level RiichiLab runtime
-       RankedSession
+       RankedSession / ValidationSession
        transport
        protocol trace
-       profile / credential helpers
        RiichiLab Adapter
   -> RiichiLab
 ```
 
-ranked one-game orchestrationのcanonical implementationはArenaです。`lisjong`側にはmigration window中のlegacy `RankedGameResult` / `run_ranked_game()` / ranked CLIが一時的に残り、follow-up `lisbun/lisjong#86` でcleanupします。両実装を長期並行発展させることは意図していません。
+ranked / validation one-game orchestrationと、execution profile・credential resolution・common CLI / trace-path compositionのcanonical implementationは、いずれもArenaです。`lisjong`側にはmigration window中のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperが一時的に残り、follow-up `lisbun/lisjong#89` でcleanupします（rankedのlegacy copyは既に`lisbun/lisjong#86`でcleanup済みです）。両実装を長期並行発展させることは意図していません。
 
-Arena-local `run_ranked_game()` はpin済みlisjongのpackage-level public primitives（`RankedSession`、`JsonlProtocolTraceWriter`、`DEFAULT_RANKED_URL`、`connect_ranked_transport()`、`drive_ranked_session()`等）をtemporaryにconsumerとして利用します。Session / transport / trace / Adapter semantics自体はまだArenaへコピー・再実装しません。
+Arena-local `run_ranked_game()` / `run_validation()` はpin済みlisjongのpackage-level public primitives（`RankedSession` / `ValidationSession`、`JsonlProtocolTraceWriter`、`DEFAULT_RANKED_URL` / `DEFAULT_VALIDATION_URL`、`connect_ranked_transport()` / `connect_validation_transport()`、`drive_ranked_session()` / `drive_validation_session()`等）をtemporaryにconsumerとして利用します。Session / transport / trace / Adapter semantics自体はまだArenaへコピー・再実装しません。
 
-profile定義、credential解決、trace path優先順位も引き続きlisjong側public helperを利用します。利用できるprofileは既存の3種類（`lisjong-dev` / `lisjong-baseline` / `lisjong`）で、profile未指定・unknown profile・対応credential未設定はいずれもfail closedします。protocol traceは既定OFFで、`--trace-path` > `RIICHILAB_TRACE_PATH`環境変数 > `--trace`（profile既定path）> 無効、の優先順位を維持します。
+profile定義、credential解決、trace path優先順位はArena-local composition（`lisjong_arena.riichilab.profile` / `lisjong_arena.riichilab.cli`）が所有し、ranked / validationで定義を共有・重複させません。利用できるprofileは既存の3種類（`lisjong-dev` / `lisjong-baseline` / `lisjong`）で、profile未指定・unknown profile・対応credential未設定はいずれもfail closedします。他profileのcredentialへのfallbackは行いません。protocol traceは既定OFFで、`--trace-path` > `RIICHILAB_TRACE_PATH`環境変数 > `--trace`（profile既定path）> 無効、の優先順位を維持します。
 
-この実行は必ず「1 connection → 1 ranked hanchan → `end_game` → return / disconnect」で終了します。automatic requeue、複数game、retry、reconnect、continuous participationは後続Issueの対象です。
+ranked実行は必ず「1 connection → 1 ranked hanchan → `end_game` → return / disconnect」で、validation実行は「1 connection → 1 validation game → `validation_result` → return / disconnect」で終了します。automatic requeue、複数game、retry、reconnect、continuous participationは後続Issueの対象です。
 
 ## 最小comparison protocol
 

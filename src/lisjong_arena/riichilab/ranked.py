@@ -1,9 +1,11 @@
 """RiichiLab ranked 1半荘のArena-owned orchestration APIとfirst-party CLI。
 
 `RankedGameResult` / `run_ranked_game()` はIssue #17でArenaへcanonical
-implementationを移す。`RankedSession`、transport、protocol trace、profile /
-credential resolution、RiichiLab Adapter等のlower-level runtimeはまだ
-`lisjong`に物理的に存在し、そのpublic APIをtemporaryに再利用する。
+implementationを移した。Issue #19では、profile / credential / CLI
+compositionもlisjong側helperへの依存からArena-local実装
+(`lisjong_arena.riichilab.profile` / `lisjong_arena.riichilab.cli`)へ切り替えた。
+`RankedSession`、transport、protocol trace、RiichiLab Adapter等のlower-level
+runtimeはまだ`lisjong`に物理的に存在し、そのpublic APIをtemporaryに再利用する。
 
 Usage:
     python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
@@ -28,8 +30,9 @@ from lisjong.riichilab_client import (
     connect_ranked_transport,
     drive_ranked_session,
 )
-from lisjong.riichilab_client.cli import build_arg_parser, resolve_trace_path
-from lisjong.riichilab_client.profile import (
+
+from lisjong_arena.riichilab.cli import build_arg_parser, resolve_trace_path
+from lisjong_arena.riichilab.profile import (
     ProfileError,
     build_runtime_summary,
     format_runtime_summary,
@@ -89,10 +92,10 @@ async def run_ranked_game(
 def _run_cli(argv: Sequence[str] | None = None) -> int:
     """`python -m lisjong_arena.riichilab.ranked --profile <name>`のentry point。
 
-    `lisjong.riichilab_client.profile` / `cli`が解決したprofile・credential・
-    trace pathをArena-local `run_ranked_game()`へ渡す。profile未指定・unknown
-    profile・credential未設定はいずれもfail closed(non-zero exit、secretを
-    含まないメッセージ)とし、他profileへの暗黙fallbackは行わない。
+    Arena-local `lisjong_arena.riichilab.profile` / `cli`が解決したprofile・
+    credential・trace pathをArena-local `run_ranked_game()`へ渡す。profile
+    未指定・unknown profile・credential未設定はいずれもfail closed(non-zero
+    exit、secretを含まないメッセージ)とし、他profileへの暗黙fallbackは行わない。
 
     接続からend_gameまでの1 ranked hanchanで終了する。requeue、複数game、
     retry、reconnectはここでは扱わない(後続Issue)。
