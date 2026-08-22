@@ -134,11 +134,11 @@ RiichiEnv
        +----------------------------------+
 ```
 
-RiichiLab client / Adapter、RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はtarget ownershipをArena execution / observationへ置き、後続Issueで段階移管します。`DecisionContext`等のcontract semanticsはlisjongに残します。
+RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はtarget ownershipをArena execution / observationへ置き、後続Issueで段階移管します。RiichiLab lower-level runtime(errors / Session / Transport / protocol trace)はIssue #23でcanonical + physical migrationが完了し、`RiichiLabSeatAdapter`だけがtarget ownership上のTEMPORARYとして`lisjong`に残ります。`DecisionContext`等のcontract semanticsはlisjongに残します。
 
 ## RiichiLab ranked / validation one-game execution
 
-`lisjong-arena`は、RiichiLab ranked 1半荘 / validation 1 gameを起動するfirst-party entry pointに加えて、`RankedGameResult` / `run_ranked_game()`（Issue #17）と`ValidationResult` / `run_validation()`（Issue #19）のcanonical one-game orchestration implementationをArena側に持ちます。
+`lisjong-arena`は、RiichiLab ranked 1半荘 / validation 1 gameを起動するfirst-party entry pointに加えて、`RankedGameResult` / `run_ranked_game()`（Issue #17）と`ValidationResult` / `run_validation()`（Issue #19）のcanonical one-game orchestration implementationをArena側に持ちます。Session / Transport / protocol trace / client errors等のlower-level runtimeもIssue #23でArena-local canonical implementationへ移行済みです。詳細な契約は[`docs/riichilab-client.md`](docs/riichilab-client.md)を正本とします。
 
 ```powershell
 python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
@@ -154,17 +154,19 @@ user
        (lisjong_arena.riichilab.profile / lisjong_arena.riichilab.cli)
   -> Arena-local RankedGameResult / run_ranked_game()
      または ValidationResult / run_validation()
-  -> temporary lisjong lower-level RiichiLab runtime
+  -> Arena-local lower-level RiichiLab runtime
        RankedSession / ValidationSession
-       transport
+       Transport
        protocol trace
-       RiichiLab Adapter
+       client errors
+       (lisjong_arena.riichilab.session / transport / trace / errors)
+  -> lisjong RiichiLabSeatAdapter (temporary consumer)
   -> RiichiLab
 ```
 
-ranked / validation one-game orchestrationと、execution profile・credential resolution・common CLI / trace-path compositionのcanonical implementationは、いずれもArenaです。`lisjong`側のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperは`lisbun/lisjong#89` / PR #90で除去済みです（rankedのlegacy copyも既に`lisbun/lisjong#86`でcleanup済みです）。両実装を長期並行発展させることは意図していませんでした。Arenaのlisjong dependency pinもIssue #21でこのcleanup後revisionへ更新済みです。
+ranked / validation one-game orchestration、execution profile・credential resolution・common CLI / trace-path composition、そしてSession / Transport / protocol trace / client errors等のlower-level runtimeのcanonical implementationは、いずれもArenaです。`lisjong`側のlegacy `ValidationResult` / `run_validation()` / validation CLI / profile・credential・CLI composition helperは`lisbun/lisjong#89` / PR #90で除去済みです（rankedのlegacy copyも既に`lisbun/lisjong#86`でcleanup済みです）。Session / Transport / protocol trace / client errorsのlegacy physical copyは、Issue #23のPRがArena mainへmergeされた後に着手する[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91)でcleanupします。cleanup PR merge後、Arenaのlisjong dependency pinをそのcleanup後revisionへ更新するfollow-upが完了して初めて、physical duplicateが完全解消したと扱います。いずれの段階でも、両実装を長期並行発展させることは意図していません。
 
-Arena-local `run_ranked_game()` / `run_validation()` はpin済みlisjongのpackage-level public primitives（`RankedSession` / `ValidationSession`、`JsonlProtocolTraceWriter`、`DEFAULT_RANKED_URL` / `DEFAULT_VALIDATION_URL`、`connect_ranked_transport()` / `connect_validation_transport()`、`drive_ranked_session()` / `drive_validation_session()`等）をtemporaryにconsumerとして利用します。Session / transport / trace / Adapter semantics自体はまだArenaへコピー・再実装しません。
+Arena-local `run_ranked_game()` / `run_validation()` はArena-local `RankedSession` / `ValidationSession`、`JsonlProtocolTraceWriter`、`DEFAULT_RANKED_URL` / `DEFAULT_VALIDATION_URL`、`connect_ranked_transport()` / `connect_validation_transport()`、`drive_ranked_session()` / `drive_validation_session()`をconsumerとして利用します。Arena-local Sessionは、Policy呼び出し・Observation変換・`possible_actions` semantic validationを担当する`lisjong`側`RiichiLabSeatAdapter`を引き続きtemporary consumerとして利用し、Adapterが送出する例外はwrapせずそのまま伝播させます。
 
 profile定義、credential解決、trace path優先順位はArena-local composition（`lisjong_arena.riichilab.profile` / `lisjong_arena.riichilab.cli`）が所有し、ranked / validationで定義を共有・重複させません。利用できるprofileは既存の3種類（`lisjong-dev` / `lisjong-baseline` / `lisjong`）で、profile未指定・unknown profile・対応credential未設定はいずれもfail closedします。他profileのcredentialへのfallbackは行いません。protocol traceは既定OFFで、`--trace-path` > `RIICHILAB_TRACE_PATH`環境変数 > `--trace`（profile既定path）> 無効、の優先順位を維持します。
 

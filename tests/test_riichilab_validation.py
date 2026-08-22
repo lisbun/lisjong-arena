@@ -20,10 +20,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy, TwoStepUkeirePolicy
-from lisjong.riichilab_client import DEFAULT_VALIDATION_URL
-from lisjong.riichilab_client.errors import RiichiLabClientError
 
 import lisjong_arena
+from lisjong_arena.riichilab.errors import RiichiLabClientError
+from lisjong_arena.riichilab.transport import DEFAULT_VALIDATION_URL
 from lisjong_arena.riichilab.validation import (
     ValidationResult,
     _run_cli,
@@ -213,7 +213,7 @@ class RunValidationTest(unittest.TestCase):
         self.assertEqual(result.responses_sent, 3)
         self.assertEqual(result.ack_history, {7: ("accepted",)})
 
-    def test_default_url_uses_pinned_lisjong_public_constant(self) -> None:
+    def test_default_url_uses_arena_local_canonical_constant(self) -> None:
         captured: dict[str, object] = {}
 
         class _FakeSession:
@@ -570,7 +570,7 @@ class SecretSafetyTest(unittest.TestCase):
 
 class OwnershipRegressionTest(unittest.TestCase):
     """Arena production compositionがlisjong側legacy helperへ依存していない
-    ことを確認する(Issue #19)。
+    ことを確認する(Issue #19、#23)。
     """
 
     def test_validation_module_does_not_import_legacy_lisjong_profile_or_cli(
@@ -590,6 +590,42 @@ class OwnershipRegressionTest(unittest.TestCase):
         )
         self.assertNotIn(
             "lisjong.riichilab_client.cli", _module_dependency_names(ranked_module)
+        )
+
+    def test_validation_module_does_not_import_legacy_lisjong_riichilab_client(
+        self,
+    ) -> None:
+        import lisjong_arena.riichilab.validation as validation_module
+
+        for name in _module_dependency_names(validation_module):
+            self.assertFalse(
+                name == "lisjong.riichilab_client"
+                or name.startswith("lisjong.riichilab_client."),
+                f"unexpected legacy lisjong.riichilab_client dependency: {name}",
+            )
+
+    def test_validation_module_uses_arena_local_lower_level_runtime(self) -> None:
+        import lisjong_arena.riichilab.validation as validation_module
+
+        self.assertEqual(
+            validation_module.ValidationSession.__module__,
+            "lisjong_arena.riichilab.session",
+        )
+        self.assertEqual(
+            validation_module.JsonlProtocolTraceWriter.__module__,
+            "lisjong_arena.riichilab.trace",
+        )
+        self.assertEqual(
+            validation_module.RiichiLabClientError.__module__,
+            "lisjong_arena.riichilab.errors",
+        )
+        self.assertEqual(
+            validation_module.connect_validation_transport.__module__,
+            "lisjong_arena.riichilab.transport",
+        )
+        self.assertEqual(
+            validation_module.drive_validation_session.__module__,
+            "lisjong_arena.riichilab.transport",
         )
 
 

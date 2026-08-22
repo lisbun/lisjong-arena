@@ -88,7 +88,7 @@ lisjong.LocalGameRunner
 RiichiEnv
 ```
 
-RiichiLabは段階migration中である。Issue #15でfirst-party ranked entry pointをArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した(lisjong側legacy orchestration copyは`lisbun/lisjong#86`でcleanup済み)。Issue #19では`ValidationResult` / `run_validation()` / validation CLIと、execution profile / credential resolution / common CLI・trace-path compositionのcanonical implementationもArenaへ移し、Arena ranked CLIもこのArena-local compositionへ切り替えた。lisjong側validation / profile / CLI legacy copyは`lisbun/lisjong#89` / PR #90でcleanup済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revision(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新した。一方、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、protocol-facing Adapter / possible-action validationはまだpin済み`lisjong`のpublic APIをtemporaryに利用する。
+RiichiLabは段階migration中である。Issue #15でfirst-party ranked entry pointをArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した(lisjong側legacy orchestration copyは`lisbun/lisjong#86`でcleanup済み)。Issue #19では`ValidationResult` / `run_validation()` / validation CLIと、execution profile / credential resolution / common CLI・trace-path compositionのcanonical implementationもArenaへ移し、Arena ranked CLIもこのArena-local compositionへ切り替えた。lisjong側validation / profile / CLI legacy copyは`lisbun/lisjong#89` / PR #90でcleanup済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revision(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationもArenaへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91`でcleanupし、そのcleanup後revisionへのArena dependency pin syncをfollow-upとして追跡する。protocol-facing Adapter / possible-action validation(`RiichiLabSeatAdapter`)は引き続きpin済み`lisjong`のpublic APIをtemporaryに利用する。
 
 RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`もphysical codeはまだ`lisjong`にある。
 
@@ -133,7 +133,14 @@ lisjong legacy cleanup                        [done: lisjong #89 / PR #90]
 Arena lisjong dependency pin sync             [done: #21]
         |
         v
-remaining lower-level RiichiLab migration
+Arena lower-level RiichiLab runtime
+(errors / Session / Transport / trace)        [done: #23]
+        |
+        v
+lisjong legacy lower-level runtime cleanup    [pending: lisjong #91]
+        |
+        v
+Arena lisjong dependency pin sync             [pending: follow-up to lisjong #91]
         |
         v
 resilient / continuous participation
@@ -142,7 +149,7 @@ resilient / continuous participation
 raw online game record / protocol observation
 ```
 
-Issue #17では`run_ranked_game()`だけをArena canonical implementationへ移し、Issue #19では`run_validation()`とexecution profile / credential / common CLI compositionもArena canonical implementationへ移した。lisjong側のlegacy validation / profile / CLI copyは`lisbun/lisjong#89` / PR #90で除去済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revisionへ更新した。WebSocket、session lifecycle、protocol trace、possible-action validation等は引き続きlisjong側に残す。これらもtarget ownership上はArenaへ段階移管するが、AI-side semanticsをArenaへ複製しない。
+Issue #17では`run_ranked_game()`だけをArena canonical implementationへ移し、Issue #19では`run_validation()`とexecution profile / credential / common CLI compositionもArena canonical implementationへ移した。lisjong側のlegacy validation / profile / CLI copyは`lisbun/lisjong#89` / PR #90で除去済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revisionへ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyもArena canonical implementationへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91`でcleanupし、そのcleanup後revisionへのArena dependency pin syncが完了して初めてphysical duplicate完全解消と扱う。`RiichiLabSeatAdapter` / possible-action validationは引き続きlisjong側に残る。これもtarget ownership上はArenaへ段階移管するが、AI-side semanticsをArenaへ複製しない。
 
 ### RiichiEnv migration lane
 
@@ -413,7 +420,12 @@ lisjong legacy cleanup                        [done: lisjong #89 / PR #90]
         |
 Arena lisjong dependency pin sync             [done: #21]
         |
-remaining RiichiLab lower-level migration
+Arena lower-level RiichiLab runtime
+(errors / Session / Transport / trace)        [done: #23]
+        |
+lisjong legacy lower-level runtime cleanup    [pending: lisjong #91]
+        |
+Arena lisjong dependency pin sync             [pending: follow-up to lisjong #91]
         |
 resilient / continuous participation
         |
