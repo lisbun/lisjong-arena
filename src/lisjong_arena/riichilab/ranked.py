@@ -1,12 +1,9 @@
-"""RiichiLab ranked 1半荘を起動するArena first-party entry point(Issue #15)。
+"""RiichiLab ranked 1半荘のArena-owned orchestration APIとfirst-party CLI。
 
-RiichiLab implementation全体はまだ`lisjong`に物理的に存在するが、それを
-組み合わせて実行する起点(composition / invocation)はArenaが所有する。
-
-このmoduleはprofile定義、credential解決、trace path優先順位、transport、
-`RankedSession`、possible-action validation等をコピー・再実装しない。
-`lisjong.riichilab_client`のpublic helpers/primitivesをtemporaryに再利用
-するだけの薄いcomposition layerである。
+`RankedGameResult` / `run_ranked_game()` はIssue #17でArenaへcanonical
+implementationを移す。`RankedSession`、transport、protocol trace、profile /
+credential resolution、RiichiLab Adapter等のlower-level runtimeはまだ
+`lisjong`に物理的に存在し、そのpublic APIをtemporaryに再利用する。
 
 Usage:
     python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
@@ -15,10 +12,22 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
-from lisjong.riichilab_client import RiichiLabClientError, run_ranked_game
+from lisjong.policy_contract.policy import Policy
+from lisjong.policy_contract.seat import Seat
+from lisjong.riichilab_client import (
+    DEFAULT_RANKED_URL,
+    JsonlProtocolTraceWriter,
+    ProtocolError,
+    RankedSession,
+    RiichiLabClientError,
+    connect_ranked_transport,
+    drive_ranked_session,
+)
 from lisjong.riichilab_client.cli import build_arg_parser, resolve_trace_path
 from lisjong.riichilab_client.profile import (
     ProfileError,
@@ -29,11 +38,59 @@ from lisjong.riichilab_client.profile import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class RankedGameResult:
+    """1 ranked hanchanのsecret-safeな完走結果。"""
+
+    end_game_received: bool
+    seat: Seat
+    requests_received: int
+    responses_sent: int
+    ack_history: Mapping[int, tuple[str, ...]]
+    scores: tuple[int, int, int, int] | None
+
+
+async def run_ranked_game(
+    policy: Policy,
+    token: str,
+    *,
+    url: str = DEFAULT_RANKED_URL,
+    trace_path: str | os.PathLike | None = None,
+) -> RankedGameResult:
+    """ranked endpointへ1回接続し、1 full hanchanの`end_game`で終了する。"""
+    if not isinstance(token, str) or not token:
+        raise ValueError("token must be a non-empty string")
+
+    session = RankedSession(policy)
+    trace_writer = (
+        JsonlProtocolTraceWriter(trace_path) if trace_path is not None else None
+    )
+    try:
+        async with connect_ranked_transport(url, token) as transport:
+            await drive_ranked_session(session, transport, trace=trace_writer)
+    finally:
+        if trace_writer is not None:
+            trace_writer.close()
+
+    status = session.status()
+    if status.seat is None:
+        raise ProtocolError("ranked game completed without a bound seat")
+
+    return RankedGameResult(
+        end_game_received=status.end_game_received,
+        seat=status.seat,
+        requests_received=status.requests_received,
+        responses_sent=status.responses_sent,
+        ack_history=status.ack_history,
+        scores=status.scores,
+    )
+
+
 def _run_cli(argv: Sequence[str] | None = None) -> int:
     """`python -m lisjong_arena.riichilab.ranked --profile <name>`のentry point。
 
     `lisjong.riichilab_client.profile` / `cli`が解決したprofile・credential・
-    trace pathをそのまま`run_ranked_game()`へ渡す。profile未指定・unknown
+    trace pathをArena-local `run_ranked_game()`へ渡す。profile未指定・unknown
     profile・credential未設定はいずれもfail closed(non-zero exit、secretを
     含まないメッセージ)とし、他profileへの暗黙fallbackは行わない。
 
@@ -82,3 +139,6 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(_run_cli())
+
+
+__all__ = ["RankedGameResult", "run_ranked_game"]
