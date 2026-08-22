@@ -340,10 +340,11 @@ lower-level runtime testはArena側で保持する。
 - `tests/test_riichilab_transport.py`: transport / JSON / trace
   integration(validation / ranked双方)
 - `tests/test_riichilab_trace.py`: trace writer
-- `tests/test_riichilab_session_adapter_integration.py`: `start_game`が
-  (fake stubへ差し替えず)実`RiichiLabSeatAdapter`を正しくconsumerとして
-  bindできることだけを確認する最小限のwiring coverage。
-  `possible_actions`構築等のAdapter correctness自体はlisjongに残る
+- `tests/test_riichilab_session_adapter_integration.py`: known-validな静的
+  `request_action` fixtureを使い、Arena-local Sessionから実
+  `RiichiLabSeatAdapter`を介してPolicyまで接続できることだけを確認する
+  validation / ranked双方のcross-repository wiring / compatibility coverage。
+  `possible_actions`生成・正規化やAdapter correctnessの正本はlisjongに残る
 - `tests/test_riichilab_ranked.py` / `tests/test_riichilab_profile.py`:
   Arena-owned orchestration / CLI / profile
 - `tests/test_riichilab_validation.py`: 同上(validation)
