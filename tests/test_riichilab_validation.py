@@ -1,7 +1,7 @@
 """Arena-owned RiichiLab validation one-game orchestration / CLI tests (Issue #19).
 
 `ValidationResult` / `run_validation()` / first-party validation CLIのcanonical
-implementationはArenaが所有する。Session / transport / trace / profile等の
+implementationはArenaが所有する。Session / transport / trace / Adapter等の
 lower-level semanticsはpin済みlisjong側のcoverageを再実装せず、
 fake / monkeypatchでArena orchestration boundaryだけを検証する。
 live RiichiLabへは接続しない。
