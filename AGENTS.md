@@ -79,7 +79,7 @@ lisjong-arena evaluation
 lisjong_arena.riichienv.LocalGameRunner
         |
         v
-RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
+RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
 ```
 
 - `Seat` 等のAI-side contractは `lisjong.policy_contract` を使用する
@@ -89,7 +89,7 @@ RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
 - RiichiLab ranked / validation orchestration、profile / credential / CLI composition、client errors / Session / Transport / protocol traceはArena-local canonical + physical implementationである
 - lisjong側legacy lower-level runtime copyは`lisbun/lisjong#91` / PR #92で削除済みであり、Issue #25でArenaのdependency pinもcleanup merge SHAへ同期済みである
 - `RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validationは、Issue #27でArena-local canonical implementationへ移行済みである(`lisjong_arena.riichilab.adapter` / `request_action` / `mjai_response` / `possible_action_validation` / `adapter_errors`)。lisjong側legacy physical copyは`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのactual cleanup merge SHAへ同期済みである
-- RiichiEnv Adapter、`GameTrace`はまだ`lisjong`に存在する
+- RiichiEnv AdapterはArena-localへ移行済みである(上記)。`GameTrace`はまだ`lisjong`に存在する
 - `lisjong` dependencyは再現可能性のためrelease tagが出るまでfull commit SHAへpinする。現在のpinは`c43588e27c2938daf4ff10cd8d89ed89d9da2e88`である
 
 これは**current physical placement**であり、恒久ownershipではない。

@@ -99,7 +99,7 @@ RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
 
 単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でArena-localの `lisjong_arena.riichienv.adapter` とTEMPORARYな `lisjong.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。lisjong側legacy `lisjong.riichienv_adapter` physical copyのcleanupと、そのcleanup後のArena exact lisjong pin同期はfollow-up Issueです。
 
-`LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv Adapter / GameTraceは引き続きcurrent implementationのTEMPORARY dependencyであり、target ownershipではありません。
+`LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv AdapterはIssue #39でArena takeoverまで完了しています(lisjong legacy cleanupとcleanup後のexact pin syncはfollow-up Issue)。GameTraceは引き続きcurrent implementationのTEMPORARY dependencyであり、target ownershipではありません。
 
 ### Target architecture
 
@@ -429,7 +429,7 @@ artifactは「どの比較条件・Policy identity・execution provenanceで何�
 
 実行用 `ComparisonResult` と読込用 `ComparisonArtifact` は分離されています。artifactへ `PolicySpec.factory`、Python callable、import path、dynamic codeを保存・復元しません。secret、credential、environment variable、username、hostname、home directory、absolute local path等の再現性に不要なmachine-local情報も保存しません。
 
-現在のPolicy-vs-Policy execution pathは `lisjong-arena evaluation -> lisjong_arena.riichienv.LocalGameRunner -> RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)` です(Issue #31)。provenance取得にはpackage metadataを使い、artifact schema / provenance contract自体はIssue #31で変更していません。Arenaはすでに`riichienv==0.4.8`をdirect dependencyとして持ち、Arena-local `LocalGameRunner`はこれをdirect importします。RiichiEnv Adapter / GameTraceは引き続きlisjongへのTEMPORARY dependencyであり、これらのtarget migrationは別Issueで扱います。
+現在のPolicy-vs-Policy execution pathは `lisjong-arena evaluation -> lisjong_arena.riichienv.LocalGameRunner -> RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)` です(Issue #31、Issue #39)。provenance取得にはpackage metadataを使い、artifact schema / provenance contract自体はIssue #31で変更していません。Arenaはすでに`riichienv==0.4.8`をdirect dependencyとして持ち、Arena-local `LocalGameRunner`はこれをdirect importします。RiichiEnv AdapterはIssue #39でArena-localへmigration済みです。GameTraceは引き続きlisjongへのTEMPORARY dependencyであり、そのtarget migrationは別Issueで扱います。
 
 artifactを保存できることとrepositoryで管理することは別です。test fixture以外の実測artifactをrepositoryへ大量commitする運用、既定保存先、retention policy、artifact repositoryは本機能の対象外です。
 
@@ -475,7 +475,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 `lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは`lisbun/lisjong#98` / PR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`です(Arena Issue #37で同期)。
 
-AABB / ABBB evaluation execution pathとRiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)はいずれも、Arena direct dependencyの`riichienv==0.4.8`を使用します。RiichiEnv Adapter自体はまだlisjong側へTEMPORARYに残ります。target architectureではArena execution / observationへRiichiEnv Adapterも段階移管しますが、そのactual migrationはconcrete migration Issueで行います。
+AABB / ABBB evaluation execution pathとRiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)はいずれも、Arena direct dependencyの`riichienv==0.4.8`を使用します。RiichiEnv AdapterはIssue #39でArena-local canonical implementationへ移行済みです。lisjong側legacy physical copyのcleanupと、cleanup後のArena exact pin syncはfollow-up Issueです。
 
 ### 品質確認
 

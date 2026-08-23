@@ -184,9 +184,9 @@ def build_policy_input(
         # の「lisbun/lisjong#28実装時の追加実測」2.を参照): 槍槓(chankan)の
         # ron応答機会では、応答するseatのdrawn_tileがそのseatの手牌にない、
         # kakanで加えられた牌(相手の牌)を指す値になる。このseatは実際には
-        # 何もツモっていないため、`docs/policy-input-schema.md`の「対応する
-        # drawn tileがない場合はNoneとする」規則をここでも適用し、Noneへ
-        # 正規化する。
+        # 何もツモっていないため、lisbun/lisjong `docs/policy-input-schema.md`
+        # の「対応するdrawn tileがない場合はNoneとする」規則をここでも適用し、
+        # Noneへ正規化する。
         raw_drawn_tile = None
 
     own_hand = OwnHandState(
