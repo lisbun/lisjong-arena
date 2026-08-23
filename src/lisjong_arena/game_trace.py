@@ -37,7 +37,7 @@ class GameTraceEvent:
             raise ValueError("event must not be empty")
         try:
             payload = json.loads(self.event)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             raise ValueError("event must be valid JSON") from None
         if type(payload) is not dict:
             raise ValueError("event must encode a JSON object")
