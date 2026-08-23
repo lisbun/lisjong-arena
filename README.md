@@ -475,7 +475,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 `lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは`lisbun/lisjong#94` / PR #95のactual cleanup merge commit `ae9058b2603275f35a01f6859b3cb8250c5bd7bb`です(Arena Issue #29で同期)。
 
-RiichiEnvは現在 `lisjong` の依存として入ります。**現行実装では** `lisjong-arena` 自身はRiichiEnvへ直接依存しません。target architectureではArena execution / observationからRiichiEnv等へ直接依存することを許容しますが、actual dependency追加はconcrete migration Issueで行います。
+RiichiEnvは `lisjong` の依存としても入ります。AABB / ABBB evaluation execution pathでは、`lisjong-arena`自身はRiichiEnvへ直接依存しません。一方RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)は、Arena Issue #27で`riichienv==0.4.8`をArena direct dependencyとして明示的に使用します(RiichiEnv game lifecycle自体はlisjong側RiichiEnv Adapterに残ります)。target architectureではArena execution / observationからRiichiEnv等へ直接依存することをさらに許容しますが、その先のactual dependency追加はconcrete migration Issueで行います。
 
 ### 品質確認
 
