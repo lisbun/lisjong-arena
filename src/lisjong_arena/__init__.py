@@ -6,6 +6,7 @@ reproducibleな条件で評価するArena。execution / observationとevaluation
 がArena-local canonical implementationとして担当する。
 """
 
+from lisjong_arena._parallel_execution import PolicyFactoryNotSerializableError
 from lisjong_arena.artifact import (
     ARTIFACT_SCHEMA_VERSION,
     COMPARISON_PROTOCOL,
@@ -20,6 +21,7 @@ from lisjong_arena.comparison import (
     ROTATION_COUNT,
     ComparisonExecutionError,
     run_comparison,
+    run_comparison_parallel,
 )
 from lisjong_arena.model import (
     ComparisonPlan,
@@ -41,6 +43,7 @@ from lisjong_arena.single_round_evaluation import (
 from lisjong_arena.single_round_evaluation import (
     SingleRoundEvaluationError,
     run_single_round_evaluation,
+    run_single_round_evaluation_parallel,
 )
 
 __version__ = "0.1.0"
@@ -57,6 +60,7 @@ __all__ = [
     "ComparisonExecutionError",
     "ComparisonPlan",
     "ComparisonResult",
+    "PolicyFactoryNotSerializableError",
     "PolicyMetrics",
     "PolicySpec",
     "SeatResult",
@@ -68,6 +72,8 @@ __all__ = [
     "ExecutionProvenance",
     "load_comparison_artifact",
     "run_comparison",
+    "run_comparison_parallel",
     "run_single_round_evaluation",
+    "run_single_round_evaluation_parallel",
     "save_comparison_artifact",
 ]

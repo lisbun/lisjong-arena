@@ -20,6 +20,13 @@ from collections.abc import Mapping
 
 from lisjong.policy_contract import Policy, Seat
 
+from lisjong_arena._parallel_execution import (
+    GameJob,
+    PolicyFactoryNotSerializableError,
+    check_policy_spec_serializable,
+    run_game_jobs,
+    validate_max_workers,
+)
 from lisjong_arena.model import (
     ComparisonPlan,
     ComparisonResult,
@@ -244,9 +251,87 @@ def run_comparison(plan: ComparisonPlan) -> ComparisonResult:
     )
 
 
+def run_comparison_parallel(
+    plan: ComparisonPlan, *, max_workers: int
+) -> ComparisonResult:
+    """``run_comparison()``と同一semanticsで、local process poolを使って並列実行する。
+
+    parallelization unitは``(seed, rotation)``の1 gameであり、1 seedの4
+    rotationを1 workerへまとめて渡すことはしない。workerの完了順序に関わらず、
+    最終raw resultは``run_comparison()``と同じ``seed入力順 -> rotation 0..3
+    -> Seat 0..3``へcanonicalizeする。Policy instanceは各job・各seatについて
+    worker process内部でfactoryからfresh生成し、parent processでは生成しない。
+
+    ``plan.policy_a`` / ``plan.policy_b``の``factory``は、spawn worker
+    processからimport可能なtop-level callableでなければならない。lambdaや
+    local closureのような、process間serialize不能なfactoryはsilentにserial
+    実行へfallbackせず``PolicyFactoryNotSerializableError``でfail closedする
+    （``run_comparison()``自体のfactory contractはこの制約で狭めない）。
+
+    途中で1 gameでも失敗した場合は``run_comparison()``と同様に
+    ``ComparisonExecutionError``を送出し、成功したgameだけのpartialな結果は
+    返さない。
+    """
+    if not isinstance(plan, ComparisonPlan):
+        raise TypeError("plan must be a ComparisonPlan")
+    validate_max_workers(max_workers)
+    check_policy_spec_serializable(plan.policy_a)
+    check_policy_spec_serializable(plan.policy_b)
+
+    assignments: dict[
+        tuple[int, int], tuple[PolicySpec, PolicySpec, PolicySpec, PolicySpec]
+    ] = {}
+    jobs: list[GameJob] = []
+    for seed in plan.seeds:
+        for rotation in range(ROTATION_COUNT):
+            assignment = _seat_assignment(plan, rotation)
+            assignments[(seed, rotation)] = assignment
+            jobs.append(
+                GameJob(
+                    seed=seed,
+                    rotation=rotation,
+                    assignment=assignment,
+                    game_mode=plan.game_mode,
+                    max_steps=plan.max_steps,
+                )
+            )
+
+    outcomes = run_game_jobs(jobs, max_workers=max_workers)
+
+    seat_results: list[SeatResult] = []
+    for seed in plan.seeds:
+        for rotation in range(ROTATION_COUNT):
+            outcome = outcomes[(seed, rotation)]
+            if outcome.error_text is not None:
+                raise ComparisonExecutionError(
+                    "single game execution failed in a worker process",
+                    seed=seed,
+                    rotation=rotation,
+                ) from RuntimeError(outcome.error_text)
+            seat_results.extend(
+                _build_seat_results(
+                    outcome.result,
+                    assignments[(seed, rotation)],
+                    seed=seed,
+                    rotation=rotation,
+                    game_mode=plan.game_mode,
+                )
+            )
+
+    frozen_results = tuple(seat_results)
+    return ComparisonResult(
+        plan=plan,
+        seat_results=frozen_results,
+        metrics_a=aggregate_policy_metrics(plan.policy_a.identity, frozen_results),
+        metrics_b=aggregate_policy_metrics(plan.policy_b.identity, frozen_results),
+    )
+
+
 __all__ = [
     "ROTATION_COUNT",
     "ComparisonExecutionError",
+    "PolicyFactoryNotSerializableError",
     "aggregate_policy_metrics",
     "run_comparison",
+    "run_comparison_parallel",
 ]
