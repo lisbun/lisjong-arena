@@ -85,23 +85,23 @@ lisjong-arena evaluation
 lisjong_arena.riichienv.LocalGameRunner
         |
         v
-RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
+RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
 ```
 
 RiichiLabは段階migration中である。Issue #15でfirst-party ranked entry pointをArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した(lisjong側legacy orchestration copyは`lisbun/lisjong#86`でcleanup済み)。Issue #19では`ValidationResult` / `run_validation()` / validation CLIと、execution profile / credential resolution / common CLI・trace-path compositionのcanonical implementationもArenaへ移し、Arena ranked CLIもこのArena-local compositionへ切り替えた。lisjong側validation / profile / CLI legacy copyは`lisbun/lisjong#89` / PR #90でcleanup済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revision(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationもArenaへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91` / PR #92でcleanup済みであり、Issue #25でArenaのdependency pinもactual cleanup merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期した。これによりlower-level runtimeのphysical duplicateは完全解消済みである。Issue #27では、protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationもArenaへ移し、`riichienv==0.4.8`をArena direct dependencyとして明示した。lisjong側legacy physical copy(`src/lisjong/riichilab_adapter/`)は`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのactual cleanup merge SHAへ同期済みである。Issue #31では、AABB / ABBB execution pathが使う`LocalGameRunner` / `LocalGameResult`のcanonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)もArenaへ移した。Issue #39では、RiichiEnv Adapter一式のcanonical + physical implementation(`lisjong_arena.riichienv.adapter`)もArenaへ移し、`LocalGameRunner` / `RiichiLabSeatAdapter` / MJAI response conversion / possible-actions validationのすべてのArena active consumerをArena-local implementationへ切り替えた。
 
-`GameTrace`のphysical codeはまだ`lisjong`にあり、Arena-local `LocalGameRunner`から一時的にconsumeする。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのexact lisjong dependency pinもPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。これによりLocalGameRunner / LocalGameResult pillarのphysical duplicateは完全解消済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)も`lisbun/lisjong#100` / PR #101で削除済みであり、Issue #41でArenaのexact lisjong dependency pinもこのcleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期済みである。これによりRiichiEnv Adapter pillarのphysical duplicateも完全解消済みである。
+`GameTrace`のcanonical physical implementationはIssue #43でArena(`lisjong_arena.game_trace`)へ移り、Arena-local `LocalGameRunner`はこれをconsumeする。lisjong側legacy physical copy(`lisjong.game_trace`)はまだcleanup pendingであり、Arenaのexact lisjong dependency pinも`3505321b62e7a2be204cc555924b485a898c8f31`のまま変更していない。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのexact lisjong dependency pinもPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。これによりLocalGameRunner / LocalGameResult pillarのphysical duplicateは完全解消済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)も`lisbun/lisjong#100` / PR #101で削除済みであり、Issue #41でArenaのexact lisjong dependency pinもこのcleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期済みである。これによりRiichiEnv Adapter pillarのphysical duplicateも完全解消済みである。
 
 ### Target ownership
 
-上記integration / runner / objective trace responsibilityはArena execution / observationへ段階移管する。`LocalGameRunner`相当のlocal executionはIssue #31のArena takeover、lisjong #98 / PR #99のlegacy cleanup、Issue #37のexact pin syncまで完了した。RiichiEnv AdapterもIssue #39のArena takeover、lisjong #100 / PR #101のlegacy cleanup、Issue #41のexact pin syncまで完了した。
+上記integration / runner / objective trace responsibilityはArena execution / observationへ段階移管する。`LocalGameRunner`相当のlocal executionはIssue #31のArena takeover、lisjong #98 / PR #99のlegacy cleanup、Issue #37のexact pin syncまで完了した。RiichiEnv AdapterもIssue #39のArena takeover、lisjong #100 / PR #101のlegacy cleanup、Issue #41のexact pin syncまで完了した。GameTraceはIssue #43でArena takeoverまで完了し、lisjong legacy cleanupとexact pin syncはfollow-up Issueである。
 
 ```text
 Arena execution / observation
     -> RiichiLab client / Adapter
     -> RiichiEnv Adapter (completed: #39 / lisjong #100 / #41)
     -> LocalGameRunner (completed: #31 / lisjong #98 / #37)
-    -> GameTrace objective observation contract
+    -> GameTrace objective observation contract (Arena takeover completed: #43; lisjong legacy cleanup / pin sync pending)
 ```
 
 ただし`DecisionContext` / `InternalAction`のcontract semanticsやshanten / ukeire / HandBelief / risk / value等のAI logicはlisjongに残す。
@@ -164,7 +164,7 @@ Issue #17では`run_ranked_game()`だけをArena canonical implementationへ移�
 
 ### RiichiEnv migration lane
 
-RiichiEnv Adapter / LocalGameRunner / GameTraceは、既存AABB / ABBB consumerを壊さないようRiichiLab laneとは独立に段階移管する。`LocalGameRunner` / `LocalGameResult` pillarはIssue #31、lisjong #98 / PR #99、Issue #37まで完了し、RiichiEnv Adapter pillarもIssue #39、lisjong #100 / PR #101、Issue #41まで完了した。GameTraceはまだTEMPORARYにlisjong側へ残る。
+RiichiEnv Adapter / LocalGameRunner / GameTraceは、既存AABB / ABBB consumerを壊さないようRiichiLab laneとは独立に段階移管する。`LocalGameRunner` / `LocalGameResult` pillarはIssue #31、lisjong #98 / PR #99、Issue #37まで完了し、RiichiEnv Adapter pillarもIssue #39、lisjong #100 / PR #101、Issue #41まで完了した。GameTraceはIssue #43でArena takeoverまで完了したが、lisjong legacy cleanupとexact pin syncはまだfollow-up Issueである。
 
 ```text
 before #31
@@ -172,15 +172,15 @@ Arena evaluation
     -> lisjong.LocalGameRunner
     -> RiichiEnv
 
-current (#41完了後)
+current (#43完了後)
 Arena evaluation
     -> lisjong_arena.riichienv.LocalGameRunner
-    -> RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
+    -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
     -> lisjong Policy contract
 
 remaining migration
 Arena evaluation
-    -> Arena execution / observation (GameTraceもArena-local化)
+    -> Arena execution / observation (lisjong legacy GameTrace cleanup + exact pin sync)
     -> RiichiEnv
     -> lisjong Policy contract
 ```
@@ -464,7 +464,11 @@ lisjong legacy RiichiEnv Adapter cleanup      [done: lisjong #100 / PR #101]
         |
 Arena lisjong dependency pin sync             [done: #41]
         |
-GameTrace migration
+GameTrace Arena takeover                      [done: #43]
+        |
+lisjong legacy GameTrace cleanup
+        |
+Arena lisjong dependency pin sync (post-GameTrace-cleanup)
         |
 temporary compatibility removal
 ```
@@ -492,7 +496,7 @@ Policy / game evaluation
 
 `lisjong-arena -> lisjong`を維持し、`lisjong -> lisjong-arena`を導入しない。
 
-Current implementationではArenaはAABB / ABBB LocalGameRunnerとRiichiLab protocol-facing bridgeのため`riichienv==0.4.8`へdirect dependencyを持つ。RiichiEnv Adapter pillarはIssue #39のArena takeover、lisjong #100 / PR #101のlegacy cleanup、Issue #41のexact pin syncまで完了しており、physical duplicateも完全解消済みである。GameTraceはまだlisjong側にTEMPORARYに残る。Target architectureではGameTraceを含む残りのenvironment-specific integrationもArena execution / observationへ段階移管する。
+Current implementationではArenaはAABB / ABBB LocalGameRunnerとRiichiLab protocol-facing bridgeのため`riichienv==0.4.8`へdirect dependencyを持つ。RiichiEnv Adapter pillarはIssue #39のArena takeover、lisjong #100 / PR #101のlegacy cleanup、Issue #41のexact pin syncまで完了しており、physical duplicateも完全解消済みである。GameTraceはIssue #43でcanonical physical implementation(`lisjong_arena.game_trace`)へのArena takeoverを完了したが、lisjong legacy copyのcleanupとexact pin syncはまだfollow-up Issueであり、physical duplicateは一時的に残る。Target architectureではGameTrace pillar完了を含む残りのenvironment-specific integration cleanupもArena execution / observationへ段階移管する。
 
 Historical Issue #9で採用した「live / standalone participation -> lisjong self-integration」は、`lisjong-project` Issue #10によってtarget ownershipが変更された。現在のtargetはArena execution / observationである。
 

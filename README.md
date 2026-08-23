@@ -85,7 +85,7 @@ lisjongが生成したPolicy-internal analysisをArenaが将来transport / persi
 
 ### Current implementation: Policy-vs-Policy evaluation
 
-現在のAABB / ABBBは、Arena-localの`lisjong_arena.riichienv.local_game_runner.LocalGameRunner`を使ってPolicy比較を成立させます(Issue #31)。RiichiEnv Adapterは Issue #39でArena-localの`lisjong_arena.riichienv.adapter`へcanonical physical migrationしました。GameTrace(`lisjong.game_trace`)はまだ`lisjong`にあるTEMPORARY dependencyです。
+現在のAABB / ABBBは、Arena-localの`lisjong_arena.riichienv.local_game_runner.LocalGameRunner`を使ってPolicy比較を成立させます(Issue #31)。RiichiEnv Adapterは Issue #39でArena-localの`lisjong_arena.riichienv.adapter`へcanonical physical migrationしました。GameTraceはIssue #43でArena-localの`lisjong_arena.game_trace`へcanonical physical migrationしました。lisjong側legacy `lisjong.game_trace`はまだcleanup pendingのTEMPORARY physical duplicateとして残っています。
 
 ```text
 lisjong-arena evaluation
@@ -94,12 +94,12 @@ lisjong-arena evaluation
 lisjong_arena.riichienv.LocalGameRunner
         |
         v
-RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
+RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
 ```
 
-単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でArena-localの `lisjong_arena.riichienv.adapter` とTEMPORARYな `lisjong.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。
+単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でArena-localの `lisjong_arena.riichienv.adapter` とArena-localの `lisjong_arena.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。
 
-`LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv Adapterも同様に、Issue #39でArena takeover、`lisbun/lisjong#100` / PR #101でlisjong legacy physical copy削除、Issue #41でArenaのexact lisjong dependency pinをPR #101のactual cleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期という順序で完了しました。これによりRiichiEnv Adapterのphysical duplicateも完全解消済みです。GameTraceは引き続きcurrent implementationのTEMPORARY dependencyであり、target ownershipではありません。
+`LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv Adapterも同様に、Issue #39でArena takeover、`lisbun/lisjong#100` / PR #101でlisjong legacy physical copy削除、Issue #41でArenaのexact lisjong dependency pinをPR #101のactual cleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期という順序で完了しました。これによりRiichiEnv Adapterのphysical duplicateも完全解消済みです。GameTraceはIssue #43でcanonical physical implementationを`lisjong_arena.game_trace`へmigrationし、Arena active consumer(production / tests)もこのArena-local実装へ切り替え済みです。ただしlisjong側legacy `lisjong.game_trace`削除とArenaのexact lisjong pin sync(現在も`3505321b62e7a2be204cc555924b485a898c8f31`のまま)はfollow-up Issueです。
 
 ### Target architecture
 
@@ -134,7 +134,7 @@ RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
        +----------------------------------+
 ```
 
-`GameTrace`はtarget ownershipをArena execution / observationへ置き、後続Issueで段階移管します。`LocalGameRunner` / `LocalGameResult`はIssue #31でcanonical + physical migrationを行い、lisjong #98 / PR #99のlegacy cleanupとArena #37のexact pin syncまで完了したため、LocalGameRunner pillarのphysical migrationは完了しています。RiichiEnv AdapterもIssue #39でcanonical + physical migrationを行い、lisjong #100 / PR #101のlegacy cleanupとArena #41のexact pin syncまで完了したため、RiichiEnv Adapter pillarのphysical migrationも完了しています。RiichiLab lower-level runtime(errors / Session / Transport / protocol trace)はIssue #23で、RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation)はIssue #27で、それぞれcanonical + physical migrationが完了しました。lisjong側protocol-facing bridge legacy physical copyはlisjong Issue #94 / PR #95で削除済みであり、Issue #29でArenaのdependency pinもそのactual cleanup merge SHAへ同期済みです。`DecisionContext` / `InternalAction` / `execute_policy()`等のcontract semanticsはlisjongに残ります。
+`GameTrace`はtarget ownershipをArena execution / observationへ置き、Issue #43でcanonical physical implementationのArena takeoverを完了しました。lisjong側legacy実装のcleanupとexact pin syncはfollow-up Issueで扱います。`LocalGameRunner` / `LocalGameResult`はIssue #31でcanonical + physical migrationを行い、lisjong #98 / PR #99のlegacy cleanupとArena #37のexact pin syncまで完了したため、LocalGameRunner pillarのphysical migrationは完了しています。RiichiEnv AdapterもIssue #39でcanonical + physical migrationを行い、lisjong #100 / PR #101のlegacy cleanupとArena #41のexact pin syncまで完了したため、RiichiEnv Adapter pillarのphysical migrationも完了しています。RiichiLab lower-level runtime(errors / Session / Transport / protocol trace)はIssue #23で、RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation)はIssue #27で、それぞれcanonical + physical migrationが完了しました。lisjong側protocol-facing bridge legacy physical copyはlisjong Issue #94 / PR #95で削除済みであり、Issue #29でArenaのdependency pinもそのactual cleanup merge SHAへ同期済みです。`DecisionContext` / `InternalAction` / `execute_policy()`等のcontract semanticsはlisjongに残ります。
 
 ## RiichiLab ranked / validation one-game execution
 
@@ -429,7 +429,7 @@ artifactは「どの比較条件・Policy identity・execution provenanceで何�
 
 実行用 `ComparisonResult` と読込用 `ComparisonArtifact` は分離されています。artifactへ `PolicySpec.factory`、Python callable、import path、dynamic codeを保存・復元しません。secret、credential、environment variable、username、hostname、home directory、absolute local path等の再現性に不要なmachine-local情報も保存しません。
 
-現在のPolicy-vs-Policy execution pathは `lisjong-arena evaluation -> lisjong_arena.riichienv.LocalGameRunner -> RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)` です(Issue #31、Issue #39)。provenance取得にはpackage metadataを使い、artifact schema / provenance contract自体はIssue #31で変更していません。Arenaはすでに`riichienv==0.4.8`をdirect dependencyとして持ち、Arena-local `LocalGameRunner`はこれをdirect importします。RiichiEnv AdapterはIssue #39でArena-localへmigration済みです。GameTraceは引き続きlisjongへのTEMPORARY dependencyであり、そのtarget migrationは別Issueで扱います。
+現在のPolicy-vs-Policy execution pathは `lisjong-arena evaluation -> lisjong_arena.riichienv.LocalGameRunner -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)` です(Issue #31、Issue #39、Issue #43)。provenance取得にはpackage metadataを使い、artifact schema / provenance contract自体はIssue #31で変更していません。Arenaはすでに`riichienv==0.4.8`をdirect dependencyとして持ち、Arena-local `LocalGameRunner`はこれをdirect importします。RiichiEnv AdapterはIssue #39で、GameTraceはIssue #43で、それぞれArena-localへcanonical physical migration済みです。lisjong側legacy GameTrace実装のcleanupとArenaのexact pin syncは別Issueで扱います。
 
 artifactを保存できることとrepositoryで管理することは別です。test fixture以外の実測artifactをrepositoryへ大量commitする運用、既定保存先、retention policy、artifact repositoryは本機能の対象外です。
 

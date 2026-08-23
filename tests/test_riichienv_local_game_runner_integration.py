@@ -6,14 +6,15 @@ Policy-specific heavy半荘compatibility coverageはIssue #33で
 ``tests/test_policy_riichienv_compatibility.py``へre-home済みであり、
 ``ShantenPolicy``は既存AABB / ABBB real-RiichiEnv integrationで検証する。
 本fileではfixed-seed single-gameのresult / GameTrace再現性を確認する。
+GameTraceはIssue #43でArena-local``lisjong_arena.game_trace``へ切り替えた。
 """
 
 import unittest
 
-from lisjong.game_trace import GameTraceRecorder
 from lisjong.policies import MinimalPolicy
 from lisjong.policy_contract import Seat
 
+from lisjong_arena.game_trace import GameTraceRecorder
 from lisjong_arena.riichienv.local_game_runner import LocalGameRunner
 
 _SEED = 12345
