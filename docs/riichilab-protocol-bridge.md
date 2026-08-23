@@ -98,7 +98,8 @@ ranked / validation CLIは`RiichiLabClientError`だけをcatchするため、
 - `ankan` / `kakan` / `reach` / `none` / `ryukyoku`は、`to_mjai()`の出力を
   そのまま使用する(`actor`の上書きを除く)
 
-tile文字列の生成には、`lisjong.riichienv_adapter.tile_to_mjai()`を使用する。
+tile文字列の生成には、`lisjong_arena.riichienv.adapter.tile_to_mjai()`
+(Issue #39でArena-local canonical implementationへ移行済み)を使用する。
 
 ## possible_actions送信前semantic validation
 
