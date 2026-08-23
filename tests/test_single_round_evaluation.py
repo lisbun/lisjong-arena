@@ -9,13 +9,16 @@ import unittest
 from collections.abc import Mapping
 from unittest import mock
 
-from lisjong.local_game_runner import LocalGameResult, LocalGameRunnerError
 from lisjong.policy_contract import Policy, Seat
 
 from lisjong_arena.model import (
     PolicySpec,
     SingleRoundEvaluationPlan,
     SingleRoundEvaluationResult,
+)
+from lisjong_arena.riichienv.local_game_runner import (
+    LocalGameResult,
+    LocalGameRunnerError,
 )
 from lisjong_arena.single_round_evaluation import (
     GAME_MODE,

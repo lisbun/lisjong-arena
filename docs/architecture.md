@@ -222,7 +222,7 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation) | Arena | Arena / lisjong legacy removed (#94 / PR #95) | Arena | migration complete; pin synced (#29) |
 | RiichiEnv acquisition / materialization / projection Adapter | Arena | lisjong | Arena | TEMPORARY |
 | RiichiEnv external Action mapping / revalidation | Arena | lisjong | Arena | TEMPORARY |
-| `LocalGameRunner` / `LocalGameResult` | Arena | lisjong | Arena | TEMPORARY |
+| `LocalGameRunner` / `LocalGameResult` | Arena | Arena canonical / lisjong legacy cleanup pending (#31) | Arena | migration complete; lisjong legacy cleanup Issue opened, pin sync pending |
 | `GameTrace` / `GameTraceSink` / recorder | Arena | lisjong | Arena | TEMPORARY |
 | AABB / ABBB evaluation protocol | Arena | Arena | Arena | KEEP |
 | evaluation metrics / artifact / provenance | Arena | Arena | Arena | KEEP |
@@ -237,9 +237,9 @@ Issue #23で、RiichiLab lower-level runtime(errors / Session / Transport / prot
 
 PolicyInput / DecisionContextの意味自体はlisjongに残すが、external parsing、state materialization、projection、external action mapping、legality revalidationはexecution integration responsibilityとしてArena targetとする。
 
-### Why LocalGameRunner moves as a target
+### Why LocalGameRunner moved (Issue #31)
 
-`LocalGameRunner`はRiichiEnv lifecycle、four-seat Policy execution、Adapter runtime state、Action mapping、game loop、GameTrace publishingを束ねている。AI decision logicを持たず、concrete environment executionをorchestrateするためArena execution / observation targetとする。
+`LocalGameRunner`はRiichiEnv lifecycle、four-seat Policy execution、Adapter runtime state、Action mapping、game loop、GameTrace publishingを束ねている。AI decision logicを持たず、concrete environment executionをorchestrateするためArena execution / observation targetであり、Issue #31でArena-local canonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)へ移行した。移行はbehavior-preserving physical migrationであり、`RiichiEnv(seed=seed, game_mode=game_mode)` / `env.reset()` / `env.done()`によるloop契約、全seat action構築後だけの`env.step()`呼び出し、one-shot実行、`max_steps`到達時の`StepLimitExceededError`、trace publishingのordered / incremental / exact-once契約は変更していない。RiichiEnv Adapter(`lisjong.riichienv_adapter`)とGameTrace(`lisjong.game_trace`)はこのIssueではmigrationせず、Arena-local `LocalGameRunner`から一時的にconsumeする。
 
 ### Why RiichiLab integration moves as a target
 
@@ -253,15 +253,15 @@ AABB / ABBB execution pathは次である。
 lisjong-arena evaluation
         |
         v
-lisjong.LocalGameRunner
+lisjong_arena.riichienv.LocalGameRunner
         |
         v
-RiichiEnv
+RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
 ```
 
-`lisjong-arena`の`pyproject.toml`は、AABB / ABBB evaluation execution pathで使うRiichiEnv direct dependencyを持たず、RiichiEnvはpinされた`lisjong` dependency経由で利用される。一方、RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)は、Issue #27で`riichienv==0.4.8`をArena direct dependencyとして明示的に使用する。
+`lisjong-arena`の`pyproject.toml`は、`riichienv==0.4.8`をArena direct dependencyとして持つ。Issue #31でAABB / ABBB evaluation execution pathの`LocalGameRunner`もこのdirect dependencyを使うArena-local実装(`lisjong_arena.riichienv.local_game_runner`)へ移行し、RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`、Issue #27)と同じ`riichienv==0.4.8`を共有する。RiichiEnv game lifecycle自体を進めるRiichiEnv Adapter(`lisjong.riichienv_adapter`)とGameTrace(`lisjong.game_trace`)はTEMPORARYにlisjong側へ残り、Arena-local `LocalGameRunner`から一時的にconsumeする。
 
-RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationをArenaへ移した。RiichiEnv Adapter、LocalGameRunner、GameTraceは現在も`lisjong`にある。
+RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationを、Issue #31で`LocalGameRunner` / `LocalGameResult`のcanonical implementationをArenaへ移した。RiichiEnv Adapter、GameTraceは現在も`lisjong`にある。`LocalGameRunner`のlisjong側legacy physical copyはcleanup pendingであり、Arena takeover PRのmerge後にlisjong側でcleanup Issueが起票・cross-linkされている。
 
 このcurrent stateはtarget ownershipを表さない。migration完了まではdocumentation上でcurrent / targetを明示的に区別する。
 
@@ -508,7 +508,7 @@ RiichiEnv等のexternal dependencyをArenaへ追加することはtarget archite
 2. RiichiLab execution integrationを段階移管
 3. Arena側one-game RiichiLab executionを成立
 4. resilient / continuous participationを追加
-5. RiichiEnv Adapter / LocalGameRunner / GameTraceを段階移管
+5. RiichiEnv Adapter / LocalGameRunner / GameTraceを段階移管(`LocalGameRunner`は#31で完了。Adapter / GameTraceは引き続きTEMPORARY)
 6. temporary compatibilityを除去
 ```
 

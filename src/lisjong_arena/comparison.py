@@ -1,11 +1,13 @@
 """fixed seedとdeterministic seat rotationによるPolicy comparisonの実行。
 
 Arenaの責務はmatchup / seeds / seat rotation / raw result / metricsだけであり、
-単一gameの進行は既存の``lisjong.local_game_runner.LocalGameRunner``へ委譲する。
-Policy判断、Policy contract、RiichiEnv Observation / Action変換、legal action
-validation、麻雀ルール、game state transitionはArenaへ再実装しない。実行経路は
+単一gameの進行はArena-localの``lisjong_arena.riichienv.local_game_runner.
+LocalGameRunner``へ委譲する。Policy判断、Policy contract、RiichiEnv
+Observation / Action変換、legal action validation、麻雀ルール、
+game state transitionはArenaへ再実装しない。実行経路は
 
-    lisjong-arena -> lisjong -> RiichiEnv
+    lisjong-arena evaluation -> lisjong-arena riichienv.LocalGameRunner
+        -> RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
 
 であり、このmoduleは``riichienv``をimportしない。
 
@@ -16,7 +18,6 @@ RiichiEnvと将来の``lisjong-engine``という2つの実経路が揃う前に�
 
 from collections.abc import Mapping
 
-from lisjong.local_game_runner import LocalGameResult, LocalGameRunner
 from lisjong.policy_contract import Policy, Seat
 
 from lisjong_arena.model import (
@@ -26,6 +27,7 @@ from lisjong_arena.model import (
     PolicySpec,
     SeatResult,
 )
+from lisjong_arena.riichienv.local_game_runner import LocalGameResult, LocalGameRunner
 
 ROTATION_COUNT = 4
 """1 seedあたりのcyclic seat rotation数。"""
