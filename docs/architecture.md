@@ -222,7 +222,7 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation) | Arena | Arena / lisjong legacy removed (#94 / PR #95) | Arena | migration complete; pin synced (#29) |
 | RiichiEnv acquisition / materialization / projection Adapter | Arena | lisjong | Arena | TEMPORARY |
 | RiichiEnv external Action mapping / revalidation | Arena | lisjong | Arena | TEMPORARY |
-| `LocalGameRunner` / `LocalGameResult` | Arena | Arena canonical / lisjong legacy cleanup pending (#31) | Arena | migration complete; lisjong legacy cleanup Issue opened, pin sync pending |
+| `LocalGameRunner` / `LocalGameResult` | Arena | Arena canonical / lisjong legacy cleanup pending (#31) | Arena | Arena takeover complete; lisjong legacy cleanup + pin sync pending |
 | `GameTrace` / `GameTraceSink` / recorder | Arena | lisjong | Arena | TEMPORARY |
 | AABB / ABBB evaluation protocol | Arena | Arena | Arena | KEEP |
 | evaluation metrics / artifact / provenance | Arena | Arena | Arena | KEEP |
@@ -253,7 +253,7 @@ AABB / ABBB execution pathは次である。
 lisjong-arena evaluation
         |
         v
-lisjong_arena.riichienv.LocalGameRunner
+lisjong_arena.riichienv.local_game_runner.LocalGameRunner
         |
         v
 RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
