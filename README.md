@@ -397,6 +397,49 @@ for game_result in result.game_results:
 
 `max_steps` は既定で `10_000` です。
 
+## Local process parallel evaluation
+
+既存の `run_comparison()` / `run_single_round_evaluation()` は引き続きserial APIです。これらの実行順序、戻り値、failure semantics、および一般のcallableを許容する `PolicySpec.factory` contractは変更していません。local CPU coreを使う場合は、同じ `ComparisonResult` / `SingleRoundEvaluationResult` を返す別entry pointを明示的に選択します。
+
+```text
+run_comparison_parallel(plan, max_workers=...)
+run_single_round_evaluation_parallel(plan, max_workers=...)
+```
+
+parallelization unitは `(seed, rotation)` の1 gameです。Python標準libraryのprocess poolを明示的な `spawn` contextで起動し、各workerが既存のArena-local `LocalGameRunner`を実行します。`max_workers` はcallerが指定するpositive integerで、worker数はresultやevaluation protocolの意味には含まれません。CPU数に応じた自動調整は行いません。
+
+parent processはPolicy instanceを生成しません。各workerが各game・各seatについて `PolicySpec.factory()` を呼び、fresh instanceを生成します。このためparallel APIで使うfactoryはspawn workerから利用できるimport可能なtop-level callableである必要があります。lambdaやlocal closure等のprocess間でserializeできないfactoryは、parallel実行前に `PolicyFactoryNotSerializableError` でfail closedし、serial実行へfallbackしません。この追加制約はparallel APIだけのものであり、serial APIは従来どおり一般のcallableを受け付けます。
+
+workerの完了順はraw result orderに使いません。AABBは `seed入力順 -> rotation 0..3 -> seat 0..3`、ABBBは `seed入力順 -> rotation 0..3` へ再構築してから既存validation / aggregationを再利用します。したがって同一条件ではserial / parallelおよび異なるworker数でraw resultとmetricsが一致します。1 jobでもPolicy factory、game execution、result validation、serialization、spawn、またはworker process failureが発生すれば評価全体を失敗させ、成功分だけのpartial resultは返しません。
+
+Windowsを含むspawn環境では、parallel APIを呼ぶscriptにmain guardを置いてください。
+
+```python
+from lisjong.policies import MinimalPolicy, ShantenPolicy
+
+from lisjong_arena import (
+    ComparisonPlan,
+    PolicySpec,
+    run_comparison_parallel,
+)
+
+
+def main() -> None:
+    plan = ComparisonPlan(
+        policy_a=PolicySpec(identity="minimal", factory=MinimalPolicy),
+        policy_b=PolicySpec(identity="shanten", factory=ShantenPolicy),
+        seeds=(12345, 23456, 34567),
+    )
+    result = run_comparison_parallel(plan, max_workers=4)
+    print(result.metrics_a, result.metrics_b)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+ABBBでは、既存の `SingleRoundEvaluationPlan` を `run_single_round_evaluation_parallel(plan, max_workers=4)` へ渡します。benchmark結果はmachine、CPU、Policy workload、seed set等に依存するため、特定のspeedup倍率をCIのpass/fail条件にはしません。
+
 ## Comparison artifact
 
 既存のversion付きJSON artifact契約は、AABB comparison protocol（`ComparisonPlan` / `ComparisonResult`）のみを対象とします。ABBB single-round evaluation result（`SingleRoundEvaluationResult`）のartifact保存は現時点では未実装で、必要になった時点で後続Issueとして独立に設計します。
@@ -451,7 +494,7 @@ artifactを保存できることとrepositoryで管理することは別です�
 - Elo / rating system
 - graph / visualization / dashboard
 - database / artifact repository / retention policy
-- distributed execution / multiprocessing / job scheduler
+- distributed / multi-machine execution / job scheduler
 - RiichiLab rankedを使ったstrength comparison protocol
 - Mortalとのmixed-agent benchmark実装 / external competitor wrapper
 - `lisjong-engine` integration

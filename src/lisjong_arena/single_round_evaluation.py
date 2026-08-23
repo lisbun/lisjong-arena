@@ -5,13 +5,16 @@
 とbaseline 1体を固定seedごとに``[A, B, B, B]`` -> ``[B, A, B, B]`` ->
 ``[B, B, A, B]`` -> ``[B, B, B, A]``へrotationし、各gameをArena-localの
 ``lisjong_arena.riichienv.local_game_runner.LocalGameRunner``で
-``game_mode="4p-red-single"``として実行する。
+``game_mode="4p-red-single"``として実行する。serial実行は
+``run_single_round_evaluation()``、``(seed, rotation)``単位のlocal process
+並列実行は``run_single_round_evaluation_parallel()``が担い、どちらも同じ
+result / aggregation契約を使う。
 
 ``4p-red-single``はこのprotocol自身のinvariantであり、``ComparisonPlan``の
 genericな``game_mode``のようにcallerが指定できるoptionではない。実行経路は
 
     lisjong-arena evaluation -> lisjong-arena riichienv.LocalGameRunner
-        -> RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
+        -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
 
 であり、このmoduleは``riichienv``をimportしない。
 """

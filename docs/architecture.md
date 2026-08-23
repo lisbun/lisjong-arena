@@ -264,6 +264,37 @@ RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
 
 `lisjong-arena`の`pyproject.toml`は、`riichienv==0.4.8`をArena direct dependencyとして持つ。Issue #31でAABB / ABBB evaluation execution pathの`LocalGameRunner`もこのdirect dependencyを使うArena-local実装(`lisjong_arena.riichienv.local_game_runner`)へ移行し、RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`、Issue #27)と同じ`riichienv==0.4.8`を共有する。RiichiEnv game lifecycle自体を進めるRiichiEnv AdapterはIssue #39でArena-local実装(`lisjong_arena.riichienv.adapter`)へ移行済みである。GameTraceはIssue #43でArena-local canonical physical implementation(`lisjong_arena.game_trace`)へ移行し、Arena-local `LocalGameRunner`はこれをconsumeする。lisjong側legacy `lisjong.game_trace`は`lisbun/lisjong#102` / PR #103で削除済みであり、Issue #45でArenaのexact lisjong dependency pinもcleanup merge commit `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期済みである。
 
+### Fixed-seed local process parallel execution (Issue #49)
+
+Issue #49で、既存AABB / ABBB protocolのserial entry pointを変更せず、local process並列用の `run_comparison_parallel()` / `run_single_round_evaluation_parallel()` を追加した。parallelization unitは `(seed, rotation)` の1 gameであり、1 seedの4 rotationを単一jobへbatchしない。
+
+```text
+EvaluationPlan
+    |
+    | seed x rotation
+    v
+private GameJob values
+    |
+    v
+ProcessPoolExecutor (explicit spawn, caller-specified max_workers)
+    |
+    +--> worker: fresh Policy per seat -> LocalGameRunner
+    +--> worker: fresh Policy per seat -> LocalGameRunner
+    `--> worker: fresh Policy per seat -> LocalGameRunner
+    |
+    v
+protocol module: canonical ordering -> existing validation / aggregation
+    |
+    v
+existing ComparisonResult / SingleRoundEvaluationResult
+```
+
+process orchestrationだけをprivate `lisjong_arena._parallel_execution`へ共有し、seat assignment、raw result construction、validation、aggregationはAABB / ABBBそれぞれの既存moduleに残す。public generic executor、`GameBackend`、`EvaluationBackend`は導入しない。Policy instanceはparent processで生成・転送せず、spawn workerが各game・各seatのfactoryをfreshに呼ぶ。
+
+parallel APIに限り、`PolicySpec.factory`はspawn workerから利用可能なprocess-serializable callableを要求する。lambda / local closure等はsilentなserial fallbackをせずfail closedする。既存serial APIと `PolicySpec` 自体の一般callable contractは狭めない。
+
+worker completion orderはcontract上のresult orderではない。AABBは `seed入力順 -> rotation -> seat`、ABBBは `seed入力順 -> rotation` へparent側でcanonicalizeし、既存aggregationを再利用する。Policy / runner / serialization / spawn / worker processのいずれか1 jobのfailureでもpartial resultを返さず、evaluation全体をfail closedする。明示的なspawn contextによりWindows互換とfork非依存を維持し、実spawn worker integration testでmodule import、factory resolution、Policy生成、game executionまで確認する。
+
 RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationを、Issue #31で`LocalGameRunner` / `LocalGameResult`のcanonical implementationを、Issue #39でRiichiEnv Adapter(`lisjong_arena.riichienv.adapter`)のcanonical implementationを、Issue #43でGameTrace(`lisjong_arena.game_trace`)のcanonical implementationをArenaへ移した。GameTraceのlisjong側legacy physical copyは`lisbun/lisjong#102` / PR #103で削除済みであり、Issue #45でArenaのdependency pinもcleanup merge SHA `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期済みである。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのdependency pinもcleanup merge SHA `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)も`lisbun/lisjong#100` / PR #101で削除済みであり、Issue #41でArenaのdependency pinもこのcleanup merge SHA `3505321b62e7a2be204cc555924b485a898c8f31`へ同期済みである。これによりLocalGameRunner、RiichiEnv Adapter、GameTraceの各pillarのphysical duplicateは完全解消済みである。
 
 このcurrent stateはtarget ownershipを表さない。migration完了まではdocumentation上でcurrent / targetを明示的に区別する。

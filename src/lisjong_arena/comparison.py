@@ -2,18 +2,22 @@
 
 Arenaの責務はmatchup / seeds / seat rotation / raw result / metricsだけであり、
 単一gameの進行はArena-localの``lisjong_arena.riichienv.local_game_runner.
-LocalGameRunner``へ委譲する。Policy判断、Policy contract、RiichiEnv
+LocalGameRunner``へ委譲する。serial実行は``run_comparison()``、
+``(seed, rotation)``単位のlocal process並列実行は
+``run_comparison_parallel()``が担い、どちらも同じresult / aggregation契約を
+使う。Policy判断、Policy contract、RiichiEnv
 Observation / Action変換、legal action validation、麻雀ルール、
 game state transitionはArenaへ再実装しない。実行経路は
 
     lisjong-arena evaluation -> lisjong-arena riichienv.LocalGameRunner
-        -> RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
+        -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
 
 であり、このmoduleは``riichienv``をimportしない。
 
 RiichiEnvと将来の``lisjong-engine``という2つの実経路が揃う前に差異を推測しない
 ため、``GameBackend`` / ``EvaluationBackend`` 等の汎用backend abstractionも
-導入しない。``LocalGameRunner``は``_run_single_game()``から直接呼び出す。
+導入しない。serial pathは``_run_single_game()``から、parallel pathはprivate
+workerから、同じ``LocalGameRunner``を直接呼び出す。
 """
 
 from collections.abc import Mapping

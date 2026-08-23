@@ -291,6 +291,10 @@ def _fake_runner_with_one_failure(job: GameJob) -> GameJobOutcome:
     )
 
 
+def _fake_runner_that_raises(job: GameJob) -> GameJobOutcome:
+    raise RuntimeError("worker exploded before returning an outcome")
+
+
 def _fake_spawn_probe_runner(job: GameJob) -> GameJobOutcome:
     fork_leak = len(_PARENT_ONLY_MUTATIONS) > 0
     return GameJobOutcome(
@@ -362,6 +366,23 @@ class RunGameJobsProcessPoolTest(unittest.TestCase):
         for key, outcome in outcomes.items():
             if key != _FAILING_KEY:
                 self.assertIsNone(outcome.error_text)
+
+    def test_worker_exception_is_reported_in_its_own_outcome(self) -> None:
+        job = _jobs_for([(42, 3)])[0]
+
+        outcomes = run_game_jobs(
+            [job], max_workers=1, game_runner=_fake_runner_that_raises
+        )
+
+        failing = outcomes[(42, 3)]
+        self.assertIsNone(failing.result)
+        self.assertEqual(failing.seed, 42)
+        self.assertEqual(failing.rotation, 3)
+        self.assertIn(
+            "worker process failed before returning a result", failing.error_text
+        )
+        self.assertIn("RuntimeError", failing.error_text)
+        self.assertIn("worker exploded before returning an outcome", failing.error_text)
 
     def test_workers_run_in_separate_spawned_processes_not_forked(self) -> None:
         _PARENT_ONLY_MUTATIONS.append("mutated-after-import-in-parent")
