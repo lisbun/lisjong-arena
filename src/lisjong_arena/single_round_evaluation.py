@@ -3,21 +3,21 @@
 既存``lisjong_arena.comparison``のAABB comparisonとは意味が異なるprotocolで
 あるため、独立したPlan / Result契約とexecution経路として持つ。candidate 1体
 とbaseline 1体を固定seedごとに``[A, B, B, B]`` -> ``[B, A, B, B]`` ->
-``[B, B, A, B]`` -> ``[B, B, B, A]``へrotationし、各gameを既存の
-``lisjong.local_game_runner.LocalGameRunner``で``game_mode="4p-red-single"``
-として実行する。
+``[B, B, A, B]`` -> ``[B, B, B, A]``へrotationし、各gameをArena-localの
+``lisjong_arena.riichienv.local_game_runner.LocalGameRunner``で
+``game_mode="4p-red-single"``として実行する。
 
 ``4p-red-single``はこのprotocol自身のinvariantであり、``ComparisonPlan``の
 genericな``game_mode``のようにcallerが指定できるoptionではない。実行経路は
 
-    lisjong-arena -> lisjong -> RiichiEnv
+    lisjong-arena evaluation -> lisjong-arena riichienv.LocalGameRunner
+        -> RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
 
 であり、このmoduleは``riichienv``をimportしない。
 """
 
 from collections.abc import Mapping
 
-from lisjong.local_game_runner import LocalGameResult, LocalGameRunner
 from lisjong.policy_contract import Policy, Seat
 
 from lisjong_arena.model import (
@@ -29,6 +29,7 @@ from lisjong_arena.model import (
     SingleRoundEvaluationResult,
     SingleRoundGameResult,
 )
+from lisjong_arena.riichienv.local_game_runner import LocalGameResult, LocalGameRunner
 
 ROTATION_COUNT = SINGLE_ROUND_ROTATION_COUNT
 """1 seedあたりのcandidate seat rotation数。"""

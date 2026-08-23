@@ -10,7 +10,6 @@ import unittest
 from collections.abc import Mapping
 from unittest import mock
 
-from lisjong.local_game_runner import LocalGameResult, LocalGameRunnerError
 from lisjong.policy_contract import Policy, Seat
 
 from lisjong_arena.comparison import (
@@ -20,6 +19,10 @@ from lisjong_arena.comparison import (
     run_comparison,
 )
 from lisjong_arena.model import ComparisonPlan, ComparisonResult, PolicySpec
+from lisjong_arena.riichienv.local_game_runner import (
+    LocalGameResult,
+    LocalGameRunnerError,
+)
 
 _SCORE_BY_RANK = {1: 40_000, 2: 30_000, 3: 20_000, 4: 10_000}
 _EVEN_RANKS = (1, 2, 3, 4)
