@@ -1,9 +1,8 @@
 """実RiichiEnvを使うArena-local ``LocalGameRunner``のsmall integration test。
 
 Issue #31のrunner ownership migrationに必要な最小限のreal RiichiEnv
-integrationだけをここへ置く。``UkeirePolicy`` / ``TwoStepUkeirePolicy``の
-Policy-specific heavy半荘compatibility coverageはIssue #33で
-``tests/test_policy_riichienv_compatibility.py``へre-home済みであり、
+integrationだけをここへ置く。Issue #51以降、lisjong-owned individual Policyの
+heavyな半荘compatibility testはArena default suiteでPolicyごとに保持しない。
 ``ShantenPolicy``は既存AABB / ABBB real-RiichiEnv integrationで検証する。
 本fileではfixed-seed single-gameのresult / GameTrace再現性を確認する。
 GameTraceはIssue #43でArena-local``lisjong_arena.game_trace``へ切り替えた。
