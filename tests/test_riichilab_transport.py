@@ -17,8 +17,8 @@ import unittest
 from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy
-from lisjong.riichilab_adapter.adapter import SendReadyResponse
 
+from lisjong_arena.riichilab.adapter import SendReadyResponse
 from lisjong_arena.riichilab.errors import (
     ProtocolError,
     RiichiLabClientError,

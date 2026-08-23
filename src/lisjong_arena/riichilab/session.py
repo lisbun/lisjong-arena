@@ -6,24 +6,25 @@
 `start_game` / `request_action` / `action_ack` / `validation_result` /
 `end_game`、`request_id`のgame内lifecycle管理)だけを担当し、Policy判断・
 Observation変換・Action mapping・`possible_actions` semantic validationは
-lisjong `RiichiLabSeatAdapter`をconsumerとして再利用する。
+Arena-local `RiichiLabSeatAdapter`(`lisjong_arena.riichilab.adapter`、
+Issue #27)をconsumerとして利用する。
 
-`RiichiLabSeatAdapter` / Policy / `InternalAction`の物理実装とsemantic
-contractはlisjongに残る(Arena Issue #23 non-goals)。Adapterから送出された
-例外はwrapせず、そのまま伝播させる。
+`Policy` / `InternalAction`の物理実装とAI-side semantic contractはlisjongに
+残る(Arena Issue #27 non-goals)。Adapterから送出された例外はwrapせず、
+そのまま伝播させる。
 
-lisjong Issue #38/#39で確立したcontractをbehavior-preservingにArenaへ
-canonical physical migrationしたものである(Arena Issue #23)。
+lisjong Issue #38/#39で確立したprotocol-facing bridgeのcontractをbehavior-
+preservingにArenaへcanonical physical migrationしたものである(Arena Issue
+#23、Issue #27)。
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from lisjong.policy_contract.policy import Policy
-from lisjong.policy_contract.seat import Seat
-from lisjong.riichilab_adapter.adapter import RiichiLabSeatAdapter
+from lisjong.policy_contract import Policy, Seat
 
+from lisjong_arena.riichilab.adapter import RiichiLabSeatAdapter
 from lisjong_arena.riichilab.errors import ProtocolError
 
 _VALIDATION_SEAT = Seat.SEAT_0

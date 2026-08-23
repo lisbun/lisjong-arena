@@ -8,10 +8,13 @@ migrationはIssue #23で完了し、この文書はその際に`lisjong`側
 behavior-preservingに引き継いだものである。
 
 project-wideなrepository責務は[`lisjong-project`](https://github.com/lisbun/lisjong-project)
-を正本とする。Policy判断、Observation変換、Action mapping、
-`possible_actions` semantic validationの詳細は、引き続き`lisjong`側
-[RiichiLab request_action Adapter](https://github.com/lisbun/lisjong/blob/main/docs/riichilab-adapter.md)
-を正本とする。この文書はAdapter固有のsemanticsを再定義しない。
+を正本とする。Policy判断、Observation変換、Action mappingといった
+AI-side semanticsの詳細は、引き続き`lisjong`側public API
+(`lisjong.policy_contract` / `lisjong.riichienv_adapter`)を正本とする。
+`RiichiLabSeatAdapter` compositionと`possible_actions` semantic
+validationのcurrent contractはIssue #27でArena側へ移り、
+[`docs/riichilab-protocol-bridge.md`](riichilab-protocol-bridge.md)を
+正本とする。この文書はそちらのAdapter固有semanticsを再定義しない。
 
 ## 現在のownership
 
@@ -27,18 +30,20 @@ project-wideなrepository責務は[`lisjong-project`](https://github.com/lisbun/
 - RiichiLab lower-level runtime: errors / Session / Transport / protocol
   trace writer(`lisjong_arena.riichilab.errors` / `session` / `transport` /
   `trace`、Issue #23、本書)
-
-一方、`RiichiLabSeatAdapter`(Policy呼び出し、Observation deserialize、
-`possible_actions` semantic validation)はIssue #23のnon-goalであり、
-引き続き`lisjong`にphysical実装がある。Arena-local Sessionはこの
-Adapterをtemporary consumerとして利用する。
+- RiichiLab protocol-facing decision bridge: `RiichiLabSeatAdapter` /
+  request_action parse / MJAI response / possible-action validation
+  (`lisjong_arena.riichilab.adapter` / `request_action` / `mjai_response` /
+  `possible_action_validation` / `adapter_errors`、Issue #27、
+  [`docs/riichilab-protocol-bridge.md`](riichilab-protocol-bridge.md))
 
 `lisjong`側`lisjong.riichilab_client`(errors / session / transport /
 trace)は[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91) /
 PR #92で削除された。Arena Issue #25でdependency pinもPR #92のactual
 merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期したため、
 lower-level runtimeのphysical duplicateは完全解消済みである。
-`RiichiLabSeatAdapter`のphysical migrationは引き続きfuture workである。
+`lisjong.riichilab_adapter`(protocol-facing decision bridgeのlegacy
+physical copy)は、Issue #27のArena migration PR merge後、lisjong側
+cleanup follow-up Issueで削除される予定であり、それまでは残る。
 
 現在の境界は次のとおりである。
 
@@ -58,9 +63,13 @@ lisjong-arena
     trace: JsonlProtocolTraceWriter / ProtocolTraceError
         |
         v
-lisjong
+lisjong-arena (Issue #27)
     RiichiLabSeatAdapter
-    Policy contract
+    request_action parse / MJAI response / possible-action validation
+        |
+        v
+lisjong
+    Policy contract (consumerとして利用)
 ```
 
 Arenaへのdependency directionは`lisjong-arena -> lisjong`である。この
@@ -285,8 +294,9 @@ failureのいずれも同じ`RiichiLabClientError`境界でcatchできる
 
 ## Adapter exception boundary
 
-Arena-local Sessionは引き続き`lisjong.riichilab_adapter.RiichiLabSeatAdapter`
-をconsumerとして使用する。Adapterから送出された例外はwrapせず、そのまま
+Arena-local Sessionは、Issue #27でArena-local
+`RiichiLabSeatAdapter`(`lisjong_arena.riichilab.adapter`)をconsumerとして
+使用するよう切り替えた。Adapterから送出された例外はwrapせず、そのまま
 伝播させる。
 
 ```text
@@ -301,12 +311,15 @@ Trace failure
 
 Adapter / Policy / Action mapping failure
     -> original exceptionをそのまま伝播
+    (RiichiLabAdapterErrorはRiichiLabClientErrorへreparentしない)
 ```
 
-Adapter / Policy semantics(Observation deserialize、`possible_actions`
-semantic validation、`DecisionContext` / `InternalAction`)はこの文書の
-scopeに含まない。正本は引き続き`lisjong`側Adapter documentation /
-Policy contractである。
+Adapter固有semantics(`request_action` parse、Observation deserialize
+boundary、MJAI response正規化、`possible_actions` semantic validation、
+Adapter error hierarchy)は[`docs/riichilab-protocol-bridge.md`](riichilab-protocol-bridge.md)
+を正本とする。`Policy` / `DecisionContext` / `InternalAction` /
+`execute_policy()`等のAI-side semanticsはこの文書のscopeに含まず、
+引き続き`lisjong`側Policy contractが正本である。
 
 ## fail-closed原則
 
@@ -341,24 +354,35 @@ lower-level runtime testはArena側で保持する。
   integration(validation / ranked双方)
 - `tests/test_riichilab_trace.py`: trace writer
 - `tests/test_riichilab_session_adapter_integration.py`: known-validな静的
-  `request_action` fixtureを使い、Arena-local Sessionから実
-  `RiichiLabSeatAdapter`を介してPolicyまで接続できることだけを確認する
-  validation / ranked双方のcross-repository wiring / compatibility coverage。
-  `possible_actions`生成・正規化やAdapter correctnessの正本はlisjongに残る
+  `request_action` fixtureを使い、Arena-local SessionからArena-local
+  `RiichiLabSeatAdapter`を介して実lisjong Policyまで接続できることを
+  確認するcross-boundary integrationの本線
+- `tests/test_riichilab_adapter.py` / `test_riichilab_adapter_errors.py` /
+  `test_riichilab_request_action.py` / `test_riichilab_mjai_response.py` /
+  `test_riichilab_possible_action_validation.py`: Issue #27でArenaへ
+  canonical physical migrationしたprotocol-facing decision bridgeの
+  correctness(詳細は[`docs/riichilab-protocol-bridge.md`](riichilab-protocol-bridge.md))
 - `tests/test_riichilab_ranked.py` / `tests/test_riichilab_profile.py`:
   Arena-owned orchestration / CLI / profile
 - `tests/test_riichilab_validation.py`: 同上(validation)
 
 `lisjong`側のArena-owned `tests/test_riichilab_client_*.py`は
-`lisbun/lisjong#91` / PR #92で削除済みである。Adapter-owned regressionは
-lisjong側`tests/test_riichilab_adapter.py`等に維持される。
+`lisbun/lisjong#91` / PR #92で削除済みである。lisjong側
+`tests/test_riichilab_adapter.py`等のprotocol-facing legacy testは、
+Issue #27のArena migration PR merge後、lisjong cleanup follow-up Issueで
+削除される予定であり、それまでは残る。lisjong側`test_policy_execution.py`
+等のAI-side semantics regressionはlisjongに残り続ける。
 
 ## 今後のmigration
 
 - `lisjong.riichilab_client`(errors / session / transport / trace)の
   legacy physical copy除去とexact dependency pin syncは完了済み
 - `RiichiLabSeatAdapter` / possible-action validationのphysical
-  migrationは本書のscope外であり、別Issueで扱う
+  migrationはIssue #27で完了した。詳細contractは
+  [`docs/riichilab-protocol-bridge.md`](riichilab-protocol-bridge.md)を正本とする
+- lisjong側legacy physical copy(`src/lisjong/riichilab_adapter/`)の除去と
+  そのexact dependency pin syncは、lisjong cleanup follow-up Issue /
+  Arena post-cleanup pin-sync Issueで扱う本書のscope外の後続作業である
 
 Issue #23ではretry / reconnect / requeue / continuous participation、raw
 online game record、Policy / DecisionContext / InternalAction変更、

@@ -83,11 +83,11 @@ RiichiEnv
 ```
 
 - `Seat` 等のAI-side contractは `lisjong.policy_contract` を使用する
-- 現行実装ではArenaからRiichiEnvへdirect dependency / direct importを持たない
+- AABB / ABBB evaluation execution pathではArenaからRiichiEnvへdirect dependency / direct importを持たない。一方RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)は、Issue #27で`riichienv==0.4.8`をArena direct dependencyとして明示的に使用する(RiichiEnv game lifecycle自体はlisjong側RiichiEnv Adapterに残る)
 - RiichiLab ranked first-party CLIと`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestrationはArenaにある
 - RiichiLab ranked / validation orchestration、profile / credential / CLI composition、client errors / Session / Transport / protocol traceはArena-local canonical + physical implementationである
 - lisjong側legacy lower-level runtime copyは`lisbun/lisjong#91` / PR #92で削除済みであり、Issue #25でArenaのdependency pinもcleanup merge SHAへ同期済みである
-- `RiichiLabSeatAdapter` / possible-action validationは引き続き`lisjong`に存在し、pin済みpublic APIをtemporaryに利用する
+- `RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validationは、Issue #27でArena-local canonical implementationへ移行済みである(`lisjong_arena.riichilab.adapter` / `request_action` / `mjai_response` / `possible_action_validation` / `adapter_errors`)。lisjong側legacy physical copyはmigration PR merge後のcleanup follow-up Issue完了まで残る
 - RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`はまだ`lisjong`に存在する
 - `lisjong` dependencyは再現可能性のためrelease tagが出るまでfull commit SHAへpinする
 

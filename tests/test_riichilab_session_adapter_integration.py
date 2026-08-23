@@ -1,20 +1,36 @@
-"""Arena Session -> real lisjong Adapter -> Policy compatibility test(Issue #23)。
+"""Arena Session -> Arena-local RiichiLabSeatAdapter -> lisjong Policy compatibility test(Issue #23、Issue #27)。
 
 Adapter / Policy semanticsのcorrectnessはlisjongが所有するため、このtestは
 `possible_actions`を生成・正規化しない。pin済みlisjong / RiichiEnv 0.4.8で
 取得したknown-validな単一`request_action` fixtureを使い、Arena-local Sessionが
-実`RiichiLabSeatAdapter`を介してPolicyまで接続できることだけを確認する。
+Arena-local `RiichiLabSeatAdapter`(Issue #27でlisjongからphysical
+migrationしたcanonical implementation)を介して実lisjong Policyまで
+接続できることを確認する、cross-boundary integrationの本線。
 
 fake AdapterによるSession lifecycleの詳細なcoverageは
-`test_riichilab_session.py`が担当する。
+`test_riichilab_session.py`が担当する。Adapter compositionのfail closed
+regression matrix(build_decision failure、Policy例外、
+PolicyActionValidationError、MJAI conversion failure、possible_actions
+mismatch等)の詳細は`test_riichilab_adapter.py`が担当する。ここでは、それら
+がSession経由でwrap/fallbackされずそのまま伝播することだけを確認する。
 """
 
 import copy
 import unittest
+from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy
-from lisjong.riichilab_adapter.adapter import RiichiLabSeatAdapter
+from lisjong.policy_contract import PassAction, PolicyActionValidationError
+from lisjong.riichienv_adapter import AdapterSyncError
 
+from lisjong_arena.riichilab.adapter import RiichiLabSeatAdapter
+from lisjong_arena.riichilab.adapter_errors import (
+    PossibleActionsValidationError,
+    ProtocolConversionError,
+    RiichiLabAdapterError,
+    SeatMismatchError,
+)
+from lisjong_arena.riichilab.errors import ProtocolError, RiichiLabClientError
 from lisjong_arena.riichilab.session import RankedSession, ValidationSession
 
 _KNOWN_VALID_OBSERVATION = (
@@ -75,10 +91,22 @@ _KNOWN_VALID_REQUEST_ACTION = {
 class _RecordingPolicy:
     def __init__(self) -> None:
         self.calls = 0
+        self.decisions = []
 
     def choose_action(self, decision):
         self.calls += 1
+        self.decisions.append(decision)
         return MinimalPolicy().choose_action(decision)
+
+
+class _RaisingPolicy:
+    def choose_action(self, decision):
+        raise RuntimeError("policy exploded")
+
+
+class _IllegalActionPolicy:
+    def choose_action(self, decision):
+        return PassAction(actor=decision.input.self_seat)
 
 
 class SessionAdapterIntegrationTest(unittest.TestCase):
@@ -99,6 +127,118 @@ class SessionAdapterIntegrationTest(unittest.TestCase):
 
     def test_ranked_session_reaches_real_adapter_and_policy(self) -> None:
         self._assert_session_connects_real_adapter_to_policy(RankedSession)
+
+    def test_request_id_time_and_possible_actions_do_not_reach_the_policy(
+        self,
+    ) -> None:
+        policy = _RecordingPolicy()
+        session = RankedSession(policy)
+        session.handle_event({"type": "start_game", "id": 0})
+
+        request = copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION)
+        request["time"] = {"grace_ms": 500}
+        session.handle_event(request)
+
+        self.assertEqual(len(policy.decisions), 1)
+        decision = policy.decisions[0]
+        self.assertTrue(hasattr(decision, "input"))
+        self.assertTrue(hasattr(decision, "legal_actions"))
+        self.assertFalse(hasattr(decision, "request_id"))
+        self.assertFalse(hasattr(decision, "time"))
+        self.assertFalse(hasattr(decision, "possible_actions"))
+
+    def test_bridge_reuses_the_same_tracker_and_mapping_session_across_requests(
+        self,
+    ) -> None:
+        session = RankedSession(_RecordingPolicy())
+        session.handle_event({"type": "start_game", "id": 0})
+
+        adapter = session._adapter
+        tracker = adapter._tracker
+        mapping_session = adapter._mapping_session
+
+        session.handle_event(copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION))
+
+        self.assertIs(session._adapter._tracker, tracker)
+        self.assertIs(session._adapter._mapping_session, mapping_session)
+
+    def test_cross_seat_observation_rejection_propagates_unwrapped(self) -> None:
+        # Observationのplayer_idはfixtureで0固定なので、seat 1へbindした
+        # Sessionへ渡すとbound seatとの不一致になる。SeatMismatchErrorは
+        # Arena `ProtocolError`(RiichiLabClientError系)へwrapされず、
+        # Adapter-specific errorとしてそのまま伝播する。
+        session = RankedSession(_RecordingPolicy())
+        session.handle_event({"type": "start_game", "id": 1})
+
+        with self.assertRaises(SeatMismatchError):
+            session.handle_event(copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION))
+
+    def test_build_decision_failure_propagates_unwrapped_through_session(
+        self,
+    ) -> None:
+        session = RankedSession(_RecordingPolicy())
+        session.handle_event({"type": "start_game", "id": 0})
+
+        with patch(
+            "lisjong_arena.riichilab.adapter.build_decision",
+            side_effect=AdapterSyncError("boom"),
+        ):
+            with self.assertRaises(AdapterSyncError):
+                session.handle_event(copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION))
+
+    def test_policy_exception_propagates_unwrapped_through_session(self) -> None:
+        session = RankedSession(_RaisingPolicy())
+        session.handle_event({"type": "start_game", "id": 0})
+
+        with self.assertRaises(RuntimeError):
+            session.handle_event(copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION))
+
+    def test_policy_action_validation_error_propagates_unwrapped_through_session(
+        self,
+    ) -> None:
+        session = RankedSession(_IllegalActionPolicy())
+        session.handle_event({"type": "start_game", "id": 0})
+
+        with self.assertRaises(PolicyActionValidationError):
+            session.handle_event(copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION))
+
+    def test_mjai_conversion_failure_produces_no_payload_through_session(self) -> None:
+        session = RankedSession(_RecordingPolicy())
+        session.handle_event({"type": "start_game", "id": 0})
+
+        with patch(
+            "lisjong_arena.riichilab.adapter.build_mjai_response",
+            side_effect=ProtocolConversionError("boom"),
+        ):
+            with self.assertRaises(ProtocolConversionError):
+                session.handle_event(copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION))
+
+    def test_possible_actions_mismatch_produces_no_payload_through_session(
+        self,
+    ) -> None:
+        session = RankedSession(_RecordingPolicy())
+        session.handle_event({"type": "start_game", "id": 0})
+
+        request = copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION)
+        request["possible_actions"] = [{"type": "ryukyoku"}]
+
+        with self.assertRaises(PossibleActionsValidationError):
+            session.handle_event(request)
+
+    def test_adapter_error_raised_through_session_is_not_a_riichilab_client_error(
+        self,
+    ) -> None:
+        session = RankedSession(_RecordingPolicy())
+        session.handle_event({"type": "start_game", "id": 0})
+
+        request = copy.deepcopy(_KNOWN_VALID_REQUEST_ACTION)
+        request["possible_actions"] = [{"type": "ryukyoku"}]
+
+        with self.assertRaises(RiichiLabAdapterError) as context:
+            session.handle_event(request)
+
+        self.assertNotIsInstance(context.exception, RiichiLabClientError)
+        self.assertNotIsInstance(context.exception, ProtocolError)
 
 
 if __name__ == "__main__":
