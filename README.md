@@ -175,7 +175,19 @@ Arena-local `run_ranked_game()` / `run_validation()` はArena-local `RankedSessi
 
 profile定義、credential解決、trace path優先順位はArena-local composition（`lisjong_arena.riichilab.profile` / `lisjong_arena.riichilab.cli`）が所有し、ranked / validationで定義を共有・重複させません。利用できるprofileは既存の3種類（`lisjong-dev` / `lisjong-baseline` / `lisjong`）で、profile未指定・unknown profile・対応credential未設定はいずれもfail closedします。他profileのcredentialへのfallbackは行いません。protocol traceは既定OFFで、`--trace-path` > `RIICHILAB_TRACE_PATH`環境変数 > `--trace`（profile既定path）> 無効、の優先順位を維持します。
 
-ranked実行は必ず「1 connection → 1 ranked hanchan → `end_game` → return / disconnect」で、validation実行は「1 connection → 1 validation game → `validation_result` → return / disconnect」で終了します。automatic requeue、複数game、retry、reconnect、continuous participationは後続Issueの対象です。
+ranked実行は必ず「1 connection → 1 ranked hanchan → `end_game` → return / disconnect」で、validation実行は「1 connection → 1 validation game → `validation_result` → return / disconnect」で終了します。`run_ranked_game()` / `run_validation()` 自体はこのone-game contractを維持し、multiple-game化やretry/reconnect semanticsを持ちません。
+
+## RiichiLab ranked resilient / continuous participation
+
+`run_ranked_game()`をone-game primitiveのまま維持しつつ、その上位layerとしてresilient / continuous ranked runner(`lisjong_arena.riichilab.continuous_ranked`、Issue #47)をArenaへ追加しています。
+
+```powershell
+python -m lisjong_arena.riichilab.continuous_ranked --profile lisjong-dev
+```
+
+profile / credential / trace pathはprocess開始時に一度だけresolveし、各gameは`profile.policy_factory()`から生成したfresh Policy instanceで新しい`run_ranked_game()` invocation(= 新しいWebSocket connection)として実行します。同一game内でのresume・同一Policy instanceのcross-game再利用は行いません。
+
+retry対象は`TransportError`階層(`UnexpectedDisconnectError`を含む)だけで、`ProtocolError` / `ProtocolTraceError` / profile・credential failure / Policy・Adapter例外等はcatch-allせずそのまま伝播してfail closedします。backoffは`5s -> 10s -> 20s -> 40s -> 60s cap`のbounded backoffで、連続5 failureに到達すると追加requeueを停止します(成功でconsecutive failure countは0へreset)。Ctrl-C等による停止要求後は新しいgameへrequeueせず、`asyncio.run()`の通常のcancellation semanticsで終了します。現在の`websockets==17.0.1`のdefault keepalive/ping-pongをそのまま利用し、concreteなliveness gapが確認されない限り独自heartbeatは追加しません。protocol traceは既存`JsonlProtocolTraceWriter`のappend semanticsをそのまま利用し、trace schema自体は変更しません。
 
 ## 最小comparison protocol
 
