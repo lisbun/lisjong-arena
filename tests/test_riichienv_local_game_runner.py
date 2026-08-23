@@ -3,7 +3,8 @@
 Issue #31でlisjong ``tests/test_local_game_runner.py``からbehavior-preserving
 に移した。patch targetは``lisjong.local_game_runner``から
 ``lisjong_arena.riichienv.local_game_runner``へ変更したが、検証内容は変えて
-いない。
+いない。GameTraceはIssue #43でArena-local``lisjong_arena.game_trace``へ
+切り替えた。
 """
 
 import json
@@ -11,13 +12,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lisjong.game_trace import (
+from lisjong.policy_contract import Seat
+
+from lisjong_arena.game_trace import (
     GameTraceEvent,
     GameTraceLifecycleError,
     GameTraceRecorder,
 )
-from lisjong.policy_contract import Seat
-
 from lisjong_arena.riichienv.local_game_runner import (
     LocalGameResult,
     LocalGameRunner,

@@ -2,7 +2,8 @@
 
 lisjong Policyをconcrete environmentで実行・観測し、controlled /
 reproducibleな条件で評価するArena。execution / observationとevaluationを
-別責務として扱い、単一gameの進行は現行実装では``lisjong``へ委譲する。
+別責務として扱い、単一gameの進行は``lisjong_arena.riichienv.LocalGameRunner``
+がArena-local canonical implementationとして担当する。
 """
 
 from lisjong_arena.artifact import (
