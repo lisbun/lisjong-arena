@@ -118,7 +118,7 @@ server candidate        --projection--> candidate semantic identity
 
 | Action type (mjai) | candidate必須identity(照合に使うfield) | candidateに存在する場合だけ整合確認するfield |
 | --- | --- | --- |
-| `dahai` | tile(`pai`) | actor, tsumogiri(要求しない) |
+| `dahai` | tile(`pai`) | actor |
 | `reach` | (type一致のみ) | actor |
 | `chi` / `pon` / `daiminkan` | called tile(`pai`), consumed tile multiset(`consumed`) | actor, target |
 | `ankan` | tile multiset(`consumed`、4枚) | actor |
@@ -126,6 +126,11 @@ server candidate        --projection--> candidate semantic identity
 | `hora`(ron/tsumo共通) | (type一致のみ) | pai(和了牌), actor, target |
 | `none` | (type一致のみ) | actor |
 | `ryukyoku` | (type一致のみ) | actor |
+
+`dahai`の`tsumogiri`は、candidateに存在してもこの列(整合確認対象)には
+含めない。打牌はcandidate identityの`pai`で一意に定まるため、`tsumogiri`は
+identityでも矛盾判定材料でもない(詳細は後述の「candidateが任意で持つ
+semantic fieldとの整合」を参照)。
 
 `hora`だけは、公式`request_action`例が示す`{"type": "hora"}`という
 minimal candidateを拒否しないために、`pai`をcandidate必須identityに

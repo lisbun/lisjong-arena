@@ -58,6 +58,17 @@ class ValidateAgainstPossibleActionsTest(unittest.TestCase):
             _dahai_response("4m", tsumogiri=True), [{"type": "dahai", "pai": "4m"}]
         )
 
+    def test_candidate_with_opposite_tsumogiri_still_matches_on_pai(self) -> None:
+        """candidateが`tsumogiri`を(公式schemaにはないはずだが)持っており、
+        しかも送信予定responseと逆の値であっても、`pai`が一致していれば
+        受理できること。`tsumogiri`はcandidate identityにも矛盾判定にも
+        使用しない(docs/riichilab-protocol-bridge.md「candidateが任意で持つ
+        semantic fieldとの整合」)。"""
+        validate_against_possible_actions(
+            _dahai_response("5m", tsumogiri=True),
+            [{"type": "dahai", "pai": "5m", "tsumogiri": False}],
+        )
+
     def test_candidate_without_actor_field_matches_normally(self) -> None:
         """candidateへ`actor`が無くても、公式candidate schemaとして正常に
         照合できること(candidateへ一律actorを要求しない)。"""
