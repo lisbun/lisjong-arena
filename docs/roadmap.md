@@ -88,7 +88,7 @@ lisjong.LocalGameRunner
 RiichiEnv
 ```
 
-RiichiLabは段階migration中である。Issue #15でfirst-party ranked entry pointをArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した(lisjong側legacy orchestration copyは`lisbun/lisjong#86`でcleanup済み)。Issue #19では`ValidationResult` / `run_validation()` / validation CLIと、execution profile / credential resolution / common CLI・trace-path compositionのcanonical implementationもArenaへ移し、Arena ranked CLIもこのArena-local compositionへ切り替えた。lisjong側validation / profile / CLI legacy copyは`lisbun/lisjong#89` / PR #90でcleanup済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revision(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationもArenaへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91` / PR #92でcleanup済みであり、Issue #25でArenaのdependency pinもactual cleanup merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期した。これによりlower-level runtimeのphysical duplicateは完全解消済みである。Issue #27では、protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationもArenaへ移し、`riichienv==0.4.8`をArena direct dependencyとして明示した。lisjong側legacy physical copy(`src/lisjong/riichilab_adapter/`)は、Arena migration PR merge後のlisjong cleanup follow-up Issueで削除される予定であり、それまでは残る。
+RiichiLabは段階migration中である。Issue #15でfirst-party ranked entry pointをArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した(lisjong側legacy orchestration copyは`lisbun/lisjong#86`でcleanup済み)。Issue #19では`ValidationResult` / `run_validation()` / validation CLIと、execution profile / credential resolution / common CLI・trace-path compositionのcanonical implementationもArenaへ移し、Arena ranked CLIもこのArena-local compositionへ切り替えた。lisjong側validation / profile / CLI legacy copyは`lisbun/lisjong#89` / PR #90でcleanup済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revision(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationもArenaへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91` / PR #92でcleanup済みであり、Issue #25でArenaのdependency pinもactual cleanup merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期した。これによりlower-level runtimeのphysical duplicateは完全解消済みである。Issue #27では、protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationもArenaへ移し、`riichienv==0.4.8`をArena direct dependencyとして明示した。lisjong側legacy physical copy(`src/lisjong/riichilab_adapter/`)は`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのactual cleanup merge SHAへ同期済みである。
 
 RiichiEnv Adapter、`LocalGameRunner`、`GameTrace`もphysical codeはまだ`lisjong`にある。
 
@@ -143,13 +143,24 @@ lisjong legacy lower-level runtime cleanup    [done: lisjong #91 / PR #92]
 Arena lisjong dependency pin sync             [done: #25]
         |
         v
+Arena protocol-facing decision bridge
+(RiichiLabSeatAdapter / request_action /
+MJAI response / possible-action validation)   [done: #27]
+        |
+        v
+lisjong legacy protocol-facing bridge cleanup [done: lisjong #94 / PR #95]
+        |
+        v
+Arena lisjong dependency pin sync             [done: #29]
+        |
+        v
 resilient / continuous participation
         |
         v
 raw online game record / protocol observation
 ```
 
-Issue #17では`run_ranked_game()`だけをArena canonical implementationへ移し、Issue #19では`run_validation()`とexecution profile / credential / common CLI compositionもArena canonical implementationへ移した。lisjong側のlegacy validation / profile / CLI copyは`lisbun/lisjong#89` / PR #90で除去済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revisionへ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyもArena canonical implementationへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91` / PR #92でcleanup済みであり、Issue #25でactual cleanup merge SHAへのArena dependency pin syncも完了した。lower-level runtimeのphysical duplicateは完全解消済みである。Issue #27では`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validationもArena canonical implementationへ移した(AI-side semanticsであるPolicy / DecisionContext / InternalAction / execute_policy()はArenaへ複製していない)。lisjong側legacy physical copyは、Arena migration PR merge後のlisjong cleanup follow-up Issue / PRで削除され、そのcleanup merge後にArena dependency pinをexact merge SHAへ同期するpost-cleanup pin-sync Issueへ引き継ぐ。
+Issue #17では`run_ranked_game()`だけをArena canonical implementationへ移し、Issue #19では`run_validation()`とexecution profile / credential / common CLI compositionもArena canonical implementationへ移した。lisjong側のlegacy validation / profile / CLI copyは`lisbun/lisjong#89` / PR #90で除去済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revisionへ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyもArena canonical implementationへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91` / PR #92でcleanup済みであり、Issue #25でactual cleanup merge SHAへのArena dependency pin syncも完了した。lower-level runtimeのphysical duplicateは完全解消済みである。Issue #27では`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validationもArena canonical implementationへ移した(AI-side semanticsであるPolicy / DecisionContext / InternalAction / execute_policy()はArenaへ複製していない)。lisjong側legacy physical copyは`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのPR #95のactual cleanup merge SHAへ同期済みである。これによりRiichiLab protocol-facing decision bridgeのphysical duplicateも完全解消済みである。
 
 ### RiichiEnv migration lane
 
@@ -426,6 +437,12 @@ Arena lower-level RiichiLab runtime
 lisjong legacy lower-level runtime cleanup    [done: lisjong #91 / PR #92]
         |
 Arena lisjong dependency pin sync             [done: #25]
+        |
+Arena protocol-facing decision bridge         [done: #27]
+        |
+lisjong legacy protocol-facing bridge cleanup [done: lisjong #94 / PR #95]
+        |
+Arena lisjong dependency pin sync             [done: #29]
         |
 resilient / continuous participation
         |

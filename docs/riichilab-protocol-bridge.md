@@ -230,8 +230,10 @@ projectionできない場合も、同様にpayloadを返さずfail closedする�
 
 ## controlled migration状態
 
-本migration PR時点では、lisjong側`src/lisjong/riichilab_adapter/`の
-legacy physical copyがまだ残っている。「protocol-facing Adapter physical
-duplicate完全解消済み」とは、lisjong cleanup PRのmergeとArenaのdependency
-pin syncが完了するまで記録しない。詳細な段階は`docs/architecture.md`の
-「RiichiLab protocol-facing decision bridge physical migration」節を参照。
+lisjong側`src/lisjong/riichilab_adapter/`のlegacy physical copyは
+`lisbun/lisjong#94` / PR #95で削除済みであり、Arena Issue #29で
+Arenaのdependency pinもこのPR #95のactual cleanup merge SHA
+(`ae9058b2603275f35a01f6859b3cb8250c5bd7bb`)へ同期済みである。これにより
+protocol-facing Adapterのphysical duplicateは完全解消済みである。詳細な
+段階は`docs/architecture.md`の「RiichiLab protocol-facing decision bridge
+physical migration」節を参照。
