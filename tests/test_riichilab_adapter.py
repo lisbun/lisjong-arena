@@ -22,13 +22,13 @@ from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy
 from lisjong.policy_contract import PassAction, PolicyActionValidationError, Seat
-from lisjong.riichienv_adapter import (
+from riichienv import RiichiEnv
+
+from lisjong_arena.riichienv.adapter import (
     AdapterSyncError,
     tile_from_physical_id,
     tile_to_mjai,
 )
-from riichienv import RiichiEnv
-
 from lisjong_arena.riichilab.adapter import RiichiLabSeatAdapter, SendReadyResponse
 from lisjong_arena.riichilab.adapter_errors import (
     PossibleActionsValidationError,

@@ -233,15 +233,15 @@ Issue #23で、RiichiLab lower-level runtime(errors / Session / Transport / prot
 
 Issue #31で`LocalGameRunner` / `LocalGameResult`をArena-local canonical implementationへ移し、lisjong側legacy copyは`lisbun/lisjong#98` / PR #99で削除した。Issue #37でArenaのexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期したため、LocalGameRunner pillarのphysical duplicateも完全解消済みである。RiichiEnv AdapterとGameTraceは引き続きTEMPORARYにlisjong側へ残る。
 
-### Why RiichiEnv Adapter moves as a target
+### Why RiichiEnv Adapter moved (Issue #39)
 
-現在のRiichiEnv Adapterは、`Observation` / RiichiEnv Action / materialized state等のenvironment-specific representationを読み、lisjong-owned `DecisionContext` / `InternalAction`へprojection / mappingするconsumerである。
+RiichiEnv Adapterは、`Observation` / RiichiEnv Action / materialized state等のenvironment-specific representationを読み、lisjong-owned `DecisionContext` / `InternalAction`へprojection / mappingするconsumerである。
 
-PolicyInput / DecisionContextの意味自体はlisjongに残すが、external parsing、state materialization、projection、external action mapping、legality revalidationはexecution integration responsibilityとしてArena targetとする。
+PolicyInput / DecisionContextの意味自体はlisjongに残すが、external parsing、state materialization、projection、external action mapping、legality revalidationはexecution integration responsibilityとしてArena targetである。Issue #39でArena-local canonical + physical implementation(`lisjong_arena.riichienv.adapter`)へ移行し、`LocalGameRunner` / `RiichiLabSeatAdapter` / MJAI response conversion / possible-actions validationのすべてのArena active consumerをArena-local implementationへ切り替えた。移行はbehavior-preserving physical migrationであり、materialized state、PolicyInput projection、Action mapping、exception hierarchyのruntime semanticsは変更していない。lisjong側legacy physical copy(`lisjong.riichienv_adapter`)のcleanupと、cleanup後のArena exact pin同期はfollow-up Issueである。
 
 ### Why LocalGameRunner moved (Issue #31)
 
-`LocalGameRunner`はRiichiEnv lifecycle、four-seat Policy execution、Adapter runtime state、Action mapping、game loop、GameTrace publishingを束ねている。AI decision logicを持たず、concrete environment executionをorchestrateするためArena execution / observation targetであり、Issue #31でArena-local canonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)へ移行した。移行はbehavior-preserving physical migrationであり、`RiichiEnv(seed=seed, game_mode=game_mode)` / `env.reset()` / `env.done()`によるloop契約、全seat action構築後だけの`env.step()`呼び出し、one-shot実行、`max_steps`到達時の`StepLimitExceededError`、trace publishingのordered / incremental / exact-once契約は変更していない。lisjong側legacy implementationは`lisbun/lisjong#98` / PR #99で削除され、Issue #37でArena pinもcleanup revisionへ同期済みである。RiichiEnv Adapter(`lisjong.riichienv_adapter`)とGameTrace(`lisjong.game_trace`)はまだmigrationせず、Arena-local `LocalGameRunner`から一時的にconsumeする。
+`LocalGameRunner`はRiichiEnv lifecycle、four-seat Policy execution、Adapter runtime state、Action mapping、game loop、GameTrace publishingを束ねている。AI decision logicを持たず、concrete environment executionをorchestrateするためArena execution / observation targetであり、Issue #31でArena-local canonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)へ移行した。移行はbehavior-preserving physical migrationであり、`RiichiEnv(seed=seed, game_mode=game_mode)` / `env.reset()` / `env.done()`によるloop契約、全seat action構築後だけの`env.step()`呼び出し、one-shot実行、`max_steps`到達時の`StepLimitExceededError`、trace publishingのordered / incremental / exact-once契約は変更していない。lisjong側legacy implementationは`lisbun/lisjong#98` / PR #99で削除され、Issue #37でArena pinもcleanup revisionへ同期済みである。RiichiEnv AdapterはIssue #39でArena-local implementation(`lisjong_arena.riichienv.adapter`)へ移行済みであり、`LocalGameRunner`はこれをconsumeする。GameTrace(`lisjong.game_trace`)はまだmigrationせず、Arena-local `LocalGameRunner`から一時的にconsumeする。
 
 ### Why RiichiLab integration moves as a target
 
@@ -258,12 +258,12 @@ lisjong-arena evaluation
 lisjong_arena.riichienv.local_game_runner.LocalGameRunner
         |
         v
-RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
+RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
 ```
 
-`lisjong-arena`の`pyproject.toml`は、`riichienv==0.4.8`をArena direct dependencyとして持つ。Issue #31でAABB / ABBB evaluation execution pathの`LocalGameRunner`もこのdirect dependencyを使うArena-local実装(`lisjong_arena.riichienv.local_game_runner`)へ移行し、RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`、Issue #27)と同じ`riichienv==0.4.8`を共有する。RiichiEnv game lifecycle自体を進めるRiichiEnv Adapter(`lisjong.riichienv_adapter`)とGameTrace(`lisjong.game_trace`)はTEMPORARYにlisjong側へ残り、Arena-local `LocalGameRunner`から一時的にconsumeする。
+`lisjong-arena`の`pyproject.toml`は、`riichienv==0.4.8`をArena direct dependencyとして持つ。Issue #31でAABB / ABBB evaluation execution pathの`LocalGameRunner`もこのdirect dependencyを使うArena-local実装(`lisjong_arena.riichienv.local_game_runner`)へ移行し、RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`、Issue #27)と同じ`riichienv==0.4.8`を共有する。RiichiEnv game lifecycle自体を進めるRiichiEnv AdapterはIssue #39でArena-local実装(`lisjong_arena.riichienv.adapter`)へ移行済みである。GameTrace(`lisjong.game_trace`)はTEMPORARYにlisjong側へ残り、Arena-local `LocalGameRunner`から一時的にconsumeする。
 
-RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationを、Issue #31で`LocalGameRunner` / `LocalGameResult`のcanonical implementationをArenaへ移した。RiichiEnv Adapter、GameTraceは現在も`lisjong`にある。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのdependency pinもcleanup merge SHA `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。
+RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationを、Issue #31で`LocalGameRunner` / `LocalGameResult`のcanonical implementationを、Issue #39でRiichiEnv Adapter(`lisjong_arena.riichienv.adapter`)のcanonical implementationをArenaへ移した。GameTraceは現在も`lisjong`にある。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのdependency pinもcleanup merge SHA `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)のcleanupと、cleanup後のArena exact pin同期はfollow-up Issueである。
 
 このcurrent stateはtarget ownershipを表さない。migration完了まではdocumentation上でcurrent / targetを明示的に区別する。
 
@@ -322,13 +322,16 @@ Arena側canonical implementationへ移した。
 Arena Sessionは、それまでtemporaryに利用していた
 `lisjong.riichilab_adapter.RiichiLabSeatAdapter`へのconsumer dependencyを
 解消し、Arena-local `RiichiLabSeatAdapter`へ切り替えた。Arena-local
-`RiichiLabSeatAdapter`自体は、`Policy` / `Seat` / `execute_policy()` /
-`build_decision()` / `SeatMaterializedState` / `RiichiEnvActionMappingSession`
-等のlisjong public API(`lisjong.policy_contract` / `lisjong.riichienv_adapter`)を
-引き続きconsumerとして利用する。`DecisionContext` / `InternalAction` /
-`execute_policy()` semantics、RiichiEnv legal Action <-> InternalAction
-mapping、Policy result legality validationはこのmigrationで複製・
-再実装していない。
+`RiichiLabSeatAdapter`自体は、当時`Policy` / `Seat` / `execute_policy()`等の
+lisjong public API(`lisjong.policy_contract`)と、`build_decision()` /
+`SeatMaterializedState` / `RiichiEnvActionMappingSession`等の
+`lisjong.riichienv_adapter`をconsumerとして利用していた。これらのRiichiEnv
+Adapter symbolはIssue #39でArena-local canonical implementation
+(`lisjong_arena.riichienv.adapter`)へ移行済みであり、`RiichiLabSeatAdapter`は
+現在このArena-local implementationを利用する。`DecisionContext` /
+`InternalAction` / `execute_policy()` semantics、RiichiEnv legal Action
+<-> InternalAction mapping、Policy result legality validationはこの
+migrationで複製・再実装していない。
 
 `RiichiLabAdapterError`は、既存Arena lower-level client error hierarchy
 (`RiichiLabClientError`)へreparentせず、直接`Exception`を継承する

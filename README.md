@@ -85,7 +85,7 @@ lisjongが生成したPolicy-internal analysisをArenaが将来transport / persi
 
 ### Current implementation: Policy-vs-Policy evaluation
 
-現在のAABB / ABBBは、Arena-localの`lisjong_arena.riichienv.local_game_runner.LocalGameRunner`を使ってPolicy比較を成立させます(Issue #31)。RiichiEnv Adapter(`lisjong.riichienv_adapter`)とGameTrace(`lisjong.game_trace`)はまだ`lisjong`にあるTEMPORARY dependencyです。
+現在のAABB / ABBBは、Arena-localの`lisjong_arena.riichienv.local_game_runner.LocalGameRunner`を使ってPolicy比較を成立させます(Issue #31)。RiichiEnv Adapterは Issue #39でArena-localの`lisjong_arena.riichienv.adapter`へcanonical physical migrationしました。GameTrace(`lisjong.game_trace`)はまだ`lisjong`にあるTEMPORARY dependencyです。
 
 ```text
 lisjong-arena evaluation
@@ -94,10 +94,10 @@ lisjong-arena evaluation
 lisjong_arena.riichienv.LocalGameRunner
         |
         v
-RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
+RiichiEnv (+ Arena-local RiichiEnv Adapter + TEMPORARY lisjong GameTrace)
 ```
 
-単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でTEMPORARYに `lisjong.riichienv_adapter` と `lisjong.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。
+単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でArena-localの `lisjong_arena.riichienv.adapter` とTEMPORARYな `lisjong.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。lisjong側legacy `lisjong.riichienv_adapter` physical copyのcleanupと、そのcleanup後のArena exact lisjong pin同期はfollow-up Issueです。
 
 `LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv Adapter / GameTraceは引き続きcurrent implementationのTEMPORARY dependencyであり、target ownershipではありません。
 

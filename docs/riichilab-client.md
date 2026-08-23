@@ -10,7 +10,10 @@ behavior-preservingに引き継いだものである。
 project-wideなrepository責務は[`lisjong-project`](https://github.com/lisbun/lisjong-project)
 を正本とする。Policy判断、Observation変換、Action mappingといった
 AI-side semanticsの詳細は、引き続き`lisjong`側public API
-(`lisjong.policy_contract` / `lisjong.riichienv_adapter`)を正本とする。
+(`lisjong.policy_contract`)を正本とする。RiichiEnv Adapter
+(`lisjong_arena.riichienv.adapter`)はIssue #39でArena-local canonical
+implementationへ移行済みであり、external environment projectionの
+current contractはそちらを正本とする。
 `RiichiLabSeatAdapter` compositionと`possible_actions` semantic
 validationのcurrent contractはIssue #27でArena側へ移り、
 [`docs/riichilab-protocol-bridge.md`](riichilab-protocol-bridge.md)を

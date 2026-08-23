@@ -32,13 +32,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from lisjong.policy_contract import Policy, Seat, execute_policy
-from lisjong.riichienv_adapter import (
+
+from lisjong_arena.riichienv.adapter import (
     RiichiEnvActionMappingSession,
     SeatMaterializedState,
     build_decision,
     seat_from_player_index,
 )
-
 from lisjong_arena.riichilab.adapter_errors import SeatMismatchError
 from lisjong_arena.riichilab.mjai_response import build_mjai_response
 from lisjong_arena.riichilab.possible_action_validation import (

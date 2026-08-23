@@ -5,9 +5,10 @@
 独立したdecisionとして処理する。Policy判断と外部Action変換は再実装せず、
 ``execute_policy()``と``build_decision()``が返すpaired mappingを利用する。
 
-Issue #31時点ではArena-local canonical implementationだが、RiichiEnv Adapter
-(``lisjong.riichienv_adapter``)とGameTrace(``lisjong.game_trace``)はまだ
-lisjongに残るTEMPORARY dependencyである。
+Issue #31時点ではArena-local canonical implementationだが、GameTrace
+(``lisjong.game_trace``)はまだlisjongに残るTEMPORARY dependencyである。
+RiichiEnv Adapterは Issue #39でArena-local canonical implementation
+(``lisjong_arena.riichienv.adapter``)へ移行済みである。
 """
 
 import json
@@ -16,14 +17,15 @@ from dataclasses import dataclass
 
 from lisjong.game_trace import GameTraceEvent, GameTraceSink
 from lisjong.policy_contract import Policy, Seat, execute_policy
-from lisjong.riichienv_adapter import (
+from riichienv import Action as RiichiEnvAction
+from riichienv import Observation, RiichiEnv
+
+from lisjong_arena.riichienv.adapter import (
     RiichiEnvActionMappingSession,
     SeatMaterializedState,
     build_decision,
     seat_from_player_index,
 )
-from riichienv import Action as RiichiEnvAction
-from riichienv import Observation, RiichiEnv
 
 
 class LocalGameRunnerError(Exception):

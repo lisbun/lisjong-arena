@@ -21,8 +21,8 @@ from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy
 from lisjong.policy_contract import PassAction, PolicyActionValidationError
-from lisjong.riichienv_adapter import AdapterSyncError
 
+from lisjong_arena.riichienv.adapter import AdapterSyncError
 from lisjong_arena.riichilab.adapter import RiichiLabSeatAdapter
 from lisjong_arena.riichilab.adapter_errors import (
     PossibleActionsValidationError,

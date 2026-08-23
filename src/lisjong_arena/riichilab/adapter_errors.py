@@ -3,8 +3,8 @@
 request_action入力validation、Observation deserialize、seat-bound bridge
 instanceのseat照合、送信前possible_actions semantic validation、MJAI response
 正規化という責務境界ごとに、呼び出し側が原因追跡できる最小限の例外型だけを
-定義する。`lisjong.riichienv_adapter` / `lisjong.policy_contract`が送出する
-例外はここで変更・再wrapせず、そのまま伝播させる。
+定義する。`lisjong_arena.riichienv.adapter` / `lisjong.policy_contract`が
+送出する例外はここで変更・再wrapせず、そのまま伝播させる。
 
 このhierarchyは、lisjong Issue #38/#39で確立したcontractをbehavior-
 preservingにArenaへcanonical physical migrationしたものである(Arena Issue

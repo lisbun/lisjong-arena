@@ -54,8 +54,8 @@ contractをbehavior-preservingにArenaへphysical migrationしたものである
 from collections.abc import Mapping, Sequence
 
 from lisjong.policy_contract.tile import Tile, tile_sort_key
-from lisjong.riichienv_adapter import tile_from_mjai
 
+from lisjong_arena.riichienv.adapter import tile_from_mjai
 from lisjong_arena.riichilab.adapter_errors import PossibleActionsValidationError
 
 # `pai`(識別に使う牌1枚)をidentityへ持つAction type。`hora`はここに含めない

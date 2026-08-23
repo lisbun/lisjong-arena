@@ -27,9 +27,9 @@ from lisjong.policy_contract import (
     RonAction,
     TsumoAction,
 )
-from lisjong.riichienv_adapter import tile_to_mjai
 from riichienv import Action as RiichiEnvAction
 
+from lisjong_arena.riichienv.adapter import tile_to_mjai
 from lisjong_arena.riichilab.adapter_errors import ProtocolConversionError
 
 
