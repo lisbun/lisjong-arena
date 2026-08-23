@@ -5,13 +5,16 @@
 とbaseline 1体を固定seedごとに``[A, B, B, B]`` -> ``[B, A, B, B]`` ->
 ``[B, B, A, B]`` -> ``[B, B, B, A]``へrotationし、各gameをArena-localの
 ``lisjong_arena.riichienv.local_game_runner.LocalGameRunner``で
-``game_mode="4p-red-single"``として実行する。
+``game_mode="4p-red-single"``として実行する。serial実行は
+``run_single_round_evaluation()``、``(seed, rotation)``単位のlocal process
+並列実行は``run_single_round_evaluation_parallel()``が担い、どちらも同じ
+result / aggregation契約を使う。
 
 ``4p-red-single``はこのprotocol自身のinvariantであり、``ComparisonPlan``の
 genericな``game_mode``のようにcallerが指定できるoptionではない。実行経路は
 
     lisjong-arena evaluation -> lisjong-arena riichienv.LocalGameRunner
-        -> RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
+        -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
 
 であり、このmoduleは``riichienv``をimportしない。
 """
@@ -20,6 +23,13 @@ from collections.abc import Mapping
 
 from lisjong.policy_contract import Policy, Seat
 
+from lisjong_arena._parallel_execution import (
+    GameJob,
+    PolicyFactoryNotSerializableError,
+    check_policy_spec_serializable,
+    run_game_jobs,
+    validate_max_workers,
+)
 from lisjong_arena.model import (
     SINGLE_ROUND_GAME_MODE,
     SINGLE_ROUND_ROTATION_COUNT,
@@ -242,10 +252,95 @@ def run_single_round_evaluation(
     )
 
 
+def run_single_round_evaluation_parallel(
+    plan: SingleRoundEvaluationPlan, *, max_workers: int
+) -> SingleRoundEvaluationResult:
+    """``run_single_round_evaluation()``と同一semanticsで、local process poolを
+    使って並列実行する。
+
+    parallelization unitは``(seed, rotation)``の1 gameであり、1 seedの4
+    rotationを1 workerへまとめて渡すことはしない。workerの完了順序に関わらず、
+    最終raw resultは``run_single_round_evaluation()``と同じ``seed入力順 ->
+    rotation 0..3``へcanonicalizeする。Policy instanceは各job・各seatについて
+    worker process内部でfactoryからfresh生成し、parent processでは生成しない。
+
+    ``plan.candidate`` / ``plan.baseline``の``factory``は、spawn worker
+    processからimport可能なtop-level callableでなければならない。lambdaや
+    local closureのような、process間serialize不能なfactoryはsilentにserial
+    実行へfallbackせず``PolicyFactoryNotSerializableError``でfail closedする
+    （``run_single_round_evaluation()``自体のfactory contractはこの制約で
+    狭めない）。
+
+    途中で1 gameでも失敗した場合は``run_single_round_evaluation()``と同様に
+    ``SingleRoundEvaluationError``を送出し、成功したgameだけのpartialな結果は
+    返さない。
+    """
+    if not isinstance(plan, SingleRoundEvaluationPlan):
+        raise TypeError("plan must be a SingleRoundEvaluationPlan")
+    validate_max_workers(max_workers)
+    check_policy_spec_serializable(plan.candidate)
+    check_policy_spec_serializable(plan.baseline)
+
+    jobs: list[GameJob] = []
+    for seed in plan.seeds:
+        for rotation in range(ROTATION_COUNT):
+            assignment = _seat_assignment(plan, rotation)
+            jobs.append(
+                GameJob(
+                    seed=seed,
+                    rotation=rotation,
+                    assignment=assignment,
+                    game_mode=GAME_MODE,
+                    max_steps=plan.max_steps,
+                )
+            )
+
+    outcomes = run_game_jobs(jobs, max_workers=max_workers)
+
+    game_results: list[SingleRoundGameResult] = []
+    for seed in plan.seeds:
+        for rotation in range(ROTATION_COUNT):
+            outcome = outcomes[(seed, rotation)]
+            if outcome.error_text is not None:
+                raise SingleRoundEvaluationError(
+                    "single game execution failed in a worker process",
+                    seed=seed,
+                    rotation=rotation,
+                ) from RuntimeError(outcome.error_text)
+            candidate_seat = Seat(rotation)
+            game_results.append(
+                _build_game_result(
+                    outcome.result,
+                    seed=seed,
+                    rotation=rotation,
+                    candidate_seat=candidate_seat,
+                )
+            )
+
+    frozen_results = tuple(game_results)
+    expected_count = ROTATION_COUNT * len(plan.seeds)
+    if len(frozen_results) != expected_count:
+        raise SingleRoundEvaluationError(
+            f"expected {expected_count} raw game results but got {len(frozen_results)}",
+            seed=plan.seeds[-1],
+            rotation=ROTATION_COUNT - 1,
+        )
+
+    return SingleRoundEvaluationResult(
+        plan=plan,
+        game_results=frozen_results,
+        candidate_metrics=aggregate_candidate_metrics(
+            plan.candidate.identity, frozen_results
+        ),
+    )
+
+
 __all__ = [
     "GAME_MODE",
     "ROTATION_COUNT",
+    "PolicyFactoryNotSerializableError",
     "SingleRoundEvaluationError",
     "aggregate_candidate_metrics",
     "run_single_round_evaluation",
+    "run_single_round_evaluation_parallel",
 ]

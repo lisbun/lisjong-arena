@@ -38,6 +38,7 @@ class PackageTest(unittest.TestCase):
                 "ComparisonPlan",
                 "ComparisonResult",
                 "ExecutionProvenance",
+                "PolicyFactoryNotSerializableError",
                 "PolicyMetrics",
                 "PolicySpec",
                 "ROTATION_COUNT",
@@ -51,7 +52,9 @@ class PackageTest(unittest.TestCase):
                 "SingleRoundGameResult",
                 "load_comparison_artifact",
                 "run_comparison",
+                "run_comparison_parallel",
                 "run_single_round_evaluation",
+                "run_single_round_evaluation_parallel",
                 "save_comparison_artifact",
             ],
         )
