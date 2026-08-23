@@ -42,8 +42,10 @@ PR #92で削除された。Arena Issue #25でdependency pinもPR #92のactual
 merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期したため、
 lower-level runtimeのphysical duplicateは完全解消済みである。
 `lisjong.riichilab_adapter`(protocol-facing decision bridgeのlegacy
-physical copy)は、Issue #27のArena migration PR merge後、lisjong側
-cleanup follow-up Issueで削除される予定であり、それまでは残る。
+physical copy)は、`lisbun/lisjong#94` / PR #95で削除済みである。Arena
+Issue #29でdependency pinもこのPR #95のactual cleanup merge SHAへ同期済み
+であり、protocol-facing decision bridgeのphysical duplicateも完全解消済み
+である。
 
 現在の境界は次のとおりである。
 
@@ -368,9 +370,8 @@ lower-level runtime testはArena側で保持する。
 
 `lisjong`側のArena-owned `tests/test_riichilab_client_*.py`は
 `lisbun/lisjong#91` / PR #92で削除済みである。lisjong側
-`tests/test_riichilab_adapter.py`等のprotocol-facing legacy testは、
-Issue #27のArena migration PR merge後、lisjong cleanup follow-up Issueで
-削除される予定であり、それまでは残る。lisjong側`test_policy_execution.py`
+`tests/test_riichilab_adapter.py`等のprotocol-facing legacy testも、
+`lisbun/lisjong#94` / PR #95で削除済みである。lisjong側`test_policy_execution.py`
 等のAI-side semantics regressionはlisjongに残り続ける。
 
 ## 今後のmigration
@@ -380,9 +381,9 @@ Issue #27のArena migration PR merge後、lisjong cleanup follow-up Issueで
 - `RiichiLabSeatAdapter` / possible-action validationのphysical
   migrationはIssue #27で完了した。詳細contractは
   [`docs/riichilab-protocol-bridge.md`](riichilab-protocol-bridge.md)を正本とする
-- lisjong側legacy physical copy(`src/lisjong/riichilab_adapter/`)の除去と
-  そのexact dependency pin syncは、lisjong cleanup follow-up Issue /
-  Arena post-cleanup pin-sync Issueで扱う本書のscope外の後続作業である
+- lisjong側legacy physical copy(`src/lisjong/riichilab_adapter/`)の除去は
+  `lisbun/lisjong#94` / PR #95で、そのexact dependency pin syncはArena
+  Issue #29で、それぞれ完了済みである
 
 Issue #23ではretry / reconnect / requeue / continuous participation、raw
 online game record、Policy / DecisionContext / InternalAction変更、
