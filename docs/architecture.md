@@ -224,6 +224,7 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | RiichiEnv external Action mapping / revalidation | Arena | Arena / lisjong legacy removed (lisjong #100 / PR #101) | Arena | migration complete; pin synced (#41) |
 | `LocalGameRunner` / `LocalGameResult` | Arena | Arena / lisjong legacy removed (#98 / PR #99) | Arena | migration complete; pin synced (#37) |
 | `GameTrace` / `GameTraceSink` / recorder | Arena | Arena / lisjong legacy removed (lisjong #102 / PR #103) | Arena | migration complete; pin synced (#45) |
+| RiichiLab ranked resilient / continuous participation runner | Arena | Arena canonical + physical (#47) | Arena | canonical + physical implemented (#47); `run_ranked_game()` primitive unchanged |
 | AABB / ABBB evaluation protocol | Arena | Arena | Arena | KEEP |
 | evaluation metrics / artifact / provenance | Arena | Arena | Arena | KEEP |
 
@@ -445,6 +446,24 @@ Issue #45で、Arenaのlisjong dependency pinを`lisbun/lisjong#102` / PR #103�
 
 このexact pin syncにより、`lisjong_arena.game_trace`はcanonicalかつsole physical implementationとなり、GameTrace pillarのphysical duplicateは完全解消した。LocalGameRunner、RiichiEnv Adapter、GameTraceの各pillarはCOMPLETEである。ただしADR 0002全体およびexternal execution / observation migration全体の完了は、別途fresh project-wide inventoryを行うまで宣言しない。
 
+### RiichiLab ranked resilient / continuous participation runner (Issue #47)
+
+Issue #47で、`RankedGameResult` / `run_ranked_game()`をone-game primitiveのまま維持し、その上位layerとしてresilient / continuous ranked runner(`lisjong_arena.riichilab.continuous_ranked`)をArena-local canonical + physical implementationとして追加した。
+
+```text
+Continuous Ranked Runner (lisjong_arena.riichilab.continuous_ranked)
+        |
+        v
+run_ranked_game()  <- 変更なし、one-game primitiveのまま
+        |
+        +-- success -> profile.policy_factory()でfresh Policyを生成し次のgameへ
+        `-- TransportError(UnexpectedDisconnectErrorを含む) -> bounded backoff -> retry
+```
+
+`run_ranked_game()`のsignature・one-game contract(1 connection -> 1 hanchan -> `end_game` -> return/disconnect)は変更していない。retry / reconnect / automatic requeue / multiple-game loop / cross-game stateはすべてこの上位layerだけが持ち、primitive側へは混入させていない。
+
+retryするのは`TransportError`階層だけで、`ProtocolError` / `ProtocolTraceError` / profile・credential failure / Policy・Adapter例外・その他unexpected exceptionはcatch-allせずそのまま伝播させる。backoffは`5s -> 10s -> 20s -> 40s -> 60s cap`のmodule-local constantで、連続5 failureに到達すると追加requeueを停止する(成功でconsecutive failure countは0へreset)。停止要求後は新しい`policy_factory()`を呼ばない。`run_continuous_ranked()`自体は`asyncio.CancelledError`をcatchせず標準のasyncio cancellation semanticsのままpropagateさせ、Ctrl-Cを正常終了として扱うUXは`asyncio.run()`が`KeyboardInterrupt`を再送出する`_run_cli()`のboundaryだけで実装する。既存`websockets==17.0.1`のdefault keepalive/ping-pongをそのまま利用し、custom heartbeatやsame-game resumeは追加していない。既存`JsonlProtocolTraceWriter`のappend semanticsをそのまま各`run_ranked_game()` invocationへ渡し、trace schema自体は変更していない。
+
 ## Target architecture
 
 ```text
@@ -550,7 +569,7 @@ RiichiEnv等のexternal dependencyをArenaへ追加することはtarget archite
 1. repository-local architecture確定
 2. RiichiLab execution integrationを段階移管
 3. Arena側one-game RiichiLab executionを成立
-4. resilient / continuous participationを追加
+4. resilient / continuous participationを追加(Arena-local `lisjong_arena.riichilab.continuous_ranked`、#47で完了)
 5. RiichiEnv Adapter / LocalGameRunner / GameTraceを段階移管(`LocalGameRunner` pillarは#31/#37で完了。RiichiEnv Adapter pillarは#39/lisjong #100/#41で完了。GameTraceは引き続きTEMPORARY)
 6. temporary compatibilityを除去
 ```

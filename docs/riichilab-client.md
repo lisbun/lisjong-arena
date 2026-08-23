@@ -101,6 +101,10 @@ src/lisjong_arena/riichilab/
     cli.py          common CLI引数解析 / trace-path解決
     ranked.py       RankedGameResult / run_ranked_game() / ranked CLI
     validation.py   ValidationResult / run_validation() / validation CLI
+    continuous_ranked.py
+                    resilient / continuous ranked runner(Issue #47)。
+                    run_ranked_game()を変更せずその上位layerとして
+                    retry / backoff / requeue / graceful shutdownを持つ
 ```
 
 `lisjong_arena.riichilab` package rootへ大量のeager re-exportは追加しない。
@@ -228,7 +232,10 @@ Arena-local lower-level runtimeはmid-game reconnectを行わない。
 unexpected disconnectは成功扱いせず`UnexpectedDisconnectError`とする。
 
 rankedのretry / backoff / requeue / continuous participationはArena側の
-上位orchestration責務であり、本書のscopeには含まない。
+上位orchestration責務であり、本書のscopeには含まない。この上位orchestration
+(`lisjong_arena.riichilab.continuous_ranked`、Issue #47)は`run_ranked_game()`
+のone-game contractを変更せず、`TransportError`階層だけを対象にした
+bounded backoff付きretryとしてこのmoduleの外側で実装されている。
 
 ## Token境界
 
@@ -370,6 +377,11 @@ lower-level runtime testはArena側で保持する。
 - `tests/test_riichilab_ranked.py` / `tests/test_riichilab_profile.py`:
   Arena-owned orchestration / CLI / profile
 - `tests/test_riichilab_validation.py`: 同上(validation)
+- `tests/test_riichilab_continuous_ranked.py`: resilient / continuous
+  ranked runner(Issue #47)。success loop、`TransportError`階層だけの
+  retry / bounded backoff、failure budget、fail closed、graceful
+  shutdown、secret safetyをfake `run_ranked_game()` boundaryで検証する
+  (live RiichiLab非依存)
 
 `lisjong`側のArena-owned `tests/test_riichilab_client_*.py`は
 `lisbun/lisjong#91` / PR #92で削除済みである。lisjong側
