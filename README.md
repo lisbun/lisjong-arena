@@ -99,7 +99,7 @@ RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
 
 単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でTEMPORARYに `lisjong.riichienv_adapter` と `lisjong.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。
 
-`LocalGameRunner` / `LocalGameResult`のcontract ownerとcanonical physicalは共にArenaになりました。lisjong側にはlegacy physical copyがcleanup pending(Issue #31 cross-link先のlisjong cleanup Issue)として残っています。RiichiEnv Adapter / GameTraceは引き続きcurrent implementationのTEMPORARY dependencyであり、target ownershipではありません。
+`LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv Adapter / GameTraceは引き続きcurrent implementationのTEMPORARY dependencyであり、target ownershipではありません。
 
 ### Target architecture
 
@@ -134,7 +134,7 @@ RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
        +----------------------------------+
 ```
 
-RiichiEnv Adapter、`GameTrace`はtarget ownershipをArena execution / observationへ置き、後続Issueで段階移管します。`LocalGameRunner` / `LocalGameResult`はIssue #31でcanonical + physical migrationが完了しました。RiichiLab lower-level runtime(errors / Session / Transport / protocol trace)はIssue #23で、RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation)はIssue #27で、それぞれcanonical + physical migrationが完了しました。lisjong側legacy physical copyはlisjong Issue #94 / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのactual cleanup merge SHAへ同期済みです。`LocalGameRunner`のlisjong側legacy physical copyはcleanup pendingで、Arena pin sync前は完全解消と扱いません。`DecisionContext` / `InternalAction` / `execute_policy()`等のcontract semanticsはlisjongに残ります。
+RiichiEnv Adapter、`GameTrace`はtarget ownershipをArena execution / observationへ置き、後続Issueで段階移管します。`LocalGameRunner` / `LocalGameResult`はIssue #31でcanonical + physical migrationを行い、lisjong #98 / PR #99のlegacy cleanupとArena #37のexact pin syncまで完了したため、LocalGameRunner pillarのphysical migrationは完了しています。RiichiLab lower-level runtime(errors / Session / Transport / protocol trace)はIssue #23で、RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation)はIssue #27で、それぞれcanonical + physical migrationが完了しました。lisjong側protocol-facing bridge legacy physical copyはlisjong Issue #94 / PR #95で削除済みであり、Issue #29でArenaのdependency pinもそのactual cleanup merge SHAへ同期済みです。`DecisionContext` / `InternalAction` / `execute_policy()`等のcontract semanticsはlisjongに残ります。
 
 ## RiichiLab ranked / validation one-game execution
 
@@ -473,9 +473,9 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 ### lisjong dependency
 
-`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは`lisbun/lisjong#94` / PR #95のactual cleanup merge commit `ae9058b2603275f35a01f6859b3cb8250c5bd7bb`です(Arena Issue #29で同期)。
+`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは`lisbun/lisjong#98` / PR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`です(Arena Issue #37で同期)。
 
-RiichiEnvは `lisjong` の依存としても入ります。AABB / ABBB evaluation execution pathでは、`lisjong-arena`自身はRiichiEnvへ直接依存しません。一方RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)は、Arena Issue #27で`riichienv==0.4.8`をArena direct dependencyとして明示的に使用します(RiichiEnv game lifecycle自体はlisjong側RiichiEnv Adapterに残ります)。target architectureではArena execution / observationからRiichiEnv等へ直接依存することをさらに許容しますが、その先のactual dependency追加はconcrete migration Issueで行います。
+AABB / ABBB evaluation execution pathとRiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)はいずれも、Arena direct dependencyの`riichienv==0.4.8`を使用します。RiichiEnv Adapter自体はまだlisjong側へTEMPORARYに残ります。target architectureではArena execution / observationへRiichiEnv Adapterも段階移管しますが、そのactual migrationはconcrete migration Issueで行います。
 
 ### 品質確認
 

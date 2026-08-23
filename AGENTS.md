@@ -83,14 +83,14 @@ RiichiEnv (+ TEMPORARY lisjong RiichiEnv Adapter / GameTrace)
 ```
 
 - `Seat` 等のAI-side contractは `lisjong.policy_contract` を使用する
-- `LocalGameRunner` / `LocalGameResult`はIssue #31でArena-local canonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)へ移行済みである。RiichiEnv game lifecycle自体を進めるRiichiEnv Adapter(`lisjong.riichienv_adapter`)とGameTrace(`lisjong.game_trace`)はまだTEMPORARYにlisjong側へ残っており、Arena-local `LocalGameRunner`から一時的にconsumeする
+- `LocalGameRunner` / `LocalGameResult`はIssue #31でArena-local canonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)へ移行済みである。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Issue #37でArenaのexact lisjong pinをcleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期したため、このpillarのphysical duplicateは完全解消済みである。RiichiEnv game lifecycle自体を進めるRiichiEnv Adapter(`lisjong.riichienv_adapter`)とGameTrace(`lisjong.game_trace`)はまだTEMPORARYにlisjong側へ残っており、Arena-local `LocalGameRunner`から一時的にconsumeする
 - AABB / ABBB evaluation execution pathでは、Arena-local `LocalGameRunner`経由で`riichienv==0.4.8`をArena direct dependencyとして使用する。一方RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)も、Issue #27で同じ`riichienv==0.4.8`をArena direct dependencyとして明示的に使用する
 - RiichiLab ranked first-party CLIと`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestrationはArenaにある
 - RiichiLab ranked / validation orchestration、profile / credential / CLI composition、client errors / Session / Transport / protocol traceはArena-local canonical + physical implementationである
 - lisjong側legacy lower-level runtime copyは`lisbun/lisjong#91` / PR #92で削除済みであり、Issue #25でArenaのdependency pinもcleanup merge SHAへ同期済みである
 - `RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validationは、Issue #27でArena-local canonical implementationへ移行済みである(`lisjong_arena.riichilab.adapter` / `request_action` / `mjai_response` / `possible_action_validation` / `adapter_errors`)。lisjong側legacy physical copyは`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのactual cleanup merge SHAへ同期済みである
-- `LocalGameRunner` / `LocalGameResult`のlisjong側legacy physical copyはcleanup pendingである(Issue #31 / cross-linkされたlisjong cleanup Issue)。RiichiEnv Adapter、`GameTrace`はまだ`lisjong`に存在する
-- `lisjong` dependencyは再現可能性のためrelease tagが出るまでfull commit SHAへpinする。本Issueではこのpinを変更しない
+- RiichiEnv Adapter、`GameTrace`はまだ`lisjong`に存在する
+- `lisjong` dependencyは再現可能性のためrelease tagが出るまでfull commit SHAへpinする。現在のpinは`c43588e27c2938daf4ff10cd8d89ed89d9da2e88`である
 
 これは**current physical placement**であり、恒久ownershipではない。
 
