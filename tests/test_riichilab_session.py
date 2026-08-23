@@ -6,21 +6,22 @@ lifecycle / `action_ack` / forward compatibility / `end_game` /
 `validation_result` / fail closed / `SessionStatus` detached snapshotを
 確認する。
 
-lisjong `RiichiLabSeatAdapter`自体の内部処理(Policy呼び出し、Observation
+Arena-local `RiichiLabSeatAdapter`自体の内部処理(Policy呼び出し、Observation
 deserialize、`possible_actions` semantic validation)はここで再検証しない
-(lisjong側の責務)。ここでは`lisjong_arena.riichilab.session.RiichiLabSeatAdapter`
-をfake stubへ差し替え、Arena-local session lifecycleロジックだけを孤立させて
-確認する。実Adapterを使った最小限のintegration確認は
-`test_riichilab_session_adapter_integration.py`が担当する。
+(`test_riichilab_adapter.py`等の責務)。ここでは
+`lisjong_arena.riichilab.session.RiichiLabSeatAdapter`をfake stubへ差し替え、
+Arena-local session lifecycleロジックだけを孤立させて確認する。実Adapterを
+使った最小限のintegration確認は`test_riichilab_session_adapter_integration.py`
+が担当する。
 """
 
 import unittest
 from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy
-from lisjong.policy_contract.seat import Seat
-from lisjong.riichilab_adapter.adapter import SendReadyResponse
+from lisjong.policy_contract import Seat
 
+from lisjong_arena.riichilab.adapter import SendReadyResponse
 from lisjong_arena.riichilab.errors import ProtocolError
 from lisjong_arena.riichilab.session import RankedSession, ValidationSession
 
