@@ -462,7 +462,7 @@ run_ranked_game()  <- 変更なし、one-game primitiveのまま
 
 `run_ranked_game()`のsignature・one-game contract(1 connection -> 1 hanchan -> `end_game` -> return/disconnect)は変更していない。retry / reconnect / automatic requeue / multiple-game loop / cross-game stateはすべてこの上位layerだけが持ち、primitive側へは混入させていない。
 
-retryするのは`TransportError`階層だけで、`ProtocolError` / `ProtocolTraceError` / profile・credential failure / Policy・Adapter例外・その他unexpected exceptionはcatch-allせずそのまま伝播させる。backoffは`5s -> 10s -> 20s -> 40s -> 60s cap`のmodule-local constantで、連続5 failureに到達すると追加requeueを停止する(成功でconsecutive failure countは0へreset)。停止要求後は新しい`policy_factory()`を呼ばず、`asyncio.run()`の通常のcancellation semantics(`asyncio.CancelledError`)でgraceful shutdownする。既存`websockets==17.0.1`のdefault keepalive/ping-pongをそのまま利用し、custom heartbeatやsame-game resumeは追加していない。既存`JsonlProtocolTraceWriter`のappend semanticsをそのまま各`run_ranked_game()` invocationへ渡し、trace schema自体は変更していない。
+retryするのは`TransportError`階層だけで、`ProtocolError` / `ProtocolTraceError` / profile・credential failure / Policy・Adapter例外・その他unexpected exceptionはcatch-allせずそのまま伝播させる。backoffは`5s -> 10s -> 20s -> 40s -> 60s cap`のmodule-local constantで、連続5 failureに到達すると追加requeueを停止する(成功でconsecutive failure countは0へreset)。停止要求後は新しい`policy_factory()`を呼ばない。`run_continuous_ranked()`自体は`asyncio.CancelledError`をcatchせず標準のasyncio cancellation semanticsのままpropagateさせ、Ctrl-Cを正常終了として扱うUXは`asyncio.run()`が`KeyboardInterrupt`を再送出する`_run_cli()`のboundaryだけで実装する。既存`websockets==17.0.1`のdefault keepalive/ping-pongをそのまま利用し、custom heartbeatやsame-game resumeは追加していない。既存`JsonlProtocolTraceWriter`のappend semanticsをそのまま各`run_ranked_game()` invocationへ渡し、trace schema自体は変更していない。
 
 ## Target architecture
 

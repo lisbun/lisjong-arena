@@ -542,8 +542,12 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(summary.completed_games, 1)
         self.assertEqual(summary.stopped_reason, "stop_requested")
 
-    def test_cancellation_is_not_retried_and_stops_the_loop(self) -> None:
+    def test_cancellation_is_not_retried_and_propagates(self) -> None:
+        """`CancelledError`はTransportErrorとしてretryされず、catchもされずに
+        呼び出し元へそのまま伝播する(標準のasyncio cancellation semantics)。
+        """
         call_count = {"n": 0}
+        delays: list[float] = []
 
         async def _fake_run_ranked_game(policy, token, **kwargs):
             call_count["n"] += 1
@@ -557,40 +561,40 @@ class ShutdownTest(unittest.TestCase):
             "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
             _fake_run_ranked_game,
         ):
-            summary = asyncio.run(
-                run_continuous_ranked(
-                    profile,
-                    "unit-test-token",
-                    sleep=_no_sleep,
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(
+                    run_continuous_ranked(
+                        profile,
+                        "unit-test-token",
+                        sleep=_recording_sleep(delays),
+                    )
                 )
-            )
 
         self.assertEqual(call_count["n"], 2)
-        self.assertEqual(summary.completed_games, 1)
-        self.assertEqual(summary.stopped_reason, "cancelled")
+        self.assertEqual(delays, [])
 
-    def test_shutdown_summary_output_is_secret_safe(self) -> None:
-        dummy_token = "unit-test-dummy-token-should-not-leak"
+    def test_cancellation_does_not_call_a_new_policy_factory(self) -> None:
+        created: list[object] = []
 
         async def _fake_run_ranked_game(policy, token, **kwargs):
             raise asyncio.CancelledError()
 
-        profile = _make_profile()
+        profile = _make_profile(created_policies=created)
 
         with patch(
             "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
             _fake_run_ranked_game,
         ):
-            summary = asyncio.run(
-                run_continuous_ranked(
-                    profile,
-                    dummy_token,
-                    sleep=_no_sleep,
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(
+                    run_continuous_ranked(
+                        profile,
+                        "unit-test-token",
+                        sleep=_no_sleep,
+                    )
                 )
-            )
 
-        output = format_continuous_summary(summary)
-        self.assertNotIn(dummy_token, output)
+        self.assertEqual(len(created), 1)
 
 
 class SummaryFormattingTest(unittest.TestCase):
@@ -707,6 +711,36 @@ class CliRegressionTest(unittest.TestCase):
 
         self.assertEqual(return_code, 1)
         self.assertIn("ProtocolError", stderr.getvalue())
+        self.assertNotIn(dummy_token, stdout.getvalue())
+        self.assertNotIn(dummy_token, stderr.getvalue())
+
+    def test_keyboard_interrupt_from_asyncio_run_exits_0_and_is_secret_safe(
+        self,
+    ) -> None:
+        """`asyncio.run()`はCtrl-Cによるtask cancellationを`KeyboardInterrupt`
+        として呼び出し元へ再送出する。`_run_cli()`はこのboundaryだけで
+        Ctrl-Cを正常終了として扱う(`run_continuous_ranked()`自体は
+        `CancelledError`をcatchしない)。
+        """
+        dummy_token = "unit-test-dummy-token-should-not-leak"
+
+        async def _fake_run_continuous_ranked(profile, token, **kwargs):
+            raise KeyboardInterrupt()
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, {_DEV_TOKEN_VAR: dummy_token}),
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_continuous_ranked",
+                _fake_run_continuous_ranked,
+            ),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            return_code = _run_cli(["--profile", "lisjong-dev"])
+
+        self.assertEqual(return_code, 0)
         self.assertNotIn(dummy_token, stdout.getvalue())
         self.assertNotIn(dummy_token, stderr.getvalue())
 

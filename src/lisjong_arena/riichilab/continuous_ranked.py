@@ -16,8 +16,10 @@
 - 連続failureを追跡するfailure budget(到達後は追加requeueしない)
 - 各gameごとに`RuntimeProfile.policy_factory()`から生成したfresh Policy
   instance(cross-game reuseはしない)
-- `asyncio.run()`の通常のcancellation semantics(`asyncio.CancelledError`)
-  によるgraceful shutdown。停止要求後は新しいgameへrequeueしない
+- 停止要求後は新しいgameへrequeueしない graceful shutdown。
+  `asyncio.CancelledError`はretryせずcatchもせずそのまま伝播させ、
+  標準のasyncio cancellation semanticsを維持する。Ctrl-Cを正常終了として
+  扱うUXは`_run_cli()`の`asyncio.run()` boundaryだけが担う
 
 generic daemon / scheduler / retry frameworkは導入しない。
 """
@@ -96,14 +98,19 @@ async def run_continuous_ranked(
     確認し、進行中のgameを中断しない。停止要求後は新しい`policy_factory()`
     を呼ばない。
 
-    `asyncio.CancelledError`(Ctrl-C相当)はretry対象ではなく、そのまま
-    loopを終了させてgraceful shutdownのsecret-safeなsummaryを返す
-    (engine/Policy側へshutdown semanticsを持ち込まない)。
+    `asyncio.CancelledError`(Ctrl-C相当)はretry対象ではなく、catchも
+    しない。標準のasyncio cancellation semanticsを維持するため、そのまま
+    呼び出し元へpropagateさせる(cleanup後に再送出すべきという
+    `asyncio`の一般原則に従う)。Ctrl-CをCLI利用者にとって正常終了として
+    扱う必要がある場合は、`_run_cli()`の`asyncio.run()` boundaryで
+    `KeyboardInterrupt`として扱う(engine/Policy側へshutdown semanticsを
+    持ち込まない)。
 
     retryするのは`TransportError`(`UnexpectedDisconnectError`を含む)
     hierarchyだけである。それ以外の例外(`ProtocolError`、
     `ProtocolTraceError`、profile/credential failure、Policy/Adapter
-    例外、その他unexpected exception)はcatch-allせずそのまま伝播させる。
+    例外、`asyncio.CancelledError`を含むその他unexpected exception)は
+    catch-allせずそのまま伝播させる。
     """
     completed_games = 0
     failed_games = 0
@@ -111,29 +118,26 @@ async def run_continuous_ranked(
     last_failure_type: str | None = None
     stopped_reason = "stop_requested"
 
-    try:
-        while True:
-            if stop_requested is not None and stop_requested():
-                stopped_reason = "stop_requested"
+    while True:
+        if stop_requested is not None and stop_requested():
+            stopped_reason = "stop_requested"
+            break
+
+        policy = profile.policy_factory()
+        try:
+            await run_ranked_game(policy, token, url=url, trace_path=trace_path)
+        except TransportError as error:
+            failed_games += 1
+            consecutive_failures += 1
+            last_failure_type = type(error).__name__
+            if consecutive_failures >= failure_budget:
+                stopped_reason = "failure_budget_exhausted"
                 break
+            await sleep(_backoff_seconds(consecutive_failures))
+            continue
 
-            policy = profile.policy_factory()
-            try:
-                await run_ranked_game(policy, token, url=url, trace_path=trace_path)
-            except TransportError as error:
-                failed_games += 1
-                consecutive_failures += 1
-                last_failure_type = type(error).__name__
-                if consecutive_failures >= failure_budget:
-                    stopped_reason = "failure_budget_exhausted"
-                    break
-                await sleep(_backoff_seconds(consecutive_failures))
-                continue
-
-            completed_games += 1
-            consecutive_failures = 0
-    except asyncio.CancelledError:
-        stopped_reason = "cancelled"
+        completed_games += 1
+        consecutive_failures = 0
 
     return ContinuousRunSummary(
         profile=profile.name,
@@ -168,6 +172,13 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
 
     `run_ranked_game()`自体のcontractは変更せず、continuous behaviorは
     `run_continuous_ranked()`だけが担う。
+
+    `run_continuous_ranked()`は`asyncio.CancelledError`をcatchせず標準の
+    asyncio cancellation semanticsのまま伝播させるため、Ctrl-CをCLI
+    利用者にとって正常終了として扱うUXはこの関数(`asyncio.run()`の
+    boundary)だけで担う。`asyncio.run()`はSIGINTによるtask cancellation
+    を`KeyboardInterrupt`として呼び出し元へ再送出するため、ここでだけ
+    それをsecret-safeなmessageとexit code 0へ変換する。
     """
     parser = build_arg_parser(
         prog="python -m lisjong_arena.riichilab.continuous_ranked"
@@ -202,6 +213,9 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    except KeyboardInterrupt:
+        print("RiichiLab continuous ranked runner stopped by user", file=sys.stderr)
+        return 0
 
     print(format_continuous_summary(summary))
     return 1 if summary.stopped_reason == "failure_budget_exhausted" else 0
