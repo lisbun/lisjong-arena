@@ -199,6 +199,8 @@ Issue #43でcanonical physical implementation(`lisjong_arena.game_trace`)へAren
 
 既存GameTraceはRiichiEnv local execution向けに`seed` / `game_mode` / ordered MJAI JSON eventsを持つsmall contractである。これをRiichiEnv / RiichiLab / `lisjong-engine` / future environment共通のgeneric canonical traceへ一般化しない。
 
+Issue #53で追加したfirst-party `lisjong-engine` execution pathは、現時点でGameTraceを発行しない。first-party engine向けtraceの要否は、concrete consumerを確認してから別Issueで判断する。
+
 また、GameTraceへshanten / ukeire / HandBelief / candidate evaluation / selection reason等のPolicy-internal analysisを混在させない。
 
 ## Ownership matrix
@@ -225,6 +227,8 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | `LocalGameRunner` / `LocalGameResult` | Arena | Arena / lisjong legacy removed (#98 / PR #99) | Arena | migration complete; pin synced (#37) |
 | `GameTrace` / `GameTraceSink` / recorder | Arena | Arena / lisjong legacy removed (lisjong #102 / PR #103) | Arena | migration complete; pin synced (#45) |
 | RiichiLab ranked resilient / continuous participation runner | Arena | Arena canonical + physical (#47) | Arena | canonical + physical implemented (#47); `run_ranked_game()` primitive unchanged |
+| first-party `lisjong-engine` bridge (domain conversion / `PolicyInput` projection / Action mapping / Policy selector) | Arena | Arena canonical + physical (#53) | Arena | canonical + physical implemented (#53) |
+| `lisjong-engine` rule / game progression | lisjong-engine | lisjong-engine | lisjong-engine | KEEP |
 | AABB / ABBB evaluation protocol | Arena | Arena | Arena | KEEP |
 | evaluation metrics / artifact / provenance | Arena | Arena | Arena | KEEP |
 
@@ -294,6 +298,88 @@ process orchestrationだけをprivate `lisjong_arena._parallel_execution`へ共�
 parallel APIに限り、`PolicySpec.factory`はspawn workerから利用可能なprocess-serializable callableを要求する。lambda / local closure等はsilentなserial fallbackをせずfail closedする。既存serial APIと `PolicySpec` 自体の一般callable contractは狭めない。
 
 worker completion orderはcontract上のresult orderではない。AABBは `seed入力順 -> rotation -> seat`、ABBBは `seed入力順 -> rotation` へparent側でcanonicalizeし、既存aggregationを再利用する。Policy / runner / serialization / spawn / worker processのいずれか1 jobのfailureでもpartial resultを返さず、evaluation全体をfail closedする。明示的なspawn contextによりWindows互換とfork非依存を維持し、実spawn worker integration testでmodule import、factory resolution、Policy生成、game executionまで確認する。
+
+### First-party `lisjong-engine` execution path (Issue #53)
+
+Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加した。RiichiEnv execution pathと並ぶ、2本目のconcrete execution pathである。
+
+```text
+                  lisjong-arena
+                 /             \
+                v               v
+            lisjong        lisjong-engine
+         Policy contract      execution
+```
+
+1 decisionのdecision pathは次である。
+
+```text
+lisjong-engine
+    |
+    | SeatObservation
+    | ActionDescriptor[]
+    v
+Arena first-party bridge
+    |
+    v
+lisjong DecisionContext
+    |
+    v
+Policy / execute_policy()
+    |
+    v
+InternalAction
+    |
+    v
+Arena decision-local mapping
+    |
+    v
+original ActionDescriptor
+    |
+    v
+lisjong-engine
+```
+
+module構成は次である。
+
+| module | 責務 |
+| --- | --- |
+| `lisjong_arena.lisjong_engine.domain_conversion` | engine `Seat` / `Wind` / `PublicTile` / `PublicMeldType` / `PublicRiichiStatus`からlisjong domain valueへの明示的変換 |
+| `lisjong_arena.lisjong_engine.policy_input` | `SeatObservation` -> `PolicyInput` projection |
+| `lisjong_arena.lisjong_engine.action_mapping` | `ActionDescriptor` -> `InternalAction`変換とdecision-local mapping |
+| `lisjong_arena.lisjong_engine.decision` | `PolicyInput` + legal `InternalAction`から`DecisionContext`を構築し、mappingと組で返す |
+| `lisjong_arena.lisjong_engine.policy_selector` | engine `ActionSelector`として利用するPolicy callableと4席分のselector composition |
+| `lisjong_arena.lisjong_engine.hanchan` | `MatchState` -> selectors -> `run_hanchan()` -> `CompletedMatch`の薄いcomposition |
+
+**first-party engine integration does not require consumer-side history materialization.**
+
+`lisjong-engine` Issue #38のplayer-safe `SeatObservation`は、`drawn_tile`、round-global discard order、`PublicMeld.called_tile`、riichi `NONE` / `PENDING` / `ESTABLISHED`を含む。そのため、RiichiEnv Adapterの`SeatMaterializedState`に相当するconsumer-side materialized historyをこのpathへ導入せず、`SeatObservation` -> `PolicyInput`の1段変換だけを行う。
+
+同様に、RiichiEnv固有workaround(`Observation.new_events()` materialization、synthetic decision identity、physical action aggregation、last discardからのreaction target再構築、chankan drawn_tile補正、event lag handling)もfirst-party pathへ持ち込まない。そのdecisionの`SeatObservation`と`ActionDescriptor[]`をsource of truthとする。
+
+RiichiEnv integrationとfirst-party engine integrationは共通のbackend abstractionへ統合しない。`GameBackend` / `BackendRegistry` / generic `MatchRuntime`は引き続き導入しない。
+
+semantic conversionのうち、名称一致では導出できないものを明示する。
+
+```text
+Engine EAST / SOUTH / WEST / NORTH
+    -> lisjong SEAT_0 / SEAT_1 / SEAT_2 / SEAT_3
+
+Engine riichi PENDING
+    -> lisjong RiichiState.DECLARED
+```
+
+Seat conversionはengine enum valueとlisjong int値の偶然の一致へ依存せず、対応表で固定する。
+
+`KakanActionDescriptor`はadded tileだけを公開するのに対し、`lisjong.KakanAction`は`from_seat` / `called_tile`を要求する。この差は、自席の現在のmeld snapshotから**tile type**で元Ponを解決して埋める。added tileが赤5で元Ponのcalled tileが通常5であっても同じPonの加槓であり得るため、赤牌identityでは照合しない。一方`KakanAction.called_tile`へは元Pon自身のactual called tileを渡し、red/non-red semanticを維持する。source meld ID、physical tile ID、Python object identityは使用しない。元Pon候補が0件または2件以上の場合はfail closedする。
+
+descriptorと`InternalAction`の対応は1 seat・1 decisionに閉じる。selectorは呼び出しごとにmappingを構築して破棄し、process-global / match-global / Policy-globalなmappingを持たない。
+
+actorはcaller引数として受け取らず、常に`observation.viewer_seat`から導出する。actorを外部から注入できると、ある席のmeld snapshotを使って別席actorの`KakanAction`を構築する等、「observation viewer seat / mapping actor / legal action actorが同じseatを表す」境界をlow-level APIから迂回できるためである。同じ理由で、`EngineActionMapping`は直接構築された場合も、全candidateのactorが`self_seat`と一致することを生成時に検証する。engine側`ActionProjection`は既にphysical duplicateをpublic descriptorへcollapse済みだが、Arena変換後に複数descriptorが同じ`InternalAction` semantic identityへcollapseした場合は、representativeを選ばずfail closedする。
+
+Policy呼び出しはlisjong-owned `execute_policy()`だけを使う。Arena側で`Policy.choose_action()`直接呼び出し、独自legal-action validation、fallback、automatic action substitution、retryは実装しない。Policy例外と`PolicyActionValidationError`はそのまま伝播する。
+
+このpathは現時点でGameTraceを発行しない。`GameTrace`のlisjong-engine対応、generic objective trace、replay / viewerはIssue #53のnon-goalである。AABB / ABBB evaluation protocolもこのpathへは接続しておらず、`run_policy_hanchan()`はfirst-party execution capabilityの成立確認に留まる。
 
 RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationを、Issue #31で`LocalGameRunner` / `LocalGameResult`のcanonical implementationを、Issue #39でRiichiEnv Adapter(`lisjong_arena.riichienv.adapter`)のcanonical implementationを、Issue #43でGameTrace(`lisjong_arena.game_trace`)のcanonical implementationをArenaへ移した。GameTraceのlisjong側legacy physical copyは`lisbun/lisjong#102` / PR #103で削除済みであり、Issue #45でArenaのdependency pinもcleanup merge SHA `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期済みである。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのdependency pinもcleanup merge SHA `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)も`lisbun/lisjong#100` / PR #101で削除済みであり、Issue #41でArenaのdependency pinもこのcleanup merge SHA `3505321b62e7a2be204cc555924b485a898c8f31`へ同期済みである。これによりLocalGameRunner、RiichiEnv Adapter、GameTraceの各pillarのphysical duplicateは完全解消済みである。
 
@@ -588,7 +674,21 @@ evaluation
 
 RiichiEnv等のexternal dependencyをArenaへ追加することはtarget architecture上許容するが、actual dependency追加は各migration Issueでconcrete requirementとversionを確認して行う。
 
-`lisjong-engine` integrationおよび`lisjong -> lisjong-engine` dependencyの要否は本architectureで再設計しない。
+Issue #53で、`lisjong-arena -> lisjong-engine`のfirst-party dependencyを追加した。
+
+```text
+lisjong-arena
+    +--> lisjong
+    `--> lisjong-engine
+
+lisjong-engine -X-> lisjong
+lisjong-engine -X-> lisjong-arena
+lisjong        -X-> lisjong-arena
+```
+
+`lisjong-engine`は`lisjong`にも`lisjong-arena`にも依存しない。Arenaがこの2つを独立したdependencyとしてconsumeし、両者を接続するbridgeをArena execution / observationが所有する。`lisjong -> lisjong-engine` dependencyは本architectureで導入しない。
+
+`lisjong-engine` dependencyは、`lisjong`と同様にrelease tagが出るまでfull commit SHAへpinする。
 
 ## Migration principles
 
