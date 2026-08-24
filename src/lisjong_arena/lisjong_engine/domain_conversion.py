@@ -25,7 +25,7 @@ from lisjong_engine.seat import Seat as EngineSeat
 from lisjong_engine.tile import TileCategory as EngineTileCategory
 from lisjong_engine.wind import Wind as EngineWind
 
-from lisjong_arena.engine.errors import UnsupportedEngineValueError
+from lisjong_arena.lisjong_engine.errors import UnsupportedEngineValueError
 
 # engineのSeatは`east`/`south`/`west`/`north`のstr enumであり、lisjongのSeatは
 # 0..3のIntEnumである。両者にint値の共有はないため、席順の対応を明示する。

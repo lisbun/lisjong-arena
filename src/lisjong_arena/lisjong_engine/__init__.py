@@ -33,13 +33,13 @@ abstractionへは統合しない。RiichiEnv固有のmaterialized state、synthe
 decision identity、event lag補正等もこのpathへ持ち込まない。
 """
 
-from lisjong_arena.engine.action_mapping import (
+from lisjong_arena.lisjong_engine.action_mapping import (
     EngineActionMapping,
     build_action_mapping,
     internal_action_from_descriptor,
 )
-from lisjong_arena.engine.decision import EngineDecision, build_decision
-from lisjong_arena.engine.domain_conversion import (
+from lisjong_arena.lisjong_engine.decision import EngineDecision, build_decision
+from lisjong_arena.lisjong_engine.domain_conversion import (
     meld_kind_from_engine_meld_type,
     public_meld_from_engine_meld,
     riichi_state_from_engine_status,
@@ -48,7 +48,7 @@ from lisjong_arena.engine.domain_conversion import (
     tiles_from_public_tiles,
     wind_from_engine_wind,
 )
-from lisjong_arena.engine.errors import (
+from lisjong_arena.lisjong_engine.errors import (
     AmbiguousActionMappingError,
     EngineBridgeError,
     KakanProvenanceError,
@@ -57,9 +57,9 @@ from lisjong_arena.engine.errors import (
     UnmappedActionError,
     UnsupportedEngineValueError,
 )
-from lisjong_arena.engine.hanchan import run_policy_hanchan
-from lisjong_arena.engine.policy_input import build_policy_input
-from lisjong_arena.engine.policy_selector import (
+from lisjong_arena.lisjong_engine.hanchan import run_policy_hanchan
+from lisjong_arena.lisjong_engine.policy_input import build_policy_input
+from lisjong_arena.lisjong_engine.policy_selector import (
     PolicySeatSelector,
     build_seat_selectors,
 )

@@ -15,12 +15,12 @@ from dataclasses import dataclass
 from lisjong.policy_contract import DecisionContext
 from lisjong_engine.observation import SeatObservation
 
-from lisjong_arena.engine.action_mapping import (
+from lisjong_arena.lisjong_engine.action_mapping import (
     EngineActionMapping,
     build_action_mapping,
 )
-from lisjong_arena.engine.errors import SeatIdentityError
-from lisjong_arena.engine.policy_input import build_policy_input
+from lisjong_arena.lisjong_engine.errors import SeatIdentityError
+from lisjong_arena.lisjong_engine.policy_input import build_policy_input
 
 
 @dataclass(frozen=True, slots=True, eq=False)

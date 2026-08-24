@@ -301,7 +301,7 @@ worker completion orderはcontract上のresult orderではない。AABBは `seed
 
 ### First-party `lisjong-engine` execution path (Issue #53)
 
-Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.engine`)を追加した。RiichiEnv execution pathと並ぶ、2本目のconcrete execution pathである。
+Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加した。RiichiEnv execution pathと並ぶ、2本目のconcrete execution pathである。
 
 ```text
                   lisjong-arena
@@ -344,12 +344,12 @@ module構成は次である。
 
 | module | 責務 |
 | --- | --- |
-| `lisjong_arena.engine.domain_conversion` | engine `Seat` / `Wind` / `PublicTile` / `PublicMeldType` / `PublicRiichiStatus`からlisjong domain valueへの明示的変換 |
-| `lisjong_arena.engine.policy_input` | `SeatObservation` -> `PolicyInput` projection |
-| `lisjong_arena.engine.action_mapping` | `ActionDescriptor` -> `InternalAction`変換とdecision-local mapping |
-| `lisjong_arena.engine.decision` | `PolicyInput` + legal `InternalAction`から`DecisionContext`を構築し、mappingと組で返す |
-| `lisjong_arena.engine.policy_selector` | engine `ActionSelector`として利用するPolicy callableと4席分のselector composition |
-| `lisjong_arena.engine.hanchan` | `MatchState` -> selectors -> `run_hanchan()` -> `CompletedMatch`の薄いcomposition |
+| `lisjong_arena.lisjong_engine.domain_conversion` | engine `Seat` / `Wind` / `PublicTile` / `PublicMeldType` / `PublicRiichiStatus`からlisjong domain valueへの明示的変換 |
+| `lisjong_arena.lisjong_engine.policy_input` | `SeatObservation` -> `PolicyInput` projection |
+| `lisjong_arena.lisjong_engine.action_mapping` | `ActionDescriptor` -> `InternalAction`変換とdecision-local mapping |
+| `lisjong_arena.lisjong_engine.decision` | `PolicyInput` + legal `InternalAction`から`DecisionContext`を構築し、mappingと組で返す |
+| `lisjong_arena.lisjong_engine.policy_selector` | engine `ActionSelector`として利用するPolicy callableと4席分のselector composition |
+| `lisjong_arena.lisjong_engine.hanchan` | `MatchState` -> selectors -> `run_hanchan()` -> `CompletedMatch`の薄いcomposition |
 
 **first-party engine integration does not require consumer-side history materialization.**
 
@@ -373,7 +373,9 @@ Seat conversionはengine enum valueとlisjong int値の偶然の一致へ依存�
 
 `KakanActionDescriptor`はadded tileだけを公開するのに対し、`lisjong.KakanAction`は`from_seat` / `called_tile`を要求する。この差は、自席の現在のmeld snapshotから**tile type**で元Ponを解決して埋める。added tileが赤5で元Ponのcalled tileが通常5であっても同じPonの加槓であり得るため、赤牌identityでは照合しない。一方`KakanAction.called_tile`へは元Pon自身のactual called tileを渡し、red/non-red semanticを維持する。source meld ID、physical tile ID、Python object identityは使用しない。元Pon候補が0件または2件以上の場合はfail closedする。
 
-descriptorと`InternalAction`の対応は1 seat・1 decisionに閉じる。selectorは呼び出しごとにmappingを構築して破棄し、process-global / match-global / Policy-globalなmappingを持たない。engine側`ActionProjection`は既にphysical duplicateをpublic descriptorへcollapse済みだが、Arena変換後に複数descriptorが同じ`InternalAction` semantic identityへcollapseした場合は、representativeを選ばずfail closedする。
+descriptorと`InternalAction`の対応は1 seat・1 decisionに閉じる。selectorは呼び出しごとにmappingを構築して破棄し、process-global / match-global / Policy-globalなmappingを持たない。
+
+actorはcaller引数として受け取らず、常に`observation.viewer_seat`から導出する。actorを外部から注入できると、ある席のmeld snapshotを使って別席actorの`KakanAction`を構築する等、「observation viewer seat / mapping actor / legal action actorが同じseatを表す」境界をlow-level APIから迂回できるためである。同じ理由で、`EngineActionMapping`は直接構築された場合も、全candidateのactorが`self_seat`と一致することを生成時に検証する。engine側`ActionProjection`は既にphysical duplicateをpublic descriptorへcollapse済みだが、Arena変換後に複数descriptorが同じ`InternalAction` semantic identityへcollapseした場合は、representativeを選ばずfail closedする。
 
 Policy呼び出しはlisjong-owned `execute_policy()`だけを使う。Arena側で`Policy.choose_action()`直接呼び出し、独自legal-action validation、fallback、automatic action substitution、retryは実装しない。Policy例外と`PolicyActionValidationError`はそのまま伝播する。
 

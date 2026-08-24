@@ -2,7 +2,7 @@
 
 import unittest
 
-from _engine_fixtures import honor, manzu, pinzu, pon_meld, public_tile, souzu
+from _lisjong_engine_fixtures import honor, manzu, pinzu, pon_meld, public_tile, souzu
 from lisjong.policy_contract import (
     MeldKind,
     PublicMeld,
@@ -19,7 +19,7 @@ from lisjong_engine.seat import Seat as EngineSeat
 from lisjong_engine.tile import TileCategory as EngineTileCategory
 from lisjong_engine.wind import Wind as EngineWind
 
-from lisjong_arena.engine.domain_conversion import (
+from lisjong_arena.lisjong_engine.domain_conversion import (
     _lookup,
     meld_kind_from_engine_meld_type,
     public_meld_from_engine_meld,
@@ -29,7 +29,7 @@ from lisjong_arena.engine.domain_conversion import (
     tiles_from_public_tiles,
     wind_from_engine_wind,
 )
-from lisjong_arena.engine.errors import UnsupportedEngineValueError
+from lisjong_arena.lisjong_engine.errors import UnsupportedEngineValueError
 
 
 class SeatConversionTest(unittest.TestCase):

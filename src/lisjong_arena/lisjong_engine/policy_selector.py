@@ -31,9 +31,9 @@ from lisjong_engine.driver import ActionSelector
 from lisjong_engine.observation import SeatObservation
 from lisjong_engine.seat import Seat as EngineSeat
 
-from lisjong_arena.engine.decision import build_decision
-from lisjong_arena.engine.domain_conversion import seat_from_engine_seat
-from lisjong_arena.engine.errors import SeatIdentityError
+from lisjong_arena.lisjong_engine.decision import build_decision
+from lisjong_arena.lisjong_engine.domain_conversion import seat_from_engine_seat
+from lisjong_arena.lisjong_engine.errors import SeatIdentityError
 
 _ENGINE_SEATS = tuple(EngineSeat)
 

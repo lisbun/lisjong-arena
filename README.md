@@ -191,7 +191,7 @@ retry対象は`TransportError`階層(`UnexpectedDisconnectError`を含む)だけ
 
 ## First-party lisjong-engine execution
 
-Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.engine`)を追加しました。RiichiEnv execution pathと並ぶ2本目のconcrete execution pathであり、両者を共通のbackend abstractionへは統合していません。
+Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加しました。RiichiEnv execution pathと並ぶ2本目のconcrete execution pathであり、両者を共通のbackend abstractionへは統合していません。
 
 ```text
                   lisjong-arena
@@ -236,7 +236,7 @@ lisjong-engine
 from lisjong.policies.minimal import MinimalPolicy
 from lisjong_engine.seat import Seat
 
-from lisjong_arena.engine import run_policy_hanchan
+from lisjong_arena.lisjong_engine import run_policy_hanchan
 
 completed = run_policy_hanchan(
     {seat: MinimalPolicy() for seat in Seat},
@@ -255,7 +255,7 @@ Policyだけをengine selectorとして使う場合は `build_seat_selectors()` 
 from lisjong_engine.driver import run_hanchan
 from lisjong_engine.match_state import MatchState
 
-from lisjong_arena.engine import build_seat_selectors
+from lisjong_arena.lisjong_engine import build_seat_selectors
 
 selectors = build_seat_selectors({seat: MinimalPolicy() for seat in Seat})
 completed = run_hanchan(MatchState(seed=20260824), selectors)
@@ -289,7 +289,7 @@ Engine riichi NONE / PENDING / ESTABLISHED
 
 ### Fail closed
 
-first-party engine bridgeは、次の場合に推測・fallbackをせず実行を停止します(`lisjong_arena.engine.errors`)。
+first-party engine bridgeは、次の場合に推測・fallbackをせず実行を停止します(`lisjong_arena.lisjong_engine.errors`)。
 
 - 未知のengine enum / descriptor variant (`UnsupportedEngineValueError`)
 - `SeatObservation` をprojectionできない (`ObservationProjectionError`)
@@ -301,6 +301,8 @@ first-party engine bridgeは、次の場合に推測・fallbackをせず実行�
 Policy呼び出しはlisjong-owned `execute_policy()` だけを使い、Arena側でのfallback、automatic action substitution、retryは行いません。Policy例外と `PolicyActionValidationError` はそのまま伝播します。
 
 descriptorと `InternalAction` の対応は1 seat・1 decisionに閉じます。selectorは呼び出しごとにmappingを構築して破棄し、process-global / match-global / Policy-globalなmappingを持ちません。
+
+actorはcaller引数として受け取らず、常に `observation.viewer_seat` から導出します。`EngineActionMapping` を直接構築した場合も、全candidateのactorが `self_seat` と一致することを生成時に検証します。
 
 ## 最小comparison protocol
 

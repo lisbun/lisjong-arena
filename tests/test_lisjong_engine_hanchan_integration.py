@@ -19,8 +19,8 @@ from lisjong_engine.observation import SeatObservation
 from lisjong_engine.rules import RuleSet
 from lisjong_engine.seat import Seat as EngineSeat
 
-from lisjong_arena.engine.hanchan import run_policy_hanchan
-from lisjong_arena.engine.policy_selector import PolicySeatSelector
+from lisjong_arena.lisjong_engine.hanchan import run_policy_hanchan
+from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
 
 _SEED = 20260824
 

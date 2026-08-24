@@ -46,13 +46,13 @@ from lisjong_engine.action_descriptor import (
 )
 from lisjong_engine.observation import SeatObservation
 
-from lisjong_arena.engine.domain_conversion import (
+from lisjong_arena.lisjong_engine.domain_conversion import (
     public_meld_from_engine_meld,
     seat_from_engine_seat,
     tile_from_public_tile,
     tiles_from_public_tiles,
 )
-from lisjong_arena.engine.errors import (
+from lisjong_arena.lisjong_engine.errors import (
     AmbiguousActionMappingError,
     EngineBridgeError,
     KakanProvenanceError,
@@ -219,14 +219,19 @@ _INTERNAL_ACTION_TYPES = (
 
 def internal_action_from_descriptor(
     descriptor: object,
-    actor: Seat,
     observation: SeatObservation,
 ) -> InternalAction:
-    """1件のengine descriptorを、同じdecisionの文脈でlisjong `InternalAction`へ変換する。"""
+    """1件のengine descriptorを、同じdecisionの文脈でlisjong `InternalAction`へ変換する。
+
+    actorはcaller引数として受け取らず、常に`observation.viewer_seat`から導出する。
+    そのため、observation viewer seatとaction actorが食い違う`InternalAction`を
+    この関数から構築することはできない。callerがactorを注入できると、例えば
+    ある席のmeld snapshotを使って別席actorの`KakanAction`を構築でき、
+    「observation viewer seat / mapping actor / legal action actorが同じseatを
+    表す」という境界を迂回できてしまう。
+    """
     if not isinstance(descriptor, ACTION_DESCRIPTOR_TYPES):
         raise TypeError("descriptor must be a lisjong-engine ActionDescriptor")
-    if not isinstance(actor, Seat):
-        raise TypeError("actor must be a lisjong Seat")
     if not isinstance(observation, SeatObservation):
         raise TypeError("observation must be a lisjong-engine SeatObservation")
 
@@ -235,6 +240,7 @@ def internal_action_from_descriptor(
         raise UnsupportedEngineValueError(
             f"unsupported lisjong-engine ActionDescriptor: {type(descriptor).__name__}"
         )
+    actor = seat_from_engine_seat(observation.viewer_seat)
     return translator(descriptor, actor, observation)
 
 
@@ -255,10 +261,28 @@ class EngineActionMapping:
         self_seat: Seat,
         descriptors_by_action: dict[InternalAction, object],
     ) -> None:
+        """`build_action_mapping()`と同じ不変条件をconstructor自身でも保証する。
+
+        `build_action_mapping()`はactorをobservationから導出するため本線は
+        安全だが、この型はpublic surfaceでもある。直接構築したmappingが
+        「全candidateのactorが`self_seat`と一致する」という不変条件を破ると、
+        `resolve()`のseat checkが意味を失うため、生成時にfail closedする。
+        """
         if not isinstance(self_seat, Seat):
             raise TypeError("self_seat must be a lisjong Seat")
         if not descriptors_by_action:
             raise EngineBridgeError("a decision must have at least one candidate")
+        for action, descriptor in descriptors_by_action.items():
+            if not isinstance(action, _INTERNAL_ACTION_TYPES):
+                raise TypeError("mapping keys must be lisjong InternalAction values")
+            if not isinstance(descriptor, ACTION_DESCRIPTOR_TYPES):
+                raise TypeError(
+                    "mapping values must be lisjong-engine ActionDescriptor values"
+                )
+            if action.actor != self_seat:
+                raise SeatIdentityError(
+                    "every candidate InternalAction.actor must equal self_seat"
+                )
         self._self_seat = self_seat
         self._descriptors_by_action = dict(descriptors_by_action)
         self._candidates = tuple(self._descriptors_by_action)
@@ -305,11 +329,7 @@ def build_action_mapping(
 
     descriptors_by_action: dict[InternalAction, object] = {}
     for descriptor in descriptors:
-        internal_action = internal_action_from_descriptor(
-            descriptor,
-            actor,
-            observation,
-        )
+        internal_action = internal_action_from_descriptor(descriptor, observation)
         if internal_action in descriptors_by_action:
             raise AmbiguousActionMappingError(
                 "multiple engine descriptors collapse onto the same InternalAction: "

@@ -26,7 +26,7 @@ from lisjong.policy_contract import (
 from lisjong_engine.observation import SeatObservation
 from lisjong_engine.seat import Seat as EngineSeat
 
-from lisjong_arena.engine.domain_conversion import (
+from lisjong_arena.lisjong_engine.domain_conversion import (
     public_meld_from_engine_meld,
     riichi_state_from_engine_status,
     seat_from_engine_seat,
@@ -34,7 +34,7 @@ from lisjong_arena.engine.domain_conversion import (
     tiles_from_public_tiles,
     wind_from_engine_wind,
 )
-from lisjong_arena.engine.errors import ObservationProjectionError
+from lisjong_arena.lisjong_engine.errors import ObservationProjectionError
 
 # lisjong `PolicyInput.players`はindex自体がSeat identityを表す。engineの
 # seat別tupleは`tuple(Seat)`順であることを`SeatObservation`自身が保証して

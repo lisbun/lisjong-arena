@@ -6,7 +6,7 @@ decisionの`PolicyInput`を構成できることを固定する。
 
 import unittest
 
-from _engine_fixtures import (
+from _lisjong_engine_fixtures import (
     discard,
     honor,
     manzu,
@@ -42,8 +42,8 @@ from lisjong_engine.public_state import (
 from lisjong_engine.seat import Seat as EngineSeat
 from lisjong_engine.wind import Wind as EngineWind
 
-from lisjong_arena.engine.errors import ObservationProjectionError
-from lisjong_arena.engine.policy_input import build_policy_input
+from lisjong_arena.lisjong_engine.errors import ObservationProjectionError
+from lisjong_arena.lisjong_engine.policy_input import build_policy_input
 
 
 def _tile(category: TileCategory, rank: int, *, is_red: bool = False) -> Tile:

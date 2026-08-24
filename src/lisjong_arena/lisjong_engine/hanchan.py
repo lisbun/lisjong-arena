@@ -19,7 +19,7 @@ from lisjong_engine.driver import run_hanchan
 from lisjong_engine.match_state import CompletedMatch, MatchState
 from lisjong_engine.rules import RuleSet
 
-from lisjong_arena.engine.policy_selector import build_seat_selectors
+from lisjong_arena.lisjong_engine.policy_selector import build_seat_selectors
 
 
 def run_policy_hanchan(

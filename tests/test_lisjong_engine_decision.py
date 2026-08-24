@@ -2,7 +2,7 @@
 
 import unittest
 
-from _engine_fixtures import manzu, observation, pinzu
+from _lisjong_engine_fixtures import manzu, observation, pinzu
 from lisjong.policy_contract import DecisionContext, DiscardAction, RiichiAction, Seat
 from lisjong_engine.action_descriptor import (
     DiscardActionDescriptor,
@@ -12,9 +12,9 @@ from lisjong_engine.action_descriptor import (
 from lisjong_engine.observation import ObservationDecisionKind
 from lisjong_engine.seat import Seat as EngineSeat
 
-from lisjong_arena.engine.action_mapping import build_action_mapping
-from lisjong_arena.engine.decision import EngineDecision, build_decision
-from lisjong_arena.engine.errors import (
+from lisjong_arena.lisjong_engine.action_mapping import build_action_mapping
+from lisjong_arena.lisjong_engine.decision import EngineDecision, build_decision
+from lisjong_arena.lisjong_engine.errors import (
     AmbiguousActionMappingError,
     SeatIdentityError,
 )

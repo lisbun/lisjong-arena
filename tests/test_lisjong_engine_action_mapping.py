@@ -1,8 +1,9 @@
 """engine `ActionDescriptor` <-> lisjong `InternalAction`のdecision-local mapping。"""
 
+import inspect
 import unittest
 
-from _engine_fixtures import (
+from _lisjong_engine_fixtures import (
     honor,
     manzu,
     observation,
@@ -45,13 +46,13 @@ from lisjong_engine.action_descriptor import (
 from lisjong_engine.observation import ObservationDecisionKind
 from lisjong_engine.seat import Seat as EngineSeat
 
-from lisjong_arena.engine.action_mapping import (
+from lisjong_arena.lisjong_engine.action_mapping import (
     _TRANSLATORS,
     EngineActionMapping,
     build_action_mapping,
     internal_action_from_descriptor,
 )
-from lisjong_arena.engine.errors import (
+from lisjong_arena.lisjong_engine.errors import (
     AmbiguousActionMappingError,
     EngineBridgeError,
     KakanProvenanceError,
@@ -67,11 +68,7 @@ def _tile(category: TileCategory, rank: int, *, is_red: bool = False) -> Tile:
 
 def _translate(descriptor, observation_value=None):
     source = observation() if observation_value is None else observation_value
-    return internal_action_from_descriptor(
-        descriptor,
-        Seat(list(EngineSeat).index(source.viewer_seat)),
-        source,
-    )
+    return internal_action_from_descriptor(descriptor, source)
 
 
 class ActionVariantTest(unittest.TestCase):
@@ -213,6 +210,52 @@ class ActionVariantTest(unittest.TestCase):
         self.assertIsInstance(foreign, ACTION_DESCRIPTOR_TYPES)
         with self.assertRaises(UnsupportedEngineValueError):
             _translate(foreign)
+
+
+class ActorIdentityTest(unittest.TestCase):
+    """actorは常に`observation.viewer_seat`から導出し、callerが注入できない。"""
+
+    def test_actor_is_derived_from_the_viewer_seat(self) -> None:
+        for engine_seat, seat in zip(EngineSeat, Seat, strict=True):
+            source = observation(viewer_seat=engine_seat, drawn_tile=None)
+            action = internal_action_from_descriptor(
+                DiscardActionDescriptor(manzu(1), False),
+                source,
+            )
+            self.assertIs(action.actor, seat)
+
+    def test_the_helper_exposes_no_actor_parameter(self) -> None:
+        """actorを外部から注入できるAPIをpublic surfaceへ出さない。"""
+        parameters = tuple(
+            inspect.signature(internal_action_from_descriptor).parameters
+        )
+        self.assertEqual(parameters, ("descriptor", "observation"))
+        with self.assertRaises(TypeError):
+            internal_action_from_descriptor(
+                DiscardActionDescriptor(manzu(1), False),
+                Seat.SEAT_1,
+                observation(),
+            )
+
+    def test_kakan_cannot_borrow_another_seats_meld_provenance(self) -> None:
+        """自席meld snapshotから別seat actorのKakanActionを構築できない。"""
+        source = observation(
+            viewer_seat=EngineSeat.EAST,
+            melds=seat_melds(east=(pon_meld(pinzu(5), EngineSeat.WEST),)),
+        )
+        action = internal_action_from_descriptor(
+            KakanActionDescriptor(pinzu(5)), source
+        )
+        self.assertIs(action.actor, Seat.SEAT_0)
+
+    def test_a_viewer_without_the_source_pon_still_fails_closed(self) -> None:
+        source = observation(
+            viewer_seat=EngineSeat.SOUTH,
+            drawn_tile=None,
+            melds=seat_melds(east=(pon_meld(pinzu(5), EngineSeat.WEST),)),
+        )
+        with self.assertRaises(KakanProvenanceError):
+            internal_action_from_descriptor(KakanActionDescriptor(pinzu(5)), source)
 
 
 class ReactionTest(unittest.TestCase):
@@ -500,6 +543,40 @@ class DecisionLocalMappingTest(unittest.TestCase):
     def test_mapping_requires_at_least_one_candidate(self) -> None:
         with self.assertRaises(EngineBridgeError):
             EngineActionMapping(self_seat=Seat.SEAT_0, descriptors_by_action={})
+
+    def test_constructor_rejects_a_candidate_for_another_seat(self) -> None:
+        """直接構築したmappingでもactor一致の不変条件を保証する。"""
+        with self.assertRaises(SeatIdentityError):
+            EngineActionMapping(
+                self_seat=Seat.SEAT_0,
+                descriptors_by_action={
+                    DiscardAction(
+                        actor=Seat.SEAT_1,
+                        tile=_tile(TileCategory.MANZU, 1),
+                        tsumogiri=True,
+                    ): DiscardActionDescriptor(manzu(1), True)
+                },
+            )
+
+    def test_constructor_rejects_non_contract_keys_and_values(self) -> None:
+        with self.assertRaises(TypeError):
+            EngineActionMapping(
+                self_seat=Seat.SEAT_0,
+                descriptors_by_action={
+                    object(): DiscardActionDescriptor(manzu(1), True)
+                },
+            )
+        with self.assertRaises(TypeError):
+            EngineActionMapping(
+                self_seat=Seat.SEAT_0,
+                descriptors_by_action={
+                    DiscardAction(
+                        actor=Seat.SEAT_0,
+                        tile=_tile(TileCategory.MANZU, 1),
+                        tsumogiri=True,
+                    ): object()
+                },
+            )
 
 
 if __name__ == "__main__":

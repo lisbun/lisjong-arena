@@ -2,7 +2,7 @@
 
 import unittest
 
-from _engine_fixtures import manzu, observation, pinzu, souzu
+from _lisjong_engine_fixtures import manzu, observation, pinzu, souzu
 from lisjong.policies.minimal import MinimalPolicy
 from lisjong.policy_contract import (
     DiscardAction,
@@ -20,8 +20,8 @@ from lisjong_engine.action_descriptor import (
 from lisjong_engine.observation import ObservationDecisionKind
 from lisjong_engine.seat import Seat as EngineSeat
 
-from lisjong_arena.engine.errors import SeatIdentityError, UnmappedActionError
-from lisjong_arena.engine.policy_selector import (
+from lisjong_arena.lisjong_engine.errors import SeatIdentityError, UnmappedActionError
+from lisjong_arena.lisjong_engine.policy_selector import (
     PolicySeatSelector,
     build_seat_selectors,
 )
