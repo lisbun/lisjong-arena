@@ -581,6 +581,33 @@ run_ranked_game()  <- 変更なし、one-game primitiveのまま
 
 retryするのは`TransportError`階層だけで、`ProtocolError` / `ProtocolTraceError` / profile・credential failure / Policy・Adapter例外・その他unexpected exceptionはcatch-allせずそのまま伝播させる。backoffは`5s -> 10s -> 20s -> 40s -> 60s cap`のmodule-local constantで、連続5 failureに到達すると追加requeueを停止する(成功でconsecutive failure countは0へreset)。停止要求後は新しい`policy_factory()`を呼ばない。`run_continuous_ranked()`自体は`asyncio.CancelledError`をcatchせず標準のasyncio cancellation semanticsのままpropagateさせ、Ctrl-Cを正常終了として扱うUXは`asyncio.run()`が`KeyboardInterrupt`を再送出する`_run_cli()`のboundaryだけで実装する。既存`websockets==17.0.1`のdefault keepalive/ping-pongをそのまま利用し、custom heartbeatやsame-game resumeは追加していない。既存`JsonlProtocolTraceWriter`のappend semanticsをそのまま各`run_ranked_game()` invocationへ渡し、trace schema自体は変更していない。
 
+### FiniteHorizonCompletionPolicy有効化のためのlisjong pin synchronization (Issue #58)
+
+Issue #58で、Arenaのlisjong dependency pinを`lisjong` PR #118のactual merge commit:
+
+```text
+296b76ab8249ac4153e6d001a41886ed38ae303a
+```
+
+へ更新した。旧pin `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`から新pinまでのintervening commitは次の8件である。
+
+```text
+72acdaf ADR 0002 physical migration完了後のownership文書を最終同期する (#105)
+f3974e3 DecisionTrace / AnalysisTrace基盤を追加する (#106)
+dfdd879 ValueAwareTwoStepUkeirePolicyを追加する (#108)
+ad64840 FiniteHorizonCompletionPolicyを追加する (#110)
+42a9792 FiniteHorizonCompletionPolicyへexact-safe parent pruningを追加する (#112)
+477f403 hand_evaluationへcount-native shanten hot pathを追加する (#114)
+8303feb standard-form shantenをlookup-table backendへ置換する (#116)
+296b76a FiniteHorizon exact DPのper-state Python costを削減する (#118)
+```
+
+このうち#106は`execute_policy(policy, decision)`のsignatureを変更しておらず、`execute_policy_with_trace()`をopt-inで追加しただけである。Arenaが使用する`LocalGameRunner` / `lisjong_arena.riichilab.adapter` / `lisjong_arena.lisjong_engine.policy_selector`はいずれも既存の`execute_policy(policy, decision)`だけを呼んでおり、breaking contract changeはない。#108の`ValueAwareTwoStepUkeirePolicy`はArenaが利用・登録しない。#110/#112/#114/#118のFiniteHorizon internals / performance改善はlisjong側test / CIを正本とし、Arena側でalgorithm correctnessを再証明しない。#116が追加した`src/lisjong/hand_evaluation/_shanten_table.bin`は`pyproject.toml`の`[tool.setuptools.package-data]`で明示的にpackage dataとして宣言されており、fresh isolated環境でのgit dependency installでもartifactが同梱されることを確認した。
+
+fresh isolated環境でのinstall後、installed `lisjong`のVCS commitがtarget revisionへ解決されていること(PEP 610 `direct_url.json`)、`from lisjong.policies import FiniteHorizonCompletionPolicy` / `from lisjong.policies import TwoStepUkeirePolicy`がいずれもimportでき、両方ともzero-argumentでconstructできること、`from lisjong.hand_evaluation import calculate_shanten`が既知のhandでlookup artifact load errorなく計算できることを確認した。
+
+このexact pin syncはIssue #56(登録済みPolicyを名前指定してfixed-seed ABBB single-round評価できるCLIを追加する)のprerequisiteであり、Policy catalog / CLI実装はこのIssueへ含めていない。
+
 ## Target architecture
 
 ```text
