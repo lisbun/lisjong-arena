@@ -175,7 +175,9 @@ class ParallelExecutorProgressCallbackTest(unittest.TestCase):
 
 
 class ParallelEvaluationProgressCallbackTest(unittest.TestCase):
-    def test_parallel_abbb_runner_forwards_progress_callback_without_changing_order(self) -> None:
+    def test_parallel_abbb_runner_forwards_progress_callback_without_changing_order(
+        self,
+    ) -> None:
         plan = SingleRoundEvaluationPlan(
             candidate=POLICY_CATALOG["finite-horizon"],
             baseline=POLICY_CATALOG["two-step"],
