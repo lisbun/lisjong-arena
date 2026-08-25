@@ -16,6 +16,8 @@ from math import isfinite
 
 from lisjong.policy_contract import Policy, Seat
 
+from lisjong_arena.riichienv.round_stats import SeatRoundStats
+
 _RANKS = (1, 2, 3, 4)
 
 SINGLE_ROUND_GAME_MODE = "4p-red-single"
@@ -269,6 +271,11 @@ class SingleRoundGameResult:
 
     candidate scoreを別fieldへ縮約せず、4 seat分のfinal scoresを正本として
     保持する。``candidate_score``はここから導出できる。
+
+    ``seat_round_stats``も同じ思想でSeat 0..3分の生ABBB非依存 raw fact
+    (``lisjong_arena.riichienv.round_stats.SeatRoundStats``)を正本として
+    保持する。baseline 3 seat分を含めここで捨てず、``candidate_round_stats``
+    がcandidateの分だけを``candidate_seat``経由で導出する。
     """
 
     seed: int
@@ -276,6 +283,9 @@ class SingleRoundGameResult:
     game_mode: str
     candidate_seat: Seat
     scores: tuple[int, int, int, int]
+    seat_round_stats: tuple[
+        SeatRoundStats, SeatRoundStats, SeatRoundStats, SeatRoundStats
+    ]
 
     def __post_init__(self) -> None:
         if type(self.seed) is not int:
@@ -303,10 +313,182 @@ class SingleRoundGameResult:
             raise TypeError("scores must contain only ints")
         object.__setattr__(self, "scores", scores)
 
+        try:
+            seat_round_stats = tuple(self.seat_round_stats)
+        except TypeError:
+            raise TypeError("seat_round_stats must be an iterable") from None
+        if len(seat_round_stats) != 4:
+            raise ValueError("seat_round_stats must contain exactly four values")
+        if any(not isinstance(item, SeatRoundStats) for item in seat_round_stats):
+            raise TypeError("seat_round_stats must contain only SeatRoundStats")
+        for seat, stats in enumerate(seat_round_stats):
+            if stats.end_score != scores[seat]:
+                raise ValueError(
+                    f"seat_round_stats[{seat}].end_score does not match scores[{seat}]"
+                )
+        object.__setattr__(self, "seat_round_stats", seat_round_stats)
+
     @property
     def candidate_score(self) -> int:
         """``scores[candidate_seat]``から導出したcandidateのfinal score。"""
         return self.scores[self.candidate_seat]
+
+    @property
+    def candidate_round_stats(self) -> SeatRoundStats:
+        """``seat_round_stats[candidate_seat]``から導出したcandidateのraw fact。"""
+        return self.seat_round_stats[self.candidate_seat]
+
+
+def _validate_bounded_count(name: str, value: object, *, maximum: int) -> None:
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an int")
+    if value < 0:
+        raise ValueError(f"{name} must not be negative")
+    if value > maximum:
+        raise ValueError(f"{name} must not exceed {maximum}")
+
+
+def _validate_unit_rate(name: str, value: object) -> None:
+    if type(value) is not float:
+        raise TypeError(f"{name} must be a float")
+    if not isfinite(value):
+        raise ValueError(f"{name} must be finite")
+    if not 0.0 <= value <= 1.0:
+        raise ValueError(f"{name} must be between 0.0 and 1.0")
+
+
+def _validate_gated_mean(
+    name: str, value: object, *, count: int, count_name: str
+) -> None:
+    """``count``が0なら``value``は``None``、正なら有限floatであることを検証する。"""
+    if count == 0:
+        if value is not None:
+            raise ValueError(f"{name} must be None when {count_name} is 0")
+        return
+    if type(value) is not float:
+        raise TypeError(f"{name} must be a float when {count_name} is positive")
+    if not isfinite(value):
+        raise ValueError(f"{name} must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class SingleRoundCandidateMahjongMetrics:
+    """candidateについての局単位Mahjong metrics(Issue #61)。
+
+    ``lisjong_arena.riichienv.round_stats.SeatRoundStats``のcandidate分だけを
+    集計したvalueである。母数0の場合はrate / averageを``0.0``へ丸めず
+    ``None``にする。rate / averageだけでなく分子・分母のcountも保持する。
+    """
+
+    round_count: int
+
+    mean_round_score_delta: float
+
+    win_count: int
+    win_rate: float
+    mean_win_points: float | None
+
+    deal_in_count: int
+    deal_in_rate: float
+    mean_deal_in_loss: float | None
+
+    exhaustive_draw_count: int
+    exhaustive_draw_tenpai_count: int
+    exhaustive_draw_tenpai_rate: float | None
+
+    tenpai_reached_count: int
+    mean_first_tenpai_turn: float | None
+
+    def __post_init__(self) -> None:
+        if type(self.round_count) is not int:
+            raise TypeError("round_count must be an int")
+        if self.round_count <= 0:
+            raise ValueError("round_count must be positive")
+
+        if type(self.mean_round_score_delta) is not float:
+            raise TypeError("mean_round_score_delta must be a float")
+        if not isfinite(self.mean_round_score_delta):
+            raise ValueError("mean_round_score_delta must be finite")
+
+        _validate_bounded_count("win_count", self.win_count, maximum=self.round_count)
+        _validate_unit_rate("win_rate", self.win_rate)
+        if self.win_rate != self.win_count / self.round_count:
+            raise ValueError("win_rate must equal win_count / round_count")
+        _validate_gated_mean(
+            "mean_win_points",
+            self.mean_win_points,
+            count=self.win_count,
+            count_name="win_count",
+        )
+        if self.mean_win_points is not None and self.mean_win_points <= 0.0:
+            raise ValueError(
+                "mean_win_points must be positive when win_count is positive"
+            )
+
+        _validate_bounded_count(
+            "deal_in_count", self.deal_in_count, maximum=self.round_count
+        )
+        _validate_unit_rate("deal_in_rate", self.deal_in_rate)
+        if self.deal_in_rate != self.deal_in_count / self.round_count:
+            raise ValueError("deal_in_rate must equal deal_in_count / round_count")
+        _validate_gated_mean(
+            "mean_deal_in_loss",
+            self.mean_deal_in_loss,
+            count=self.deal_in_count,
+            count_name="deal_in_count",
+        )
+        if self.mean_deal_in_loss is not None and self.mean_deal_in_loss <= 0.0:
+            raise ValueError(
+                "mean_deal_in_loss must be positive when deal_in_count is positive"
+            )
+
+        _validate_bounded_count(
+            "exhaustive_draw_count",
+            self.exhaustive_draw_count,
+            maximum=self.round_count,
+        )
+        _validate_bounded_count(
+            "exhaustive_draw_tenpai_count",
+            self.exhaustive_draw_tenpai_count,
+            maximum=self.exhaustive_draw_count,
+        )
+        if self.exhaustive_draw_count == 0:
+            if self.exhaustive_draw_tenpai_rate is not None:
+                raise ValueError(
+                    "exhaustive_draw_tenpai_rate must be None when "
+                    "exhaustive_draw_count is 0"
+                )
+        else:
+            _validate_unit_rate(
+                "exhaustive_draw_tenpai_rate", self.exhaustive_draw_tenpai_rate
+            )
+            if self.exhaustive_draw_tenpai_rate != (
+                self.exhaustive_draw_tenpai_count / self.exhaustive_draw_count
+            ):
+                raise ValueError(
+                    "exhaustive_draw_tenpai_rate must equal "
+                    "exhaustive_draw_tenpai_count / exhaustive_draw_count"
+                )
+
+        _validate_bounded_count(
+            "tenpai_reached_count",
+            self.tenpai_reached_count,
+            maximum=self.round_count,
+        )
+        _validate_gated_mean(
+            "mean_first_tenpai_turn",
+            self.mean_first_tenpai_turn,
+            count=self.tenpai_reached_count,
+            count_name="tenpai_reached_count",
+        )
+        if (
+            self.mean_first_tenpai_turn is not None
+            and self.mean_first_tenpai_turn < 0.0
+        ):
+            raise ValueError(
+                "mean_first_tenpai_turn must not be negative when "
+                "tenpai_reached_count is positive"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,12 +498,17 @@ class SingleRoundCandidateMetrics:
     ``seat_mean_scores``はSeat 0..3順のtupleであり、``seat_mean_scores[seat]``
     がそのseatを担当した時のcandidate平均scoreになる。開始点``25000``を
     hard-codeしたpoint deltaはここでは扱わず、final score自体を正本とする。
+
+    ``mahjong_metrics``はIssue #61で追加した局単位Mahjong metricsであり、
+    既存のfinal-score系metrics(``mean_candidate_score`` /
+    ``seat_mean_scores``)の意味は変更しない。
     """
 
     candidate_identity: str
     game_count: int
     mean_candidate_score: float
     seat_mean_scores: tuple[float, float, float, float]
+    mahjong_metrics: SingleRoundCandidateMahjongMetrics
 
     def __post_init__(self) -> None:
         if type(self.candidate_identity) is not str:
@@ -353,6 +540,13 @@ class SingleRoundCandidateMetrics:
             if not isfinite(value):
                 raise ValueError("seat_mean_scores must contain only finite floats")
         object.__setattr__(self, "seat_mean_scores", seat_mean_scores)
+
+        if not isinstance(self.mahjong_metrics, SingleRoundCandidateMahjongMetrics):
+            raise TypeError(
+                "mahjong_metrics must be a SingleRoundCandidateMahjongMetrics"
+            )
+        if self.mahjong_metrics.round_count != self.game_count:
+            raise ValueError("mahjong_metrics.round_count must equal game_count")
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,6 +654,7 @@ __all__ = [
     "PolicyMetrics",
     "PolicySpec",
     "SeatResult",
+    "SingleRoundCandidateMahjongMetrics",
     "SingleRoundCandidateMetrics",
     "SingleRoundEvaluationPlan",
     "SingleRoundEvaluationResult",

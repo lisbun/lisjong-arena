@@ -15,6 +15,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Seat
 
 from lisjong_arena._parallel_execution import (
@@ -70,13 +71,15 @@ class _RecordingLocalGameRunner:
 
     def run(self) -> LocalGameResult:
         type(self).captured_policies.append(dict(self._policies))
+        scores = (30_000, 30_000, 30_000, -90_000 + 30_000)
         return LocalGameResult(
             seed=self._seed,
             game_mode=self._game_mode,
-            scores=(30_000, 30_000, 30_000, -90_000 + 30_000),
+            scores=scores,
             ranks=(1, 2, 3, 4),
             steps=1,
             decisions=4,
+            seat_round_stats=neutral_seat_round_stats_tuple(scores),
         )
 
 

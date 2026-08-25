@@ -9,6 +9,7 @@ import unittest
 from collections.abc import Mapping
 from unittest import mock
 
+from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Policy, Seat
 
 from lisjong_arena.model import (
@@ -99,6 +100,9 @@ class _FakeSingleGame:
             if self._scores_per_game is None
             else self._scores_per_game[index]
         )
+        seat_round_stats = neutral_seat_round_stats_tuple(
+            scores if len(scores) == 4 else (0, 0, 0, 0)
+        )
         return LocalGameResult(
             seed=seed + self._seed_offset,
             game_mode=self._game_mode,
@@ -108,6 +112,7 @@ class _FakeSingleGame:
             else (1, 2, 3, 4),
             steps=1,
             decisions=4,
+            seat_round_stats=seat_round_stats,
         )
 
 

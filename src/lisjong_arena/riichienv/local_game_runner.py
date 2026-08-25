@@ -26,6 +26,7 @@ from lisjong_arena.riichienv.adapter import (
     build_decision,
     seat_from_player_index,
 )
+from lisjong_arena.riichienv.round_stats import RoundStatsCollector, SeatRoundStats
 
 
 class LocalGameRunnerError(Exception):
@@ -50,7 +51,12 @@ def _normalize_four_ints(value: object, field_name: str) -> tuple[int, int, int,
 
 @dataclass(frozen=True, slots=True)
 class LocalGameResult:
-    """``env.done()``後に取得した1対局の結果と実行量。"""
+    """``env.done()``後に取得した1対局の結果と実行量。
+
+    ``seat_round_stats``はSeat 0..3順のgenericなraw round observable fact
+    であり、ABBBの``candidate`` / ``baseline``概念をここへは持ち込まない
+    (``lisjong_arena.riichienv.round_stats.SeatRoundStats``を参照)。
+    """
 
     seed: int
     game_mode: str
@@ -58,6 +64,9 @@ class LocalGameResult:
     ranks: tuple[int, int, int, int]
     steps: int
     decisions: int
+    seat_round_stats: tuple[
+        SeatRoundStats, SeatRoundStats, SeatRoundStats, SeatRoundStats
+    ]
 
     def __post_init__(self) -> None:
         if type(self.seed) is not int:
@@ -79,8 +88,23 @@ class LocalGameResult:
         if self.decisions < self.steps:
             raise ValueError("decisions must be greater than or equal to steps")
 
+        try:
+            seat_round_stats = tuple(self.seat_round_stats)
+        except TypeError:
+            raise TypeError("seat_round_stats must be an iterable") from None
+        if len(seat_round_stats) != 4:
+            raise ValueError("seat_round_stats must contain exactly four values")
+        if any(not isinstance(item, SeatRoundStats) for item in seat_round_stats):
+            raise TypeError("seat_round_stats must contain only SeatRoundStats")
+        for seat, stats in enumerate(seat_round_stats):
+            if stats.end_score != scores[seat]:
+                raise ValueError(
+                    f"seat_round_stats[{seat}].end_score does not match scores[{seat}]"
+                )
+
         object.__setattr__(self, "scores", scores)
         object.__setattr__(self, "ranks", ranks)
+        object.__setattr__(self, "seat_round_stats", seat_round_stats)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +146,7 @@ class LocalGameRunner:
         "_env",
         "_game_mode",
         "_max_steps",
+        "_round_stats",
         "_seat_runtimes",
         "_seed",
         "_started",
@@ -155,6 +180,7 @@ class LocalGameRunner:
         self._env = RiichiEnv(seed=seed, game_mode=game_mode)
         self._started = False
         self._trace_sink = trace_sink
+        self._round_stats = RoundStatsCollector()
 
     def _build_actions(
         self,
@@ -174,22 +200,39 @@ class LocalGameRunner:
             actions[player_id] = decision.mapping.resolve(selected)
         return actions
 
-    def _publish_trace_events(self, next_sequence: int) -> int:
-        """``mjai_log``の未通知entryを順序どおりdetached JSONで通知する。"""
-        if self._trace_sink is None:
-            return next_sequence
+    def _process_new_events(
+        self,
+        next_sequence: int,
+        observations: Mapping[int, Observation],
+    ) -> int:
+        """``mjai_log``の未処理entryをround stats collectorとtrace sinkへ渡す。
 
+        ``env.mjai_log``全体をここで1回だけ読み、同じ生entry列を
+        ``RoundStatsCollector``(常時)とtrace sink(設定時のみ)の両方へ渡す。
+        round stats collectionはGameTrace出力の有無に関わらず常に必要な
+        core機能であるため、``trace_sink``が``None``でも``mjai_log``自体は
+        読む。``observations``はこの直前の``env.reset()`` / ``env.step()``が
+        返した現在のaction待ちseatで、``RoundStatsCollector``が
+        ``start_kyoku``直後の新dealerの``drawn_tile``を読むためだけに使う。
+        """
         source_events = self._env.mjai_log
         if not isinstance(source_events, list):
             raise LocalGameRunnerError("RiichiEnv.mjai_log must be a list")
         if len(source_events) < next_sequence:
             raise LocalGameRunnerError("RiichiEnv.mjai_log unexpectedly shrank")
 
-        for source_event in source_events[next_sequence:]:
-            if type(source_event) is not dict:
-                raise LocalGameRunnerError(
-                    "RiichiEnv.mjai_log entries must be dictionaries"
-                )
+        new_events = source_events[next_sequence:]
+        if any(type(source_event) is not dict for source_event in new_events):
+            raise LocalGameRunnerError(
+                "RiichiEnv.mjai_log entries must be dictionaries"
+            )
+
+        self._round_stats.on_new_events(new_events, self._env, observations)
+
+        if self._trace_sink is None:
+            return next_sequence + len(new_events)
+
+        for source_event in new_events:
             try:
                 detached_event = json.dumps(
                     source_event,
@@ -222,7 +265,7 @@ class LocalGameRunner:
             self._trace_sink.on_start(seed=self._seed, game_mode=self._game_mode)
 
         observations = self._env.reset()
-        next_trace_sequence = self._publish_trace_events(0)
+        next_event_sequence = self._process_new_events(0, observations)
         steps = 0
         decisions = 0
 
@@ -240,9 +283,11 @@ class LocalGameRunner:
             decisions += len(actions)
             observations = self._env.step(actions)
             steps += 1
-            next_trace_sequence = self._publish_trace_events(next_trace_sequence)
+            next_event_sequence = self._process_new_events(
+                next_event_sequence, observations
+            )
 
-        self._publish_trace_events(next_trace_sequence)
+        self._process_new_events(next_event_sequence, observations)
         result = LocalGameResult(
             seed=self._seed,
             game_mode=self._game_mode,
@@ -250,6 +295,7 @@ class LocalGameRunner:
             ranks=tuple(self._env.ranks()),
             steps=steps,
             decisions=decisions,
+            seat_round_stats=self._round_stats.build(self._env),
         )
         if self._trace_sink is not None:
             self._trace_sink.on_complete()

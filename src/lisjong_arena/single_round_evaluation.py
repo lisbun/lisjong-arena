@@ -34,6 +34,7 @@ from lisjong_arena.model import (
     SINGLE_ROUND_GAME_MODE,
     SINGLE_ROUND_ROTATION_COUNT,
     PolicySpec,
+    SingleRoundCandidateMahjongMetrics,
     SingleRoundCandidateMetrics,
     SingleRoundEvaluationPlan,
     SingleRoundEvaluationResult,
@@ -156,6 +157,75 @@ def _build_game_result(
         game_mode=result.game_mode,
         candidate_seat=candidate_seat,
         scores=result.scores,
+        seat_round_stats=result.seat_round_stats,
+    )
+
+
+def _aggregate_candidate_mahjong_metrics(
+    game_results: tuple[SingleRoundGameResult, ...],
+) -> SingleRoundCandidateMahjongMetrics:
+    """raw candidate ``SeatRoundStats``の列からIssue #61の7 metricsを集計する。
+
+    candidateのraw factだけを対象にし、baselineのstatsはここでは使わない。
+    母数が0の指標は``0.0``ではなく``None``にする。
+    """
+    round_count = len(game_results)
+    candidate_stats = [
+        game_result.candidate_round_stats for game_result in game_results
+    ]
+
+    score_deltas = [stats.score_delta for stats in candidate_stats]
+    mean_round_score_delta = sum(score_deltas) / round_count
+
+    win_points = [stats.win_points for stats in candidate_stats if stats.won]
+    win_count = len(win_points)
+    mean_win_points = None if win_count == 0 else sum(win_points) / win_count
+
+    deal_in_losses = [stats.deal_in_loss for stats in candidate_stats if stats.dealt_in]
+    deal_in_count = len(deal_in_losses)
+    mean_deal_in_loss = (
+        None if deal_in_count == 0 else sum(deal_in_losses) / deal_in_count
+    )
+
+    exhaustive_draw_stats = [
+        stats for stats in candidate_stats if stats.exhaustive_draw
+    ]
+    exhaustive_draw_count = len(exhaustive_draw_stats)
+    exhaustive_draw_tenpai_count = sum(
+        1 for stats in exhaustive_draw_stats if stats.tenpai_at_exhaustive_draw
+    )
+    exhaustive_draw_tenpai_rate = (
+        None
+        if exhaustive_draw_count == 0
+        else exhaustive_draw_tenpai_count / exhaustive_draw_count
+    )
+
+    first_tenpai_turns = [
+        stats.first_tenpai_turn
+        for stats in candidate_stats
+        if stats.first_tenpai_turn is not None
+    ]
+    tenpai_reached_count = len(first_tenpai_turns)
+    mean_first_tenpai_turn = (
+        None
+        if tenpai_reached_count == 0
+        else sum(first_tenpai_turns) / tenpai_reached_count
+    )
+
+    return SingleRoundCandidateMahjongMetrics(
+        round_count=round_count,
+        mean_round_score_delta=mean_round_score_delta,
+        win_count=win_count,
+        win_rate=win_count / round_count,
+        mean_win_points=mean_win_points,
+        deal_in_count=deal_in_count,
+        deal_in_rate=deal_in_count / round_count,
+        mean_deal_in_loss=mean_deal_in_loss,
+        exhaustive_draw_count=exhaustive_draw_count,
+        exhaustive_draw_tenpai_count=exhaustive_draw_tenpai_count,
+        exhaustive_draw_tenpai_rate=exhaustive_draw_tenpai_rate,
+        tenpai_reached_count=tenpai_reached_count,
+        mean_first_tenpai_turn=mean_first_tenpai_turn,
     )
 
 
@@ -167,7 +237,9 @@ def aggregate_candidate_metrics(
 
     ``mean_candidate_score``は全gameのcandidate final scoreの平均、
     ``seat_mean_scores``はcandidateがそのseatを担当した時のfinal score平均
-    である。
+    である。``mahjong_metrics``はIssue #61の局単位Mahjong metricsであり、
+    candidateのraw ``SeatRoundStats``だけから集計する(baseline statsは
+    ``game_results``に残るが、ここでは使わない)。
     """
     if not game_results:
         raise ValueError("game_results must not be empty")
@@ -190,6 +262,7 @@ def aggregate_candidate_metrics(
         game_count=len(game_results),
         mean_candidate_score=sum(all_scores) / len(all_scores),
         seat_mean_scores=seat_mean_scores,
+        mahjong_metrics=_aggregate_candidate_mahjong_metrics(game_results),
     )
 
 

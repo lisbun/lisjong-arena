@@ -11,6 +11,8 @@ serial/parallel一致は``tests.test_comparison_parallel_integration``が担当�
 import unittest
 from unittest import mock
 
+from _round_stats_fixtures import neutral_seat_round_stats_tuple
+
 from lisjong_arena._parallel_execution import (
     GameJobOutcome,
     PolicyFactoryNotSerializableError,
@@ -81,6 +83,9 @@ def _fake_outcomes(
                 ranks=ranks,
                 steps=1,
                 decisions=4,
+                seat_round_stats=neutral_seat_round_stats_tuple(
+                    tuple(_SCORE_BY_RANK[rank] for rank in ranks)
+                ),
             ),
             error_text=None,
         )
@@ -224,6 +229,9 @@ class FailClosedTest(unittest.TestCase):
                 ranks=(1, 2, 3, 4),
                 steps=1,
                 decisions=4,
+                seat_round_stats=neutral_seat_round_stats_tuple(
+                    (40_000, 30_000, 20_000, 10_000)
+                ),
             )
 
         with mock.patch("lisjong_arena.comparison._run_single_game", _fake_single_game):
