@@ -19,7 +19,7 @@ genericな``game_mode``のようにcallerが指定できるoptionではない。
 であり、このmoduleは``riichienv``をimportしない。
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from lisjong.policy_contract import Policy, Seat
 
@@ -268,11 +268,17 @@ def aggregate_candidate_metrics(
 
 def run_single_round_evaluation(
     plan: SingleRoundEvaluationPlan,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> SingleRoundEvaluationResult:
     """``SingleRoundEvaluationPlan``に従ってcandidate single-round評価を実行する。
 
     実行順序は``seed入力順 -> rotation 0..3``で決定的である。seed数をNとする
     と、total gamesは4N、candidateは各seatをちょうどN回担当する。
+
+    ``progress_callback``は成功した1 gameをraw resultへ追加するたびに
+    ``(completed, total)``で呼ぶoptional notificationであり、resultやmetricsの
+    semantic dataには含めない。未指定callerの挙動は変更しない。
 
     途中で1 gameでも失敗した場合は``SingleRoundEvaluationError``を送出し、
     成功したgameだけのpartialな結果を返さない。
@@ -280,6 +286,8 @@ def run_single_round_evaluation(
     if not isinstance(plan, SingleRoundEvaluationPlan):
         raise TypeError("plan must be a SingleRoundEvaluationPlan")
 
+    total = ROTATION_COUNT * len(plan.seeds)
+    completed = 0
     game_results: list[SingleRoundGameResult] = []
     for seed in plan.seeds:
         for rotation in range(ROTATION_COUNT):
@@ -306,6 +314,9 @@ def run_single_round_evaluation(
                     candidate_seat=candidate_seat,
                 )
             )
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(completed, total)
 
     frozen_results = tuple(game_results)
     expected_count = ROTATION_COUNT * len(plan.seeds)
@@ -326,7 +337,10 @@ def run_single_round_evaluation(
 
 
 def run_single_round_evaluation_parallel(
-    plan: SingleRoundEvaluationPlan, *, max_workers: int
+    plan: SingleRoundEvaluationPlan,
+    *,
+    max_workers: int,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> SingleRoundEvaluationResult:
     """``run_single_round_evaluation()``と同一semanticsで、local process poolを
     使って並列実行する。
@@ -336,6 +350,10 @@ def run_single_round_evaluation_parallel(
     最終raw resultは``run_single_round_evaluation()``と同じ``seed入力順 ->
     rotation 0..3``へcanonicalizeする。Policy instanceは各job・各seatについて
     worker process内部でfactoryからfresh生成し、parent processでは生成しない。
+
+    ``progress_callback``はparent processが成功outcomeを回収するたびに
+    ``(completed, total)``で呼ぶoptional notificationである。completion順序は
+    result canonicalizationへ使わず、worker processからcallbackを呼ばない。
 
     ``plan.candidate`` / ``plan.baseline``の``factory``は、spawn worker
     processからimport可能なtop-level callableでなければならない。lambdaや
@@ -368,7 +386,11 @@ def run_single_round_evaluation_parallel(
                 )
             )
 
-    outcomes = run_game_jobs(jobs, max_workers=max_workers)
+    outcomes = run_game_jobs(
+        jobs,
+        max_workers=max_workers,
+        progress_callback=progress_callback,
+    )
 
     game_results: list[SingleRoundGameResult] = []
     for seed in plan.seeds:
