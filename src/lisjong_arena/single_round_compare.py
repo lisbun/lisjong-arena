@@ -174,7 +174,7 @@ class _ProgressReporter:
         eta_text = "calculating"
         if completed > 0:
             eta = elapsed / completed * (self._total - completed)
-            eta_text = _format_duration(eta)
+            eta_text = f"{_format_duration(eta):>11}"
         line = (
             f"\r[{bar}] {completed}/{self._total} ({percentage:5.1f}%) "
             f"elapsed {_format_duration(elapsed)} ETA {eta_text}"
