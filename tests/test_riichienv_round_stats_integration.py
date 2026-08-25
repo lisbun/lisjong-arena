@@ -106,6 +106,11 @@ class RonFixtureTest(unittest.TestCase):
         self.assertFalse(stats[2].dealt_in)
         for seat in range(4):
             self.assertEqual(stats[seat].end_score, env.scores()[seat])
+        # 実測値をexact fixtureとして固定する(discard-count基準のturn)。
+        self.assertEqual(
+            tuple(seat_stats.first_tenpai_turn for seat_stats in stats),
+            (None, None, 17, None),
+        )
 
 
 class TsumoFixtureTest(unittest.TestCase):

@@ -495,25 +495,65 @@ class RoundStatsCollectorHoraTest(unittest.TestCase):
 
         self.assertFalse(any(seat_stats.dealt_in for seat_stats in stats))
 
-    def test_missing_win_result_degrades_without_recording_a_win(self) -> None:
-        # 4p-red-halfのような複数局gameでは、非最終局のhora直後にengineが
-        # 次局を開始してenv.win_resultsを空にすることを実測で確認した
-        # (see _apply_hora docstring)。その局は次のstart_kyokuで捨てられる
-        # ため、fail closedにせずwonをFalseのまま残す。
+    def test_missing_win_result_for_the_currently_tracked_kyoku_raises(self) -> None:
+        # on_new_events()がsuperseded kyokuのeventを事前に除外するため、
+        # ここで処理されるhoraは必ず現在追跡中の局に属する。win_resultsに
+        # actorが存在しない場合はfail closedする。
         env = _default_env(oya=0)
         collector = self._reset(env)
-        collector.on_new_events(
-            [{"type": "hora", "actor": 2, "target": 3, "deltas": [0, 0, 1000, -1000]}],
-            env,
-            {},
-        )
+        with self.assertRaises(RoundStatsError):
+            collector.on_new_events(
+                [
+                    {
+                        "type": "hora",
+                        "actor": 2,
+                        "target": 3,
+                        "deltas": [0, 0, 1000, -1000],
+                    }
+                ],
+                env,
+                {},
+            )
+
+    def test_events_before_the_last_start_kyoku_in_a_batch_are_discarded(
+        self,
+    ) -> None:
+        # 非最終局のhora直後、同じenv.step()内で次局のstart_kyokuまで
+        # 進んだ場合、その非最終局のhoraはwin_resultsが読めなくても
+        # fail closedにならず、単純に無視される(次局の集計だけが残る)。
+        env = _default_env(oya=1)
+        collector = self._reset(env)
+        env.hands = [
+            _thirteen(100),
+            _thirteen(200),
+            _thirteen(300) + [999],
+            _thirteen(400),
+        ]
+        env.oya = 2
+        env.set_scores([24000, 24000, 27000, 25000])
+
+        with patch(f"{_MODULE}.HandEvaluator") as hand_evaluator:
+            hand_evaluator.return_value.is_tenpai.return_value = False
+            collector.on_new_events(
+                [
+                    # superseded kyoku(win_resultsが読めない、かつ不正な
+                    # deltasを持つ)は最後のstart_kyokuより前なので無視される。
+                    {
+                        "type": "hora",
+                        "actor": 0,
+                        "target": 1,
+                        "deltas": [999999, -999999, 0, 0],
+                    },
+                    {"type": "end_kyoku"},
+                    _start_kyoku_event(oya=2, scores=[24000, 24000, 27000, 25000]),
+                ],
+                env,
+                {2: _FakeObservation(999)},
+            )
 
         stats = collector.build(env)
-        self.assertFalse(stats[2].won)
-        self.assertIsNone(stats[2].win_points)
-        # deal-in trackingはdeltasだけから求まるため、この制約を受けない。
-        self.assertTrue(stats[3].dealt_in)
-        self.assertEqual(stats[3].deal_in_loss, 1000)
+        self.assertFalse(stats[0].won)
+        self.assertEqual(stats[2].start_score, 27000)
 
     def test_same_seat_winning_twice_raises_round_stats_error(self) -> None:
         env = _default_env(oya=0)

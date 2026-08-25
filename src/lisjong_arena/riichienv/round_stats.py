@@ -15,6 +15,14 @@ execution境界(``SeatMaterializedState``)とは責務を分離する。
 ``LocalGameResult.seat_round_stats``の内容を集計に使わないため、複数局game
 でどの局が採用されるかはAABB側の意味へ影響しない。
 
+非最終局のhora / ryukyoku直後にRiichiEnvが同じ``env.step()``内で次局の
+配牌まで自動的に進めることを実測で確認したため、``on_new_events()``は
+渡された``events``内に複数の``start_kyoku``が含まれる場合、最後の
+``start_kyoku``より前のevent(superseded kyokuに属する)を処理せず捨てる。
+これにより、実際に処理されるevent(``hora`` / ``ryukyoku``を含む)は必ず
+現在追跡中の局に属することが保証され、``env.win_results`` /
+``env.hands`` / ``env.melds``の読み取りをfail closedにできる。
+
 このcollectorが読むRiichiEnv側stateは次だけである。
 
 - ``env.mjai_log``に新しく追加された``start_kyoku`` / ``dahai`` / ``hora`` /
@@ -202,7 +210,25 @@ class RoundStatsCollector:
         ``observations``は同じ呼び出しが返した現在の(action待ちの) seat別
         Observationであり、``start_kyoku`` event直後の新dealerの
         ``drawn_tile``を読むためだけに使う。
+
+        ``4p-red-half``のような複数局gameでは、非最終局のhora/ryukyoku
+        直後にRiichiEnvが同じ``env.step()``内で次局の配牌まで自動的に
+        進めてしまうため、``events``の中に複数の``start_kyoku``が含まれる
+        ことがある(実測で確認)。この場合、最後の``start_kyoku``より前の
+        eventは必ず superseded(直近局のresetで捨てられる)なので、
+        ``env.win_results`` / ``env.hands`` / ``env.melds``がすでに次局の
+        stateへ入れ替わっているかどうかに関わらず一切処理しない。
+        処理するのは最後の``start_kyoku``以降のeventだけであり、その範囲は
+        現在追跡中の局(単一局gameでは常に、複数局gameでは直近局)に
+        属することが保証されるため、以降のhandlerはfail closedにできる。
         """
+        last_start_kyoku_index = None
+        for index, event in enumerate(events):
+            if event.get("type") == "start_kyoku":
+                last_start_kyoku_index = index
+        if last_start_kyoku_index is not None:
+            events = events[last_start_kyoku_index:]
+
         for event in events:
             event_type = event.get("type")
             try:
@@ -270,17 +296,14 @@ class RoundStatsCollector:
     def _apply_hora(self, event: dict, env: object) -> None:
         """``hora`` eventを適用する。
 
-        ``env.win_results``は直近の(かつ現在進行中の)局のwinnerだけを保持し、
-        次の``start_kyoku``で内部的にresetされることを実測で確認した
-        (``4p-red-half``のように1 gameで複数局続く場合、非最終局のhora
-        直後にengineが即座に次局を開始し、その中でwin_resultsが空になる)。
-        このcollectorは``build()``で「直近1局」だけを報告するため、
-        ``win_results``が読めない局は必ず後続の``start_kyoku``で捨てられる
-        非最終局であり、fail closedにする必要はない。honba継続後の最終局
-        (game終了後)では``win_results``は保持されたままであることを確認済み
-        なので、実際に報告されるSeatRoundStatsの``won`` / ``win_points``が
-        不正確になることはない。deal-in trackingはevent自体の``deltas``だけ
-        から求まるため、この制約の影響を受けない。
+        ``on_new_events()``がすでに、このcollectorへ渡す``events``を最後の
+        ``start_kyoku``以降だけへ絞り込んでいるため、ここで処理する``hora``
+        は必ず現在追跡中の局(単一局gameでは常に、複数局gameでは直近局)に
+        属する。``4p-red-half``のような複数局gameで、非最終局のhora直後に
+        RiichiEnvが同じ``env.step()``内で次局まで進めて``env.win_results``を
+        resetすることを実測で確認したが、そのeventはこの絞り込みで最初から
+        処理対象外になるため、ここでは``env.win_results``に``actor``の
+        ``WinResult``が存在しないことをfail closedで扱ってよい。
         """
         actor = int(event["actor"])
         target = int(event["target"])
@@ -294,24 +317,26 @@ class RoundStatsCollector:
 
         win_results = getattr(env, "win_results", None)
         win_result = None if win_results is None else win_results.get(actor)
-        if win_result is not None:
-            if is_tsumo:
-                if actor == env.oya:
-                    win_points = 3 * win_result.tsumo_agari_ko
-                else:
-                    win_points = (
-                        win_result.tsumo_agari_oya + 2 * win_result.tsumo_agari_ko
-                    )
+        if win_result is None:
+            raise RoundStatsError(
+                f"env.win_results does not contain a WinResult for seat {actor}"
+            )
+
+        if is_tsumo:
+            if actor == env.oya:
+                win_points = 3 * win_result.tsumo_agari_ko
             else:
-                win_points = win_result.ron_agari
+                win_points = win_result.tsumo_agari_oya + 2 * win_result.tsumo_agari_ko
+        else:
+            win_points = win_result.ron_agari
 
-            if win_points <= 0:
-                raise RoundStatsError(
-                    f"computed non-positive win_points for winning seat {actor}"
-                )
+        if win_points <= 0:
+            raise RoundStatsError(
+                f"computed non-positive win_points for winning seat {actor}"
+            )
 
-            self._won[actor] = True
-            self._win_points[actor] = win_points
+        self._won[actor] = True
+        self._win_points[actor] = win_points
 
         if not is_tsumo and target != actor:
             loss = -int(deltas[target])
@@ -325,16 +350,11 @@ class RoundStatsCollector:
     def _apply_ryukyoku(self, event: dict, env: object) -> None:
         """``ryukyoku`` eventを適用する。
 
-        ``_apply_hora``と同じ理由で、``4p-red-half``のような複数局game
-        では、非最終局のryukyoku直後にengineが即座に次局の配牌まで進めて
-        しまうため、``env.hands`` / ``env.melds``がここで読める時点では
-        すでに次局の手牌へ入れ替わっていることを実測で確認した(該当局の
-        ``hand``長が13枚+1枚(次dealerの自動tsumo分)になる)。このcollector
-        は``build()``で「直近1局」だけを報告し、そのような非最終局の
-        tenpai flagは必ず後続の``start_kyoku``で上書きされるため、実際に
-        報告される値には影響しない。単一局のgame(``4p-red-single``)や
-        game終了直後の最終局では、次局が存在しないため``env.hands`` /
-        ``env.melds``はそのままその局の最終手牌を表す(Preflightで実測済み)。
+        ``_apply_hora``と同じ理由で、``on_new_events()``が最後の
+        ``start_kyoku``より前のeventを処理対象から除外しているため、ここで
+        処理する``ryukyoku``は必ず現在追跡中の局に属する。``env.hands`` /
+        ``env.melds``は次局の配牌へ入れ替わる前の、その局の最終手牌である
+        ことがPreflightで実測済みである。
         """
         if event.get("reason") != _EXHAUSTIVE_DRAW_REASON:
             return
