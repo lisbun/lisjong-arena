@@ -158,9 +158,7 @@ class _ProgressReporter:
 
     def __call__(self, completed: int, total: int) -> None:
         if total != self._total:
-            raise ValueError(
-                f"progress total changed from {self._total} to {total}"
-            )
+            raise ValueError(f"progress total changed from {self._total} to {total}")
         if type(completed) is not int or not 0 <= completed <= total:
             raise ValueError("progress completed must be between 0 and total")
         elapsed = max(0.0, self._clock() - self._started_at)
