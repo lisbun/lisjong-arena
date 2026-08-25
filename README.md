@@ -555,6 +555,61 @@ if __name__ == "__main__":
 
 ABBBでは、既存の `SingleRoundEvaluationPlan` を `run_single_round_evaluation_parallel(plan, max_workers=4)` へ渡します。benchmark結果はmachine、CPU、Policy workload、seed set等に依存するため、特定のspeedup倍率をCIのpass/fail条件にはしません。
 
+## `single_round_compare` CLI
+
+登録済みPolicyを名前で選び、既存ABBB single-round評価(`SingleRoundEvaluationPlan` / `run_single_round_evaluation()` / `run_single_round_evaluation_parallel()`)を1コマンドで実行できる薄いdeveloper-facing CLIです(Issue #56)。新しいevaluation engineではなく、既存evaluation semanticsをそのまま呼び出すだけの層です。
+
+```powershell
+python -m lisjong_arena.single_round_compare `
+  --candidate finite-horizon `
+  --baseline two-step `
+  --seeds 0:99 `
+  --workers 4
+```
+
+利用可能なPolicy名は次の2つだけです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
+
+```text
+two-step        -> TwoStepUkeirePolicy
+finite-horizon  -> FiniteHorizonCompletionPolicy
+```
+
+Policyの追加はこの明示catalogだけを正本とし、`package.module:ClassName`のようなdynamic import、entry point plugin、YAML/TOML config等は導入していません。
+
+- `--candidate` / `--baseline`: catalog登録名のみ受け付けます。未知の名前はargparseの`choices`でparse時点でfail closedします。同じidentity同士の指定は既存`SingleRoundEvaluationPlan`のvalidationにより拒否され、CLI側で重複したvalidationは持ちません
+- `--seeds N`: 単一seed(例: `--seeds 42` -> `(42,)`)
+- `--seeds START:END`: **inclusive** range(例: `--seeds 0:99` -> `0..99`の100 seeds)。comma listや複数rangeは未対応です
+- `--workers N`: positive int、既定値`1`。`workers=1`は既存`run_single_round_evaluation()`(serial)、`workers>1`は既存`run_single_round_evaluation_parallel()`(local process parallel)へそのまま委譲します
+
+evaluation protocol(ABBB rotation、`4p-red-single`固定、Policy lifecycle、raw result canonicalization、candidate metrics aggregation、fail-closed semantics)はこのCLIから変更できません。`--protocol` / `--game-mode` / `--rotation-count`のようなoptionはありません。
+
+成功時は次の形式でsummaryをstdoutへ表示します。
+
+```text
+Policy comparison completed
+
+protocol:   ABBB / 4p-red-single
+candidate:  finite-horizon
+baseline:   two-step
+seeds:      0..99 (100)
+games:      400
+workers:    4
+
+candidate mean score: 25123.5
+baseline mean score:  24958.8
+mean delta:            +164.7
+
+candidate seat means:
+  seat 0: 25110.0
+  seat 1: 24890.0
+  seat 2: 25412.0
+  seat 3: 25082.0
+```
+
+`baseline mean score`は各gameのcandidate以外3 seatのfinal scoreすべての平均、`mean delta`は各gameの`candidate score - そのgameのbaseline 3 seat平均`をgame平均したdescriptive metricです。いずれも`SingleRoundEvaluationResult`へfield追加せず、raw `game_results`からCLI側で導出します。confidence interval・statistical significance・自動勝敗判定は追加していません。
+
+1 gameでも失敗した場合は既存evaluationのfail-closed挙動(partial summaryを返さずcomparison全体を失敗させる)がそのまま伝わり、CLIはsuccess summaryを出さずnon-zero exitで終了します。結果のpersistence(`--json` / `--output` / historical storage等)は行わず、stdout表示だけです。
+
 ## Comparison artifact
 
 既存のversion付きJSON artifact契約は、AABB comparison protocol（`ComparisonPlan` / `ComparisonResult`）のみを対象とします。ABBB single-round evaluation result（`SingleRoundEvaluationResult`）のartifact保存は現時点では未実装で、必要になった時点で後続Issueとして独立に設計します。
