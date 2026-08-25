@@ -16,7 +16,7 @@
         -> 既存SingleRoundEvaluationPlan
     既存runner
         -> run_single_round_evaluation() / run_single_round_evaluation_parallel()
-    human-readable summary
+    human-readable summary / optional progress presentation
 
 ABBB rotation、``4p-red-single``固定、Policy lifecycle、raw result
 canonicalization、candidate metrics aggregation、fail-closed semanticsは
@@ -30,14 +30,19 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from time import monotonic
+from typing import TextIO
 
 from lisjong_arena.model import SingleRoundEvaluationPlan, SingleRoundEvaluationResult
 from lisjong_arena.policy_catalog import POLICY_CATALOG
 from lisjong_arena.single_round_evaluation import (
+    ROTATION_COUNT,
     run_single_round_evaluation,
     run_single_round_evaluation_parallel,
 )
+
+_PROGRESS_BAR_WIDTH = 24
 
 
 def parse_seeds(raw: str) -> tuple[int, ...]:
@@ -108,7 +113,85 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
         default=1,
         help="local process worker count (default: 1; 1=serial, >1=parallel)",
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="show completed games, elapsed time, and ETA on stderr",
+    )
     return parser
+
+
+def _format_duration(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    minutes, second = divmod(total_seconds, 60)
+    hours, minute = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minute:02d}:{second:02d}"
+    return f"{minute:02d}:{second:02d}"
+
+
+class _ProgressReporter:
+    """ABBB game completionを1行のstderr progressとして表示する。
+
+    evaluation semanticsやresultには一切関与せず、runnerから受け取る
+    ``(completed, total)``だけをwall-clock表示へ変換する。worker processから
+    直接出力せず、このobjectはCLIのparent processだけで使う。
+    """
+
+    __slots__ = ("_clock", "_finished", "_started_at", "_stream", "_total")
+
+    def __init__(
+        self,
+        total: int,
+        *,
+        stream: TextIO,
+        clock: Callable[[], float] = monotonic,
+    ) -> None:
+        if type(total) is not int or total <= 0:
+            raise ValueError("progress total must be a positive int")
+        self._total = total
+        self._stream = stream
+        self._clock = clock
+        self._started_at = clock()
+        self._finished = False
+        self._write(completed=0, elapsed=0.0)
+
+    def __call__(self, completed: int, total: int) -> None:
+        if total != self._total:
+            raise ValueError(
+                f"progress total changed from {self._total} to {total}"
+            )
+        if type(completed) is not int or not 0 <= completed <= total:
+            raise ValueError("progress completed must be between 0 and total")
+        elapsed = max(0.0, self._clock() - self._started_at)
+        self._write(completed=completed, elapsed=elapsed)
+
+    def _write(self, *, completed: int, elapsed: float) -> None:
+        fraction = completed / self._total
+        filled = int(_PROGRESS_BAR_WIDTH * fraction)
+        bar = "#" * filled + "-" * (_PROGRESS_BAR_WIDTH - filled)
+        percentage = fraction * 100.0
+        eta_text = "calculating"
+        if completed > 0:
+            eta = elapsed / completed * (self._total - completed)
+            eta_text = _format_duration(eta)
+        line = (
+            f"\r[{bar}] {completed}/{self._total} ({percentage:5.1f}%) "
+            f"elapsed {_format_duration(elapsed)} ETA {eta_text}"
+        )
+        self._stream.write(line)
+        if completed == self._total:
+            self._stream.write("\n")
+            self._finished = True
+        self._stream.flush()
+
+    def close(self) -> None:
+        """途中failure等でも後続stderr/stdoutがprogress行と重ならないよう改行する。"""
+        if self._finished:
+            return
+        self._stream.write("\n")
+        self._stream.flush()
+        self._finished = True
 
 
 def _describe_seeds(seeds: tuple[int, ...]) -> str:
@@ -228,6 +311,10 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     既存``SingleRoundEvaluationPlan``のvalidationをそのまま使い、このCLI側で
     重複したvalidation logicは持たない。
 
+    ``--progress``指定時だけparent processのstderrへexecution progressを
+    表示する。final summaryは従来どおりstdoutだけへ出し、未指定時の既存
+    stdout/stderr behaviorは変更しない。
+
     ``run_single_round_evaluation()`` / ``run_single_round_evaluation_parallel()``
     が失敗した場合はpartial summaryを出さず、non-zero exitで終了する。
     """
@@ -245,20 +332,41 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         print(f"invalid comparison: {error}", file=sys.stderr)
         return 2
 
+    progress_reporter = None
+    if args.progress:
+        progress_reporter = _ProgressReporter(
+            ROTATION_COUNT * len(plan.seeds), stream=sys.stderr
+        )
+
     try:
         if args.workers == 1:
-            result = run_single_round_evaluation(plan)
-        else:
+            if progress_reporter is None:
+                result = run_single_round_evaluation(plan)
+            else:
+                result = run_single_round_evaluation(
+                    plan, progress_callback=progress_reporter
+                )
+        elif progress_reporter is None:
             result = run_single_round_evaluation_parallel(
                 plan, max_workers=args.workers
             )
+        else:
+            result = run_single_round_evaluation_parallel(
+                plan,
+                max_workers=args.workers,
+                progress_callback=progress_reporter,
+            )
     except Exception as error:
+        if progress_reporter is not None:
+            progress_reporter.close()
         print(
             f"single-round evaluation failed: {type(error).__name__}: {error}",
             file=sys.stderr,
         )
         return 1
 
+    if progress_reporter is not None:
+        progress_reporter.close()
     print(format_summary(result, workers=args.workers))
     return 0
 
