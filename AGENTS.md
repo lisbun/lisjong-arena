@@ -5,257 +5,106 @@
 このファイルはrepository全体へ適用する恒常的な作業規則である。
 Issueまたはユーザーの明示的な指示が本書と異なる場合は、その指示を優先する。
 
-以下の作業分担は現時点のdefault responsibilityであり、恒久的なtool制約や禁止ではない。利用可能なtool、credit、作業内容、学習目的に応じて担当や作業場所を変更できる。一方、本書でmandatoryとする安全境界と承認境界は維持する。
+以下の`Project-wide common core`はlisjong ecosystemの主要implementation repositoryで
+同じintentと原則を維持する共通ルールである。`Repository-specific delta`はこのrepositoryの
+責務・architecture・test重点を具体化するものであり、common coreのmandatoryな安全境界や
+承認境界を弱めない。
 
-## Repositoryの責務
+## Project-wide common core
 
-`lisjong-arena` は、lisjongのPolicyをconcrete environmentで実行・観測し、その実行をcontrolled / reproducibleな条件で評価する基盤を担当する。
+### デフォルトの作業分担
 
-repository内部では、次の2 layerを分離する。
+- Git変更を伴わない方針・設計相談、Issue整理、実装方針・PR・実測結果のレビュー、
+  依頼文やGitHubへ記録する内容の作成は、通常のChatGPT conversationをdefaultとする。
+  相談・レビューだけを担当する場合、明示的な依頼なしにbranchを先行作成しない
+- source code、test、refactor、実装と不可分な小規模文書、品質確認、Git作業は、
+  現時点ではClaude Codeをdefaultの変更担当とする
+- `AGENTS.md`、README、設計・調査文書、文書間整合やstale documentationの整理は、
+  現時点ではChatGPT WORKをdefaultの変更担当とする
+- credentialを必要とする操作、ローカルOS・GUI・network依存の確認、外部serviceへのlive操作は、
+  ユーザー管理環境をdefaultとする。AIはcredentialの受領を前提にせず、原則として実行command、
+  期待結果、確認項目を示す
+- 上記は専属担当を定めない。必要に応じてAI間でcode・文書の担当を入れ替え、
+  利用可能なtool、credit、作業内容、学習目的に応じて適切な作業場所を選べる
 
-```text
-lisjong Policy contract
-        ^
-        |
-execution / observation
-        ^
-        |
-    evaluation
-```
+### 開発フロー
 
-### Arena execution / observationが所有するもの
-
-- environment-specific integration
-- external / local runner / client
-- session lifecycle / matchmaking
-- retry / reconnect / continuous participation
-- execution profile / credential source resolution
-- protocol trace / raw game record acquisition
-- objective execution event
-- environmentへ実際に送信・適用したActionの記録
-- external representationからlisjong-owned Policy contractへのprojection
-- `InternalAction`からexternal legal Actionへのmapping / revalidation
-
-### Arena evaluationが所有するもの
-
-- Policy同士のmatchup定義
-- fixed seed set
-- deterministicなseat rotation
-- 複数gameの実行計画
-- Policy assignmentの記録
-- raw evaluation / comparison result
-- 平均順位・平均得点・順位回数等の基本metrics
-- reproducible Policy comparison protocol
-- comparison条件・raw result・metrics・provenanceのversion付きartifact contract
-- A/B対等comparisonに限らないcandidate vs baseline群のevaluation protocol
-  （例: ABBB single-round evaluation）
-- external benchmark / external competitor orchestration
-
-### Arenaが所有しないもの
-
-- Policy / AI戦略
-- `DecisionContext` / `InternalAction` のAI-side semantic contract
-- Action / state evaluation、向聴数、受け入れ、HandBelief、risk / value / utility等のAIロジック
-- Policy-internal candidate evaluation / selection reason semantics
-- AI-side `InternalAction` semantic validation
-- 麻雀ルール / game state transition
-- 学習model実装
-- generic external-player runtime / generic process host
-
-責務判断では、**Arenaは「何が起きたか」を所有し、lisjongは「なぜそのActionを選んだか」を所有する**ことを基本線とする。
-
-Arenaがlisjong-generated analysisを将来transport / persistenceしてもよいが、HandBelief等のpayload semanticsを再計算・再定義・correctness判定しない。
-
-詳細なownership matrixとmigration boundaryは `docs/architecture.md` を正本とする。
-
-## Current implementation と target ownership
-
-現在のAABB / ABBB execution pathは次である。
-
-```text
-lisjong-arena evaluation
-        |
-        v
-lisjong_arena.riichienv.LocalGameRunner
-        |
-        v
-RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
-```
-
-- `Seat` 等のAI-side contractは `lisjong.policy_contract` を使用する
-- `LocalGameRunner` / `LocalGameResult`はIssue #31でArena-local canonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)へ移行済みである。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Issue #37でArenaのexact lisjong pinをcleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期したため、このpillarのphysical duplicateは完全解消済みである。RiichiEnv game lifecycle自体を進めるRiichiEnv Adapterは、Issue #39でArena-local canonical + physical implementation(`lisjong_arena.riichienv.adapter`)へ移行済みであり、Arena active consumerもすべてこのArena-local implementationへ切替済みである。lisjong側legacy physical copy(`lisjong.riichienv_adapter`)は`lisbun/lisjong#100` / PR #101で削除され、Issue #41でArenaのexact lisjong pinをこのcleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期したため、RiichiEnv Adapter pillarのphysical duplicateも完全解消済みである。GameTrace(`lisjong_arena.game_trace`)はIssue #43でArena-local canonical + physical implementationへ移行し、Arena active consumer(production / tests)もこのArena-local implementationへ切替済みである。lisjong側legacy physical copy(`lisjong.game_trace`)は`lisbun/lisjong#102` / PR #103で削除され、Issue #45でArenaのexact lisjong pinをcleanup merge commit `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期したため、GameTraceのphysical duplicateも完全解消済みである
-- AABB / ABBB evaluation execution pathでは、Arena-local `LocalGameRunner`経由で`riichienv==0.4.8`をArena direct dependencyとして使用する。一方RiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)も、Issue #27で同じ`riichienv==0.4.8`をArena direct dependencyとして明示的に使用する
-- RiichiLab ranked first-party CLIと`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestrationはArenaにある
-- `run_ranked_game()`をone-game primitiveのまま維持した上位layerとして、resilient / continuous ranked runner(`lisjong_arena.riichilab.continuous_ranked`)がIssue #47でArena-local canonical + physical implementationとして追加された。retryは`TransportError`階層(`UnexpectedDisconnectError`を含む)だけを対象とし、`ProtocolError`等はcatch-allしない
-- RiichiLab ranked / validation orchestration、profile / credential / CLI composition、client errors / Session / Transport / protocol traceはArena-local canonical + physical implementationである
-- lisjong側legacy lower-level runtime copyは`lisbun/lisjong#91` / PR #92で削除済みであり、Issue #25でArenaのdependency pinもcleanup merge SHAへ同期済みである
-- `RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validationは、Issue #27でArena-local canonical implementationへ移行済みである(`lisjong_arena.riichilab.adapter` / `request_action` / `mjai_response` / `possible_action_validation` / `adapter_errors`)。lisjong側legacy physical copyは`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのactual cleanup merge SHAへ同期済みである
-- LocalGameRunner、RiichiEnv Adapter、GameTraceは、canonical physical implementation・lisjong legacy cleanup・Arena exact pin syncのすべてが完了し、それぞれpillarとしてCOMPLETEである。ただしADR 0002全体およびexternal execution / observation migration全体の完了はfresh project-wide inventory前には宣言しない
-- Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加した。RiichiEnv execution pathと並ぶ2本目のconcrete execution pathであり、共通のbackend abstractionへは統合しない。`SeatObservation` -> `PolicyInput`のprojectionは、engine Issue #38のplayer-safe snapshotをそのまま利用し、consumer-side history materializerを導入しない。descriptorと`InternalAction`の対応は1 seat・1 decisionに閉じ、semantic duplicate collapseはfail closedする。現時点でこのpathはGameTraceを発行せず、AABB / ABBB evaluation protocolへも接続していない
-- `lisjong` / `lisjong-engine` dependencyは再現可能性のためrelease tagが出るまでfull commit SHAへpinする。`lisjong`の現在のpinは`296b76ab8249ac4153e6d001a41886ed38ae303a`である(lisjong PR #118のactual merge commit。Issue #58で`FiniteHorizonCompletionPolicy`をArenaから利用可能にするため同期)。`lisjong-engine`の現在のpinは`7077e6da5e873c779ffe0c8c2626b2acf17ad273`である(engine Issue #38 / PR #39 merge後revision、Issue #53で追加)
-
-これは**current physical placement**であり、恒久ownershipではない。
-
-Target architectureでは次をArena execution / observationへ段階移管する。
-
-- RiichiLab client / Adapter / protocol trace / session lifecycle
-- RiichiEnv Adapter / external action mapping
-- `GameTrace` / objective observation contract
-
-一方、`DecisionContext` / `InternalAction` / Policy analysis等のsemantic contractはlisjongへ残す。
-
-ArenaからRiichiEnv等のexternal environmentへdirect dependencyを追加することはtarget architecture上許容する。actual dependency追加・version・package layoutはconcrete migration Issueで決定する。
-
-## Internal dependency direction
-
-Arena内部では次を維持する。
-
-```text
-evaluation
-    -> execution / observation
-    -> lisjong Policy contract
-```
-
-禁止する方向:
-
-```text
-execution / observation
-    -X-> AABB / ABBB semantics
-    -X-> evaluation seed / rotation semantics
-    -X-> strength metrics / statistical comparison
-    -X-> evaluation artifact schema
-
-lisjong
-    -X-> lisjong-arena
-```
-
-Execution / observationはevaluation-specific semanticsを知らなくても成立する構造にする。
-
-## Policy contract / Adapter boundary
-
-`DecisionContext`のfield、visibility、meaning、seat-visible information semanticsはlisjongが所有する。
-
-External environmentからのacquisition / materialization / projection codeはArena target ownershipとしてよいが、projection先contractをArena都合で変更しない。
-
-Action validationは次の2責務へ分ける。
-
-```text
-lisjong:
-    InternalActionがAI-side contractとしてsemanticに妥当か
-
-Arena execution / observation:
-    InternalActionを現在のexternal legal Actionへ
-    正しくmapping / revalidationできるか
-```
-
-## Trace / analysis boundary
-
-`GameTrace`はobjective execution observationとしてArena target ownershipとする。ただし既存GameTraceをRiichiEnv / RiichiLab / lisjong-engine共通のgeneric canonical traceへ先行一般化しない。
-
-次をGameTraceへ暗黙に混在させない。
-
-- shanten
-- ukeire
-- HandBelief
-- danger / value estimate
-- candidate evaluation
-- selection reason
-
-Policy-internal analysisはlisjong-owned semanticsとして別channelで扱う。DecisionTrace / AnalysisEnvelope / correlation ID等はconcrete consumerなしに先行設計しない。
-
-Observation / analysisの有無そのものによってPolicyのAction selectionを変えない。ただしtrace / sink / persistence failureをsilentに無視することまでは要求せず、fail-closed execution failureを許容する。
-
-## Information-flow / secret boundary
-
-次を維持する。
-
-```text
-credential / Authorization information
-    -X-> trace / game record / evaluation artifact
-
-privileged offline / ground-truth data
-    -X-> online Policy input
-
-observer-only execution data
-    -X-> Policy decision path
-```
-
-`.env`、token、API key、credentialをrepositoryへcommitしない。
-
-## Generic abstractionを先行しない
-
-RiichiLab / RiichiEnv等のconcrete execution pathとmigration実績を確認する前に、次を先行導入しない。
-
-- `GameBackend`
-- `EvaluationBackend`
-- backend registry
-- universal Agent API
-- generic external process host
-- generic match runtime
-- environment abstraction hierarchy
-- project-wide canonical GameTrace
-
-共通化は複数の実経路とconcrete consumerの差異を確認してから判断する。
-
-独立した`lisjong-runtime` repositoryも現時点では作らない。24/7 production hosting、independent deployment、Arena外の複数consumer等が成立した場合に再検討する。
-
-## Evaluation protocolの設計方針
-
-Arenaは同等Policy同士のA/B対等comparisonだけでなく、candidate 1体を固定baseline群へ投入して評価するような、意味の異なるevaluation protocolも所有できる（例: 既存AABB comparisonとABBB single-round evaluation）。
-
-- matchupの意味が異なるprotocolを既存Plan / Resultへoption追加で無理に統合しない。必要に応じて独立したPlan / Result contractを持つ
-- `4p-red-single` のようにprotocol identityそのものを構成する条件はcaller-configurable defaultにせず、そのprotocol自身のinvariantとして固定する
-- public Result valueはconstruction時点で件数、順序、seat / candidate assignment、protocol条件、metricsの母数がplanと整合することをfail closedで検証する
-- deterministic reproducibilityとstatistical strength claimを混同しない
-
-## デフォルトの作業分担
-
-- Git変更を伴わない方針・設計相談、Issue整理、実装方針・PR・実測結果のレビュー、GitHubへ記録する内容の作成は、通常のChatGPT conversationをdefaultとする
-- source code、test、refactor、実装と不可分な小規模文書、品質確認、Git作業は、現時点ではClaude Codeをdefaultの変更担当とする
-- `AGENTS.md`、README、設計・調査文書、文書間整合やstale documentationの整理は、現時点ではChatGPT WORKをdefaultの変更担当とする
-- 上記は専属担当を定めない。必要に応じてAI間で担当を入れ替えられる
-
-## 開発フロー
-
-### Issue、branch、Pull Request
+#### Issue、branch、Pull Request
 
 - GitHub Issueを作業の目的、scope、完了条件の正本とする
-- `main`へ直接pushせず、実際にGit上の変更を担当する作業主体が対応Issueの主作業branchを作成する
-- 原則として1 Issueにつき1つの主作業branchを使い、概ね1つのPull Requestで完結させる
+- `main`へ直接pushせず、実際にGit上のファイル変更を担当する作業主体が、
+  対応Issueの主作業branchを作成する。相談・設計・レビューだけの担当は、
+  実装担当に先立って将来用のbranchを確保しない
+- 原則として1 Issueにつき1つの主作業branchを使い、概ね1つのPull Requestで完結させる。
+  同じIssueに理由なく複数の並行した主作業branchを作らない
+- Issueが大きい場合、stacked PR、先行refactor、調査と実装の分離など合理的な理由が
+  あれば複数branch・PRを使える。その理由、各branch・PRの責務、Issue全体に対する
+  担当範囲をIssueまたはPRへ記録する
 - 1つのPull Requestでは1つの主目的を扱い、無関係な変更を混ぜない
-- Git変更担当AIは、必要なIssue作成、branch作成、ファイル変更、品質確認、commit、push、Pull Request作成、Issueとの関連付け、Ready for review化までを追加承認なしで進めてよい
-- PRのmergeでIssue全体が完了する場合は`Closes #123`等を使用し、途中PRや一部変更だけを扱う場合は`Refs #123`等を使用する
+- Git変更担当AIは、必要なIssue作成、branch作成、ファイル変更、品質確認、commit、push、
+  Pull Request作成、Issueとの関連付け、Ready for review化までを追加承認なしで進めてよい
+- PRのmergeでIssue全体が完了する場合は`Closes #123`等を使用し、途中PRや一部変更だけを
+  扱う場合は`Refs #123`等、Issueを早期closeしない関連付けを使用する
 
-### mergeと完了後cleanup
+#### mergeと完了後cleanup
 
 - Pull Requestのmergeにはユーザーの明示的な承認を必要とする
-- ユーザーがmergeを承認した時点で、そのmergeに伴う定型cleanup（`Closes #...`によるIssue close、完了Issueの手動close、不要になったremote branchの削除）も承認済みとみなし、追加承認を必要としない
-- merge後は完了条件と不要branchのcleanupを確認する
-- PRをmergeせずcloseした場合は、Issueを機械的にcompletedとしてcloseしない
+- ユーザーがmergeを承認した時点で、そのmergeに予定された次の定型cleanupも承認済みと
+  みなし、追加承認を必要としない
+  - `Closes #...`による対応Issueの自動close
+  - merge後、完了条件を満たし追加作業がないIssueの手動close
+  - 不要になったremoteのIssue主作業branch・補助branchの自動または手動削除
+- merge後は原則として変更担当AIが完了条件とcleanupを確認する。明示的に引き継いだ
+  レビュー担当AIも、同じ条件を確認できる場合は実行できる
+- PRをmergeせずcloseした場合は、Issueを機械的にcompletedとしてcloseせず、継続、
+  not planned、別PRへの引継ぎ等を確認する。remote branchは今後利用しないことが明らかな
+  場合だけ削除する
 - `main`等の長期branchはcleanup対象にしない
 
-### repository settingsとその他の承認境界
+#### repository settingsとその他の承認境界
 
-- repository settings変更には個別のユーザー承認を必要とする。ただし、merged PRの不要なhead branchを自動削除する設定など、visibility、branch protection、Actions・security・permission、secret、外部公開、課金へ影響しない安全なcleanup設定に限り追加承認を不要とする
-- 上記の承認済みmergeに伴う定型cleanupを除き、破壊的操作、外部公開、課金、認証情報の使用は、対象と影響を示して承認を得る
+- repository settings変更には個別のユーザー承認を必要とする。ただし、merged PRの不要な
+  head branchを自動削除する設定など、visibility、branch protection、Actions・security・
+  permission、secret、外部公開、課金へ影響しない安全なcleanup設定に限り追加承認を不要とする
+- 上記の承認済みmergeに伴う定型cleanupを除き、破壊的操作、外部公開、課金、認証情報の
+  使用は、対象と影響を示して承認を得る
 
-## 実装規則
+### AI code review
 
-- 通常版CPython 3.14を初期基準とし、free-threaded build（3.14t）は互換性を個別に検証するまで対象外とする
-- 比較条件と比較結果は不変valueとして表現し、結果の意味が曖昧になる入力はfail closedする
-- 比較対象はPolicy instanceではなく、明示的identityとfactoryの組で保持する。identityをclass名から暗黙導出しない
-- Policy instanceは各game・各seatごとにfactoryから新規生成し、seat間・game間で共有しない
-- comparisonは全体としてfail closedにする。1 gameでも失敗した場合、成功したgameだけの結果を返さず、失敗gameをskipするfallbackも導入しない
-- 実行順序は各protocol contractに従ってdeterministicにし、raw resultの順序も監査可能に保つ
-- artifactは実行用modelと分離したimmutable snapshotとし、factory・callable・任意codeを保存・復元しない。既存artifactを上書きせず、内部矛盾をload時にfail closedする
-- migrationではexisting AABB / ABBBを壊さず、main branchをbroken stateにしない
-- temporary compatibility / re-exportを使う場合はimplementationを複製せず、removal conditionをfollow-up Issueへ明記する
-- cross-repository physical migrationで短期間のlegacy implementation copyが不可避な場合は、concrete Issueでcanonical side・legacy side・removal Issueを明示し、長期並行発展させない
-- 調査前に将来の構造を過剰設計しない。module分割も最初から細かくしすぎない
-- 信頼区間、統計検定、Elo / rating、visualization、database、distributed execution、job schedulerは必要性を実測してから別Issueで扱う
+- AI reviewはcurrent Issueのscope / acceptance criteria、existing contract、repository architecture、
+  ownership / dependency / information-flow boundaryに対するcorrectness確認を主目的とする。
+  review中に新しい機能要求を暗黙に追加しない
+- correctness defect、regression、existing contract violation、architecture / ownership / dependency /
+  information-flow boundary violation、concrete changed behaviorに必要なtest不足を優先して確認する
+- current Issueとexisting contractを完全に満たす最小の変更を優先する。concrete requirementがない
+  future extensibility、hypothetical consumer、additional abstraction、schema expansion、persistence、
+  extra defensive layer、unrelated cleanup / refactor、toolingで判定済みのstyle preferenceはblockingにしない
+- findingは`blocking`と`non-blocking`を区別する。blockingはcurrent Issueのcorrectness / contract /
+  architecture / regressionに影響する事項とし、optional improvementやfuture workをreview通過の必須変更へ
+  昇格させない。scope外で価値がある事項は必要ならfollow-up Issue候補へ分離する
+- format、lint、unit / integration tests、`git diff --check`等のdeterministic checkはtool / CIを正本とする。
+  LLM reviewは同じmechanical findingの再探索より、testの意味やcoverageを含むsemantic / architecture /
+  correctness reviewへ集中する
+- 標準的にはimplementation self-review、CI / automated checks、one broad semantic / architecture reviewを
+  基本形とする。同じPR headへ理由なく複数AIのopen-ended broad reviewを重ねない。review修正後は変更箇所、
+  既知findingの解消、その変更から生じるregressionを中心にfocused re-reviewする
+- blockingな問題が解消しacceptance criteriaを満たした時点でreviewを終了する。追加commentを作るためだけに
+  改善点探索を続けず、`blockingなし / merge可能`を正常なreview結果として扱う
+- security / credential / information-flow boundary、hidden-information boundary、public API / stable contract、
+  cross-repository ownership migration、data loss / destructive behavior、large architectural change、
+  high-impact persistence / migration等のhigh-risk changeでは追加・independent reviewを合理的に利用できる。
+  review回数そのものは品質指標にしない
+
+### 共通実装原則
+
+- 通常版CPython 3.14を初期基準とし、free-threaded build（3.14t）は互換性を
+  個別に検証するまで対象外とする
+- 調査前に将来の構造を過剰設計せず、concrete requirementや複数の実例がないgeneric abstractionを
+  先行導入しない
+- Rust等の高速化はprofilingで必要性が確認され、Issueで合意されるまで導入しない
 - 外部libraryを追加する場合は、必要性、license、version、保守状況を確認する
 
-## テストと品質確認
+### テストと品質確認
 
 変更内容に応じて、Pull Request前に次を実行する。
 
@@ -265,20 +114,105 @@ python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-- 文書だけの変更では最低限`git diff --check`を実行する
-- unit testでは実RiichiEnvを毎回起動せず、単一game実行境界を差し替えて高速に検証する。ただしtestのためだけにproduction側へgeneric backend abstractionを導入しない
-- testは正常系だけでなく、rotationとPolicy assignment、実行順序、metricsの母数、異常入力、失敗時のfail closed、再現性を優先して固定する
-- 実RiichiEnvを使うintegration testは重くしすぎず、環境差でflakyになる厳密なwall-clock thresholdを入れない
+- 文書だけの変更では最低限`git diff --check`を実行し、source code・test codeの変更が
+  含まれないことを確認する。Markdown lint等が標準化されている場合はそれも実行する
+- 外部serviceを使うtestでは本物のtokenや個人データを使用しない
 - 実行できなかった確認は、理由と影響をPull RequestまたはIssueへ記録する
 - code変更により利用方法、設計、制約が変わる場合は関連文書も更新する
 
-## 秘密情報と外部成果物
+### 秘密情報と外部成果物
 
 次をrepositoryへcommitしない。
 
 - `.env`、token、API key、credential
 - 外部model weightおよび生成model
 - 利用条件を確認していない牌譜・raw data
-- 実験artifact、対局結果のrun出力、coverageやcache等の生成物
+- 実験artifact、run出力、coverageやcache等の生成物
 
-秘密情報らしき値や大容量binaryを発見した場合は変更を止め、内容を出力せずにユーザーへ報告する。
+秘密情報らしき値や大容量binaryを発見した場合は変更を止め、内容を出力せずに
+ユーザーへ報告する。外部modelやデータを導入する場合は、提供元、license、version、
+取得方法、hash、再配布可否を確認する。
+
+## Repository-specific delta
+
+### Repositoryの責務
+
+`lisjong-arena`は、lisjongのPolicyをconcrete environmentで実行・観測し、その実行を
+controlled / reproducibleな条件で評価する基盤を担当する。
+
+repository内部では次の依存方向を維持する。
+
+```text
+evaluation
+    -> execution / observation
+    -> lisjong Policy contract
+```
+
+execution / observationはevaluation-specific semanticsを知らなくても成立させる。
+Policy / AI戦略、AI-side `DecisionContext` / `InternalAction` semantics、麻雀ルール / game state transitionは
+Arenaへ取り込まない。詳細なownership matrix、current physical placement、migration historyは
+`docs/architecture.md`を正本とし、変化しやすいcommit SHAやmigration statusを`AGENTS.md`へ重複維持しない。
+
+責務判断では、**Arenaは「何が起きたか」を所有し、lisjongは「なぜそのActionを選んだか」を所有する**
+ことを基本線とする。
+
+### Policy contract / Adapter boundary
+
+- `DecisionContext`のfield、visibility、meaning、seat-visible information semanticsはlisjongが所有する
+- external environmentからのacquisition / materialization / projectionはArenaが所有できるが、
+  projection先contractをArena都合で変更しない
+- `InternalAction`のAI-side semantic validationはlisjong、現在のexternal legal Actionへのmapping /
+  revalidationはArena execution / observationの責務とする
+
+### Trace / analysis / information-flow boundary
+
+- `GameTrace`等のobjective execution observationへshanten、ukeire、HandBelief、danger / value estimate、
+  candidate evaluation、selection reason等のPolicy-internal analysisを暗黙に混在させない
+- Arenaがlisjong-generated analysisをtransport / persistenceする場合もpayload semanticsを再計算・再定義・
+  correctness判定しない
+- credential / Authorization informationをtrace / game record / evaluation artifactへ流さない
+- privileged offline / ground-truth dataやobserver-only execution dataをonline Policy decision pathへ流さない
+
+### Generic abstraction / evaluation protocol
+
+- RiichiLab、RiichiEnv、`lisjong-engine`等の複数concrete execution pathとconsumer requirementを確認する前に、
+  `GameBackend`、`EvaluationBackend`、backend registry、universal Agent API、generic external process host、
+  generic match runtime、environment abstraction hierarchy、project-wide canonical GameTraceを先行導入しない
+- matchupの意味が異なるevaluation protocolを既存Plan / Resultへのoption追加で無理に統合せず、
+  必要に応じて独立したcontractを持つ
+- protocol identityそのものを構成する条件はcaller-configurable defaultにせず、protocol invariantとして固定する
+- public Resultはconstruction時点で件数、順序、seat / candidate assignment、protocol条件、metricsの母数を
+  fail closedで検証する
+- deterministic reproducibilityとstatistical strength claimを混同しない
+
+### 実装・evaluation invariant
+
+- 比較条件と比較結果は不変valueとして表現し、結果の意味が曖昧になる入力はfail closedする
+- 比較対象はPolicy instanceではなく明示的identityとfactoryの組で保持し、identityをclass名から暗黙導出しない
+- Policy instanceは各game・各seatごとにfactoryから新規生成し、seat間・game間で共有しない
+- comparisonは全体としてfail closedにし、失敗gameをskipして成功分だけの結果を返さない
+- 実行順序は各protocol contractに従ってdeterministicにし、raw resultの順序も監査可能に保つ
+- artifactは実行用modelと分離したimmutable snapshotとし、factory・callable・任意codeを保存・復元しない。
+  既存artifactを上書きせず、内部矛盾をload時にfail closedする
+- migrationではexisting evaluation pathを壊さずmain branchをbroken stateにしない
+- temporary compatibility / re-exportを使う場合はimplementationを複製せず、removal conditionをfollow-up Issueへ明記する
+- cross-repository physical migrationで短期間のlegacy implementation copyが不可避な場合は、concrete Issueで
+  canonical side・legacy side・removal Issueを明示し、長期並行発展させない
+- 信頼区間、統計検定、Elo / rating、visualization、database、distributed execution、job schedulerは
+  concrete requirementや実測上の必要性を確認してから別Issueで扱う
+
+### Review重点
+
+- execution / observation vs evaluation ownership
+- external mapping / revalidation
+- objective trace vs AI analysis separation
+- reproducibility / evaluation protocol invariants
+- credential / information-flow boundary
+
+### テスト重点
+
+- unit testでは実RiichiEnvを毎回起動せず、単一game実行境界を差し替えて高速に検証する。
+  ただしtestのためだけにproduction側へgeneric backend abstractionを導入しない
+- testは正常系だけでなく、rotationとPolicy assignment、実行順序、metricsの母数、異常入力、
+  失敗時のfail closed、再現性を優先して固定する
+- 実RiichiEnvを使うintegration testは重くしすぎず、環境差でflakyになる厳密なwall-clock thresholdを入れない
