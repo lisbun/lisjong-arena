@@ -299,6 +299,25 @@ parallel APIに限り、`PolicySpec.factory`はspawn workerから利用可能な
 
 worker completion orderはcontract上のresult orderではない。AABBは `seed入力順 -> rotation -> seat`、ABBBは `seed入力順 -> rotation` へparent側でcanonicalizeし、既存aggregationを再利用する。Policy / runner / serialization / spawn / worker processのいずれか1 jobのfailureでもpartial resultを返さず、evaluation全体をfail closedする。明示的なspawn contextによりWindows互換とfork非依存を維持し、実spawn worker integration testでmodule import、factory resolution、Policy生成、game executionまで確認する。
 
+### Mortal mixed single-round execution (Issue #67)
+
+Mortalはlisjong `Policy` / `PolicySpec`へ適合させず、Arena-owned external runtimeとして1 seatだけを担当する。既存Policy-vs-Policy `LocalGameRunner`は変更せず、Mortal専用のmixed runnerが残り3 seatを既存の `build_decision() -> execute_policy() -> mapping.resolve()` 経路へ渡す。
+
+```text
+RiichiEnv action request
+    |
+    +--> Mortal seat: Observation.new_events() full batch
+    |        -> concrete Docker stdin/stdout runtime
+    |        -> Observation.select_action_from_mjai()
+    |
+    `--> three baseline seats: existing Policy decision path
+             -> build_decision() -> execute_policy() -> mapping.resolve()
+```
+
+runtimeはupstream Mortal Dockerfileのmjai entrypointだけを対象とするconcrete implementationであり、generic process/backend/plugin abstractionは持たない。1 gameごとにfresh process/containerを起動し、model directoryを`/mnt`へread-only mountする。stdinへ全new-events batchを送ってflushしてから1 responseを有限時間待ち、malformed / illegal response、launch / termination / timeout / environment failureをfail closedする。全終了経路でcleanupし、cleanup failureが同時に起きても元のgame failureを失わない。
+
+Mortal evaluationは`MortalSingleRoundEvaluationPlan` / `MortalSingleRoundEvaluationResult`のserial-only経路を持ち、Mortalをseat 0..3へrotationする。game mode、raw `SingleRoundGameResult`、`RoundStatsCollector`、candidate metrics aggregation、canonical order、no-partial-result semanticsは既存ABBBと同じ値・helperを再利用する。Mortalは`POLICY_CATALOG`へ登録せず、`single_round_compare --candidate mortal`の明示分岐だけから選択できる。baselineは`two-step`、workersは1に固定する。
+
 ### First-party `lisjong-engine` execution path (Issue #53)
 
 Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加した。RiichiEnv execution pathと並ぶ、2本目のconcrete execution pathである。

@@ -567,21 +567,43 @@ python -m lisjong_arena.single_round_compare `
   --workers 4
 ```
 
-利用可能なPolicy名は次の2つだけです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
+利用可能なPolicy名は次の3つだけです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
 
 ```text
 two-step        -> TwoStepUkeirePolicy
 finite-horizon  -> FiniteHorizonCompletionPolicy
+combined        -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
 ```
 
 Policyの追加はこの明示catalogだけを正本とし、`package.module:ClassName`のようなdynamic import、entry point plugin、YAML/TOML config等は導入していません。
 
-- `--candidate` / `--baseline`: catalog登録名のみ受け付けます。未知の名前はargparseの`choices`でparse時点でfail closedします。同じidentity同士の指定は既存`SingleRoundEvaluationPlan`のvalidationにより拒否され、CLI側で重複したvalidationは持ちません
+- `--candidate` / `--baseline`: 通常はcatalog登録名のみ受け付けます。唯一の例外として`--candidate mortal`が後述の専用mixed経路を選びます。Mortalをbaselineには指定できません。未知の名前はargparseの`choices`でparse時点でfail closedします。同じPolicy identity同士の指定は既存`SingleRoundEvaluationPlan`のvalidationにより拒否され、CLI側で重複したvalidationは持ちません
 - `--seeds N`: 単一seed(例: `--seeds 42` -> `(42,)`)
 - `--seeds START:END`: **inclusive** range(例: `--seeds 0:99` -> `0..99`の100 seeds)。comma listや複数rangeは未対応です
 - `--workers N`: positive int、既定値`1`。`workers=1`は既存`run_single_round_evaluation()`(serial)、`workers>1`は既存`run_single_round_evaluation_parallel()`(local process parallel)へそのまま委譲します
 
 evaluation protocol(ABBB rotation、`4p-red-single`固定、Policy lifecycle、raw result canonicalization、candidate metrics aggregation、fail-closed semantics)はこのCLIから変更できません。`--protocol` / `--game-mode` / `--rotation-count`のようなoptionはありません。
+
+### Mortal candidate
+
+Issue #67で、同じCLIからMortalをcandidate、`TwoStepUkeirePolicy` 3体をbaselineとして実行する明示的なmixed single-round経路を追加しました。Mortalはlisjong `Policy`でも`PolicySpec`でもないため、`POLICY_CATALOG`には登録しません。`--candidate mortal`だけがこの専用経路を選び、`--baseline two-step`と`--workers 1`以外はfail closedします。
+
+Mortal upstreamのDocker imageはmodelを含みません。評価前に、使用するMortal revisionからimageをbuildし、model file `mortal.pth`を別途用意してください。Arenaはimageやmodelを自動downloadせず、Dockerにも`--pull=never`を渡します。
+
+```powershell
+python -m lisjong_arena.single_round_compare `
+  --candidate mortal `
+  --baseline two-step `
+  --seeds 0 `
+  --workers 1 `
+  --mortal-image mortal@sha256:<image-digest> `
+  --mortal-revision <Mortal-commit-or-version> `
+  --mortal-model C:\models\mortal.pth
+```
+
+`--mortal-model`はupstream Docker imageが`/mnt/mortal.pth`として読む単一fileを指定します。Arenaはその親directoryをread-only mountし、model SHA256を実行前に計算します。summaryにはDocker executable、image identity、Mortal implementation revision/version、解決済みmodel path、model SHA256、action response timeoutを表示します。
+
+各gameではMortal Docker processをfresh起動し、RiichiEnv `Observation.new_events()`の全batchをstdinへ送ってflushした後、そのdecisionに必要な1 action responseだけを有限時間待ちます。responseは`Observation.select_action_from_mjai()`でRiichiEnv actionへ解決し、malformed / illegal response、launch failure、unexpected termination、timeout、RiichiEnv failureのいずれでもTwoStepへfallbackしません。成功・失敗を問わずprocess/containerをcleanupし、1 gameでも失敗した場合は4 rotationのpartial resultを返しません。
 
 成功時は次の形式でsummaryをstdoutへ表示します。
 
