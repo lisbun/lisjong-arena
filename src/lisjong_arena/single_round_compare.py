@@ -1,4 +1,4 @@
-"""登録済みPolicyを名前指定して既存ABBB single-round評価を実行するCLI。
+"""Policyまたは明示的Mortal candidateでABBB single-round評価を実行するCLI。
 
 正本の起動方法:
 
@@ -12,6 +12,8 @@
 
     Policy名解決
         -> lisjong_arena.policy_catalog.POLICY_CATALOG
+    Mortal candidate
+        -> concrete Docker mixed runner (serial only)
     既存PolicySpec
         -> 既存SingleRoundEvaluationPlan
     既存runner
@@ -31,10 +33,18 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from time import monotonic
 from typing import TextIO
 
 from lisjong_arena.model import SingleRoundEvaluationPlan, SingleRoundEvaluationResult
+from lisjong_arena.mortal_runtime import MortalDockerConfig
+from lisjong_arena.mortal_single_round_evaluation import (
+    MORTAL_IDENTITY,
+    MortalSingleRoundEvaluationPlan,
+    MortalSingleRoundEvaluationResult,
+    run_mortal_single_round_evaluation,
+)
 from lisjong_arena.policy_catalog import POLICY_CATALOG
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
@@ -43,6 +53,7 @@ from lisjong_arena.single_round_evaluation import (
 )
 
 _PROGRESS_BAR_WIDTH = 24
+_CANDIDATE_CHOICES = sorted([*POLICY_CATALOG, MORTAL_IDENTITY])
 
 
 def parse_seeds(raw: str) -> tuple[int, ...]:
@@ -86,13 +97,23 @@ def _positive_int(raw: str) -> int:
     return value
 
 
+def _positive_float(raw: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid float value: {raw!r}") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be positive: {raw!r}")
+    return value
+
+
 def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog)
     parser.add_argument(
         "--candidate",
         required=True,
-        choices=sorted(POLICY_CATALOG),
-        help="candidate policy name",
+        choices=_CANDIDATE_CHOICES,
+        help="candidate name (registered Policy or mortal)",
     )
     parser.add_argument(
         "--baseline",
@@ -117,6 +138,32 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
         "--progress",
         action="store_true",
         help="show completed games, elapsed time, and ETA on stderr",
+    )
+    parser.add_argument(
+        "--mortal-image",
+        help="existing local Mortal Docker image identity (no implicit pull)",
+    )
+    parser.add_argument(
+        "--mortal-revision",
+        help="Mortal implementation revision/version represented by the image",
+    )
+    parser.add_argument(
+        "--mortal-model",
+        type=Path,
+        help="path to the Mortal model file named mortal.pth",
+    )
+    parser.add_argument(
+        "--mortal-response-timeout",
+        type=_positive_float,
+        default=30.0,
+        metavar="SECONDS",
+        help="finite wait for each Mortal action response (default: 30)",
+    )
+    parser.add_argument(
+        "--mortal-docker-executable",
+        default="docker",
+        metavar="PATH",
+        help="Docker CLI executable used only for the Mortal candidate",
     )
     return parser
 
@@ -198,7 +245,10 @@ def _describe_seeds(seeds: tuple[int, ...]) -> str:
     return f"{seeds[0]}..{seeds[-1]} ({len(seeds)})"
 
 
-def _baseline_mean_score(result: SingleRoundEvaluationResult) -> float:
+_SummaryResult = SingleRoundEvaluationResult | MortalSingleRoundEvaluationResult
+
+
+def _baseline_mean_score(result: _SummaryResult) -> float:
     """全gameのbaseline 3 seat(candidate以外)final scoreの平均。"""
     baseline_scores = [
         score
@@ -209,7 +259,7 @@ def _baseline_mean_score(result: SingleRoundEvaluationResult) -> float:
     return sum(baseline_scores) / len(baseline_scores)
 
 
-def _mean_delta(result: SingleRoundEvaluationResult) -> float:
+def _mean_delta(result: _SummaryResult) -> float:
     """game単位の``candidate score - baseline 3 seat平均``をgame平均したdescriptive metric。"""
     deltas = []
     for game_result in result.game_results:
@@ -240,7 +290,7 @@ def _format_mean(value: float | None) -> str:
     return "N/A" if value is None else f"{value:.1f}"
 
 
-def _format_mahjong_metrics(result: SingleRoundEvaluationResult) -> list[str]:
+def _format_mahjong_metrics(result: _SummaryResult) -> list[str]:
     """candidateのIssue #61 Mahjong metricsをformatする。domain aggregation
     自体はすでに``SingleRoundCandidateMahjongMetrics``へ計算済みであり、ここは
     表示のためのformattingだけを行う。
@@ -264,7 +314,7 @@ def _format_mahjong_metrics(result: SingleRoundEvaluationResult) -> list[str]:
     ]
 
 
-def format_summary(result: SingleRoundEvaluationResult, *, workers: int) -> str:
+def format_summary(result: _SummaryResult, *, workers: int) -> str:
     """成功したsingle-round評価結果からhuman-readable summaryを組み立てる。
 
     baseline mean scoreとmean deltaは``SingleRoundEvaluationResult``へfield
@@ -274,12 +324,18 @@ def format_summary(result: SingleRoundEvaluationResult, *, workers: int) -> str:
     """
     plan = result.plan
     metrics = result.candidate_metrics
+    if isinstance(result, MortalSingleRoundEvaluationResult):
+        candidate_identity = MORTAL_IDENTITY
+        heading = "Single-round comparison completed"
+    else:
+        candidate_identity = plan.candidate.identity
+        heading = "Policy comparison completed"
 
     lines = [
-        "Policy comparison completed",
+        heading,
         "",
         "protocol:   ABBB / 4p-red-single",
-        f"candidate:  {plan.candidate.identity}",
+        f"candidate:  {candidate_identity}",
         f"baseline:   {plan.baseline.identity}",
         f"seeds:      {_describe_seeds(plan.seeds)}",
         f"games:      {len(result.game_results)}",
@@ -297,15 +353,32 @@ def format_summary(result: SingleRoundEvaluationResult, *, workers: int) -> str:
     lines.append("")
     lines.extend(_format_mahjong_metrics(result))
 
+    if isinstance(result, MortalSingleRoundEvaluationResult):
+        config = result.plan.mortal_config
+        lines.extend(
+            [
+                "",
+                "Mortal provenance:",
+                f"  Docker executable:        {config.docker_executable}",
+                f"  Docker image:             {config.image}",
+                f"  implementation revision:  {config.implementation_revision}",
+                f"  model path:               {config.model_path}",
+                f"  model SHA256:             {config.model_sha256}",
+                "  action response timeout:  "
+                f"{config.response_timeout_seconds:g} seconds",
+            ]
+        )
+
     return "\n".join(lines)
 
 
 def _run_cli(argv: Sequence[str] | None = None) -> int:
     """``python -m lisjong_arena.single_round_compare``のentry point。
 
-    Policy名解決とseed解析はargparseの``choices`` / ``type``で行い、未知の
-    Policy名やseed構文はargparse標準のfail-closed挙動(non-zero exit、
-    usageをstderrへ出力)に委ねる。candidateとbaselineが同じidentityの場合は
+    Policy名解決とseed解析はargparseの``choices`` / ``type``で行う。Mortalは
+    ``POLICY_CATALOG``へ登録せず、candidateの明示的な唯一の例外として扱う。
+    未知の名前やseed構文はargparse標準のfail-closed挙動(non-zero exit、usageを
+    stderrへ出力)に委ねる。Policy candidateとbaselineが同じidentityの場合は
     既存``SingleRoundEvaluationPlan``のvalidationをそのまま使い、このCLI側で
     重複したvalidation logicは持たない。
 
@@ -319,16 +392,62 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser(prog="python -m lisjong_arena.single_round_compare")
     args = parser.parse_args(argv)
 
-    candidate = POLICY_CATALOG[args.candidate]
+    is_mortal = args.candidate == MORTAL_IDENTITY
     baseline = POLICY_CATALOG[args.baseline]
 
-    try:
-        plan = SingleRoundEvaluationPlan(
-            candidate=candidate, baseline=baseline, seeds=args.seeds
-        )
-    except ValueError as error:
-        print(f"invalid comparison: {error}", file=sys.stderr)
-        return 2
+    if is_mortal:
+        if args.baseline != "two-step":
+            print(
+                "invalid comparison: Mortal baseline must be two-step",
+                file=sys.stderr,
+            )
+            return 2
+        if args.workers != 1:
+            print(
+                "invalid comparison: Mortal evaluation requires --workers 1",
+                file=sys.stderr,
+            )
+            return 2
+        missing = [
+            option
+            for option, value in (
+                ("--mortal-image", args.mortal_image),
+                ("--mortal-revision", args.mortal_revision),
+                ("--mortal-model", args.mortal_model),
+            )
+            if value is None
+        ]
+        if missing:
+            print(
+                "invalid comparison: Mortal candidate requires " + ", ".join(missing),
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            mortal_config = MortalDockerConfig(
+                image=args.mortal_image,
+                implementation_revision=args.mortal_revision,
+                model_path=args.mortal_model,
+                response_timeout_seconds=args.mortal_response_timeout,
+                docker_executable=args.mortal_docker_executable,
+            )
+            plan = MortalSingleRoundEvaluationPlan(
+                baseline=baseline,
+                seeds=args.seeds,
+                mortal_config=mortal_config,
+            )
+        except (OSError, TypeError, ValueError) as error:
+            print(f"invalid comparison: {error}", file=sys.stderr)
+            return 2
+    else:
+        candidate = POLICY_CATALOG[args.candidate]
+        try:
+            plan = SingleRoundEvaluationPlan(
+                candidate=candidate, baseline=baseline, seeds=args.seeds
+            )
+        except ValueError as error:
+            print(f"invalid comparison: {error}", file=sys.stderr)
+            return 2
 
     progress_reporter = None
     if args.progress:
@@ -337,7 +456,14 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         )
 
     try:
-        if args.workers == 1:
+        if is_mortal:
+            if progress_reporter is None:
+                result = run_mortal_single_round_evaluation(plan)
+            else:
+                result = run_mortal_single_round_evaluation(
+                    plan, progress_callback=progress_reporter
+                )
+        elif args.workers == 1:
             if progress_reporter is None:
                 result = run_single_round_evaluation(plan)
             else:
