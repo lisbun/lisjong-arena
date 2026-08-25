@@ -169,6 +169,7 @@ def run_game_jobs(
     *,
     max_workers: int,
     game_runner: Callable[[GameJob], GameJobOutcome] = _run_game_job,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[tuple[int, int], GameJobOutcome]:
     """独立した``(seed, rotation)`` job群をlocal process poolで実行する。
 
@@ -181,6 +182,12 @@ def run_game_jobs(
     見つかったfailureを報告することで、失敗の報告自体もprocess completion
     順序に依存しない決定的な挙動にできる。
 
+    ``progress_callback``はparent process側で成功したjobを1件回収するたびに
+    ``(completed, total)``で呼ぶoptionalなexecution notificationである。
+    worker processからcallbackやterminal outputを行わず、未指定callerの挙動は
+    変更しない。失敗outcomeはcompleted successとして数えず、既存fail-closed
+    semanticsをそのまま保つ。
+
     ``game_runner``はtestのためだけの差し替え口であり、既定値は実際に
     ``LocalGameRunner``を実行する``_run_game_job``である。public parallel
     entry point（``run_comparison_parallel`` / ``run_single_round_evaluation_parallel``）
@@ -192,6 +199,8 @@ def run_game_jobs(
     if not jobs:
         return outcomes
 
+    completed = 0
+    total = len(jobs)
     with ProcessPoolExecutor(
         max_workers=max_workers, mp_context=_SPAWN_CONTEXT
     ) as executor:
@@ -215,6 +224,10 @@ def run_game_jobs(
                     ),
                 )
             outcomes[(job.seed, job.rotation)] = outcome
+            if outcome.error_text is None:
+                completed += 1
+                if progress_callback is not None:
+                    progress_callback(completed, total)
 
     return outcomes
 
