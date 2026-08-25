@@ -239,6 +239,33 @@ Arenaは同等Policy同士のA/B対等comparisonだけでなく、candidate 1体
 - repository settings変更には個別のユーザー承認を必要とする。ただし、merged PRの不要なhead branchを自動削除する設定など、visibility、branch protection、Actions・security・permission、secret、外部公開、課金へ影響しない安全なcleanup設定に限り追加承認を不要とする
 - 上記の承認済みmergeに伴う定型cleanupを除き、破壊的操作、外部公開、課金、認証情報の使用は、対象と影響を示して承認を得る
 
+## AI code review
+
+- AI reviewはcurrent Issueのscope / acceptance criteria、existing contract、repository architecture、ownership /
+  information-flow boundaryに対するcorrectness確認を主目的とする。review中に新しい機能要求を暗黙に追加しない
+- correctness defect、regression、existing contract violation、architecture / ownership boundary violation、
+  information-flow violation、concrete changed behaviorに必要なtest不足を優先して確認する
+- current Issueとexisting contractを完全に満たす最小の変更を優先する。concrete requirementがない
+  future extensibility、hypothetical consumer、additional abstraction、schema expansion、persistence、
+  extra defensive layer、unrelated cleanup / refactor、toolingで判定済みのstyle preferenceはblockingにしない
+- findingは`blocking`と`non-blocking`を区別する。blockingはcurrent Issueのcorrectness / contract /
+  architecture / regressionに影響する事項とし、optional improvementやfuture workをreview通過の必須変更へ
+  昇格させない。scope外で価値がある事項は必要ならfollow-up Issue候補へ分離する
+- format、lint、unit / integration tests、`git diff --check`等のdeterministic checkはtool / CIを正本とする。
+  LLM reviewは同じmechanical findingの再探索より、testの意味やcoverageを含むsemantic / architecture /
+  correctness reviewへ集中する
+- 標準的にはimplementation self-review、CI / automated checks、one broad semantic / architecture reviewを
+  基本形とする。同じPR headへ理由なく複数AIのopen-ended broad reviewを重ねない。review修正後は変更箇所、
+  既知findingの解消、その変更から生じるregressionを中心にfocused re-reviewする
+- blockingな問題が解消しacceptance criteriaを満たした時点でreviewを終了する。追加commentを作るためだけに
+  改善点探索を続けず、`blockingなし / merge可能`を正常なreview結果として扱う
+- security / credential / information-flow boundary、public API / stable contract、cross-repository ownership migration、
+  data loss / destructive behavior、high-impact persistence / migration等のhigh-risk changeでは追加・independent reviewを
+  合理的に利用できる。review回数そのものは品質指標にしない
+- `lisjong-arena`では特にexecution / observation vs evaluation ownership、external mapping / revalidation、objective
+  trace vs AI analysis separation、reproducibility / evaluation protocol invariants、credential / information-flow boundaryを
+  semantic reviewの重点とする
+
 ## 実装規則
 
 - 通常版CPython 3.14を初期基準とし、free-threaded build（3.14t）は互換性を個別に検証するまで対象外とする
