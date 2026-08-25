@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
+from lisjong.policy_contract import Seat
 
 from lisjong_arena._parallel_execution import GameJob, GameJobOutcome, run_game_jobs
 from lisjong_arena.model import (
@@ -54,7 +55,7 @@ def _fake_result() -> SingleRoundEvaluationResult:
             seed=0,
             rotation=rotation,
             game_mode="4p-red-single",
-            candidate_seat=rotation,
+            candidate_seat=Seat(rotation),
             scores=scores,
             seat_round_stats=neutral_seat_round_stats_tuple(scores),
         )
@@ -113,9 +114,9 @@ class ProgressReporterTest(unittest.TestCase):
         self.assertIn("0/4", output)
         self.assertIn("ETA calculating", output)
         self.assertIn("1/4", output)
-        self.assertIn("elapsed 00:10 ETA 00:30", output)
+        self.assertIn("elapsed 00:10 ETA       00:30", output)
         self.assertIn("4/4", output)
-        self.assertIn("elapsed 00:40 ETA 00:00", output)
+        self.assertIn("elapsed 00:40 ETA       00:00", output)
         self.assertIn("\r", output)
         self.assertTrue(output.endswith("\n"))
 
@@ -139,9 +140,10 @@ class SerialProgressCallbackTest(unittest.TestCase):
             side_effect=lambda policies, *, seed, max_steps: _local_result(seed),
         ):
             result = run_single_round_evaluation(
-                plan, progress_callback=lambda completed, total: notifications.append(
+                plan,
+                progress_callback=lambda completed, total: notifications.append(
                     (completed, total)
-                )
+                ),
             )
 
         self.assertEqual(len(result.game_results), 4)
