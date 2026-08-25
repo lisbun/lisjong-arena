@@ -645,7 +645,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 ### lisjong / lisjong-engine dependency
 
-`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは`lisbun/lisjong#102` / PR #103のactual GameTrace cleanup merge commit `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`です(Arena Issue #45で同期)。
+`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは`lisjong` PR #118のactual merge commit `296b76ab8249ac4153e6d001a41886ed38ae303a`です(Arena Issue #58で、`FiniteHorizonCompletionPolicy`をArenaから利用可能にするため同期)。
 
 `lisjong-engine` にもrelease tagがないため、同じ理由でfull commit SHAへpinしています。現在のpinは、lisjong-engine Issue #38 / PR #39 merge後の `7077e6da5e873c779ffe0c8c2626b2acf17ad273` です(Arena Issue #53で追加)。`lisjong-engine` は `lisjong` にも `lisjong-arena` にも依存せず、Arenaが両者を独立したdependencyとしてconsumeします。
 
