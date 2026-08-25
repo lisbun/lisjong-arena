@@ -1,6 +1,10 @@
 import dataclasses
 import unittest
 
+from _round_stats_fixtures import (
+    neutral_candidate_mahjong_metrics,
+    neutral_seat_round_stats_tuple,
+)
 from lisjong.policy_contract import Seat
 
 from lisjong_arena.model import (
@@ -8,6 +12,7 @@ from lisjong_arena.model import (
     PolicyMetrics,
     PolicySpec,
     SeatResult,
+    SingleRoundCandidateMahjongMetrics,
     SingleRoundCandidateMetrics,
     SingleRoundEvaluationPlan,
     SingleRoundEvaluationResult,
@@ -326,6 +331,19 @@ class SingleRoundEvaluationPlanTest(unittest.TestCase):
             )
 
 
+def _safe_seat_round_stats(scores: object) -> tuple:
+    """``scores``が壊れたshapeのtestでも、``seat_round_stats``自体はvalidな
+    中立値にして、testが検証したい``scores``自身のvalidationだけを起こす。
+    """
+    try:
+        end_scores = tuple(int(score) for score in scores)
+        if len(end_scores) != 4:
+            raise ValueError
+    except TypeError, ValueError:
+        end_scores = (25_000, 25_000, 25_000, 25_000)
+    return neutral_seat_round_stats_tuple(end_scores)
+
+
 def _single_round_game_result(**overrides: object) -> SingleRoundGameResult:
     fields = {
         "seed": 12345,
@@ -335,6 +353,8 @@ def _single_round_game_result(**overrides: object) -> SingleRoundGameResult:
         "scores": (30_000, 25_000, 25_000, 20_000),
     }
     fields.update(overrides)
+    if "seat_round_stats" not in fields:
+        fields["seat_round_stats"] = _safe_seat_round_stats(fields["scores"])
     return SingleRoundGameResult(**fields)
 
 
@@ -382,6 +402,12 @@ def _single_round_metrics(**overrides: object) -> SingleRoundCandidateMetrics:
         "seat_mean_scores": (24_000.0, 25_000.0, 26_000.0, 25_000.0),
     }
     fields.update(overrides)
+    if "mahjong_metrics" not in fields:
+        game_count = fields["game_count"]
+        round_count = game_count if type(game_count) is int and game_count > 0 else 4
+        fields["mahjong_metrics"] = neutral_candidate_mahjong_metrics(
+            round_count=round_count
+        )
     return SingleRoundCandidateMetrics(**fields)
 
 
@@ -430,6 +456,9 @@ def _valid_game_results(
             game_mode="4p-red-single",
             candidate_seat=Seat(rotation),
             scores=(25_000, 25_000, 25_000, 25_000),
+            seat_round_stats=neutral_seat_round_stats_tuple(
+                (25_000, 25_000, 25_000, 25_000)
+            ),
         )
         for seed in plan.seeds
         for rotation in range(4)
@@ -437,11 +466,13 @@ def _valid_game_results(
 
 
 def _valid_metrics(plan: SingleRoundEvaluationPlan) -> SingleRoundCandidateMetrics:
+    round_count = 4 * len(plan.seeds)
     return SingleRoundCandidateMetrics(
         candidate_identity=plan.candidate.identity,
-        game_count=4 * len(plan.seeds),
+        game_count=round_count,
         mean_candidate_score=25_000.0,
         seat_mean_scores=(25_000.0, 25_000.0, 25_000.0, 25_000.0),
+        mahjong_metrics=neutral_candidate_mahjong_metrics(round_count=round_count),
     )
 
 
@@ -584,13 +615,196 @@ class SingleRoundEvaluationResultTest(unittest.TestCase):
 
     def test_rejects_candidate_metrics_game_count_mismatch(self) -> None:
         plan = _single_round_plan()
-        metrics = dataclasses.replace(_valid_metrics(plan), game_count=999)
+        # game_countとmahjong_metrics.round_countは内部的に整合させたまま、
+        # SingleRoundEvaluationResult自体が要求するgame_results件数とだけ
+        # 食い違う値にする。
+        metrics = dataclasses.replace(
+            _valid_metrics(plan),
+            game_count=999,
+            mahjong_metrics=neutral_candidate_mahjong_metrics(round_count=999),
+        )
 
         with self.assertRaises(ValueError):
             SingleRoundEvaluationResult(
                 plan=plan,
                 game_results=_valid_game_results(plan),
                 candidate_metrics=metrics,
+            )
+
+
+class SingleRoundGameResultRoundStatsTest(unittest.TestCase):
+    def test_seat_round_stats_is_kept_as_a_tuple(self) -> None:
+        result = _single_round_game_result()
+        self.assertIsInstance(result.seat_round_stats, tuple)
+        self.assertEqual(len(result.seat_round_stats), 4)
+
+    def test_candidate_round_stats_is_derived_from_the_candidate_seat(self) -> None:
+        seat_round_stats = neutral_seat_round_stats_tuple(
+            (30_000, 25_000, 21_000, 24_000)
+        )
+        result = _single_round_game_result(
+            candidate_seat=Seat.SEAT_2,
+            scores=(30_000, 25_000, 21_000, 24_000),
+            seat_round_stats=seat_round_stats,
+        )
+
+        self.assertIs(result.candidate_round_stats, seat_round_stats[2])
+
+    def test_rejects_wrong_seat_round_stats_count(self) -> None:
+        with self.assertRaises(ValueError):
+            _single_round_game_result(
+                seat_round_stats=neutral_seat_round_stats_tuple(
+                    (30_000, 25_000, 25_000, 20_000)
+                )[:3]
+            )
+
+    def test_rejects_seat_round_stats_containing_non_seat_round_stats_items(
+        self,
+    ) -> None:
+        with self.assertRaises(TypeError):
+            _single_round_game_result(
+                seat_round_stats=(object(), object(), object(), object())
+            )
+
+    def test_rejects_seat_round_stats_end_score_mismatch_with_scores(self) -> None:
+        mismatched = neutral_seat_round_stats_tuple((0, 25_000, 25_000, 20_000))
+        with self.assertRaises(ValueError):
+            _single_round_game_result(
+                scores=(30_000, 25_000, 25_000, 20_000),
+                seat_round_stats=mismatched,
+            )
+
+
+def _mahjong_metrics(**overrides: object) -> SingleRoundCandidateMahjongMetrics:
+    fields = {
+        "round_count": 4,
+        "mean_round_score_delta": 0.0,
+        "win_count": 0,
+        "win_rate": 0.0,
+        "mean_win_points": None,
+        "deal_in_count": 0,
+        "deal_in_rate": 0.0,
+        "mean_deal_in_loss": None,
+        "exhaustive_draw_count": 0,
+        "exhaustive_draw_tenpai_count": 0,
+        "exhaustive_draw_tenpai_rate": None,
+        "tenpai_reached_count": 0,
+        "mean_first_tenpai_turn": None,
+    }
+    fields.update(overrides)
+    return SingleRoundCandidateMahjongMetrics(**fields)
+
+
+class SingleRoundCandidateMahjongMetricsTest(unittest.TestCase):
+    def test_accepts_all_zero_counts_with_none_means(self) -> None:
+        metrics = _mahjong_metrics()
+        self.assertIsNone(metrics.mean_win_points)
+        self.assertIsNone(metrics.mean_deal_in_loss)
+        self.assertIsNone(metrics.exhaustive_draw_tenpai_rate)
+        self.assertIsNone(metrics.mean_first_tenpai_turn)
+
+    def test_accepts_a_fully_populated_example(self) -> None:
+        metrics = _mahjong_metrics(
+            round_count=400,
+            mean_round_score_delta=123.5,
+            win_count=90,
+            win_rate=90 / 400,
+            mean_win_points=6150.0,
+            deal_in_count=44,
+            deal_in_rate=44 / 400,
+            mean_deal_in_loss=5420.5,
+            exhaustive_draw_count=50,
+            exhaustive_draw_tenpai_count=24,
+            exhaustive_draw_tenpai_rate=24 / 50,
+            tenpai_reached_count=380,
+            mean_first_tenpai_turn=9.4,
+        )
+        self.assertEqual(metrics.win_count, 90)
+        self.assertEqual(metrics.mean_win_points, 6150.0)
+
+    def test_rejects_non_positive_round_count(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(round_count=0)
+
+    def test_rejects_win_rate_inconsistent_with_win_count(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(round_count=4, win_count=1, win_rate=0.5)
+
+    def test_rejects_win_count_exceeding_round_count(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(round_count=4, win_count=5, win_rate=1.25)
+
+    def test_rejects_mean_win_points_when_win_count_is_zero(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(win_count=0, win_rate=0.0, mean_win_points=100.0)
+
+    def test_rejects_missing_mean_win_points_when_win_count_is_positive(self) -> None:
+        with self.assertRaises(TypeError):
+            _mahjong_metrics(round_count=4, win_count=1, win_rate=0.25)
+
+    def test_rejects_deal_in_rate_inconsistent_with_deal_in_count(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(round_count=4, deal_in_count=1, deal_in_rate=0.5)
+
+    def test_rejects_mean_deal_in_loss_when_deal_in_count_is_zero(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(deal_in_count=0, deal_in_rate=0.0, mean_deal_in_loss=1.0)
+
+    def test_rejects_exhaustive_draw_tenpai_count_exceeding_draw_count(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(
+                round_count=4,
+                exhaustive_draw_count=1,
+                exhaustive_draw_tenpai_count=2,
+                exhaustive_draw_tenpai_rate=1.0,
+            )
+
+    def test_rejects_exhaustive_draw_tenpai_rate_when_draw_count_is_zero(self) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(
+                exhaustive_draw_count=0,
+                exhaustive_draw_tenpai_count=0,
+                exhaustive_draw_tenpai_rate=0.0,
+            )
+
+    def test_rejects_missing_exhaustive_draw_tenpai_rate_when_draw_count_is_positive(
+        self,
+    ) -> None:
+        with self.assertRaises(TypeError):
+            _mahjong_metrics(
+                round_count=4,
+                exhaustive_draw_count=1,
+                exhaustive_draw_tenpai_count=1,
+            )
+
+    def test_rejects_mean_first_tenpai_turn_when_tenpai_reached_count_is_zero(
+        self,
+    ) -> None:
+        with self.assertRaises(ValueError):
+            _mahjong_metrics(tenpai_reached_count=0, mean_first_tenpai_turn=1.0)
+
+    def test_rejects_missing_mean_first_tenpai_turn_when_tenpai_reached_positive(
+        self,
+    ) -> None:
+        with self.assertRaises(TypeError):
+            _mahjong_metrics(round_count=4, tenpai_reached_count=1)
+
+    def test_is_immutable(self) -> None:
+        metrics = _mahjong_metrics()
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            metrics.win_count = 1
+
+
+class SingleRoundCandidateMetricsMahjongMetricsFieldTest(unittest.TestCase):
+    def test_rejects_non_mahjong_metrics_type(self) -> None:
+        with self.assertRaises(TypeError):
+            _single_round_metrics(mahjong_metrics=object())
+
+    def test_rejects_round_count_mismatch_with_game_count(self) -> None:
+        with self.assertRaises(ValueError):
+            _single_round_metrics(
+                game_count=4,
+                mahjong_metrics=neutral_candidate_mahjong_metrics(round_count=5),
             )
 
 

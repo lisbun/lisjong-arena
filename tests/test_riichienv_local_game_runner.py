@@ -5,6 +5,14 @@ Issue #31でlisjong ``tests/test_local_game_runner.py``からbehavior-preserving
 ``lisjong_arena.riichienv.local_game_runner``へ変更したが、検証内容は変えて
 いない。GameTraceはIssue #43でArena-local``lisjong_arena.game_trace``へ
 切り替えた。
+
+Issue #61で``LocalGameResult``へ``seat_round_stats``を追加した。
+``RoundStatsCollector``自体がRiichiEnv 0.4.8のevent / attribute semanticsを
+どう解釈するかは``tests/test_riichienv_round_stats.py``が個別に検証するため、
+ここでは``RoundStatsCollector``をfakeへ差し替え、``LocalGameRunner``が
+正しいタイミングで``on_new_events()`` / ``build()``を呼び、
+その結果を``LocalGameResult.seat_round_stats``へそのまま使うことだけを確認
+する。
 """
 
 import json
@@ -12,6 +20,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Seat
 
 from lisjong_arena.game_trace import (
@@ -27,6 +36,9 @@ from lisjong_arena.riichienv.local_game_runner import (
 )
 
 _MODULE = "lisjong_arena.riichienv.local_game_runner"
+
+_FAKE_SCORES = [27000, 23000, 26000, 24000]
+_FAKE_SEAT_ROUND_STATS = neutral_seat_round_stats_tuple(tuple(_FAKE_SCORES))
 
 
 class _NeverCalledPolicy:
@@ -63,6 +75,11 @@ class _FakeEnv:
         self.scores_calls = 0
         self.ranks_calls = 0
         self._done = False
+        self._mjai_log: list[dict[str, object]] = []
+
+    @property
+    def mjai_log(self) -> list[dict[str, object]]:
+        return self._mjai_log
 
     def reset(self) -> dict[int, _Observation]:
         self.reset_calls += 1
@@ -80,7 +97,7 @@ class _FakeEnv:
 
     def scores(self) -> list[int]:
         self.scores_calls += 1
-        return [27000, 23000, 26000, 24000]
+        return list(_FAKE_SCORES)
 
     def ranks(self) -> list[int]:
         self.ranks_calls += 1
@@ -141,6 +158,30 @@ class _RecordingSink:
         self.calls.append(("complete", None))
 
 
+class _FakeRoundStatsCollector:
+    """``RoundStatsCollector``の呼び出し順序だけを記録するfake。
+
+    RiichiEnv 0.4.8のevent semantics自体はここでは解釈せず、常に
+    ``seat_round_stats``をそのまま返す。
+    """
+
+    def __init__(self, seat_round_stats=None) -> None:
+        self.seat_round_stats = (
+            _FAKE_SEAT_ROUND_STATS if seat_round_stats is None else seat_round_stats
+        )
+        self.on_new_events_calls: list[tuple[list[dict], object, object]] = []
+        self.build_calls = 0
+
+    def on_new_events(
+        self, events: list[dict], env: object, observations: object
+    ) -> None:
+        self.on_new_events_calls.append((list(events), env, observations))
+
+    def build(self, env: object) -> object:
+        self.build_calls += 1
+        return self.seat_round_stats
+
+
 def _policies() -> dict[Seat, _NeverCalledPolicy]:
     return {seat: _NeverCalledPolicy() for seat in Seat}
 
@@ -154,10 +195,12 @@ class LocalGameResultTest(unittest.TestCase):
             ranks=[1, 4, 2, 3],
             steps=10,
             decisions=12,
+            seat_round_stats=_FAKE_SEAT_ROUND_STATS,
         )
 
         self.assertEqual(result.scores, (27000, 23000, 26000, 24000))
         self.assertEqual(result.ranks, (1, 4, 2, 3))
+        self.assertEqual(result.seat_round_stats, _FAKE_SEAT_ROUND_STATS)
 
     def test_rejects_invalid_result_shape_or_counts(self) -> None:
         valid = {
@@ -167,12 +210,15 @@ class LocalGameResultTest(unittest.TestCase):
             "ranks": (1, 4, 2, 3),
             "steps": 10,
             "decisions": 12,
+            "seat_round_stats": _FAKE_SEAT_ROUND_STATS,
         }
         invalid_overrides = (
             {"scores": (25000,)},
             {"ranks": (1, 2, 3, "4")},
             {"steps": -1},
             {"decisions": 9},
+            {"seat_round_stats": _FAKE_SEAT_ROUND_STATS[:3]},
+            {"seat_round_stats": (object(), object(), object(), object())},
         )
 
         for override in invalid_overrides:
@@ -181,6 +227,19 @@ class LocalGameResultTest(unittest.TestCase):
                 self.assertRaises((TypeError, ValueError)),
             ):
                 LocalGameResult(**(valid | override))
+
+    def test_rejects_seat_round_stats_end_score_mismatch(self) -> None:
+        mismatched = neutral_seat_round_stats_tuple((0, 23000, 26000, 24000))
+        with self.assertRaisesRegex(ValueError, "end_score"):
+            LocalGameResult(
+                seed=7,
+                game_mode="4p-red-half",
+                scores=(27000, 23000, 26000, 24000),
+                ranks=(1, 4, 2, 3),
+                steps=10,
+                decisions=12,
+                seat_round_stats=mismatched,
+            )
 
 
 class LocalGameRunnerTest(unittest.TestCase):
@@ -193,6 +252,7 @@ class LocalGameRunnerTest(unittest.TestCase):
         mappings: dict[Seat, _FakeMapping] = {}
         selected_by_seat = {seat: object() for seat in Seat}
         external_by_seat = {seat: object() for seat in Seat}
+        round_stats = _FakeRoundStatsCollector()
 
         def fake_build_decision(tracker, observation, mapping_session):
             seat = Seat(observation.player_id)
@@ -210,6 +270,7 @@ class LocalGameRunnerTest(unittest.TestCase):
 
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env) as env_type,
+            patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
             patch(
                 f"{_MODULE}.build_decision",
                 side_effect=fake_build_decision,
@@ -245,6 +306,12 @@ class LocalGameRunnerTest(unittest.TestCase):
         self.assertEqual(result.decisions, 4)
         self.assertEqual(result.scores, (27000, 23000, 26000, 24000))
         self.assertEqual(result.ranks, (1, 4, 2, 3))
+        self.assertEqual(result.seat_round_stats, _FAKE_SEAT_ROUND_STATS)
+        self.assertGreaterEqual(len(round_stats.on_new_events_calls), 1)
+        _, first_call_env, first_call_observations = round_stats.on_new_events_calls[0]
+        self.assertIs(first_call_env, env)
+        self.assertIs(first_call_observations, observations)
+        self.assertEqual(round_stats.build_calls, 1)
 
     def test_does_not_step_with_partial_actions_when_one_seat_fails(self) -> None:
         observations = {0: _Observation(0), 2: _Observation(2)}
@@ -268,6 +335,10 @@ class LocalGameRunnerTest(unittest.TestCase):
 
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 side_effect=fake_build_decision,
@@ -311,6 +382,10 @@ class LocalGameRunnerTest(unittest.TestCase):
                 with (
                     patch(f"{_MODULE}.RiichiEnv", return_value=env),
                     patch(
+                        f"{_MODULE}.RoundStatsCollector",
+                        return_value=_FakeRoundStatsCollector(),
+                    ),
+                    patch(
                         f"{_MODULE}.build_decision",
                         side_effect=fake_build_decision,
                     ),
@@ -328,7 +403,13 @@ class LocalGameRunnerTest(unittest.TestCase):
 
     def test_rejects_empty_action_request_before_done(self) -> None:
         env = _FakeEnv({})
-        with patch(f"{_MODULE}.RiichiEnv", return_value=env):
+        with (
+            patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
+        ):
             runner = LocalGameRunner(_policies(), seed=7)
             with self.assertRaisesRegex(LocalGameRunnerError, "no action requests"):
                 runner.run()
@@ -339,6 +420,10 @@ class LocalGameRunnerTest(unittest.TestCase):
         env = _FakeEnv({0: _Observation(0)}, finish_after_step=False)
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -359,6 +444,10 @@ class LocalGameRunnerTest(unittest.TestCase):
         env = _FakeEnv({0: _Observation(0)})
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -394,8 +483,10 @@ class LocalGameRunnerTest(unittest.TestCase):
     def test_publishes_initial_step_and_terminal_events_exactly_once(self) -> None:
         env = _TraceFakeEnv({0: _Observation(0)})
         sink = _RecordingSink()
+        round_stats = _FakeRoundStatsCollector()
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -418,12 +509,29 @@ class LocalGameRunnerTest(unittest.TestCase):
         self.assertEqual(env.scores_calls, 1)
         self.assertEqual(env.ranks_calls, 1)
         self.assertEqual(env.mjai_log_reads, 3)
+        # round statsはtrace sinkと同じ``mjai_log``成長をtrace publishと
+        # 同じタイミングで読むため、呼び出し回数自体ではなく、転送された
+        # event列がtrace sinkへ渡ったものと一致することだけを確認する。
+        all_forwarded_events = [
+            event
+            for events, _, _obs in round_stats.on_new_events_calls
+            for event in events
+        ]
+        self.assertEqual(
+            [event["type"] for event in all_forwarded_events],
+            ["start_game", "start_kyoku", "dahai", "end_kyoku", "end_game"],
+        )
+        self.assertEqual(round_stats.build_calls, 1)
 
     def test_trace_payload_is_detached_from_runtime_log(self) -> None:
         env = _TraceFakeEnv({0: _Observation(0)})
         recorder = GameTraceRecorder()
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -439,15 +547,12 @@ class LocalGameRunnerTest(unittest.TestCase):
 
         self.assertEqual(json.loads(trace.events[0].event)["names"][0], "a")
 
-    def test_trace_disabled_does_not_read_mjai_log(self) -> None:
-        class UnreadableLogEnv(_FakeEnv):
-            @property
-            def mjai_log(self):
-                raise AssertionError("mjai_log must not be read when trace is disabled")
-
-        env = UnreadableLogEnv({0: _Observation(0)})
+    def test_round_stats_are_collected_even_without_a_trace_sink(self) -> None:
+        env = _TraceFakeEnv({0: _Observation(0)})
+        round_stats = _FakeRoundStatsCollector()
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -459,12 +564,28 @@ class LocalGameRunnerTest(unittest.TestCase):
             result = LocalGameRunner(_policies(), seed=7).run()
 
         self.assertEqual(result.steps, 1)
+        self.assertEqual(round_stats.build_calls, 1)
+        all_forwarded_events = [
+            event
+            for events, _, _obs in round_stats.on_new_events_calls
+            for event in events
+        ]
+        self.assertEqual(
+            [event["type"] for event in all_forwarded_events],
+            ["start_game", "start_kyoku", "dahai", "end_kyoku", "end_game"],
+        )
 
     def test_propagates_sink_exception_without_completing_execution(self) -> None:
         env = _TraceFakeEnv({0: _Observation(0)})
         error = RuntimeError("observer failed")
         sink = _RecordingSink(failure=error)
-        with patch(f"{_MODULE}.RiichiEnv", return_value=env):
+        with (
+            patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
+        ):
             runner = LocalGameRunner(_policies(), seed=7, trace_sink=sink)
             with self.assertRaises(RuntimeError) as caught:
                 runner.run()
@@ -481,6 +602,10 @@ class LocalGameRunnerTest(unittest.TestCase):
         recorder = GameTraceRecorder()
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -507,6 +632,10 @@ class LocalGameRunnerTest(unittest.TestCase):
         error = ValueError("result construction failed")
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
+            patch(
+                f"{_MODULE}.RoundStatsCollector",
+                return_value=_FakeRoundStatsCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(

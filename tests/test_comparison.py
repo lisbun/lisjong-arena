@@ -10,6 +10,7 @@ import unittest
 from collections.abc import Mapping
 from unittest import mock
 
+from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Policy, Seat
 
 from lisjong_arena.comparison import (
@@ -105,13 +106,15 @@ class _FakeSingleGame:
         ranks = (
             _EVEN_RANKS if self._ranks_per_game is None else self._ranks_per_game[index]
         )
+        scores = tuple(_SCORE_BY_RANK[rank] for rank in ranks)
         return LocalGameResult(
             seed=seed,
             game_mode=game_mode,
-            scores=tuple(_SCORE_BY_RANK[rank] for rank in ranks),
+            scores=scores,
             ranks=ranks,
             steps=1,
             decisions=4,
+            seat_round_stats=neutral_seat_round_stats_tuple(scores),
         )
 
 

@@ -12,6 +12,7 @@ serial/parallel一致は``tests.test_single_round_evaluation_parallel_integratio
 import unittest
 from unittest import mock
 
+from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Seat
 
 from lisjong_arena._parallel_execution import (
@@ -89,6 +90,9 @@ def _fake_outcomes(
                 ranks=(1, 2, 3, 4),
                 steps=1,
                 decisions=4,
+                seat_round_stats=neutral_seat_round_stats_tuple(
+                    _scores_for(candidate_seat)
+                ),
             ),
             error_text=None,
         )
@@ -222,6 +226,9 @@ class FailClosedTest(unittest.TestCase):
                 ranks=(1, 2, 3, 4),
                 steps=1,
                 decisions=4,
+                seat_round_stats=neutral_seat_round_stats_tuple(
+                    (40_000, 20_000, 20_000, 20_000)
+                ),
             )
 
         with mock.patch(

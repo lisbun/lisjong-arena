@@ -143,11 +143,53 @@ def _mean_delta(result: SingleRoundEvaluationResult) -> float:
     return sum(deltas) / len(deltas)
 
 
+def _format_rate(count: int, total: int) -> str:
+    """``count / total``を``NN.N% (count/total)``、``total``が0なら``N/A``。
+
+    rate自体の計算はここで行わず、``total``が0でも``0.0%``へ誤表示しない
+    ためのformattingだけを担当する。
+    """
+    if total == 0:
+        return "N/A"
+    return f"{count / total * 100:.1f}% ({count}/{total})"
+
+
+def _format_mean(value: float | None) -> str:
+    """``None``を``0.0``へ丸めず``N/A``としてformatする。"""
+    return "N/A" if value is None else f"{value:.1f}"
+
+
+def _format_mahjong_metrics(result: SingleRoundEvaluationResult) -> list[str]:
+    """candidateのIssue #61 Mahjong metricsをformatする。domain aggregation
+    自体はすでに``SingleRoundCandidateMahjongMetrics``へ計算済みであり、ここは
+    表示のためのformattingだけを行う。
+    """
+    m = result.candidate_metrics.mahjong_metrics
+    return [
+        "mahjong metrics:",
+        "",
+        f"  mean round score delta:       {m.mean_round_score_delta:+.1f}",
+        "",
+        f"  win rate:                     {_format_rate(m.win_count, m.round_count)}",
+        f"  mean win points:              {_format_mean(m.mean_win_points)}",
+        "",
+        f"  deal-in rate:                 "
+        f"{_format_rate(m.deal_in_count, m.round_count)}",
+        f"  mean deal-in loss:            {_format_mean(m.mean_deal_in_loss)}",
+        "",
+        f"  exhaustive-draw tenpai rate:  "
+        f"{_format_rate(m.exhaustive_draw_tenpai_count, m.exhaustive_draw_count)}",
+        f"  mean first-tenpai turn:       {_format_mean(m.mean_first_tenpai_turn)}",
+    ]
+
+
 def format_summary(result: SingleRoundEvaluationResult, *, workers: int) -> str:
     """成功したsingle-round評価結果からhuman-readable summaryを組み立てる。
 
     baseline mean scoreとmean deltaは``SingleRoundEvaluationResult``へfield
-    追加せず、raw``game_results``からこの関数で決定的に導出する。
+    追加せず、raw``game_results``からこの関数で決定的に導出する。7 Mahjong
+    metrics(Issue #61)のdomain aggregationは``SingleRoundCandidateMahjongMetrics``
+    がすでに担っており、ここではformattingだけを行う。
     """
     plan = result.plan
     metrics = result.candidate_metrics
@@ -170,6 +212,9 @@ def format_summary(result: SingleRoundEvaluationResult, *, workers: int) -> str:
     ]
     for seat, seat_mean_score in enumerate(metrics.seat_mean_scores):
         lines.append(f"  seat {seat}: {seat_mean_score:.1f}")
+
+    lines.append("")
+    lines.extend(_format_mahjong_metrics(result))
 
     return "\n".join(lines)
 

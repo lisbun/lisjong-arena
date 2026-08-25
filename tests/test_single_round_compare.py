@@ -10,10 +10,12 @@ serial-parallel equivalence等のevaluation semanticsは
 """
 
 import contextlib
+import dataclasses
 import io
 import unittest
 from unittest import mock
 
+from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Seat
 
 from lisjong_arena.model import (
@@ -33,6 +35,19 @@ from lisjong_arena.single_round_evaluation import (
 )
 
 
+def _game_result_with_neutral_round_stats(
+    *, seed: int, rotation: int, scores: tuple[int, int, int, int]
+) -> SingleRoundGameResult:
+    return SingleRoundGameResult(
+        seed=seed,
+        rotation=rotation,
+        game_mode="4p-red-single",
+        candidate_seat=Seat(rotation),
+        scores=scores,
+        seat_round_stats=neutral_seat_round_stats_tuple(scores),
+    )
+
+
 def _fake_result(
     *,
     candidate: str = "finite-horizon",
@@ -45,11 +60,9 @@ def _fake_result(
         seeds=seeds,
     )
     game_results = tuple(
-        SingleRoundGameResult(
+        _game_result_with_neutral_round_stats(
             seed=seed,
             rotation=rotation,
-            game_mode="4p-red-single",
-            candidate_seat=Seat(rotation),
             scores=tuple(40_000 if seat == rotation else 20_000 for seat in range(4)),
         )
         for seed in seeds
@@ -408,11 +421,9 @@ class SummaryTest(unittest.TestCase):
             3: (20_000, 19_000, 21_000, 40_000),
         }
         game_results = tuple(
-            SingleRoundGameResult(
+            _game_result_with_neutral_round_stats(
                 seed=0,
                 rotation=rotation,
-                game_mode="4p-red-single",
-                candidate_seat=Seat(rotation),
                 scores=scores_by_rotation[rotation],
             )
             for rotation in range(ROTATION_COUNT)
@@ -448,6 +459,65 @@ class SummaryTest(unittest.TestCase):
         summary = format_summary(result, workers=4)
         self.assertIn("seeds:      0..99 (100)", summary.splitlines())
         self.assertIn("games:      400", summary.splitlines())
+
+
+class MahjongMetricsSummaryTest(unittest.TestCase):
+    """Issue #61のmahjong metrics表示は、domain aggregation自体を
+    ``SingleRoundCandidateMahjongMetrics``へ委ねた前提でformattingだけを
+    検証する。
+    """
+
+    def test_denominator_zero_metrics_are_shown_as_na_not_zero(self) -> None:
+        # candidateがwin_count=0/deal_in_count=0/exhaustive_draw_count=0/
+        # tenpai_reached_count=0のため、それぞれのmean / exhaustive-draw
+        # tenpai rateは0.0ではなくN/Aになる。round_countは常に正なので
+        # win_rate / deal_in_rate自体は0.0%として表示される。
+        result = _fake_result(seeds=(0,))
+        summary = format_summary(result, workers=1)
+        lines = summary.splitlines()
+
+        self.assertIn("mahjong metrics:", lines)
+        self.assertIn("  win rate:                     0.0% (0/4)", lines)
+        self.assertIn("  mean win points:              N/A", lines)
+        self.assertIn("  deal-in rate:                 0.0% (0/4)", lines)
+        self.assertIn("  mean deal-in loss:            N/A", lines)
+        self.assertIn("  exhaustive-draw tenpai rate:  N/A", lines)
+        self.assertIn("  mean first-tenpai turn:       N/A", lines)
+
+    def test_populated_metrics_are_formatted_with_counts(self) -> None:
+        base_result = _fake_result(seeds=(0,))
+        base_metrics = base_result.candidate_metrics
+        mahjong_metrics = dataclasses.replace(
+            base_metrics.mahjong_metrics,
+            round_count=4,
+            mean_round_score_delta=123.5,
+            win_count=1,
+            win_rate=0.25,
+            mean_win_points=6150.0,
+            deal_in_count=1,
+            deal_in_rate=0.25,
+            mean_deal_in_loss=5420.5,
+            exhaustive_draw_count=2,
+            exhaustive_draw_tenpai_count=1,
+            exhaustive_draw_tenpai_rate=0.5,
+            tenpai_reached_count=3,
+            mean_first_tenpai_turn=9.4,
+        )
+        candidate_metrics = dataclasses.replace(
+            base_metrics, mahjong_metrics=mahjong_metrics
+        )
+        result = dataclasses.replace(base_result, candidate_metrics=candidate_metrics)
+
+        summary = format_summary(result, workers=1)
+        lines = summary.splitlines()
+
+        self.assertIn("  mean round score delta:       +123.5", lines)
+        self.assertIn("  win rate:                     25.0% (1/4)", lines)
+        self.assertIn("  mean win points:              6150.0", lines)
+        self.assertIn("  deal-in rate:                 25.0% (1/4)", lines)
+        self.assertIn("  mean deal-in loss:            5420.5", lines)
+        self.assertIn("  exhaustive-draw tenpai rate:  50.0% (1/2)", lines)
+        self.assertIn("  mean first-tenpai turn:       9.4", lines)
 
 
 if __name__ == "__main__":
