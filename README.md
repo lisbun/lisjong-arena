@@ -99,6 +99,37 @@ RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
 
 単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でArena-localの `lisjong_arena.riichienv.adapter` とArena-localの `lisjong_arena.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。
 
+standard RiichiEnv executionで、正常終了後にobjective `GameTrace`とstepごとの
+`PolicyInput` / `DecisionTrace`を同一process内でinspectする場合は、opt-inの
+`LocalGameInspectionRecorder`を渡します。recorderは1回の`env.step()`を0-basedの
+stepとして、各seat decisionとそのstepで追加されたGameTrace eventのhalf-open
+intervalを保持します。通常callerは引き続き`execute_policy()` pathを使い、
+inspectionを有効化したcallerだけが`execute_policy_with_trace()` pathを使います。
+
+```python
+from lisjong_arena.riichienv.local_game_runner import (
+    LocalGameInspectionRecorder,
+    LocalGameRunner,
+)
+
+recorder = LocalGameInspectionRecorder()
+result = LocalGameRunner(
+    policies,
+    seed=12345,
+    inspection_recorder=recorder,
+).run()
+inspection = recorder.snapshot()
+
+assert inspection.result is result
+assert inspection.game_trace.seed == result.seed
+```
+
+`snapshot()`はgame、final event processing、RoundStats、result construction、
+GameTrace completion、composition consistency validationのすべてが成功した後だけ
+利用できます。これはstandard `LocalGameRunner`専用のin-memory compositionであり、
+JSON / DB persistence、cross-process history、canonical GameRecordではありません。
+Mortal mixed、RiichiLab、first-party engine、AABB / ABBB artifactのcontractも変更しません。
+
 `LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv Adapterも同様に、Issue #39でArena takeover、`lisbun/lisjong#100` / PR #101でlisjong legacy physical copy削除、Issue #41でArenaのexact lisjong dependency pinをPR #101のactual cleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期という順序で完了しました。これによりRiichiEnv Adapterのphysical duplicateも完全解消済みです。GameTraceはIssue #43でcanonical physical implementationを`lisjong_arena.game_trace`へmigrationし、Arena active consumer(production / tests)もこのArena-local実装へ切り替えました。lisjong側legacy `lisjong.game_trace`は`lisbun/lisjong#102` / PR #103で削除され、Arena Issue #45でexact lisjong pinをactual cleanup merge commit `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期しました。これによりGameTraceのphysical duplicateも完全解消し、GameTrace pillarはCOMPLETEです。
 
 ### Target architecture

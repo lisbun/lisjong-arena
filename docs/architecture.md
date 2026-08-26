@@ -203,6 +203,37 @@ Issue #53で追加したfirst-party `lisjong-engine` execution pathは、現時�
 
 また、GameTraceへshanten / ukeire / HandBelief / candidate evaluation / selection reason等のPolicy-internal analysisを混在させない。
 
+### Standard RiichiEnv same-process decision inspection
+
+Issue #55で、standard RiichiEnv `LocalGameRunner`にopt-inの
+`LocalGameInspectionRecorder`を追加した。これは同じsuccessful runner executionの
+existing `LocalGameResult`、objective `GameTrace`、step-scoped decision observationを
+組み合わせるconcrete in-memory compositionである。
+
+各decision observationは、同じ`build_decision()` invocationから得たlisjong-owned
+`PolicyInput`と、`execute_policy_with_trace()`が生成した`DecisionTrace`を型のまま
+transportする。Arenaはconcrete `AnalysisTrace`のshanten / ukeire / value / defense等を
+再計算・再定義せず、`analysis=None`も正常semanticとして保持する。GameTrace schemaへ
+AI analysisを混在させない。
+
+correlation unitは1回の`env.step(actions)`であり、0-based runner-local step ordinal、
+seat、step直後のevent processingまでにpublishされたGameTrace eventのhalf-open
+sequence intervalを保持する。reset eventsはstep 0 intervalより前、post-loop final
+flush eventsは最後のstep intervalより後に置く。Action equality、DecisionTraceの
+notification index、tuple positionはjoin keyにしない。
+
+decision notificationはpending captureし、全seatのdecision / mapping、`env.step()`、
+`RoundStatsCollector.on_new_events()`、GameTrace publishが成功した後だけstep observationを
+commitする。さらにfinal event processing、`RoundStatsCollector.build()`、
+`LocalGameResult` construction、GameTrace completion、composition consistency validationまで
+成功した後だけcompleted snapshotを公開する。failed / incomplete runのpartial snapshot、
+fallback、retryは提供しない。
+
+これはpost-execution same-process inspectionまでのcapabilityである。JSON / database /
+historical persistence、canonical GameRecord、viewer、training dataset schema、global ID /
+timestampは導入しない。Mortal mixed、RiichiLab、first-party `lisjong-engine`、AABB / ABBB
+artifactへ自動適用せず、既存RoundStats / evaluation semanticsも変更しない。
+
 ## Ownership matrix
 
 Issue #13で確認したtarget ownershipと、その後の段階migrationを含むcurrent placementは次のとおりとする。
@@ -226,6 +257,7 @@ Issue #13で確認したtarget ownershipと、その後の段階migrationを含�
 | RiichiEnv external Action mapping / revalidation | Arena | Arena / lisjong legacy removed (lisjong #100 / PR #101) | Arena | migration complete; pin synced (#41) |
 | `LocalGameRunner` / `LocalGameResult` | Arena | Arena / lisjong legacy removed (#98 / PR #99) | Arena | migration complete; pin synced (#37) |
 | `GameTrace` / `GameTraceSink` / recorder | Arena | Arena / lisjong legacy removed (lisjong #102 / PR #103) | Arena | migration complete; pin synced (#45) |
+| standard RiichiEnv same-process decision inspection composition | Arena composition / lisjong decision semantics | Arena (`LocalGameInspectionRecorder`, #55) | Arena | opt-in in-memory inspection implemented (#55) |
 | RiichiLab ranked resilient / continuous participation runner | Arena | Arena canonical + physical (#47) | Arena | canonical + physical implemented (#47); `run_ranked_game()` primitive unchanged |
 | first-party `lisjong-engine` bridge (domain conversion / `PolicyInput` projection / Action mapping / Policy selector) | Arena | Arena canonical + physical (#53) | Arena | canonical + physical implemented (#53) |
 | `lisjong-engine` rule / game progression | lisjong-engine | lisjong-engine | lisjong-engine | KEEP |
