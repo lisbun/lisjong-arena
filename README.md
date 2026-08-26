@@ -592,18 +592,20 @@ ABBBでは、既存の `SingleRoundEvaluationPlan` を `run_single_round_evaluat
 
 ```powershell
 python -m lisjong_arena.single_round_compare `
-  --candidate finite-horizon `
+  --candidate hand-value-aware `
   --baseline two-step `
   --seeds 0:99 `
-  --workers 4
+  --workers 4 `
+  --progress
 ```
 
-利用可能なPolicy名は次の3つだけです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
+利用可能なPolicy名は次の4つだけです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
 
 ```text
 two-step        -> TwoStepUkeirePolicy
 finite-horizon  -> FiniteHorizonCompletionPolicy
 combined        -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
+hand-value-aware -> HandValueAwareTwoStepUkeirePolicy
 ```
 
 Policyの追加はこの明示catalogだけを正本とし、`package.module:ClassName`のようなdynamic import、entry point plugin、YAML/TOML config等は導入していません。
