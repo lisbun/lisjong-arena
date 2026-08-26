@@ -5,6 +5,10 @@
 独立したdecisionとして処理する。Policy判断と外部Action変換は再実装せず、
 ``execute_policy()``と``build_decision()``が返すpaired mappingを利用する。
 
+Issue #55で、successful run後にobjective ``GameTrace``とstep-scopedな
+``PolicyInput`` / ``DecisionTrace``を同一process内で対応付けるopt-in
+inspection compositionを追加した。通常pathは引き続き``execute_policy()``を使う。
+
 Issue #31でArena-local canonical implementationへ移行済みである。GameTraceは
 Issue #43でArena-local canonical implementation(``lisjong_arena.game_trace``)
 へ移行済みである。RiichiEnv Adapterは Issue #39でArena-local canonical
@@ -14,12 +18,25 @@ implementation(``lisjong_arena.riichienv.adapter``)へ移行済みである。
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum, auto
 
-from lisjong.policy_contract import Policy, Seat, execute_policy
+from lisjong.policy_contract import (
+    DecisionTrace,
+    Policy,
+    PolicyInput,
+    Seat,
+    execute_policy,
+    execute_policy_with_trace,
+)
 from riichienv import Action as RiichiEnvAction
 from riichienv import Observation, RiichiEnv
 
-from lisjong_arena.game_trace import GameTraceEvent, GameTraceSink
+from lisjong_arena.game_trace import (
+    GameTrace,
+    GameTraceEvent,
+    GameTraceRecorder,
+    GameTraceSink,
+)
 from lisjong_arena.riichienv.adapter import (
     RiichiEnvActionMappingSession,
     SeatMaterializedState,
@@ -35,6 +52,10 @@ class LocalGameRunnerError(Exception):
 
 class StepLimitExceededError(LocalGameRunnerError):
     """対局終了前に設定されたstep上限へ到達した場合。"""
+
+
+class LocalGameInspectionLifecycleError(LocalGameRunnerError):
+    """standard in-memory inspection recorderのlifecycle違反。"""
 
 
 def _normalize_four_ints(value: object, field_name: str) -> tuple[int, int, int, int]:
@@ -108,6 +129,237 @@ class LocalGameResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SeatDecisionObservation:
+    """1 environment step内の1 seat decisionを表すimmutable composition。"""
+
+    seat: Seat
+    policy_input: PolicyInput
+    decision_trace: DecisionTrace
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.seat, Seat):
+            raise TypeError("seat must be a Seat")
+        if not isinstance(self.policy_input, PolicyInput):
+            raise TypeError("policy_input must be a PolicyInput")
+        if not isinstance(self.decision_trace, DecisionTrace):
+            raise TypeError("decision_trace must be a DecisionTrace")
+        if self.policy_input.self_seat != self.seat:
+            raise ValueError("policy_input.self_seat must match seat")
+        if self.decision_trace.selected_action.actor != self.seat:
+            raise ValueError("decision_trace.selected_action.actor must match seat")
+
+
+@dataclass(frozen=True, slots=True)
+class StepDecisionObservation:
+    """1 ``env.step(actions)``とGameTrace event intervalの対応。"""
+
+    step_ordinal: int
+    event_sequence_start: int
+    event_sequence_end: int
+    seat_decisions: tuple[SeatDecisionObservation, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.step_ordinal) is not int:
+            raise TypeError("step_ordinal must be an int")
+        if self.step_ordinal < 0:
+            raise ValueError("step_ordinal must not be negative")
+        if type(self.event_sequence_start) is not int:
+            raise TypeError("event_sequence_start must be an int")
+        if type(self.event_sequence_end) is not int:
+            raise TypeError("event_sequence_end must be an int")
+        if self.event_sequence_start < 0:
+            raise ValueError("event_sequence_start must not be negative")
+        if self.event_sequence_end < self.event_sequence_start:
+            raise ValueError("event sequence interval must not be reversed")
+        try:
+            seat_decisions = tuple(self.seat_decisions)
+        except TypeError:
+            raise TypeError("seat_decisions must be an iterable") from None
+        if not seat_decisions:
+            raise ValueError("seat_decisions must not be empty")
+        if any(
+            not isinstance(decision, SeatDecisionObservation)
+            for decision in seat_decisions
+        ):
+            raise TypeError(
+                "seat_decisions must contain only SeatDecisionObservation values"
+            )
+        seats = tuple(decision.seat for decision in seat_decisions)
+        if len(set(seats)) != len(seats):
+            raise ValueError("seat_decisions must not contain duplicate seats")
+        object.__setattr__(self, "seat_decisions", seat_decisions)
+
+
+@dataclass(frozen=True, slots=True)
+class LocalGameInspection:
+    """successful standard LocalGameRunner executionのimmutable snapshot。"""
+
+    result: LocalGameResult
+    game_trace: GameTrace
+    step_observations: tuple[StepDecisionObservation, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.result, LocalGameResult):
+            raise TypeError("result must be a LocalGameResult")
+        if not isinstance(self.game_trace, GameTrace):
+            raise TypeError("game_trace must be a GameTrace")
+        try:
+            step_observations = tuple(self.step_observations)
+        except TypeError:
+            raise TypeError("step_observations must be an iterable") from None
+        if any(
+            not isinstance(step, StepDecisionObservation) for step in step_observations
+        ):
+            raise TypeError(
+                "step_observations must contain only StepDecisionObservation values"
+            )
+
+        if self.game_trace.seed != self.result.seed:
+            raise ValueError("game_trace.seed must match result.seed")
+        if self.game_trace.game_mode != self.result.game_mode:
+            raise ValueError("game_trace.game_mode must match result.game_mode")
+        if len(step_observations) != self.result.steps:
+            raise ValueError("step observation count must match result.steps")
+        if sum(len(step.seat_decisions) for step in step_observations) != (
+            self.result.decisions
+        ):
+            raise ValueError("seat decision count must match result.decisions")
+
+        previous_end = 0
+        event_count = len(self.game_trace.events)
+        for expected_ordinal, step in enumerate(step_observations):
+            if step.step_ordinal != expected_ordinal:
+                raise ValueError("step ordinals must be zero-based and contiguous")
+            if step.event_sequence_start < previous_end:
+                raise ValueError(
+                    "step event intervals must not overlap or go backwards"
+                )
+            if step.event_sequence_end > event_count:
+                raise ValueError("step event interval exceeds GameTrace events")
+            previous_end = step.event_sequence_end
+
+        object.__setattr__(self, "step_observations", step_observations)
+
+
+class _InspectionRecorderState(Enum):
+    NEW = auto()
+    STARTED = auto()
+    COMPLETED = auto()
+
+
+class LocalGameInspectionRecorder:
+    """GameTraceとdecision observationsをpairするstandard in-memory recorder。
+
+    ``snapshot()``は``LocalGameRunner.run()``が正常終了し、result / trace /
+    step observationsの整合検証まで完了した後だけ利用できる。
+    """
+
+    __slots__ = (
+        "_game_trace_recorder",
+        "_next_event_sequence",
+        "_snapshot",
+        "_state",
+        "_steps",
+    )
+
+    def __init__(self) -> None:
+        self._game_trace_recorder = GameTraceRecorder()
+        self._next_event_sequence = 0
+        self._snapshot: LocalGameInspection | None = None
+        self._state = _InspectionRecorderState.NEW
+        self._steps: list[StepDecisionObservation] = []
+
+    def on_start(self, *, seed: int, game_mode: str) -> None:
+        if self._state is not _InspectionRecorderState.NEW:
+            raise LocalGameInspectionLifecycleError(
+                "inspection has already been started"
+            )
+        self._game_trace_recorder.on_start(seed=seed, game_mode=game_mode)
+        self._state = _InspectionRecorderState.STARTED
+
+    def on_event(self, event: GameTraceEvent) -> None:
+        if self._state is not _InspectionRecorderState.STARTED:
+            raise LocalGameInspectionLifecycleError(
+                "inspection event received outside an active run"
+            )
+        self._game_trace_recorder.on_event(event)
+        self._next_event_sequence = event.sequence + 1
+
+    def on_step(self, observation: StepDecisionObservation) -> None:
+        """event processing後のapplied step observationをcommitする。"""
+        if self._state is not _InspectionRecorderState.STARTED:
+            raise LocalGameInspectionLifecycleError(
+                "inspection step received outside an active run"
+            )
+        if not isinstance(observation, StepDecisionObservation):
+            raise TypeError("observation must be a StepDecisionObservation")
+        if observation.step_ordinal != len(self._steps):
+            raise LocalGameInspectionLifecycleError(
+                "inspection step ordinals must be zero-based and contiguous"
+            )
+        if observation.event_sequence_end != self._next_event_sequence:
+            raise LocalGameInspectionLifecycleError(
+                "step event interval must end at the next GameTrace sequence"
+            )
+        if self._steps and (
+            observation.event_sequence_start < self._steps[-1].event_sequence_end
+        ):
+            raise LocalGameInspectionLifecycleError(
+                "step event intervals must not overlap or go backwards"
+            )
+        self._steps.append(observation)
+
+    def complete(self, result: LocalGameResult) -> None:
+        """GameTrace completionと全composition validationをatomicに公開する。"""
+        if self._state is not _InspectionRecorderState.STARTED:
+            raise LocalGameInspectionLifecycleError(
+                "inspection completed outside an active run"
+            )
+        if not isinstance(result, LocalGameResult):
+            raise TypeError("result must be a LocalGameResult")
+
+        self._game_trace_recorder.on_complete()
+        snapshot = LocalGameInspection(
+            result=result,
+            game_trace=self._game_trace_recorder.snapshot(),
+            step_observations=tuple(self._steps),
+        )
+        self._snapshot = snapshot
+        self._state = _InspectionRecorderState.COMPLETED
+
+    def snapshot(self) -> LocalGameInspection:
+        if self._state is not _InspectionRecorderState.COMPLETED:
+            raise LocalGameInspectionLifecycleError(
+                "inspection snapshot is available only after successful completion"
+            )
+        assert self._snapshot is not None
+        return self._snapshot
+
+
+class _DecisionTraceCapture:
+    """execute_policy_with_trace()のdecision-local notificationを一時保持する。"""
+
+    __slots__ = ("_trace",)
+
+    def __init__(self) -> None:
+        self._trace: DecisionTrace | None = None
+
+    def on_decision(self, trace: DecisionTrace) -> None:
+        if self._trace is not None:
+            raise LocalGameRunnerError("multiple DecisionTrace values for one decision")
+        if not isinstance(trace, DecisionTrace):
+            raise TypeError("trace must be a DecisionTrace")
+        self._trace = trace
+
+    def take(self) -> DecisionTrace:
+        if self._trace is None:
+            raise LocalGameRunnerError(
+                "Policy execution did not produce a DecisionTrace"
+            )
+        return self._trace
+
+
+@dataclass(frozen=True, slots=True)
 class _SeatRuntime:
     """1 seatに対応付けたPolicyとAdapter runtime state。"""
 
@@ -145,6 +397,7 @@ class LocalGameRunner:
     __slots__ = (
         "_env",
         "_game_mode",
+        "_inspection_recorder",
         "_max_steps",
         "_round_stats",
         "_seat_runtimes",
@@ -161,6 +414,7 @@ class LocalGameRunner:
         game_mode: str = "4p-red-half",
         max_steps: int | None = None,
         trace_sink: GameTraceSink | None = None,
+        inspection_recorder: LocalGameInspectionRecorder | None = None,
     ) -> None:
         if type(seed) is not int:
             raise TypeError("seed must be an int")
@@ -172,6 +426,16 @@ class LocalGameRunner:
             raise TypeError("max_steps must be an int or None")
         if max_steps is not None and max_steps <= 0:
             raise ValueError("max_steps must be positive")
+        if inspection_recorder is not None and not isinstance(
+            inspection_recorder, LocalGameInspectionRecorder
+        ):
+            raise TypeError(
+                "inspection_recorder must be a LocalGameInspectionRecorder or None"
+            )
+        if trace_sink is not None and inspection_recorder is not None:
+            raise ValueError(
+                "trace_sink and inspection_recorder must not both be configured"
+            )
 
         self._seed = seed
         self._game_mode = game_mode
@@ -179,7 +443,10 @@ class LocalGameRunner:
         self._seat_runtimes = _build_seat_runtimes(policies)
         self._env = RiichiEnv(seed=seed, game_mode=game_mode)
         self._started = False
-        self._trace_sink = trace_sink
+        self._inspection_recorder = inspection_recorder
+        self._trace_sink = (
+            inspection_recorder if inspection_recorder is not None else trace_sink
+        )
         self._round_stats = RoundStatsCollector()
 
     def _build_actions(
@@ -199,6 +466,38 @@ class LocalGameRunner:
             selected = execute_policy(runtime.policy, decision.context)
             actions[player_id] = decision.mapping.resolve(selected)
         return actions
+
+    def _build_observed_actions(
+        self,
+        observations: Mapping[int, Observation],
+    ) -> tuple[dict[int, RiichiEnvAction], tuple[SeatDecisionObservation, ...]]:
+        """全Actionと、まだapplied扱いしないpending decisionを構築する。"""
+        actions = {}
+        seat_decisions = []
+        for player_id, observation in observations.items():
+            seat = seat_from_player_index(player_id)
+            runtime = self._seat_runtimes[seat]
+            decision = build_decision(
+                runtime.tracker,
+                observation,
+                runtime.mapping_session,
+            )
+            capture = _DecisionTraceCapture()
+            selected = execute_policy_with_trace(
+                runtime.policy,
+                decision.context,
+                capture,
+            )
+            decision_trace = capture.take()
+            actions[player_id] = decision.mapping.resolve(selected)
+            seat_decisions.append(
+                SeatDecisionObservation(
+                    seat=seat,
+                    policy_input=decision.context.input,
+                    decision_trace=decision_trace,
+                )
+            )
+        return actions, tuple(sorted(seat_decisions, key=lambda item: int(item.seat)))
 
     def _process_new_events(
         self,
@@ -279,13 +578,28 @@ class LocalGameRunner:
                     "RiichiEnv returned no action requests before done()"
                 )
 
-            actions = self._build_actions(observations)
-            decisions += len(actions)
+            event_sequence_start = next_event_sequence
+            if self._inspection_recorder is None:
+                actions = self._build_actions(observations)
+                seat_decisions = None
+            else:
+                actions, seat_decisions = self._build_observed_actions(observations)
             observations = self._env.step(actions)
-            steps += 1
             next_event_sequence = self._process_new_events(
                 next_event_sequence, observations
             )
+            if self._inspection_recorder is not None:
+                assert seat_decisions is not None
+                self._inspection_recorder.on_step(
+                    StepDecisionObservation(
+                        step_ordinal=steps,
+                        event_sequence_start=event_sequence_start,
+                        event_sequence_end=next_event_sequence,
+                        seat_decisions=seat_decisions,
+                    )
+                )
+            decisions += len(actions)
+            steps += 1
 
         self._process_new_events(next_event_sequence, observations)
         result = LocalGameResult(
@@ -297,14 +611,21 @@ class LocalGameRunner:
             decisions=decisions,
             seat_round_stats=self._round_stats.build(self._env),
         )
-        if self._trace_sink is not None:
+        if self._inspection_recorder is not None:
+            self._inspection_recorder.complete(result)
+        elif self._trace_sink is not None:
             self._trace_sink.on_complete()
         return result
 
 
 __all__ = [
     "LocalGameResult",
+    "LocalGameInspection",
+    "LocalGameInspectionLifecycleError",
+    "LocalGameInspectionRecorder",
     "LocalGameRunner",
     "LocalGameRunnerError",
+    "SeatDecisionObservation",
+    "StepDecisionObservation",
     "StepLimitExceededError",
 ]
