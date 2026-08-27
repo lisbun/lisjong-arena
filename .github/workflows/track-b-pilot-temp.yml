@@ -8,9 +8,13 @@ permissions:
 
 jobs:
   pilot:
-    name: pilot-0-19
+    name: pilot-${{ matrix.seeds }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        seeds: ["0:4", "5:9", "10:14", "15:19"]
 
     steps:
       - name: Check out repository
@@ -25,5 +29,5 @@ jobs:
       - name: Install package
         run: python -m pip install --disable-pip-version-check -e .
 
-      - name: Run coverage-only Track B pilot
-        run: python -m lisjong_arena.oracle_sensitivity_pilot --seeds 0:19
+      - name: Run coverage-only Track B pilot shard
+        run: python -m lisjong_arena.oracle_sensitivity_pilot --seeds ${{ matrix.seeds }}
