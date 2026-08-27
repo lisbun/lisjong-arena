@@ -7,6 +7,7 @@ raw result、metrics、fail closedを高速に固定する。
 
 import unittest
 from collections.abc import Mapping
+from math import sqrt
 from unittest import mock
 
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
@@ -16,6 +17,7 @@ from lisjong_arena.model import (
     PolicySpec,
     SingleRoundEvaluationPlan,
     SingleRoundEvaluationResult,
+    SingleRoundGameResult,
 )
 from lisjong_arena.riichienv.local_game_runner import (
     LocalGameResult,
@@ -25,7 +27,11 @@ from lisjong_arena.single_round_evaluation import (
     GAME_MODE,
     ROTATION_COUNT,
     SingleRoundEvaluationError,
+    aggregate_seed_block_statistics,
+    candidate_game_delta,
+    mean_candidate_game_delta,
     run_single_round_evaluation,
+    scaled_candidate_game_delta,
 )
 
 
@@ -133,6 +139,38 @@ def _run(
 ) -> SingleRoundEvaluationResult:
     with mock.patch("lisjong_arena.single_round_evaluation._run_single_game", fake):
         return run_single_round_evaluation(plan)
+
+
+def _scores_for_scaled_delta(
+    rotation: int, scaled_delta: int
+) -> tuple[int, int, int, int]:
+    scores = [25_000, 25_000, 25_000, 25_000]
+    baseline_seat = (rotation + 1) % ROTATION_COUNT
+    scores[baseline_seat] -= scaled_delta
+    return tuple(scores)
+
+
+def _raw_game_result(
+    *, seed: int, rotation: int, scaled_delta: int
+) -> SingleRoundGameResult:
+    scores = _scores_for_scaled_delta(rotation, scaled_delta)
+    return SingleRoundGameResult(
+        seed=seed,
+        rotation=rotation,
+        game_mode=GAME_MODE,
+        candidate_seat=Seat(rotation),
+        scores=scores,
+        seat_round_stats=neutral_seat_round_stats_tuple(scores),
+    )
+
+
+def _seed_block(
+    seed: int, scaled_game_deltas: tuple[int, int, int, int]
+) -> tuple[SingleRoundGameResult, ...]:
+    return tuple(
+        _raw_game_result(seed=seed, rotation=rotation, scaled_delta=scaled_delta)
+        for rotation, scaled_delta in enumerate(scaled_game_deltas)
+    )
 
 
 class ProtocolInvariantTest(unittest.TestCase):
@@ -330,6 +368,108 @@ class MetricsTest(unittest.TestCase):
         seat_means = result.candidate_metrics.seat_mean_scores
         self.assertEqual(seat_means[0], 30_000.0)
         self.assertEqual(seat_means[1], 20_000.0)
+
+
+class SeedBlockStatisticsTest(unittest.TestCase):
+    def test_exact_game_delta_uses_candidate_minus_three_baseline_seat_mean(
+        self,
+    ) -> None:
+        game_result = _raw_game_result(seed=1, rotation=1, scaled_delta=1)
+
+        self.assertEqual(scaled_candidate_game_delta(game_result), 1)
+        self.assertEqual(candidate_game_delta(game_result), 1 / 3)
+
+    def test_one_seed_block_averages_its_four_rotation_deltas(self) -> None:
+        game_results = _seed_block(1, (36, 36, 36, 36))
+
+        statistics = aggregate_seed_block_statistics(game_results)
+
+        self.assertEqual(statistics.seed_block_count, 1)
+        self.assertEqual(statistics.mean_seed_block_delta, 12.0)
+        self.assertEqual(statistics.positive_seed_block_count, 1)
+
+    def test_multiple_seed_blocks_use_sample_sd_and_seed_count_for_se(
+        self,
+    ) -> None:
+        game_results = (
+            *_seed_block(1, (36, 36, 36, 36)),
+            *_seed_block(2, (0, 0, 0, 0)),
+            *_seed_block(3, (-36, -36, -36, -36)),
+        )
+
+        statistics = aggregate_seed_block_statistics(game_results)
+
+        self.assertEqual(statistics.seed_block_count, 3)
+        self.assertEqual(statistics.mean_seed_block_delta, 0.0)
+        self.assertEqual(statistics.sample_standard_deviation, 12.0)
+        expected_standard_error = 12.0 / sqrt(3)
+        self.assertEqual(statistics.standard_error, expected_standard_error)
+        self.assertEqual(
+            statistics.normal_approx_95_interval_lower,
+            -1.96 * expected_standard_error,
+        )
+        self.assertEqual(
+            statistics.normal_approx_95_interval_upper,
+            1.96 * expected_standard_error,
+        )
+        self.assertEqual(statistics.positive_seed_block_count, 1)
+        self.assertEqual(statistics.zero_seed_block_count, 1)
+        self.assertEqual(statistics.negative_seed_block_count, 1)
+
+    def test_game_mean_equals_seed_block_mean(self) -> None:
+        game_results = (
+            *_seed_block(1, (1, 2, 3, 4)),
+            *_seed_block(2, (5, 6, 7, 8)),
+        )
+
+        self.assertEqual(
+            mean_candidate_game_delta(game_results),
+            aggregate_seed_block_statistics(game_results).mean_seed_block_delta,
+        )
+
+    def test_sign_classification_uses_exact_scaled_block_sum(self) -> None:
+        game_results = (
+            *_seed_block(1, (1, 0, 0, 0)),
+            *_seed_block(2, (1, 1, -1, -1)),
+            *_seed_block(3, (-1, 0, 0, 0)),
+        )
+
+        statistics = aggregate_seed_block_statistics(game_results)
+
+        self.assertEqual(statistics.positive_seed_block_count, 1)
+        self.assertEqual(statistics.zero_seed_block_count, 1)
+        self.assertEqual(statistics.negative_seed_block_count, 1)
+
+    def test_one_seed_leaves_dispersion_and_interval_undefined(self) -> None:
+        statistics = aggregate_seed_block_statistics(_seed_block(1, (1, 0, 0, 0)))
+
+        self.assertEqual(statistics.mean_seed_block_delta, 1 / 12)
+        self.assertIsNone(statistics.sample_standard_deviation)
+        self.assertIsNone(statistics.standard_error)
+        self.assertIsNone(statistics.normal_approx_95_interval_lower)
+        self.assertIsNone(statistics.normal_approx_95_interval_upper)
+
+    def test_partial_seed_block_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "four records"):
+            aggregate_seed_block_statistics(_seed_block(1, (1, 2, 3, 4))[:3])
+
+    def test_mixed_seed_block_is_rejected(self) -> None:
+        game_results = (
+            *_seed_block(1, (1, 2, 3, 4))[:3],
+            _raw_game_result(seed=2, rotation=3, scaled_delta=4),
+        )
+
+        with self.assertRaisesRegex(ValueError, "same seed"):
+            aggregate_seed_block_statistics(game_results)
+
+    def test_incomplete_rotation_set_is_rejected(self) -> None:
+        game_results = tuple(
+            _raw_game_result(seed=1, rotation=rotation, scaled_delta=0)
+            for rotation in (0, 1, 2, 2)
+        )
+
+        with self.assertRaisesRegex(ValueError, "rotations 0, 1, 2, 3"):
+            aggregate_seed_block_statistics(game_results)
 
 
 class FailClosedTest(unittest.TestCase):

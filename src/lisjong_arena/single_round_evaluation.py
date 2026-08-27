@@ -20,6 +20,9 @@ genericな``game_mode``のようにcallerが指定できるoptionではない。
 """
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from math import sqrt
+from statistics import stdev
 
 from lisjong.policy_contract import Policy, Seat
 
@@ -64,6 +67,117 @@ class SingleRoundEvaluationError(Exception):
         super().__init__(f"seed={seed} rotation={rotation}: {message}")
         self.seed = seed
         self.rotation = rotation
+
+
+@dataclass(frozen=True, slots=True)
+class SeedBlockStatistics:
+    """ABBBの4 rotationsを1 seed blockとして扱う記述統計。"""
+
+    seed_block_count: int
+    mean_seed_block_delta: float
+    sample_standard_deviation: float | None
+    standard_error: float | None
+    normal_approx_95_interval_lower: float | None
+    normal_approx_95_interval_upper: float | None
+    positive_seed_block_count: int
+    zero_seed_block_count: int
+    negative_seed_block_count: int
+
+
+def scaled_candidate_game_delta(game_result: SingleRoundGameResult) -> int:
+    """candidate-vs-baseline game deltaを3倍したexact integerで返す。
+
+    ``3 * candidate score - sum(other 3 baseline scores)``をcanonicalな
+    game delta計算元とし、通常のgame deltaはこの値を3で割って得る。
+    """
+    if not isinstance(game_result, SingleRoundGameResult):
+        raise TypeError("game_result must be a SingleRoundGameResult")
+    baseline_score_sum = sum(
+        score
+        for seat, score in enumerate(game_result.scores)
+        if seat != game_result.candidate_seat
+    )
+    return 3 * game_result.candidate_score - baseline_score_sum
+
+
+def candidate_game_delta(game_result: SingleRoundGameResult) -> float:
+    """``candidate score - baseline 3 seat mean``を返す。"""
+    return scaled_candidate_game_delta(game_result) / 3
+
+
+def mean_candidate_game_delta(
+    game_results: tuple[SingleRoundGameResult, ...],
+) -> float:
+    """game単位candidate-vs-baseline deltaの平均を返す。"""
+    if not game_results:
+        raise ValueError("game_results must not be empty")
+    return sum(scaled_candidate_game_delta(item) for item in game_results) / (
+        3 * len(game_results)
+    )
+
+
+def aggregate_seed_block_statistics(
+    game_results: tuple[SingleRoundGameResult, ...],
+) -> SeedBlockStatistics:
+    """canonical raw resultsから1 seed = 4 rotationsの記述統計を導出する。
+
+    blockの符号はfloatへ変換せず、4 games分のscaled delta合計のexact
+    integer signで分類する。raw tupleへ直接適用してもpartial / mixed blockを
+    silentに集計しないよう、non-empty、4 records/block、同一seed、rotation
+    0..3をここで確認する。通常のResult経路が保証するその他のinvariantは
+    重複検証しない。
+    """
+    if not isinstance(game_results, tuple):
+        raise TypeError("game_results must be a tuple")
+    if not game_results:
+        raise ValueError("game_results must not be empty")
+    if any(not isinstance(item, SingleRoundGameResult) for item in game_results):
+        raise TypeError("game_results must contain only SingleRoundGameResult")
+    if len(game_results) % ROTATION_COUNT != 0:
+        raise ValueError(
+            "game_results must contain exactly four records per seed block"
+        )
+
+    scaled_seed_block_sums: list[int] = []
+    for offset in range(0, len(game_results), ROTATION_COUNT):
+        block = game_results[offset : offset + ROTATION_COUNT]
+        seed = block[0].seed
+        if any(item.seed != seed for item in block):
+            raise ValueError("each seed block must contain records for the same seed")
+        if tuple(item.rotation for item in block) != tuple(range(ROTATION_COUNT)):
+            raise ValueError(
+                "each seed block must contain rotations 0, 1, 2, 3 in order"
+            )
+        scaled_seed_block_sums.append(
+            sum(scaled_candidate_game_delta(item) for item in block)
+        )
+
+    seed_block_count = len(scaled_seed_block_sums)
+    mean_seed_block_delta = sum(scaled_seed_block_sums) / (
+        3 * ROTATION_COUNT * seed_block_count
+    )
+    if seed_block_count == 1:
+        sample_standard_deviation = None
+        standard_error = None
+        interval_lower = None
+        interval_upper = None
+    else:
+        sample_standard_deviation = stdev(scaled_seed_block_sums) / (3 * ROTATION_COUNT)
+        standard_error = sample_standard_deviation / sqrt(seed_block_count)
+        interval_lower = mean_seed_block_delta - 1.96 * standard_error
+        interval_upper = mean_seed_block_delta + 1.96 * standard_error
+
+    return SeedBlockStatistics(
+        seed_block_count=seed_block_count,
+        mean_seed_block_delta=mean_seed_block_delta,
+        sample_standard_deviation=sample_standard_deviation,
+        standard_error=standard_error,
+        normal_approx_95_interval_lower=interval_lower,
+        normal_approx_95_interval_upper=interval_upper,
+        positive_seed_block_count=sum(value > 0 for value in scaled_seed_block_sums),
+        zero_seed_block_count=sum(value == 0 for value in scaled_seed_block_sums),
+        negative_seed_block_count=sum(value < 0 for value in scaled_seed_block_sums),
+    )
 
 
 def _seat_assignment(
@@ -434,8 +548,13 @@ __all__ = [
     "GAME_MODE",
     "ROTATION_COUNT",
     "PolicyFactoryNotSerializableError",
+    "SeedBlockStatistics",
     "SingleRoundEvaluationError",
     "aggregate_candidate_metrics",
+    "aggregate_seed_block_statistics",
+    "candidate_game_delta",
+    "mean_candidate_game_delta",
     "run_single_round_evaluation",
     "run_single_round_evaluation_parallel",
+    "scaled_candidate_game_delta",
 ]

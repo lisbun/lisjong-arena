@@ -26,6 +26,7 @@ from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
     SingleRoundEvaluationError,
     aggregate_candidate_metrics,
+    aggregate_seed_block_statistics,
     run_single_round_evaluation,
     run_single_round_evaluation_parallel,
 )
@@ -151,6 +152,10 @@ class CanonicalOrderTest(unittest.TestCase):
         self.assertEqual(serial_result.game_results, parallel_result.game_results)
         self.assertEqual(
             serial_result.candidate_metrics, parallel_result.candidate_metrics
+        )
+        self.assertEqual(
+            aggregate_seed_block_statistics(serial_result.game_results),
+            aggregate_seed_block_statistics(parallel_result.game_results),
         )
 
 
