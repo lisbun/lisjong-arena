@@ -41,7 +41,9 @@ class OracleBeliefBoundaryTest(unittest.TestCase):
                     13 * SCALE,
                 )
 
-    def test_public_slot_counts_do_not_use_current_self_draw_as_opponent_mass(self) -> None:
+    def test_public_slot_counts_do_not_use_current_self_draw_as_opponent_mass(
+        self,
+    ) -> None:
         match_state = MatchState(seed=_SEED, rules=RuleSet.default())
         match_state.start_round()
         round_state = match_state.active_round
