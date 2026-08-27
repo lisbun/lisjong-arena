@@ -70,6 +70,8 @@ class PilotAggregationTest(unittest.TestCase):
                 consumer_active_decisions=2,
                 unstable_state_exclusions=1,
                 decision_kind_counts=(("turn", 10),),
+                discard_eligible_kind_counts=(("turn", 6),),
+                oracle_buildable_kind_counts=(("turn", 5),),
                 unstable_exclusion_kind_counts=(("turn", 1),),
             ),
             pilot.OracleSensitivityPilotSeedResult(
@@ -80,6 +82,8 @@ class PilotAggregationTest(unittest.TestCase):
                 consumer_active_decisions=3,
                 unstable_state_exclusions=0,
                 decision_kind_counts=(("discard_reaction", 4), ("turn", 8)),
+                discard_eligible_kind_counts=(("turn", 7),),
+                oracle_buildable_kind_counts=(("turn", 7),),
                 unstable_exclusion_kind_counts=(),
             ),
         )
@@ -99,7 +103,14 @@ class PilotAggregationTest(unittest.TestCase):
             summary.decision_kind_counts,
             (("discard_reaction", 4), ("turn", 18)),
         )
+        self.assertEqual(summary.discard_eligible_kind_counts, (("turn", 13),))
+        self.assertEqual(summary.oracle_buildable_kind_counts, (("turn", 12),))
         self.assertEqual(summary.unstable_exclusion_kind_counts, (("turn", 1),))
+        self.assertEqual(
+            dict(summary.discard_eligible_kind_counts)["turn"]
+            - dict(summary.oracle_buildable_kind_counts)["turn"],
+            dict(summary.unstable_exclusion_kind_counts)["turn"],
+        )
         self.assertFalse(hasattr(summary, "action_divergence"))
         self.assertFalse(hasattr(summary, "oracle_action"))
 
