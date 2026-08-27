@@ -177,8 +177,7 @@ def _opponent_slot_counts_by_wind(
             continue
         meld_count = len(policy_input.players[int(seat)].melds)
         concealed_slots = (
-            _STABLE_EQUIVALENT_TILE_COUNT
-            - _MELD_EQUIVALENT_TILE_COUNT * meld_count
+            _STABLE_EQUIVALENT_TILE_COUNT - _MELD_EQUIVALENT_TILE_COUNT * meld_count
         )
         if concealed_slots < 0:
             raise RuntimeError("public meld count implies negative concealed slots")
@@ -216,9 +215,7 @@ def _build_oracle_belief(
         ):
             return None
 
-        wind_number = wind_index(
-            wind_for_seat(seat, policy_input.round.dealer_seat)
-        )
+        wind_number = wind_index(wind_for_seat(seat, policy_input.round.dealer_seat))
         hands[wind_number] = exact_hand_belief_with_waits(
             concealed_tiles,
             own_melds=melds,
@@ -282,9 +279,7 @@ def run_oracle_sensitivity_pilot(
             result.unstable_state_exclusions for result in results
         ),
         decision_kind_counts=tuple(sorted(decision_kinds.items())),
-        unstable_exclusion_kind_counts=tuple(
-            sorted(unstable_exclusion_kinds.items())
-        ),
+        unstable_exclusion_kind_counts=tuple(sorted(unstable_exclusion_kinds.items())),
     )
 
 
