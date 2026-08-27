@@ -93,11 +93,20 @@ class MainAggregationTest(unittest.TestCase):
             "inconclusive relative to 5% threshold",
         )
 
+    def test_below_locked_minimum_is_insufficient_even_with_narrow_interval(self) -> None:
+        summary = measurement._aggregate_main_results(
+            (_result(20, active=399, divergent=0, better=0, worse=0),)
+        )
+
+        self.assertEqual(summary.materiality_classification, "insufficient coverage")
+
     def test_cli_dataset_is_locked_to_fresh_seeds_20_through_29(self) -> None:
         with patch.object(
             measurement,
             "run_oracle_sensitivity_main_seed",
-            side_effect=lambda seed: _result(seed, active=50, divergent=0, better=0, worse=0),
+            side_effect=lambda seed: _result(
+                seed, active=50, divergent=0, better=0, worse=0
+            ),
         ) as run_seed:
             summary = measurement.run_oracle_sensitivity_main()
 
