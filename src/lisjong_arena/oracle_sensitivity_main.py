@@ -116,6 +116,8 @@ class OracleSensitivityMainSummary:
 
     @property
     def materiality_classification(self) -> str:
+        if self.consumer_active_decisions < _MINIMUM_ACTIVE_POSITIONS:
+            return "insufficient coverage"
         interval = self.action_divergence_wilson_95
         if interval is None:
             return "insufficient coverage"
@@ -293,8 +295,7 @@ def _wilson_95(successes: int, total: int) -> WilsonInterval | None:
     half_width = (
         _WILSON_Z_95
         * math.sqrt(
-            proportion * (1.0 - proportion) / total
-            + z2 / (4.0 * total * total)
+            proportion * (1.0 - proportion) / total + z2 / (4.0 * total * total)
         )
         / denominator
     )
@@ -361,10 +362,7 @@ def _aggregate_main_results(
 def run_oracle_sensitivity_main() -> OracleSensitivityMainSummary:
     """pre-registered fresh seeds 20..29を変更せず実行する。"""
     results = tuple(run_oracle_sensitivity_main_seed(seed) for seed in _MAIN_SEEDS)
-    summary = _aggregate_main_results(results)
-    if summary.consumer_active_decisions < _MINIMUM_ACTIVE_POSITIONS:
-        return summary
-    return summary
+    return _aggregate_main_results(results)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
