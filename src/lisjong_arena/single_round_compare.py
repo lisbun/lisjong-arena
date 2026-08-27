@@ -48,6 +48,9 @@ from lisjong_arena.mortal_single_round_evaluation import (
 from lisjong_arena.policy_catalog import POLICY_CATALOG
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
+    SeedBlockStatistics,
+    aggregate_seed_block_statistics,
+    mean_candidate_game_delta,
     run_single_round_evaluation,
     run_single_round_evaluation_parallel,
 )
@@ -261,17 +264,7 @@ def _baseline_mean_score(result: _SummaryResult) -> float:
 
 def _mean_delta(result: _SummaryResult) -> float:
     """game単位の``candidate score - baseline 3 seat平均``をgame平均したdescriptive metric。"""
-    deltas = []
-    for game_result in result.game_results:
-        baseline_scores = [
-            score
-            for seat, score in enumerate(game_result.scores)
-            if seat != game_result.candidate_seat
-        ]
-        deltas.append(
-            game_result.candidate_score - sum(baseline_scores) / len(baseline_scores)
-        )
-    return sum(deltas) / len(deltas)
+    return mean_candidate_game_delta(result.game_results)
 
 
 def _format_rate(count: int, total: int) -> str:
@@ -314,13 +307,42 @@ def _format_mahjong_metrics(result: _SummaryResult) -> list[str]:
     ]
 
 
+def _format_seed_block_statistics(statistics: SeedBlockStatistics) -> list[str]:
+    """evaluation側で導出済みのseed-block statisticsを表示する。"""
+    if statistics.sample_standard_deviation is None:
+        standard_deviation = "N/A"
+        standard_error = "N/A"
+        interval = "N/A"
+    else:
+        standard_deviation = f"{statistics.sample_standard_deviation:.1f}"
+        standard_error = f"{statistics.standard_error:.1f}"
+        interval = (
+            f"[{statistics.normal_approx_95_interval_lower:+.1f}, "
+            f"{statistics.normal_approx_95_interval_upper:+.1f}]"
+        )
+
+    return [
+        "seed-block statistics:",
+        "",
+        f"  {'seed blocks:':<32}{statistics.seed_block_count:>8}",
+        f"  {'mean delta:':<32}{statistics.mean_seed_block_delta:>+8.1f}",
+        f"  {'standard deviation:':<32}{standard_deviation:>8}",
+        f"  {'standard error:':<32}{standard_error:>8}",
+        f"  {'normal-approx 95% interval:':<32}{interval:>8}",
+        "",
+        f"  {'positive seed blocks:':<32}{statistics.positive_seed_block_count:>8}",
+        f"  {'zero seed blocks:':<32}{statistics.zero_seed_block_count:>8}",
+        f"  {'negative seed blocks:':<32}{statistics.negative_seed_block_count:>8}",
+    ]
+
+
 def format_summary(result: _SummaryResult, *, workers: int) -> str:
     """成功したsingle-round評価結果からhuman-readable summaryを組み立てる。
 
-    baseline mean scoreとmean deltaは``SingleRoundEvaluationResult``へfield
-    追加せず、raw``game_results``からこの関数で決定的に導出する。7 Mahjong
-    metrics(Issue #61)のdomain aggregationは``SingleRoundCandidateMahjongMetrics``
-    がすでに担っており、ここではformattingだけを行う。
+    baseline mean scoreはraw ``game_results``から導出する。mean deltaと
+    seed-block statisticsのdomain aggregationは
+    ``lisjong_arena.single_round_evaluation``が担い、ここではformattingだけを
+    行う。7 Mahjong metrics(Issue #61)も同様にaggregation済みの値を表示する。
     """
     plan = result.plan
     metrics = result.candidate_metrics
@@ -352,6 +374,12 @@ def format_summary(result: _SummaryResult, *, workers: int) -> str:
 
     lines.append("")
     lines.extend(_format_mahjong_metrics(result))
+    lines.append("")
+    lines.extend(
+        _format_seed_block_statistics(
+            aggregate_seed_block_statistics(result.game_results)
+        )
+    )
 
     if isinstance(result, MortalSingleRoundEvaluationResult):
         config = result.plan.mortal_config

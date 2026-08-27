@@ -659,9 +659,23 @@ candidate seat means:
   seat 1: 24890.0
   seat 2: 25412.0
   seat 3: 25082.0
+
+seed-block statistics:
+
+  seed blocks:                         100
+  mean delta:                       +164.7
+  standard deviation:               1800.0
+  standard error:                    180.0
+  normal-approx 95% interval:     [-188.1, +517.5]
+
+  positive seed blocks:                 53
+  zero seed blocks:                      2
+  negative seed blocks:                 45
 ```
 
-`baseline mean score`は各gameのcandidate以外3 seatのfinal scoreすべての平均、`mean delta`は各gameの`candidate score - そのgameのbaseline 3 seat平均`をgame平均したdescriptive metricです。いずれも`SingleRoundEvaluationResult`へfield追加せず、raw `game_results`からCLI側で導出します。confidence interval・statistical significance・自動勝敗判定は追加していません。
+`baseline mean score`は各gameのcandidate以外3 seatのfinal scoreすべての平均です。`mean delta`は各gameの`candidate score - そのgameのbaseline 3 seat平均`をgame平均したdescriptive metricで、整数スケールの共通evaluation helperから導出します。
+
+`seed-block statistics`は同一seedの4 rotationsを1 sampling blockとして集約します。sample standard deviationはseed-block deltaに対する`n - 1` denominator、standard errorは`SD / sqrt(seed blocks)`、`normal-approx 95% interval`は`mean ± 1.96 * SE`です。1 seedだけの場合、meanとpositive / zero / negative countは表示し、SD・SE・intervalは`N/A`になります。これはdescriptive uncertainty summaryであり、statistical significanceやPolicyの自動勝敗判定は行いません。既存`SingleRoundEvaluationResult` schemaは変更せず、Policy candidateとMortal candidateのどちらも同じraw `game_results`から共通semanticで導出します。
 
 1 gameでも失敗した場合は既存evaluationのfail-closed挙動(partial summaryを返さずcomparison全体を失敗させる)がそのまま伝わり、CLIはsuccess summaryを出さずnon-zero exitで終了します。結果のpersistence(`--json` / `--output` / historical storage等)は行わず、stdout表示だけです。
 

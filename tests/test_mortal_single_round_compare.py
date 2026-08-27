@@ -175,6 +175,12 @@ class MortalSingleRoundCompareTest(unittest.TestCase):
         self.assertIn("model SHA256:", summary)
         self.assertIn("candidate mean score: 40000.0", summary)
         self.assertIn("mahjong metrics:", summary)
+        self.assertIn("seed-block statistics:", summary)
+        self.assertRegex(summary, r"seed blocks:\s+1")
+        self.assertRegex(summary, r"mean delta:\s+\+20000\.0")
+        self.assertRegex(summary, r"standard deviation:\s+N/A")
+        self.assertRegex(summary, r"standard error:\s+N/A")
+        self.assertRegex(summary, r"normal-approx 95% interval:\s+N/A")
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ from lisjong_arena.model import (
 )
 from lisjong_arena.policy_catalog import POLICY_CATALOG
 from lisjong_arena.single_round_compare import (
+    _mean_delta,
     _run_cli,
     format_summary,
     parse_seeds,
@@ -32,6 +33,7 @@ from lisjong_arena.single_round_compare import (
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
     aggregate_candidate_metrics,
+    aggregate_seed_block_statistics,
 )
 
 
@@ -453,12 +455,71 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("  seat 1: 43000.0", lines)
         self.assertIn("  seat 2: 45000.0", lines)
         self.assertIn("  seat 3: 40000.0", lines)
+        self.assertIn("seed-block statistics:", lines)
+        self.assertTrue(
+            any("seed blocks:" in line and line.endswith("1") for line in lines)
+        )
+        self.assertTrue(
+            any("mean delta:" in line and line.endswith("+23000.0") for line in lines)
+        )
+        self.assertTrue(
+            any(
+                "standard deviation:" in line and line.endswith("N/A") for line in lines
+            )
+        )
+        self.assertTrue(
+            any("standard error:" in line and line.endswith("N/A") for line in lines)
+        )
+        self.assertTrue(
+            any(
+                "normal-approx 95% interval:" in line and line.endswith("N/A")
+                for line in lines
+            )
+        )
+        self.assertTrue(
+            any(
+                "positive seed blocks:" in line and line.endswith("1") for line in lines
+            )
+        )
+        self.assertTrue(
+            any("zero seed blocks:" in line and line.endswith("0") for line in lines)
+        )
+        self.assertTrue(
+            any(
+                "negative seed blocks:" in line and line.endswith("0") for line in lines
+            )
+        )
 
     def test_seed_range_description_covers_multi_seed_plans(self) -> None:
         result = _fake_result(seeds=tuple(range(0, 100)))
         summary = format_summary(result, workers=4)
         self.assertIn("seeds:      0..99 (100)", summary.splitlines())
         self.assertIn("games:      400", summary.splitlines())
+
+    def test_multi_seed_summary_formats_defined_uncertainty_values(self) -> None:
+        result = _fake_result(seeds=(0, 1))
+        summary = format_summary(result, workers=2)
+        lines = summary.splitlines()
+
+        self.assertTrue(
+            any(
+                "standard deviation:" in line and line.endswith("0.0") for line in lines
+            )
+        )
+        self.assertTrue(
+            any("standard error:" in line and line.endswith("0.0") for line in lines)
+        )
+        self.assertTrue(
+            any(
+                "normal-approx 95% interval:" in line
+                and line.endswith("[+20000.0, +20000.0]")
+                for line in lines
+            )
+        )
+        self.assertEqual(
+            _mean_delta(result),
+            aggregate_seed_block_statistics(result.game_results).mean_seed_block_delta,
+        )
 
 
 class MahjongMetricsSummaryTest(unittest.TestCase):
