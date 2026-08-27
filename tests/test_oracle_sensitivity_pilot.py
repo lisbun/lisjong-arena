@@ -68,6 +68,7 @@ class PilotAggregationTest(unittest.TestCase):
                 consumer_active_decisions=2,
                 unstable_state_exclusions=1,
                 decision_kind_counts=(("turn", 10),),
+                unstable_exclusion_kind_counts=(("turn", 1),),
             ),
             pilot.OracleSensitivityPilotSeedResult(
                 seed=2,
@@ -77,6 +78,7 @@ class PilotAggregationTest(unittest.TestCase):
                 consumer_active_decisions=3,
                 unstable_state_exclusions=0,
                 decision_kind_counts=(("discard_reaction", 4), ("turn", 8)),
+                unstable_exclusion_kind_counts=(),
             ),
         )
         with patch.object(
@@ -95,6 +97,7 @@ class PilotAggregationTest(unittest.TestCase):
             summary.decision_kind_counts,
             (("discard_reaction", 4), ("turn", 18)),
         )
+        self.assertEqual(summary.unstable_exclusion_kind_counts, (("turn", 1),))
         self.assertFalse(hasattr(summary, "action_divergence"))
         self.assertFalse(hasattr(summary, "oracle_action"))
 
