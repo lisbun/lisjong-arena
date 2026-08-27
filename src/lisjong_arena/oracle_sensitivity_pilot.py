@@ -67,6 +67,8 @@ class OracleSensitivityPilotSeedResult:
     consumer_active_decisions: int
     unstable_state_exclusions: int
     decision_kind_counts: tuple[tuple[str, int], ...]
+    discard_eligible_kind_counts: tuple[tuple[str, int], ...]
+    oracle_buildable_kind_counts: tuple[tuple[str, int], ...]
     unstable_exclusion_kind_counts: tuple[tuple[str, int], ...]
 
 
@@ -81,6 +83,8 @@ class OracleSensitivityPilotSummary:
     consumer_active_decisions: int
     unstable_state_exclusions: int
     decision_kind_counts: tuple[tuple[str, int], ...]
+    discard_eligible_kind_counts: tuple[tuple[str, int], ...]
+    oracle_buildable_kind_counts: tuple[tuple[str, int], ...]
     unstable_exclusion_kind_counts: tuple[tuple[str, int], ...]
 
 
@@ -95,6 +99,8 @@ class _PilotRecorder:
         self.consumer_active_decisions = 0
         self.unstable_state_exclusions = 0
         self.decision_kind_counts: Counter[str] = Counter()
+        self.discard_eligible_kind_counts: Counter[str] = Counter()
+        self.oracle_buildable_kind_counts: Counter[str] = Counter()
         self.unstable_exclusion_kind_counts: Counter[str] = Counter()
 
     def observe(self, observation: SeatObservation, options: object) -> None:
@@ -115,6 +121,7 @@ class _PilotRecorder:
             return
 
         self.discard_eligible_decisions += 1
+        self.discard_eligible_kind_counts[decision_kind] += 1
         policy_input = engine_decision.context.input
         baseline = estimate_conditional_uniform_hand_belief(
             policy_input,
@@ -126,6 +133,7 @@ class _PilotRecorder:
             return
 
         self.oracle_buildable_decisions += 1
+        self.oracle_buildable_kind_counts[decision_kind] += 1
         baseline_decision = evaluate_hand_belief_sensitive_discard(
             policy_input,
             discard_actions,
@@ -143,6 +151,12 @@ class _PilotRecorder:
             consumer_active_decisions=self.consumer_active_decisions,
             unstable_state_exclusions=self.unstable_state_exclusions,
             decision_kind_counts=tuple(sorted(self.decision_kind_counts.items())),
+            discard_eligible_kind_counts=tuple(
+                sorted(self.discard_eligible_kind_counts.items())
+            ),
+            oracle_buildable_kind_counts=tuple(
+                sorted(self.oracle_buildable_kind_counts.items())
+            ),
             unstable_exclusion_kind_counts=tuple(
                 sorted(self.unstable_exclusion_kind_counts.items())
             ),
@@ -258,9 +272,13 @@ def run_oracle_sensitivity_pilot(
 
     results = tuple(run_oracle_sensitivity_pilot_seed(seed) for seed in normalized)
     decision_kinds: Counter[str] = Counter()
+    discard_eligible_kinds: Counter[str] = Counter()
+    oracle_buildable_kinds: Counter[str] = Counter()
     unstable_exclusion_kinds: Counter[str] = Counter()
     for result in results:
         decision_kinds.update(dict(result.decision_kind_counts))
+        discard_eligible_kinds.update(dict(result.discard_eligible_kind_counts))
+        oracle_buildable_kinds.update(dict(result.oracle_buildable_kind_counts))
         unstable_exclusion_kinds.update(dict(result.unstable_exclusion_kind_counts))
 
     return OracleSensitivityPilotSummary(
@@ -279,6 +297,8 @@ def run_oracle_sensitivity_pilot(
             result.unstable_state_exclusions for result in results
         ),
         decision_kind_counts=tuple(sorted(decision_kinds.items())),
+        discard_eligible_kind_counts=tuple(sorted(discard_eligible_kinds.items())),
+        oracle_buildable_kind_counts=tuple(sorted(oracle_buildable_kinds.items())),
         unstable_exclusion_kind_counts=tuple(sorted(unstable_exclusion_kinds.items())),
     )
 
@@ -308,10 +328,21 @@ def _print_summary(summary: OracleSensitivityPilotSummary) -> None:
     print("decision kinds:")
     for kind, count in summary.decision_kind_counts:
         print(f"  {kind}: {count}")
-    if summary.unstable_exclusion_kind_counts:
-        print("unstable exclusions by decision kind:")
-        for kind, count in summary.unstable_exclusion_kind_counts:
-            print(f"  {kind}: {count}")
+
+    eligible_by_kind = dict(summary.discard_eligible_kind_counts)
+    buildable_by_kind = dict(summary.oracle_buildable_kind_counts)
+    excluded_by_kind = dict(summary.unstable_exclusion_kind_counts)
+    coverage_kinds = sorted(
+        set(eligible_by_kind) | set(buildable_by_kind) | set(excluded_by_kind)
+    )
+    if coverage_kinds:
+        print("discard coverage by decision kind:")
+        for kind in coverage_kinds:
+            print(
+                f"  {kind}: eligible={eligible_by_kind.get(kind, 0)}, "
+                f"buildable={buildable_by_kind.get(kind, 0)}, "
+                f"unstable_excluded={excluded_by_kind.get(kind, 0)}"
+            )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
