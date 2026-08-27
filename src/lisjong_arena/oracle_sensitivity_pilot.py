@@ -67,6 +67,7 @@ class OracleSensitivityPilotSeedResult:
     consumer_active_decisions: int
     unstable_state_exclusions: int
     decision_kind_counts: tuple[tuple[str, int], ...]
+    unstable_exclusion_kind_counts: tuple[tuple[str, int], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +81,7 @@ class OracleSensitivityPilotSummary:
     consumer_active_decisions: int
     unstable_state_exclusions: int
     decision_kind_counts: tuple[tuple[str, int], ...]
+    unstable_exclusion_kind_counts: tuple[tuple[str, int], ...]
 
 
 class _PilotRecorder:
@@ -93,10 +95,12 @@ class _PilotRecorder:
         self.consumer_active_decisions = 0
         self.unstable_state_exclusions = 0
         self.decision_kind_counts: Counter[str] = Counter()
+        self.unstable_exclusion_kind_counts: Counter[str] = Counter()
 
     def observe(self, observation: SeatObservation, options: object) -> None:
         self.total_decisions += 1
-        self.decision_kind_counts[observation.decision_kind.value] += 1
+        decision_kind = observation.decision_kind.value
+        self.decision_kind_counts[decision_kind] += 1
 
         engine_decision = build_decision(observation, options)
         legal_actions = engine_decision.context.legal_actions
@@ -118,6 +122,7 @@ class _PilotRecorder:
         )
         if _build_oracle_belief(self._match_state, policy_input, baseline) is None:
             self.unstable_state_exclusions += 1
+            self.unstable_exclusion_kind_counts[decision_kind] += 1
             return
 
         self.oracle_buildable_decisions += 1
@@ -138,6 +143,9 @@ class _PilotRecorder:
             consumer_active_decisions=self.consumer_active_decisions,
             unstable_state_exclusions=self.unstable_state_exclusions,
             decision_kind_counts=tuple(sorted(self.decision_kind_counts.items())),
+            unstable_exclusion_kind_counts=tuple(
+                sorted(self.unstable_exclusion_kind_counts.items())
+            ),
         )
 
 
@@ -253,8 +261,10 @@ def run_oracle_sensitivity_pilot(
 
     results = tuple(run_oracle_sensitivity_pilot_seed(seed) for seed in normalized)
     decision_kinds: Counter[str] = Counter()
+    unstable_exclusion_kinds: Counter[str] = Counter()
     for result in results:
         decision_kinds.update(dict(result.decision_kind_counts))
+        unstable_exclusion_kinds.update(dict(result.unstable_exclusion_kind_counts))
 
     return OracleSensitivityPilotSummary(
         seeds=normalized,
@@ -272,6 +282,9 @@ def run_oracle_sensitivity_pilot(
             result.unstable_state_exclusions for result in results
         ),
         decision_kind_counts=tuple(sorted(decision_kinds.items())),
+        unstable_exclusion_kind_counts=tuple(
+            sorted(unstable_exclusion_kinds.items())
+        ),
     )
 
 
@@ -300,6 +313,10 @@ def _print_summary(summary: OracleSensitivityPilotSummary) -> None:
     print("decision kinds:")
     for kind, count in summary.decision_kind_counts:
         print(f"  {kind}: {count}")
+    if summary.unstable_exclusion_kind_counts:
+        print("unstable exclusions by decision kind:")
+        for kind, count in summary.unstable_exclusion_kind_counts:
+            print(f"  {kind}: {count}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
