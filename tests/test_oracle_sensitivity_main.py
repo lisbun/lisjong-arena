@@ -93,7 +93,9 @@ class MainAggregationTest(unittest.TestCase):
             "inconclusive relative to 5% threshold",
         )
 
-    def test_below_locked_minimum_is_insufficient_even_with_narrow_interval(self) -> None:
+    def test_below_locked_minimum_is_insufficient_even_with_narrow_interval(
+        self,
+    ) -> None:
         summary = measurement._aggregate_main_results(
             (_result(20, active=399, divergent=0, better=0, worse=0),)
         )
