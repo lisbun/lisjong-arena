@@ -10,7 +10,7 @@ from lisjong_engine.rules import RuleSet
 from lisjong_engine.seat import Seat as EngineSeat
 
 import lisjong_arena.oracle_sensitivity_pilot as pilot
-from lisjong_arena.lisjong_engine.policy_input import policy_input_from_observation
+from lisjong_arena.lisjong_engine.policy_input import build_policy_input
 
 _SEED = 20260827
 
@@ -24,7 +24,7 @@ class OracleBeliefBoundaryTest(unittest.TestCase):
         round_state.draw(EngineSeat.EAST)
 
         observation = build_seat_observation(match_state, EngineSeat.EAST)
-        policy_input = policy_input_from_observation(observation)
+        policy_input = build_policy_input(observation)
         baseline = estimate_conditional_uniform_hand_belief(
             policy_input,
             pilot._opponent_slot_counts_by_wind(policy_input),
@@ -51,7 +51,7 @@ class OracleBeliefBoundaryTest(unittest.TestCase):
         round_state.draw(EngineSeat.EAST)
 
         observation = build_seat_observation(match_state, EngineSeat.EAST)
-        policy_input = policy_input_from_observation(observation)
+        policy_input = build_policy_input(observation)
 
         self.assertEqual(
             pilot._opponent_slot_counts_by_wind(policy_input),
