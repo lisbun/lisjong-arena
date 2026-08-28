@@ -307,9 +307,7 @@ def load_phase3_bootstrap_corpus(path: str | Path) -> ValidatedBootstrapCorpus:
             raise Phase3BootstrapArtifactError("artifact content is inconsistent")
         canonical = _json_bytes(rebuilt)
         if serialized != canonical:
-            raise Phase3BootstrapArtifactError(
-                "artifact bytes are not canonical JSON"
-            )
+            raise Phase3BootstrapArtifactError("artifact bytes are not canonical JSON")
         counts = _freeze_counts_from_extractions(parsed.extractions)
     except Phase3BootstrapArtifactError:
         raise

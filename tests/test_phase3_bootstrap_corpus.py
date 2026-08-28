@@ -92,9 +92,7 @@ class FixedGenerationSpecTests(unittest.TestCase):
         spec = _value()["generation_spec"]
         self.assertEqual(spec["source_class"], "first-party-bootstrap")
         self.assertEqual(spec["execution"], FIXED_EXECUTION)
-        self.assertEqual(
-            spec["policies"], {"identity": FIXED_POLICY, "seat_count": 4}
-        )
+        self.assertEqual(spec["policies"], {"identity": FIXED_POLICY, "seat_count": 4})
         self.assertEqual(spec["rules"], FIXED_RULES)
         self.assertEqual(spec["seeds"], list(FIXED_SEEDS))
         self.assertEqual(spec["anchor"], FIXED_ANCHOR)
@@ -123,7 +121,10 @@ class FixedGenerationSpecTests(unittest.TestCase):
             [item.args[0] for item in extractor.call_args_list], list(FIXED_SEEDS)
         )
         self.assertTrue(
-            all(isinstance(item.kwargs["rules"], RuleSet) for item in extractor.call_args_list)
+            all(
+                isinstance(item.kwargs["rules"], RuleSet)
+                for item in extractor.call_args_list
+            )
         )
 
     def test_unresolved_preflight_fails_before_game_generation(self):
@@ -268,9 +269,7 @@ class LabelPersistenceTests(unittest.TestCase):
             path = Path(directory) / "corpus.json"
             readback = save_phase3_bootstrap_corpus(value, path)
             self.assertEqual(path.read_bytes(), canonical)
-            self.assertEqual(
-                readback.canonical_sha256, canonical_sha256(canonical)
-            )
+            self.assertEqual(readback.canonical_sha256, canonical_sha256(canonical))
             self.assertEqual(readback.game_seeds, FIXED_SEEDS)
             self.assertEqual(readback.counts.sample_count, 8)
 
@@ -444,9 +443,7 @@ class MeasurementAndRepeatTests(unittest.TestCase):
             ):
                 report = generate_phase3_reproducibility_check(first, second)
         self.assertEqual(extractor.call_count, 16)
-        self.assertEqual(
-            report.first.canonical_sha256, report.second.canonical_sha256
-        )
+        self.assertEqual(report.first.canonical_sha256, report.second.canonical_sha256)
         self.assertEqual(report.first.counts, report.second.counts)
         self.assertNotEqual(report.first.output_path, report.second.output_path)
         self.assertEqual(report.first.wall_clock_seconds, 1.0)

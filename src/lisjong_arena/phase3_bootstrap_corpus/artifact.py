@@ -33,7 +33,9 @@ from lisjong_arena.phase2_training_anchor.pipeline_provenance import (
     LABEL_SEMANTICS_ID,
     TrainingPipelineProvenance,
 )
-from lisjong_arena.phase2_training_anchor.rule_provenance import normalize_effective_rules
+from lisjong_arena.phase2_training_anchor.rule_provenance import (
+    normalize_effective_rules,
+)
 from lisjong_arena.phase2_training_anchor.training_sample import TrainingSample
 from lisjong_arena.phase3_bootstrap_corpus.encoding import (
     provenance_to_dict,
@@ -145,7 +147,9 @@ def _accumulate_sample_counts(counts: _MutableCounts, sample: TrainingSample) ->
                 counts.kan_evidence_prefix_occurrences += 1
         if isinstance(evidence, (KanDeclaredEvidence, KanConfirmedEvidence)):
             counts.kan_evidence_prefix_occurrences += 1
-        if isinstance(evidence, (ResponseEpochOpenedEvidence, ResponseEpochClosedEvidence)):
+        if isinstance(
+            evidence, (ResponseEpochOpenedEvidence, ResponseEpochClosedEvidence)
+        ):
             counts.response_epoch_evidence_prefix_occurrences += 1
         if (
             isinstance(evidence, ResponseEpochClosedEvidence)
@@ -210,7 +214,9 @@ def build_phase3_bootstrap_value(
     if type(extractions) is not tuple:
         raise TypeError("extractions must be a tuple")
     if len(extractions) != len(FIXED_SEEDS):
-        raise Phase3BootstrapArtifactError("exactly eight fixed-seed games are required")
+        raise Phase3BootstrapArtifactError(
+            "exactly eight fixed-seed games are required"
+        )
     if tuple(game.source.game_seed for game in extractions) != FIXED_SEEDS:
         raise Phase3BootstrapArtifactError("games must be ordered by seeds 1000..1007")
 
@@ -264,9 +270,7 @@ def build_phase3_bootstrap_value(
         if tuple(sample.anchor.anchor_index for sample in game.samples) != tuple(
             range(len(game.samples))
         ):
-            raise Phase3BootstrapArtifactError(
-                "samples must be in anchor_index order"
-            )
+            raise Phase3BootstrapArtifactError("samples must be in anchor_index order")
 
         game_counts = _MutableCounts(total_decisions=game.total_decisions)
         corpus_counts.total_decisions += game.total_decisions
@@ -358,9 +362,7 @@ def _json_bytes(value: object) -> bytes:
             + "\n"
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
-        raise Phase3BootstrapArtifactError(
-            "artifact is not JSON serializable"
-        ) from exc
+        raise Phase3BootstrapArtifactError("artifact is not JSON serializable") from exc
 
 
 def canonical_sha256(canonical_bytes: bytes) -> str:

@@ -83,9 +83,10 @@ class CorpusCounts:
             sorted(self.structural_wait_unavailable_reasons)
         ):
             raise ValueError("structural-wait reason counts must be sorted")
-        if sum(
-            count for _, count in self.structural_wait_unavailable_reasons
-        ) != self.structural_wait_unavailable_count:
+        if (
+            sum(count for _, count in self.structural_wait_unavailable_reasons)
+            != self.structural_wait_unavailable_count
+        ):
             raise ValueError("structural-wait reason counts are inconsistent")
         if any(
             type(count) is not int or count <= 0

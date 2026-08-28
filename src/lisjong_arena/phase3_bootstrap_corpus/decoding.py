@@ -433,9 +433,7 @@ def parse_evidence(value: object, context: str) -> RoundEvidence:
                     EngineSeat, raw["source_seat"], f"{context}.source_seat"
                 ),
                 responder_seats=tuple(
-                    parse_enum(
-                        EngineSeat, seat, f"{context}.responder_seats[{index}]"
-                    )
+                    parse_enum(EngineSeat, seat, f"{context}.responder_seats[{index}]")
                     for index, seat in enumerate(
                         expect_list(
                             raw["responder_seats"], f"{context}.responder_seats"
@@ -471,7 +469,9 @@ def parse_evidence(value: object, context: str) -> RoundEvidence:
             )
         if kind in {"kan_declared", "kan_confirmed"}:
             raw = expect_object(value, {"meld", "seat", "type"}, context)
-            cls = KanDeclaredEvidence if kind == "kan_declared" else KanConfirmedEvidence
+            cls = (
+                KanDeclaredEvidence if kind == "kan_declared" else KanConfirmedEvidence
+            )
             return cls(
                 seat=parse_enum(EngineSeat, raw["seat"], f"{context}.seat"),
                 meld=parse_meld(raw["meld"], f"{context}.meld"),

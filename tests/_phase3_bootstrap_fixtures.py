@@ -49,7 +49,9 @@ def resolved_provenance(
     )
 
 
-def sample_for_seed(seed: int, provenance: TrainingPipelineProvenance) -> TrainingSample:
+def sample_for_seed(
+    seed: int, provenance: TrainingPipelineProvenance
+) -> TrainingSample:
     base = _base_sample()
     source = AnchorSourceIdentity(
         source_class=FIRST_PARTY_SOURCE_CLASS,

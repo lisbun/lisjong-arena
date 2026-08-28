@@ -12,7 +12,9 @@ from lisjong_arena.phase2_training_anchor.extraction import extract_phase2_game
 from lisjong_arena.phase2_training_anchor.pipeline_provenance import (
     collect_pipeline_provenance,
 )
-from lisjong_arena.phase2_training_anchor.rule_provenance import normalize_effective_rules
+from lisjong_arena.phase2_training_anchor.rule_provenance import (
+    normalize_effective_rules,
+)
 from lisjong_arena.phase3_bootstrap_corpus.artifact import (
     FIXED_SEEDS,
     CorpusCounts,
@@ -74,10 +76,7 @@ def generate_phase3_bootstrap_corpus(path: str | Path) -> Phase3GenerationReport
     provenance = collect_pipeline_provenance(rules)
     # VCS metadataが解決できない環境では、8半荘を回す前にfail closedする。
     _require_resolved_provenance(provenance)
-    extractions = tuple(
-        extract_phase2_game(seed, rules=rules)
-        for seed in FIXED_SEEDS
-    )
+    extractions = tuple(extract_phase2_game(seed, rules=rules) for seed in FIXED_SEEDS)
     value = build_phase3_bootstrap_value(
         extractions,
         provenance,

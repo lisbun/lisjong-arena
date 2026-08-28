@@ -126,14 +126,10 @@ def _parse_expected_counts(value: object, context: str) -> OpponentExpectedCount
         red_five_present=tuple(
             expect_bool(flag, f"{context}.red_five_present[{index}]")
             for index, flag in enumerate(
-                expect_list(
-                    raw["red_five_present"], f"{context}.red_five_present"
-                )
+                expect_list(raw["red_five_present"], f"{context}.red_five_present")
             )
         ),
-        concealed_size=expect_int(
-            raw["concealed_size"], f"{context}.concealed_size"
-        ),
+        concealed_size=expect_int(raw["concealed_size"], f"{context}.concealed_size"),
     )
 
 

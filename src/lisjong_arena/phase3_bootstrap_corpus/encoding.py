@@ -69,7 +69,9 @@ def discard_to_dict(discard: PublicDiscard) -> dict[str, Any]:
 
 def meld_to_dict(meld: PublicMeld) -> dict[str, Any]:
     return {
-        "called_tile": None if meld.called_tile is None else tile_to_dict(meld.called_tile),
+        "called_tile": None
+        if meld.called_tile is None
+        else tile_to_dict(meld.called_tile),
         "from_seat": None if meld.from_seat is None else meld.from_seat.value,
         "meld_type": meld.meld_type.value,
         "tiles": [tile_to_dict(tile) for tile in meld.tiles],
@@ -97,7 +99,10 @@ def observation_to_dict(observation: SeatObservation) -> dict[str, Any]:
         "hand_tiles": [tile_to_dict(tile) for tile in observation.hand_tiles],
         "honba": observation.honba,
         "melds": [
-            {"melds": [meld_to_dict(item) for item in row.melds], "seat": row.seat.value}
+            {
+                "melds": [meld_to_dict(item) for item in row.melds],
+                "seat": row.seat.value,
+            }
             for row in observation.melds
         ],
         "prevailing_wind": observation.prevailing_wind.value,
