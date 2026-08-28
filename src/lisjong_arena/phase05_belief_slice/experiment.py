@@ -548,23 +548,24 @@ def _print_report(result: Phase05ExperimentResult) -> None:
     print(
         f"  learned conservation exclusions: {decision.learned_conservation_exclusions}"
     )
-    print(
-        "  baseline vs learned divergence: "
-        f"{decision.baseline_learned_divergences}/"
-        f"{decision.consumer_active_positions} "
-        f"({_format_percent(decision.baseline_learned_divergence_rate)})"
-    )
-    print(
-        "  learned vs oracle agreement: "
-        f"{decision.learned_oracle_agreements}/"
-        f"{decision.consumer_active_positions} "
-        f"({_format_percent(decision.learned_oracle_agreement_rate)})"
-    )
+    print(f"  learned evaluable positions: {decision.learned_evaluable_positions}")
     print(
         "  baseline vs oracle agreement: "
         f"{decision.baseline_oracle_agreements}/"
         f"{decision.consumer_active_positions} "
         f"({_format_percent(decision.baseline_oracle_agreement_rate)})"
+    )
+    print(
+        "  baseline vs learned divergence: "
+        f"{decision.baseline_learned_divergences}/"
+        f"{decision.learned_evaluable_positions} "
+        f"({_format_percent(decision.baseline_learned_divergence_rate)})"
+    )
+    print(
+        "  learned vs oracle agreement: "
+        f"{decision.learned_oracle_agreements}/"
+        f"{decision.learned_evaluable_positions} "
+        f"({_format_percent(decision.learned_oracle_agreement_rate)})"
     )
     print(
         "  live-wall structural proxy on baseline-vs-learned divergences: "

@@ -2,14 +2,19 @@
 
 import pickle
 import unittest
-from unittest.mock import patch
+from dataclasses import dataclass
 
-from lisjong.belief import wind_for_seat, wind_index
-from lisjong.policies.experimental_hand_belief_sensitivity import (
-    HandBeliefSensitivityError,
-    OpponentExpectedCounts,
+from lisjong.belief import (
+    estimate_conditional_uniform_hand_belief,
+    wind_for_seat,
+    wind_index,
 )
-from lisjong.policy_contract import Wind
+from lisjong.policies.experimental_hand_belief_sensitivity import (
+    OpponentExpectedCounts,
+    evaluate_expected_count_sensitive_discard,
+    opponent_expected_counts_from_belief,
+)
+from lisjong.policy_contract import DiscardAction, Wind
 from lisjong_engine.action_projection import project_legal_actions
 from lisjong_engine.match_state import MatchState
 from lisjong_engine.observation import ObservationDecisionKind
@@ -17,11 +22,13 @@ from lisjong_engine.observation_builder import build_seat_observation
 from lisjong_engine.rules import RuleSet
 from lisjong_engine.seat import Seat as EngineSeat
 
-import lisjong_arena.phase05_belief_slice.decision_linked as decision_linked
+from lisjong_arena.lisjong_engine.decision import build_decision
 from lisjong_arena.lisjong_engine.policy_input import build_policy_input
+from lisjong_arena.oracle_sensitivity_pilot import _opponent_slot_counts_by_wind
 from lisjong_arena.phase05_belief_slice.decision_linked import (
     Phase05DecisionLinkedResult,
     _DecisionLinkedRecorder,
+    _oracle_opponent_counts,
     _summed_opponent_counts,
     run_phase05_decision_linked,
 )
@@ -30,6 +37,57 @@ from lisjong_arena.phase05_belief_slice.estimator import (
 )
 
 _SEED = 20260827
+_CONSERVATION_FAILING_COUNT = 4.0
+"""3他家合計で1牌種12.0となり、必ずviewer-visibleな未見枚数を超える値。"""
+
+
+@dataclass(frozen=True, slots=True)
+class _ConsumerActivations:
+    """同一positionで3 beliefへ与えたときのconsumer activation。"""
+
+    baseline: bool
+    oracle: bool
+    zeroed: bool
+
+
+def _consumer_activations(observation, options) -> _ConsumerActivations:
+    """同じhard filterがbeliefに依存しないことを確認するためのprobe。"""
+    match_state, _, _ = _dealer_turn_decision()
+    engine_decision = build_decision(observation, options)
+    policy_input = engine_decision.context.input
+    discard_actions = tuple(
+        action
+        for action in engine_decision.context.legal_actions
+        if isinstance(action, DiscardAction)
+    )
+    baseline_belief = estimate_conditional_uniform_hand_belief(
+        policy_input,
+        _opponent_slot_counts_by_wind(policy_input),
+    )
+    baseline_counts = opponent_expected_counts_from_belief(
+        policy_input,
+        baseline_belief,
+    )
+    oracle_counts = _oracle_opponent_counts(
+        match_state,
+        policy_input,
+        baseline_belief,
+    )
+    if oracle_counts is None:
+        raise unittest.SkipTest("fixture position must be oracle buildable")
+
+    def active(counts) -> bool:
+        return evaluate_expected_count_sensitive_discard(
+            policy_input,
+            discard_actions,
+            counts,
+        ).consumer_active
+
+    return _ConsumerActivations(
+        baseline=active(baseline_counts),
+        oracle=active(oracle_counts),
+        zeroed=active(OpponentExpectedCounts(counts=(0.0,) * 34)),
+    )
 
 
 def _dealer_turn_decision():
@@ -115,20 +173,6 @@ class RecorderBoundaryTest(unittest.TestCase):
         self.assertEqual(recorder.turn_decisions, 0)
         self.assertEqual(recorder.eligible_positions, 0)
 
-    def test_learned_conservation_failure_is_excluded_not_raised(self) -> None:
-        match_state, observation, options = _dealer_turn_decision()
-        recorder = _DecisionLinkedRecorder(match_state, _flat_estimator(0.0))
-
-        with patch.object(
-            decision_linked,
-            "evaluate_expected_count_sensitive_discard",
-            side_effect=_conservation_failure_on_second_call(),
-        ):
-            recorder.observe(observation, options)
-
-        self.assertEqual(recorder.learned_conservation_exclusions, 1)
-        self.assertEqual(recorder.consumer_active_positions, 0)
-
     def test_recorder_uses_only_turn_anchor_positions(self) -> None:
         match_state, observation, options = _dealer_turn_decision()
         recorder = _DecisionLinkedRecorder(match_state, _flat_estimator(0.0))
@@ -140,56 +184,148 @@ class RecorderBoundaryTest(unittest.TestCase):
         self.assertEqual(recorder.oracle_buildable_positions, 1)
 
 
-def _conservation_failure_on_second_call():
-    from lisjong.policies.experimental_hand_belief_sensitivity import (
-        evaluate_expected_count_sensitive_discard,
-    )
+class DenominatorAccountingTest(unittest.TestCase):
+    """consumer activationがbelief非依存であることを母数へ反映する。
 
-    state = {"calls": 0}
+    `_CONSERVATION_FAILING_COUNT`は3他家合計で1牌種あたり12.0となり、
+    viewer-visibleな未見枚数（最大4）を必ず超えるため、mockではなく実際の
+    Track B consumerが`HandBeliefSensitivityError`をfail closedで送出する。
+    """
 
-    def side_effect(policy_input, discard_actions, counts):
-        state["calls"] += 1
-        if state["calls"] == 1:
-            decision = evaluate_expected_count_sensitive_discard(
-                policy_input,
-                discard_actions,
-                counts,
+    def setUp(self) -> None:
+        self.match_state, self.observation, self.options = _dealer_turn_decision()
+        activation = _consumer_activations(self.observation, self.options)
+        if not activation.baseline:
+            raise unittest.SkipTest(
+                "fixture position must activate the Track B consumer"
             )
-            if not decision.consumer_active:
-                raise unittest.SkipTest(
-                    "fixture position must activate the Track B consumer"
-                )
-            return decision
-        raise HandBeliefSensitivityError("simulated conservation failure")
 
-    return side_effect
+    def _observe(self, expected_count: float) -> _DecisionLinkedRecorder:
+        recorder = _DecisionLinkedRecorder(
+            self.match_state,
+            _flat_estimator(expected_count),
+        )
+        recorder.observe(self.observation, self.options)
+        return recorder
+
+    def test_learned_conservation_failure_keeps_the_position_consumer_active(
+        self,
+    ) -> None:
+        recorder = self._observe(_CONSERVATION_FAILING_COUNT)
+
+        self.assertEqual(recorder.consumer_active_positions, 1)
+        self.assertEqual(recorder.learned_conservation_exclusions, 1)
+
+    def test_baseline_oracle_comparison_survives_learned_conservation_failure(
+        self,
+    ) -> None:
+        evaluable = self._observe(0.0)
+        excluded = self._observe(_CONSERVATION_FAILING_COUNT)
+
+        self.assertEqual(evaluable.learned_conservation_exclusions, 0)
+        self.assertEqual(excluded.learned_conservation_exclusions, 1)
+        self.assertEqual(
+            excluded.consumer_active_positions,
+            evaluable.consumer_active_positions,
+        )
+        self.assertEqual(
+            excluded.baseline_oracle_agreements,
+            evaluable.baseline_oracle_agreements,
+        )
+
+    def test_learned_comparisons_are_dropped_when_learned_is_not_evaluable(
+        self,
+    ) -> None:
+        recorder = self._observe(_CONSERVATION_FAILING_COUNT)
+
+        self.assertEqual(recorder.learned_oracle_agreements, 0)
+        self.assertEqual(recorder.baseline_learned_divergences, 0)
+        self.assertEqual(recorder.proxy_learned_better, 0)
+        self.assertEqual(recorder.proxy_same, 0)
+        self.assertEqual(recorder.proxy_learned_worse, 0)
+
+    def test_track_b_consumer_activation_is_belief_independent(self) -> None:
+        activation = _consumer_activations(self.observation, self.options)
+
+        self.assertEqual(activation.baseline, activation.oracle)
+        self.assertEqual(activation.baseline, activation.zeroed)
+
+
+def _result(**overrides) -> Phase05DecisionLinkedResult:
+    fields = {
+        "seeds": (150,),
+        "turn_decisions": 100,
+        "eligible_positions": 80,
+        "oracle_buildable_positions": 80,
+        "consumer_active_positions": 40,
+        "learned_conservation_exclusions": 0,
+        "baseline_learned_divergences": 10,
+        "learned_oracle_agreements": 30,
+        "baseline_oracle_agreements": 34,
+        "proxy_learned_better": 4,
+        "proxy_same": 3,
+        "proxy_learned_worse": 3,
+        "proxy_delta_sum": 2,
+        "backoff_level_counts": ((0, 100),),
+        "wall_clock_seconds": 1.0,
+    }
+    fields.update(overrides)
+    return Phase05DecisionLinkedResult(**fields)
 
 
 class ResultAggregationTest(unittest.TestCase):
-    def test_rates_use_consumer_active_positions_as_denominator(self) -> None:
-        result = Phase05DecisionLinkedResult(
-            seeds=(150,),
-            turn_decisions=100,
-            eligible_positions=80,
-            oracle_buildable_positions=80,
-            consumer_active_positions=40,
-            learned_conservation_exclusions=2,
-            baseline_learned_divergences=10,
-            learned_oracle_agreements=30,
-            baseline_oracle_agreements=34,
-            proxy_learned_better=4,
-            proxy_same=3,
-            proxy_learned_worse=3,
-            proxy_delta_sum=2,
-            backoff_level_counts=((0, 100),),
-            wall_clock_seconds=1.0,
-        )
+    def test_learned_rates_use_learned_evaluable_denominator(self) -> None:
+        result = _result(learned_conservation_exclusions=2)
 
-        self.assertEqual(result.baseline_learned_divergence_rate, 0.25)
-        self.assertEqual(result.learned_oracle_agreement_rate, 0.75)
-        self.assertEqual(result.baseline_oracle_agreement_rate, 0.85)
+        self.assertEqual(result.learned_evaluable_positions, 38)
+        self.assertEqual(result.baseline_learned_divergence_rate, 10 / 38)
+        self.assertEqual(result.learned_oracle_agreement_rate, 30 / 38)
         self.assertEqual(result.proxy_compared_positions, 10)
         self.assertEqual(result.proxy_mean_delta, 0.2)
+
+    def test_baseline_oracle_rate_is_independent_of_learned_validity(self) -> None:
+        without_exclusions = _result()
+        with_exclusions = _result(learned_conservation_exclusions=2)
+
+        self.assertEqual(without_exclusions.baseline_oracle_agreement_rate, 0.85)
+        self.assertEqual(
+            with_exclusions.baseline_oracle_agreement_rate,
+            without_exclusions.baseline_oracle_agreement_rate,
+        )
+
+    def test_zero_exclusions_keeps_every_rate_on_the_same_denominator(self) -> None:
+        """exclusion 0件なら従来のrate semanticsと一致する。
+
+        lisjong-project #22のauthoritative runは
+        `learned_conservation_exclusions == 0` だったため、この等式が
+        投稿済みdecision-linked数値の不変性を保証する。
+        """
+        result = _result()
+
+        self.assertEqual(
+            result.learned_evaluable_positions,
+            result.consumer_active_positions,
+        )
+        self.assertEqual(result.baseline_learned_divergence_rate, 10 / 40)
+        self.assertEqual(result.learned_oracle_agreement_rate, 30 / 40)
+        self.assertEqual(result.baseline_oracle_agreement_rate, 34 / 40)
+
+    def test_counts_outside_their_denominator_fail_closed(self) -> None:
+        with self.assertRaises(ValueError):
+            _result(learned_conservation_exclusions=41)
+        with self.assertRaises(ValueError):
+            _result(baseline_oracle_agreements=41)
+        with self.assertRaises(ValueError):
+            _result(
+                learned_conservation_exclusions=35,
+                learned_oracle_agreements=30,
+            )
+        with self.assertRaises(ValueError):
+            _result(consumer_active_positions=81)
+
+    def test_proxy_outcomes_must_cover_the_divergent_positions(self) -> None:
+        with self.assertRaises(ValueError):
+            _result(proxy_same=2)
 
     def test_empty_denominators_do_not_divide_by_zero(self) -> None:
         result = Phase05DecisionLinkedResult(

@@ -769,7 +769,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 ### lisjong / lisjong-engine dependency
 
-`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは、lisjong-project #22 Phase 0.5のexpected-count-only Track B consumer seamを含む `9dc0128874fafd9282a6ecfc5da394be0f8a3558` です(`lisjong` branch `claude/lisjong-issue-22-handbeleif-slice-wklqnl` 上のcommit)。このseamを追加した`lisjong` PRがmergeされた時点で、pinをmerged main commitへ張り替えます。
+`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは、`lisjong` PR #130（lisjong-project #22 Phase 0.5のexpected-count-only Track B consumer seam）のmerge後の`main` commit `1bc334b6d5df8089a408e80b89f691af0e9d1c80` です(Arenaのlisjong-project #22 Phase 0.5 vertical sliceが`evaluate_expected_count_sensitive_discard()`を利用するため同期)。
 
 `lisjong-engine` にもrelease tagがないため、同じ理由でfull commit SHAへpinしています。現在のpinは、lisjong-engine Issue #38 / PR #39 merge後の `7077e6da5e873c779ffe0c8c2626b2acf17ad273` です(Arena Issue #53で追加)。`lisjong-engine` は `lisjong` にも `lisjong-arena` にも依存せず、Arenaが両者を独立したdependencyとしてconsumeします。
 

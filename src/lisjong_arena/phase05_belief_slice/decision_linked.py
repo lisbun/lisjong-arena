@@ -17,6 +17,21 @@ learned estimatorはexpected countしか提供しないため、`red_five_probab
 expected-count-only seam（`evaluate_expected_count_sensitive_discard()`）を
 使う。これはgame EVではなく、prediction improvement / action divergence /
 structural proxyを区別したまま報告するためのdecision-linked測定である。
+
+母数は次の順序で確定させる。consumer activationはbeliefに依存しない
+hard-filter propertyなので、`consumer_active_positions`とbaseline vs oracle
+比較をlearned estimatorのvalidityへ条件付けない。
+
+```text
+eligible
+    -> oracle buildable
+    -> baseline consumer active         (consumer_active_positions)
+    -> oracle decision / baseline-oracle comparison
+    -> learned prediction
+        valid   -> learned-evaluable comparison
+                   (learned_evaluable_positions)
+        invalid -> learned_conservation_exclusions
+```
 """
 
 import time
@@ -69,7 +84,18 @@ _WINNING_ACTION_TYPES = (RonAction, TsumoAction)
 
 @dataclass(frozen=True, slots=True)
 class Phase05DecisionLinkedResult:
-    """test partitionのdecision-linked comparison aggregate。"""
+    """test partitionのdecision-linked comparison aggregate。
+
+    母数は2種類あり、意味が異なる。
+
+    - `consumer_active_positions`
+      baseline consumerがactiveになったposition数。consumer activationは
+      beliefに依存しないhard-filter propertyなので、learned estimatorが
+      validかどうかへ条件付けない。baseline vs oracleの比較母数でもある。
+    - `learned_evaluable_positions`
+      そのうちlearned expected countsからTrack B consumerを構成できた
+      position数。learnedが関わる比較の母数はこちらである。
+    """
 
     seeds: tuple[int, ...]
     turn_decisions: int
@@ -87,17 +113,73 @@ class Phase05DecisionLinkedResult:
     backoff_level_counts: tuple[tuple[int, int], ...]
     wall_clock_seconds: float
 
+    def __post_init__(self) -> None:
+        """報告するratioの母数と分子の入れ子関係をfail closedで検証する。"""
+        nesting = (
+            ("eligible_positions", self.eligible_positions, self.turn_decisions),
+            (
+                "oracle_buildable_positions",
+                self.oracle_buildable_positions,
+                self.eligible_positions,
+            ),
+            (
+                "consumer_active_positions",
+                self.consumer_active_positions,
+                self.oracle_buildable_positions,
+            ),
+            (
+                "learned_conservation_exclusions",
+                self.learned_conservation_exclusions,
+                self.consumer_active_positions,
+            ),
+            (
+                "baseline_oracle_agreements",
+                self.baseline_oracle_agreements,
+                self.consumer_active_positions,
+            ),
+        )
+        for name, value, limit in nesting:
+            if value < 0 or value > limit:
+                raise ValueError(f"{name} must be within 0..{limit}")
+
+        learned_evaluable = (
+            self.consumer_active_positions - self.learned_conservation_exclusions
+        )
+        for name, value in (
+            ("baseline_learned_divergences", self.baseline_learned_divergences),
+            ("learned_oracle_agreements", self.learned_oracle_agreements),
+        ):
+            if value < 0 or value > learned_evaluable:
+                raise ValueError(
+                    f"{name} must be within 0..{learned_evaluable} "
+                    "(learned-evaluable positions)"
+                )
+
+        proxy_compared = (
+            self.proxy_learned_better + self.proxy_same + self.proxy_learned_worse
+        )
+        if proxy_compared != self.baseline_learned_divergences:
+            raise ValueError(
+                "live-wall proxy outcomes must cover exactly the "
+                "baseline-vs-learned divergent positions"
+            )
+
+    @property
+    def learned_evaluable_positions(self) -> int:
+        """learnedが関わる比較の母数。"""
+        return self.consumer_active_positions - self.learned_conservation_exclusions
+
     @property
     def baseline_learned_divergence_rate(self) -> float:
-        if self.consumer_active_positions == 0:
+        if self.learned_evaluable_positions == 0:
             return 0.0
-        return self.baseline_learned_divergences / self.consumer_active_positions
+        return self.baseline_learned_divergences / self.learned_evaluable_positions
 
     @property
     def learned_oracle_agreement_rate(self) -> float:
-        if self.consumer_active_positions == 0:
+        if self.learned_evaluable_positions == 0:
             return 0.0
-        return self.learned_oracle_agreements / self.consumer_active_positions
+        return self.learned_oracle_agreements / self.learned_evaluable_positions
 
     @property
     def baseline_oracle_agreement_rate(self) -> float:
@@ -170,6 +252,13 @@ class _DecisionLinkedRecorder:
         self.backoff_level_counts: Counter[int] = Counter()
 
     def observe(self, observation: SeatObservation, options: object) -> None:
+        """1 decisionをobserveし、母数をsemanticの順序どおりに数える。
+
+        consumer activationはbeliefに依存しないhard-filter propertyなので、
+        `consumer_active_positions`はbaseline consumerがactiveだと確定した
+        時点で数え、learned estimatorがvalidかどうかへ条件付けない。
+        baseline vs oracleの比較も同じ理由でlearned validityから独立させる。
+        """
         if observation.decision_kind is not ObservationDecisionKind.TURN:
             return
 
@@ -213,6 +302,20 @@ class _DecisionLinkedRecorder:
         if not baseline_decision.consumer_active:
             return
 
+        self.consumer_active_positions += 1
+
+        oracle_decision = evaluate_expected_count_sensitive_discard(
+            policy_input,
+            discard_actions,
+            oracle_counts,
+        )
+        if not oracle_decision.consumer_active:
+            raise RuntimeError(
+                "consumer activation must depend only on non-belief hard filters"
+            )
+        if baseline_decision.action == oracle_decision.action:
+            self.baseline_oracle_agreements += 1
+
         features = encode_phase05_anchor_features(policy_input)
         learned_rows: list[tuple[float, ...]] = []
         for offset in range(OPPONENT_COUNT):
@@ -240,21 +343,12 @@ class _DecisionLinkedRecorder:
             self.learned_conservation_exclusions += 1
             return
 
-        oracle_decision = evaluate_expected_count_sensitive_discard(
-            policy_input,
-            discard_actions,
-            oracle_counts,
-        )
-        if not (learned_decision.consumer_active and oracle_decision.consumer_active):
+        if not learned_decision.consumer_active:
             raise RuntimeError(
                 "consumer activation must depend only on non-belief hard filters"
             )
-
-        self.consumer_active_positions += 1
         if learned_decision.action == oracle_decision.action:
             self.learned_oracle_agreements += 1
-        if baseline_decision.action == oracle_decision.action:
-            self.baseline_oracle_agreements += 1
         if baseline_decision.action == learned_decision.action:
             return
 
