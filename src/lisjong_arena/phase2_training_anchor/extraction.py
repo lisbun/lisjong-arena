@@ -41,12 +41,12 @@ from lisjong_engine.rules import RuleSet
 from lisjong_engine.seat import Seat as EngineSeat
 
 from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
+from lisjong_arena.phase2_training_anchor.pipeline_provenance import (
+    collect_pipeline_provenance,
+)
 from lisjong_arena.phase2_training_anchor.player_safe_anchor import (
     AnchorSourceIdentity,
     freeze_player_safe_anchor,
-)
-from lisjong_arena.phase2_training_anchor.rule_provenance import (
-    effective_rule_provenance,
 )
 from lisjong_arena.phase2_training_anchor.training_labels import (
     build_exact_training_labels,
@@ -78,7 +78,8 @@ class Phase2AnchorRecorder:
             raise TypeError("source must be an AnchorSourceIdentity")
         self._match_state = match_state
         self._source = source
-        self._rule_provenance = effective_rule_provenance(match_state.rules)
+        self._provenance = collect_pipeline_provenance(match_state.rules)
+        self._rule_provenance = self._provenance.effective_rules
         self.total_decisions = 0
         self.turn_anchors = 0
         self.samples: list[TrainingSample] = []
@@ -109,9 +110,11 @@ class Phase2AnchorRecorder:
         )
 
         # --- training-only path: 同じanchorのomniscient truthから別に構成する ---
-        labels = build_exact_training_labels(active_round, observation.viewer_seat)
+        # labelのanchor identityはanchorからcopyせず、privileged stateから
+        # 独立に導出する。compositionのalignment検証はそのうえで行う。
+        labels = build_exact_training_labels(self._match_state, observation.viewer_seat)
 
-        self.samples.append(compose_training_sample(anchor, labels))
+        self.samples.append(compose_training_sample(anchor, labels, self._provenance))
 
 
 class _Phase2Selector:

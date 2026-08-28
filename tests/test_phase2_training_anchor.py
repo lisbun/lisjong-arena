@@ -38,6 +38,7 @@ from lisjong.belief import (
     tile_type_index,
     wind_for_seat,
 )
+from lisjong.policy_contract import Seat, Wind
 from lisjong_engine.match_state import MatchState
 from lisjong_engine.observation import ObservationDecisionKind
 from lisjong_engine.player_state import PlayerState
@@ -56,6 +57,13 @@ from lisjong_arena.phase2_training_anchor.extraction import (
     Phase2AnchorRecorder,
     extract_phase2_game,
 )
+from lisjong_arena.phase2_training_anchor.pipeline_provenance import (
+    ANCHOR_SEMANTICS_ID,
+    EVIDENCE_CUTOFF_SEMANTICS_ID,
+    LABEL_SEMANTICS_ID,
+    SourceRevisions,
+    collect_pipeline_provenance,
+)
 from lisjong_arena.phase2_training_anchor.player_safe_anchor import (
     AnchorKind,
     AnchorSourceIdentity,
@@ -69,16 +77,22 @@ from lisjong_arena.phase2_training_anchor.rule_provenance import (
 from lisjong_arena.phase2_training_anchor.training_labels import (
     OPPONENT_COUNT,
     ExactTrainingLabels,
+    LabelAnchorIdentity,
     StructuralWaitUnavailableReason,
     build_exact_training_labels,
     expected_counts_for_concealed_hand,
     structural_wait_for_hand,
 )
 from lisjong_arena.phase2_training_anchor.training_sample import (
+    anchor_identity_of,
     compose_training_sample,
 )
 
 _SOURCE = AnchorSourceIdentity(source_class="test", game_seed=101)
+
+
+def _provenance(rules: RuleSet | None = None):
+    return collect_pipeline_provenance(rules or RuleSet.default())
 
 
 def _freeze_from(halted, anchor_index: int = 0) -> FrozenPlayerSafeAnchor:
@@ -205,11 +219,11 @@ class LabelAttachmentImmutabilityTest(unittest.TestCase):
         before = copy.deepcopy(frozen)
 
         labels = build_exact_training_labels(
-            halted.round_state, halted.observation.viewer_seat
+            halted.match_state, halted.observation.viewer_seat
         )
         self.assertEqual(frozen, before)
 
-        sample = compose_training_sample(frozen, labels)
+        sample = compose_training_sample(frozen, labels, _provenance())
         self.assertEqual(frozen, before)
         self.assertIs(sample.anchor, frozen)
         self.assertEqual(sample.anchor, before)
@@ -224,7 +238,7 @@ class SamePublicDifferentHiddenTest(unittest.TestCase):
         viewer = halted.observation.viewer_seat
 
         before_anchor = _freeze_from(halted, 6)
-        before_labels = build_exact_training_labels(round_state, viewer)
+        before_labels = build_exact_training_labels(halted.match_state, viewer)
 
         opponents = [seat for seat in EngineSeat if seat is not viewer]
         first, second = opponents[0], opponents[1]
@@ -252,7 +266,7 @@ class SamePublicDifferentHiddenTest(unittest.TestCase):
         players[second] = _swapped(second, first_hand)
 
         after_anchor = _freeze_from(halted, 6)
-        after_labels = build_exact_training_labels(round_state, viewer)
+        after_labels = build_exact_training_labels(halted.match_state, viewer)
 
         # player-safe anchorは同一。
         self.assertEqual(before_anchor, after_anchor)
@@ -412,7 +426,7 @@ class OpponentIdentityRotationTest(unittest.TestCase):
     def test_viewer_is_never_a_target_opponent(self):
         halted = halt_at_turn_anchor(101, 8)
         labels = build_exact_training_labels(
-            halted.round_state, halted.observation.viewer_seat
+            halted.match_state, halted.observation.viewer_seat
         )
         viewer = seat_from_engine_seat(halted.observation.viewer_seat)
         self.assertEqual(labels.viewer_seat, viewer)
@@ -721,7 +735,7 @@ class NoHiddenMetadataInPlayerSafeInputTest(unittest.TestCase):
     def test_label_availability_lives_only_on_the_training_only_type(self):
         halted = halt_at_turn_anchor(101, 2)
         labels = build_exact_training_labels(
-            halted.round_state, halted.observation.viewer_seat
+            halted.match_state, halted.observation.viewer_seat
         )
         self.assertIsInstance(labels, ExactTrainingLabels)
         self.assertTrue(
@@ -767,9 +781,9 @@ class DownstreamTypeBoundaryTest(unittest.TestCase):
             },
         )
 
-    def test_only_the_label_path_accepts_a_round_state(self):
+    def test_only_the_label_path_accepts_omniscient_state(self):
         names = self._annotation_names(build_exact_training_labels)
-        self.assertIn("RoundState", names)
+        self.assertIn("MatchState", names)
 
 
 class SampleCompositionTest(unittest.TestCase):
@@ -781,26 +795,190 @@ class SampleCompositionTest(unittest.TestCase):
         other_viewer = next(
             seat for seat in EngineSeat if seat is not halted.observation.viewer_seat
         )
-        mismatched = build_exact_training_labels(halted.round_state, other_viewer)
+        mismatched = build_exact_training_labels(halted.match_state, other_viewer)
         with self.assertRaises(ValueError):
-            compose_training_sample(frozen, mismatched)
+            compose_training_sample(frozen, mismatched, _provenance())
+
+    def test_same_viewer_and_round_but_different_revision_is_rejected(self):
+        """same viewer / same round でもstate positionが違えばcomposeできない。
+
+        viewer一致だけを検証していると、同じgame・同じ局・同じviewerの
+        後続state positionのlabelsをearly anchorへ貼り付けられてしまう。
+        これはpre / post action混同とoff-by-one alignment errorの本体である。
+        """
+        early = halt_at_turn_anchor(101, 1)
+        late = halt_at_turn_anchor(101, 5)
+
+        early_anchor = _freeze_from(early, 1)
+        late_labels = build_exact_training_labels(
+            late.match_state, late.observation.viewer_seat
+        )
+
+        # fixtureがsame viewer / same round / different revisionであることを固定する。
+        self.assertEqual(early.observation.viewer_seat, late.observation.viewer_seat)
+        self.assertEqual(early.observation.hand_number, late.observation.hand_number)
+        self.assertEqual(early.observation.honba, late.observation.honba)
+        self.assertNotEqual(early.round_state.revision, late.round_state.revision)
+
+        with self.assertRaises(ValueError):
+            compose_training_sample(early_anchor, late_labels, _provenance())
+
+    def test_same_hand_number_but_different_honba_is_rejected(self):
+        """繰り返し局は`round_revision`が衝突し得るためhonbaでも区別する。"""
+        first = halt_at_turn_anchor(101, 1)
+        repeated = halt_at_turn_anchor(101, 20)
+
+        self.assertEqual(
+            first.observation.hand_number, repeated.observation.hand_number
+        )
+        self.assertNotEqual(first.observation.honba, repeated.observation.honba)
+
+        first_anchor = _freeze_from(first, 1)
+        repeated_labels = build_exact_training_labels(
+            repeated.match_state, repeated.observation.viewer_seat
+        )
+        with self.assertRaises(ValueError):
+            compose_training_sample(first_anchor, repeated_labels, _provenance())
+
+    def test_label_identity_is_not_copied_from_the_anchor(self):
+        """labelのanchor identityはprivileged stateから独立に導出される。"""
+        halted = halt_at_turn_anchor(101, 5)
+        labels = build_exact_training_labels(
+            halted.match_state, halted.observation.viewer_seat
+        )
+        # anchor objectを一切渡していないbuilderが、anchor identityを持つ。
+        self.assertEqual(
+            labels.anchor_identity.round_revision, halted.round_state.revision
+        )
+        self.assertEqual(
+            labels.anchor_identity.hand_number, halted.observation.hand_number
+        )
+        self.assertEqual(labels.anchor_identity.honba, halted.observation.honba)
+
+        # そのidentityは、anchor側から独立に構成した期待値と一致する。
+        frozen = _freeze_from(halted, 5)
+        self.assertEqual(labels.anchor_identity, anchor_identity_of(frozen))
+
+    def test_mismatched_rule_provenance_is_rejected(self):
+        halted = halt_at_turn_anchor(101, 5)
+        frozen = _freeze_from(halted, 5)
+        labels = build_exact_training_labels(
+            halted.match_state, halted.observation.viewer_seat
+        )
+        other_rules = rules_with(
+            nagashi_mangan_enabled=(not RuleSet.default().nagashi_mangan_enabled)
+        )
+        with self.assertRaises(ValueError):
+            compose_training_sample(
+                frozen, labels, collect_pipeline_provenance(other_rules)
+            )
 
     def test_matching_anchor_and_labels_compose(self):
         halted = halt_at_turn_anchor(101, 5)
         frozen = _freeze_from(halted, 5)
         labels = build_exact_training_labels(
-            halted.round_state, halted.observation.viewer_seat
+            halted.match_state, halted.observation.viewer_seat
         )
-        sample = compose_training_sample(frozen, labels)
+        provenance = _provenance()
+        sample = compose_training_sample(frozen, labels, provenance)
         self.assertIs(sample.anchor, frozen)
         self.assertIs(sample.labels, labels)
+        self.assertIs(sample.provenance, provenance)
         self.assertEqual(
             sample.labels.viewer_seat, seat_from_engine_seat(frozen.viewer_seat)
         )
 
 
+class PipelineProvenanceTest(unittest.TestCase):
+    """#24が要求するsource / anchor / cutoff / label semantics provenance。"""
+
+    def test_binds_semantics_identities_and_effective_rules(self):
+        provenance = collect_pipeline_provenance(RuleSet.default())
+
+        self.assertEqual(provenance.anchor_semantics_id, ANCHOR_SEMANTICS_ID)
+        self.assertEqual(
+            provenance.evidence_cutoff_semantics_id, EVIDENCE_CUTOFF_SEMANTICS_ID
+        )
+        self.assertEqual(provenance.label_semantics_id, LABEL_SEMANTICS_ID)
+        self.assertEqual(
+            provenance.effective_rules,
+            effective_rule_provenance(RuleSet.default()),
+        )
+
+    def test_semantics_identities_are_independent_of_effective_rules(self):
+        """rules差はfingerprintへ、semantics差はsemantics idへ現れる。"""
+        default = collect_pipeline_provenance(RuleSet.default())
+        variant = collect_pipeline_provenance(
+            rules_with(
+                kokushi_ankan_chankan_enabled=(
+                    not RuleSet.default().kokushi_ankan_chankan_enabled
+                )
+            )
+        )
+        self.assertNotEqual(
+            default.effective_rules.fingerprint, variant.effective_rules.fingerprint
+        )
+        self.assertEqual(default.label_semantics_id, variant.label_semantics_id)
+        self.assertEqual(default.anchor_semantics_id, variant.anchor_semantics_id)
+
+    def test_source_revisions_are_never_fabricated(self):
+        revisions = collect_pipeline_provenance(RuleSet.default()).source_revisions
+        for value in (
+            revisions.lisjong,
+            revisions.lisjong_engine,
+            revisions.lisjong_arena,
+        ):
+            # 解決できた場合はfull commit ID、できない場合はNone。
+            # 「それらしい」placeholderを作らない。
+            if value is not None:
+                self.assertRegex(value, r"\A[0-9a-f]{40}\Z")
+        self.assertEqual(
+            revisions.fully_resolved,
+            None
+            not in (
+                revisions.lisjong,
+                revisions.lisjong_engine,
+                revisions.lisjong_arena,
+            ),
+        )
+
+    def test_rejects_a_non_commit_revision(self):
+        with self.assertRaises(ValueError):
+            SourceRevisions(
+                lisjong="not-a-commit", lisjong_engine=None, lisjong_arena=None
+            )
+
+    def test_every_sample_carries_pipeline_provenance(self):
+        extraction = extract_phase2_game(101)
+        first = extraction.samples[0].provenance
+        for sample in extraction.samples:
+            self.assertEqual(sample.provenance, first)
+            self.assertEqual(
+                sample.provenance.effective_rules, sample.anchor.rule_provenance
+            )
+
+
 class LabelValidationTest(unittest.TestCase):
     """label側のfail closed validation。"""
+
+    def test_anchor_identity_rejects_invalid_positions(self):
+        valid = {
+            "hand_number": 1,
+            "honba": 0,
+            "round_revision": 0,
+            "viewer_seat": Seat.SEAT_0,
+            "dealer_seat": Seat.SEAT_0,
+            "prevailing_wind": Wind.EAST,
+        }
+        LabelAnchorIdentity(**valid)
+        for field_name, bad in (
+            ("hand_number", 0),
+            ("honba", -1),
+            ("round_revision", -1),
+        ):
+            with self.subTest(field=field_name):
+                with self.assertRaises(ValueError):
+                    LabelAnchorIdentity(**{**valid, field_name: bad})
 
     def test_counts_row_rejects_a_wrong_length(self):
         from lisjong_arena.phase2_training_anchor.training_labels import (
@@ -834,7 +1012,7 @@ class LabelValidationTest(unittest.TestCase):
     def test_expected_count_lookup_uses_logical_wind_identity(self):
         halted = halt_at_turn_anchor(101, 7)
         labels = build_exact_training_labels(
-            halted.round_state, halted.observation.viewer_seat
+            halted.match_state, halted.observation.viewer_seat
         )
         row = labels.expected_counts[0]
         for index in range(TILE_TYPE_COUNT):

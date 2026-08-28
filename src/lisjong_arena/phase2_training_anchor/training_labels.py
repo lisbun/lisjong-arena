@@ -47,6 +47,7 @@ from lisjong.belief import (
 )
 from lisjong.belief.self_belief import concealed_hand_marginals
 from lisjong.policy_contract import Seat, TileCategory, Wind
+from lisjong_engine.match_state import MatchState
 from lisjong_engine.public_state import public_meld, public_tile
 from lisjong_engine.round_state import RoundState
 from lisjong_engine.seat import Seat as EngineSeat
@@ -55,6 +56,7 @@ from lisjong_arena.lisjong_engine.domain_conversion import (
     public_meld_from_engine_meld,
     seat_from_engine_seat,
     tile_from_public_tile,
+    wind_from_engine_wind,
 )
 
 OPPONENT_COUNT = 3
@@ -172,20 +174,59 @@ class OpponentStructuralWait:
 
 
 @dataclass(frozen=True, slots=True)
+class LabelAnchorIdentity:
+    """labelを読んだengine stateが、どのanchor stateだったかを表すidentity。
+
+    これはplayer-safe anchorからcopyした値ではなく、label builderが実際に
+    読んだprivileged stateから導出した値である。したがって
+    `TrainingSample`のalignment検証は自明に成立せず、pre / post action混同や
+    off-by-one alignment errorを実際に検出できる。
+
+    `round_revision`は局内で単調増加するため、同じgame・同じ局・同じviewerの
+    別state positionを区別する主要discriminatorになる。`hand_number`と`honba`は
+    revisionが局ごとにresetされることに対する繰り返し局のdiscriminatorである。
+    """
+
+    hand_number: int
+    honba: int
+    round_revision: int
+    viewer_seat: Seat
+    dealer_seat: Seat
+    prevailing_wind: Wind
+
+    def __post_init__(self) -> None:
+        if type(self.hand_number) is not int or self.hand_number < 1:
+            raise ValueError("hand_number must be a positive int")
+        if type(self.honba) is not int or self.honba < 0:
+            raise ValueError("honba must be a non-negative int")
+        if type(self.round_revision) is not int or self.round_revision < 0:
+            raise ValueError("round_revision must be a non-negative int")
+        if not isinstance(self.viewer_seat, Seat):
+            raise TypeError("viewer_seat must be a lisjong Seat")
+        if not isinstance(self.dealer_seat, Seat):
+            raise TypeError("dealer_seat must be a lisjong Seat")
+        if not isinstance(self.prevailing_wind, Wind):
+            raise TypeError("prevailing_wind must be a lisjong Wind")
+
+
+@dataclass(frozen=True, slots=True)
 class ExactTrainingLabels:
     """1 anchor分のtraining-only omniscient labelsとavailability metadata。
 
     availability / unsupported reasonはこの型の側にだけ存在し、player-safe
     anchorへは持ち込まない。
+
+    `anchor_identity`はlabelが読んだstate positionのidentityであり、
+    compositionのsame-anchor検証に使う。
     """
 
-    viewer_seat: Seat
+    anchor_identity: LabelAnchorIdentity
     expected_counts: tuple[OpponentExpectedCounts, ...]
     structural_waits: tuple[OpponentStructuralWait, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.viewer_seat, Seat):
-            raise TypeError("viewer_seat must be a lisjong Seat")
+        if not isinstance(self.anchor_identity, LabelAnchorIdentity):
+            raise TypeError("anchor_identity must be a LabelAnchorIdentity")
         if len(self.expected_counts) != OPPONENT_COUNT:
             raise ValueError("expected_counts must contain exactly 3 rows")
         if len(self.structural_waits) != OPPONENT_COUNT:
@@ -201,6 +242,10 @@ class ExactTrainingLabels:
             raise ValueError("opponent rows must reference three distinct seats")
         if self.viewer_seat in {identity.seat for identity in identities}:
             raise ValueError("the viewer seat must not appear as a target opponent")
+
+    @property
+    def viewer_seat(self) -> Seat:
+        return self.anchor_identity.viewer_seat
 
     @property
     def opponent_identities(self) -> tuple[OpponentIdentity, ...]:
@@ -331,21 +376,39 @@ def structural_wait_for_hand(
 
 
 def build_exact_training_labels(
-    round_state: RoundState,
+    match_state: MatchState,
     viewer_seat: EngineSeat,
 ) -> ExactTrainingLabels:
     """anchor時点のomniscient truthから、training-only exact labelsを構成する。
 
-    `round_state`はprivileged omniscient stateであり、この関数の外（player-safe
+    `match_state`はprivileged omniscient stateであり、この関数の外（player-safe
     anchor path / feature path）へは渡さない。
+
+    labelそのものだけでなく、`LabelAnchorIdentity`もここで読んだprivileged
+    stateから導出する。anchor側の値をcopyしないため、compositionのalignment
+    検証が自明に成立しない。`hand_number` / `honba`は`MatchState.position`、
+    `round_revision`はactive `RoundState`が正本である。
     """
-    if not isinstance(round_state, RoundState):
-        raise TypeError("round_state must be a lisjong-engine RoundState")
+    if not isinstance(match_state, MatchState):
+        raise TypeError("match_state must be a lisjong-engine MatchState")
     if not isinstance(viewer_seat, EngineSeat):
         raise TypeError("viewer_seat must be a lisjong-engine Seat")
 
+    round_state = match_state.active_round
+    if round_state is None:
+        raise RuntimeError("exact training labels require an active round")
+
+    position = match_state.position
     viewer = seat_from_engine_seat(viewer_seat)
     dealer_seat = seat_from_engine_seat(round_state.dealer_seat)
+    anchor_identity = LabelAnchorIdentity(
+        hand_number=position.hand_number,
+        honba=position.honba,
+        round_revision=round_state.revision,
+        viewer_seat=viewer,
+        dealer_seat=dealer_seat,
+        prevailing_wind=wind_from_engine_wind(round_state.prevailing_wind),
+    )
 
     rows: list[tuple[OpponentIdentity, tuple, tuple]] = []
     for engine_seat in EngineSeat:
@@ -365,7 +428,7 @@ def build_exact_training_labels(
     rows.sort(key=lambda row: row[0].viewer_relative_offset)
 
     return ExactTrainingLabels(
-        viewer_seat=viewer,
+        anchor_identity=anchor_identity,
         expected_counts=tuple(
             expected_counts_for_concealed_hand(identity, concealed)
             for identity, concealed, _ in rows
