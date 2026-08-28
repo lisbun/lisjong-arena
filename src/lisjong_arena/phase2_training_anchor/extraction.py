@@ -10,7 +10,7 @@ TURN callback
   ├─ rule provenance    : effective RuleSet fingerprint
   │        -> freeze_player_safe_anchor()   (player-safe path)
   │
-  └─ omniscient truth   : build_exact_training_labels(active_round, viewer)
+  └─ omniscient truth   : build_exact_training_labels(match_state, viewer)
                              (training-only path)
 
 両pathが独立に完成したあとで compose_training_sample()
@@ -19,7 +19,7 @@ TURN callback
 `build_round_evidence()`を呼ぶこのorchestration pointまではactive
 `RoundState`を参照してよい。その出力より下流のplayer-safe path
 （`player_safe_anchor`）へは`MatchState` / `RoundState` / internal omniscient
-eventを渡さない。
+eventを渡さない。omniscient stateを受け取るのは`training_labels`だけである。
 
 anchor eligibilityは`SeatObservation.decision_kind == TURN`だけで決める。legal
 action composition、winning / riichi / kan capability、reaction availability、

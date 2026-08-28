@@ -88,7 +88,13 @@ from lisjong_arena.phase2_training_anchor.training_sample import (
     compose_training_sample,
 )
 
-_SOURCE = AnchorSourceIdentity(source_class="test", game_seed=101)
+
+def _source_for(game_seed: int) -> AnchorSourceIdentity:
+    """anchorのsource identity。game_seedはそのgameのseedと一致させる。"""
+    return AnchorSourceIdentity(source_class="test", game_seed=game_seed)
+
+
+_SOURCE = _source_for(101)
 
 
 def _provenance(rules: RuleSet | None = None):
@@ -97,7 +103,7 @@ def _provenance(rules: RuleSet | None = None):
 
 def _freeze_from(halted, anchor_index: int = 0) -> FrozenPlayerSafeAnchor:
     return freeze_player_safe_anchor(
-        source=_SOURCE,
+        source=_source_for(halted.match_state.match_seed),
         observation=halted.observation,
         evidence=build_round_evidence(
             halted.round_state, halted.observation.viewer_seat
@@ -156,7 +162,8 @@ class FutureAppendInvarianceTest(unittest.TestCase):
         snapshots: list[FrozenPlayerSafeAnchor] = []
 
         match_state = MatchState(seed=137, rules=RuleSet.default())
-        recorder = Phase2AnchorRecorder(match_state, _SOURCE)
+        source = _source_for(137)
+        recorder = Phase2AnchorRecorder(match_state, source)
 
         class _CapturingRecorder(Phase2AnchorRecorder):
             def observe(self, observation):
@@ -168,7 +175,7 @@ class FutureAppendInvarianceTest(unittest.TestCase):
                     # capture時点のvalueをdeep copyで独立に保存する。
                     snapshots.append(copy.deepcopy(frozen))
 
-        recorder = _CapturingRecorder(match_state, _SOURCE)
+        recorder = _CapturingRecorder(match_state, source)
         run_game_with_recorder(match_state, recorder)
 
         self.assertEqual(len(captured), 3)
@@ -377,6 +384,7 @@ class OpponentIdentityRotationTest(unittest.TestCase):
 
     def test_row_identity_tracks_the_actual_seat_across_rotation(self):
         match_state = MatchState(seed=151, rules=RuleSet.default())
+        source = _source_for(151)
         seen_dealers = set()
         seen_viewers = set()
         checked = 0
@@ -416,7 +424,7 @@ class OpponentIdentityRotationTest(unittest.TestCase):
                     assert row.identity.seat != labels.viewer_seat
                     checked += 1
 
-        recorder = _VerifyingRecorder(match_state, _SOURCE)
+        recorder = _VerifyingRecorder(match_state, source)
         run_game_with_recorder(match_state, recorder)
 
         self.assertGreater(checked, 100)
@@ -823,6 +831,58 @@ class SampleCompositionTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             compose_training_sample(early_anchor, late_labels, _provenance())
 
+    def test_different_game_seed_with_identical_position_is_rejected(self):
+        """position identifierが全一致でも、別gameのlabelsはcomposeできない。
+
+        東1局最初のTURNは、seedが違っても`hand_number` / `honba` /
+        `round_revision` / `viewer_seat` / `dealer_seat` / `prevailing_wind`が
+        すべて一致する。position識別子だけではgameを跨いだ取り違えを検出
+        できないため、game / match identityもalignmentへ含める。
+        """
+        first = halt_at_turn_anchor(101, 0)
+        other = halt_at_turn_anchor(102, 0)
+
+        # fixtureがposition identifier全一致であることを先に固定する。
+        self.assertNotEqual(first.match_state.match_seed, other.match_state.match_seed)
+        for attribute in (
+            "hand_number",
+            "honba",
+            "viewer_seat",
+            "dealer_seat",
+            "prevailing_wind",
+        ):
+            self.assertEqual(
+                getattr(first.observation, attribute),
+                getattr(other.observation, attribute),
+                f"fixture must share {attribute}",
+            )
+        self.assertEqual(first.round_state.revision, other.round_state.revision)
+
+        first_anchor = _freeze_from(first, 0)
+        other_labels = build_exact_training_labels(
+            other.match_state, other.observation.viewer_seat
+        )
+        # hidden truthは当然異なる。
+        self.assertNotEqual(
+            other_labels.expected_counts,
+            build_exact_training_labels(
+                first.match_state, first.observation.viewer_seat
+            ).expected_counts,
+        )
+
+        with self.assertRaises(ValueError):
+            compose_training_sample(first_anchor, other_labels, _provenance())
+
+    def test_label_game_identity_comes_from_the_engine_match_state(self):
+        """label側のgame identityはanchorではなくengine authorityから来る。"""
+        halted = halt_at_turn_anchor(102, 0)
+        labels = build_exact_training_labels(
+            halted.match_state, halted.observation.viewer_seat
+        )
+        self.assertEqual(
+            labels.anchor_identity.game_seed, halted.match_state.match_seed
+        )
+
     def test_same_hand_number_but_different_honba_is_rejected(self):
         """繰り返し局は`round_revision`が衝突し得るためhonbaでも区別する。"""
         first = halt_at_turn_anchor(101, 1)
@@ -963,6 +1023,7 @@ class LabelValidationTest(unittest.TestCase):
 
     def test_anchor_identity_rejects_invalid_positions(self):
         valid = {
+            "game_seed": 101,
             "hand_number": 1,
             "honba": 0,
             "round_revision": 0,
@@ -979,6 +1040,24 @@ class LabelValidationTest(unittest.TestCase):
             with self.subTest(field=field_name):
                 with self.assertRaises(ValueError):
                     LabelAnchorIdentity(**{**valid, field_name: bad})
+        with self.assertRaises(TypeError):
+            LabelAnchorIdentity(**{**valid, "game_seed": "101"})
+
+    def test_anchor_identity_distinguishes_games_at_an_identical_position(self):
+        """position全一致でもgame_seedが違えばidentityは一致しない。"""
+        base = {
+            "game_seed": 101,
+            "hand_number": 1,
+            "honba": 0,
+            "round_revision": 2,
+            "viewer_seat": Seat.SEAT_0,
+            "dealer_seat": Seat.SEAT_0,
+            "prevailing_wind": Wind.EAST,
+        }
+        self.assertNotEqual(
+            LabelAnchorIdentity(**base),
+            LabelAnchorIdentity(**{**base, "game_seed": 102}),
+        )
 
     def test_counts_row_rejects_a_wrong_length(self):
         from lisjong_arena.phase2_training_anchor.training_labels import (

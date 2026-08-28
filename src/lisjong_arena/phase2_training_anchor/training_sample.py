@@ -50,12 +50,17 @@ from lisjong_arena.phase2_training_anchor.training_labels import (
 def anchor_identity_of(anchor: FrozenPlayerSafeAnchor) -> LabelAnchorIdentity:
     """frozen anchorのplayer-safe valueから、期待されるanchor identityを作る。
 
-    `dealer_seat` / `prevailing_wind`はanchor時点のtrusted `SeatObservation`から
-    取る。どれもplayer-safeな値であり、hidden truthは参照しない。
+    `game_seed`はanchorのsource identity、`dealer_seat` / `prevailing_wind`は
+    anchor時点のtrusted `SeatObservation`から取る。どれもplayer-safeな値で
+    あり、hidden truthは参照しない。
+
+    label側は同じ値をengine `MatchState`から独立に導出する。両者は別々の
+    authorityから来るため、この比較は自明には成立しない。
     """
     if not isinstance(anchor, FrozenPlayerSafeAnchor):
         raise TypeError("anchor must be a FrozenPlayerSafeAnchor")
     return LabelAnchorIdentity(
+        game_seed=anchor.source.game_seed,
         hand_number=anchor.hand_number,
         honba=anchor.honba,
         round_revision=anchor.round_revision,

@@ -1,8 +1,12 @@
 """Phase 2のtraining-only omniscient label path。
 
-このmoduleだけが、anchor時点のprivileged `RoundState`を読む。player-safe
-anchor pathとは別pathであり、player-safe value側へlabel、label availability、
-unsupported reason、hidden truthを一切書き戻さない。
+このmoduleだけが、anchor時点のprivileged `MatchState` / active `RoundState`を
+読む。player-safe anchor pathとは別pathであり、player-safe value側へlabel、
+label availability、unsupported reason、hidden truthを一切書き戻さない。
+
+`MatchState`を受け取るのは、`LabelAnchorIdentity`のgame / match identityと
+`hand_number` / `honba`が`MatchState`側のauthorityであり、これらをanchorから
+copyせずlabel側で独立に導出するためである。
 
 ```text
 same anchor omniscient truth
@@ -185,8 +189,14 @@ class LabelAnchorIdentity:
     `round_revision`は局内で単調増加するため、同じgame・同じ局・同じviewerの
     別state positionを区別する主要discriminatorになる。`hand_number`と`honba`は
     revisionが局ごとにresetされることに対する繰り返し局のdiscriminatorである。
+
+    `game_seed`はgame / match identityである。position識別子だけではgameを
+    跨いだ取り違えを検出できない。例えば東1局最初のTURNは、seedが違っても
+    `hand_number` / `honba` / `round_revision` / `viewer_seat` / `dealer_seat` /
+    `prevailing_wind`がすべて一致し得る（hidden truthだけが異なる）。
     """
 
+    game_seed: int
     hand_number: int
     honba: int
     round_revision: int
@@ -195,6 +205,8 @@ class LabelAnchorIdentity:
     prevailing_wind: Wind
 
     def __post_init__(self) -> None:
+        if type(self.game_seed) is not int:
+            raise TypeError("game_seed must be an int")
         if type(self.hand_number) is not int or self.hand_number < 1:
             raise ValueError("hand_number must be a positive int")
         if type(self.honba) is not int or self.honba < 0:
@@ -402,6 +414,7 @@ def build_exact_training_labels(
     viewer = seat_from_engine_seat(viewer_seat)
     dealer_seat = seat_from_engine_seat(round_state.dealer_seat)
     anchor_identity = LabelAnchorIdentity(
+        game_seed=match_state.match_seed,
         hand_number=position.hand_number,
         honba=position.honba,
         round_revision=round_state.revision,
