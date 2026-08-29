@@ -10,6 +10,7 @@ from _phase3_bootstrap_fixtures import (
     normalized_default_rules,
     resolved_provenance,
 )
+
 from lisjong_arena.phase3_bootstrap_corpus.artifact import (
     SCHEMA_VERSION,
     Phase3BootstrapArtifactError,
