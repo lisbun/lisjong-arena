@@ -5,7 +5,7 @@
 canonical result order、fail-closed、max_workers / factory serializability
 のfail closedをRiichiEnvなしに高速に固定する。実際のprocess poolによる
 orchestrationは``tests.test_parallel_execution``、実RiichiEnvでの
-serial/parallel一致は``tests.test_comparison_parallel_integration``が担当する。
+serial/parallel一致は``tests.test_comparison_integration``が担当する。
 """
 
 import unittest
