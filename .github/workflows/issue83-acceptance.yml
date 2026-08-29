@@ -1,0 +1,86 @@
+name: Issue 83 acceptance measurement
+
+on:
+  push:
+    branches:
+      - issue-83-phase3-bootstrap-corpus
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out acceptance code revision
+        uses: actions/checkout@v4
+        with:
+          ref: 3e465d27640c644a8f8ea7ab6e5dc0bcb15ad50f
+          fetch-depth: 0
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install acceptance revision as VCS package
+        run: >-
+          python -m pip install --disable-pip-version-check
+          "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@3e465d27640c644a8f8ea7ab6e5dc0bcb15ad50f"
+
+      - name: Verify diff-check
+        shell: bash
+        run: |
+          git fetch origin main
+          git diff --check origin/main...HEAD
+          echo "DIFF_CHECK=ok"
+
+      - name: Verify fully resolved provenance
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from dataclasses import asdict
+          from lisjong_engine.rules import RuleSet
+          from lisjong_arena.phase2_training_anchor.pipeline_provenance import collect_pipeline_provenance
+
+          provenance = collect_pipeline_provenance(RuleSet.default())
+          print("PROVENANCE=" + json.dumps(asdict(provenance.source_revisions), sort_keys=True))
+          print("PROVENANCE_FULLY_RESOLVED=" + str(provenance.source_revisions.fully_resolved))
+          assert provenance.source_revisions.fully_resolved
+          PY
+
+      - name: Run fixed 8-hanchan corpus twice
+        run: >-
+          python -m lisjong_arena.phase3_bootstrap_corpus
+          "$RUNNER_TEMP/phase3-first.json"
+          --repeat-output "$RUNNER_TEMP/phase3-second.json"
+
+      - name: Print acceptance summary
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from dataclasses import asdict
+          from pathlib import Path
+          from lisjong_arena.phase3_bootstrap_corpus import load_phase3_bootstrap_corpus
+
+          first_path = Path(os.environ["RUNNER_TEMP"]) / "phase3-first.json"
+          second_path = Path(os.environ["RUNNER_TEMP"]) / "phase3-second.json"
+          first = load_phase3_bootstrap_corpus(first_path)
+          second = load_phase3_bootstrap_corpus(second_path)
+          assert first.canonical_sha256 == second.canonical_sha256
+          assert first.counts == second.counts
+          summary = {
+              "artifact_bytes": first.artifact_bytes,
+              "bytes_per_hanchan": first.artifact_bytes / first.counts.hanchan_count,
+              "canonical_sha256": first.canonical_sha256,
+              "counts": asdict(first.counts),
+              "digests_match": True,
+              "stored_bytes_equal_canonical_bytes": first_path.stat().st_size == first.artifact_bytes,
+              "second_artifact_bytes": second.artifact_bytes,
+          }
+          print("ACCEPTANCE_SUMMARY=" + json.dumps(summary, sort_keys=True))
+          PY
