@@ -806,7 +806,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 ### lisjong / lisjong-engine dependency
 
-`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは、`lisjong` PR #130（lisjong-project #22 Phase 0.5のexpected-count-only Track B consumer seam）のmerge後の`main` commit `1bc334b6d5df8089a408e80b89f691af0e9d1c80` です(Arenaのlisjong-project #22 Phase 0.5 vertical sliceが`evaluate_expected_count_sensitive_discard()`を利用するため同期)。
+`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは、`lisjong` PR #132（exact shanten lookup backendのruntime frontier combine高速化）のactual merge commit `6db1ddc0c6fae312801104008bf18660975f687d` です。Arena Issue #90でこのrevisionへexact pin syncしました。
 
 `lisjong-engine` にもrelease tagがないため、同じ理由でfull commit SHAへpinしています。現在のpinは、lisjong-engine Issue #46 / PR #47 merge後の `2c5ba3969dc70705303ad8bdd79caefdd674ed5e` です。Phase 4 raw corpusは、このrevisionの`RoundEvidenceCompletion`と`run_hanchan(..., on_round_evidence_complete=...)`を利用します。`lisjong-engine` は `lisjong` にも `lisjong-arena` にも依存せず、Arenaが両者を独立したdependencyとしてconsumeします。
 
