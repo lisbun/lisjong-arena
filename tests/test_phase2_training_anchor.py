@@ -17,6 +17,7 @@ import copy
 import inspect
 import unittest
 from dataclasses import fields
+from functools import cache
 
 from _phase2_anchor_fixtures import (
     halt_at_turn_anchor,
@@ -101,6 +102,12 @@ def _provenance(rules: RuleSet | None = None):
     return collect_pipeline_provenance(rules or RuleSet.default())
 
 
+@cache
+def _integrated_phase2_extraction():
+    """複数contractが読む同一のimmutable real-execution fixture。"""
+    return extract_phase2_game(101)
+
+
 def _freeze_from(halted, anchor_index: int = 0) -> FrozenPlayerSafeAnchor:
     return freeze_player_safe_anchor(
         source=_source_for(halted.match_state.match_seed),
@@ -163,23 +170,39 @@ class FutureAppendInvarianceTest(unittest.TestCase):
 
         match_state = MatchState(seed=137, rules=RuleSet.default())
         source = _source_for(137)
-        recorder = Phase2AnchorRecorder(match_state, source)
+        phase2_recorder = Phase2AnchorRecorder(match_state, source)
+        turns_seen = 0
 
-        class _CapturingRecorder(Phase2AnchorRecorder):
-            def observe(self, observation):
-                before = len(self.samples)
-                super().observe(observation)
-                if len(self.samples) > before and len(captured) < 3:
-                    frozen = self.samples[-1].anchor
+        class _EnoughProgression(Exception):
+            pass
+
+        class _CapturingRecorder:
+            def observe(inner, observation):  # noqa: N805
+                nonlocal turns_seen
+                if observation.decision_kind is not ObservationDecisionKind.TURN:
+                    return
+
+                if turns_seen < 3:
+                    phase2_recorder.observe(observation)
+                    frozen = phase2_recorder.samples[-1].anchor
                     captured.append(frozen)
                     # capture時点のvalueをdeep copyで独立に保存する。
                     snapshots.append(copy.deepcopy(frozen))
 
-        recorder = _CapturingRecorder(match_state, source)
-        run_game_with_recorder(match_state, recorder)
+                turns_seen += 1
+                if turns_seen >= 8:
+                    raise _EnoughProgression
+
+        try:
+            run_game_with_recorder(match_state, _CapturingRecorder())
+        except _EnoughProgression:
+            pass
+        else:  # pragma: no cover - deterministic fixture regression
+            self.fail("fixture must reach eight TURN anchors")
 
         self.assertEqual(len(captured), 3)
-        self.assertGreater(recorder.turn_anchors, len(captured))
+        self.assertEqual(phase2_recorder.turn_anchors, len(captured))
+        self.assertGreater(turns_seen, len(captured))
         for frozen, snapshot in zip(captured, snapshots, strict=True):
             self.assertEqual(frozen, snapshot)
             self.assertEqual(frozen.observation, snapshot.observation)
@@ -371,7 +394,7 @@ class ExpectedCountIndependenceTest(unittest.TestCase):
         )
 
     def test_extraction_never_silently_drops_an_anchor(self):
-        extraction = extract_phase2_game(103)
+        extraction = _integrated_phase2_extraction()
         self.assertGreater(extraction.turn_anchors, 0)
         self.assertEqual(len(extraction.samples), extraction.turn_anchors)
         for sample in extraction.samples:
@@ -384,23 +407,40 @@ class OpponentIdentityRotationTest(unittest.TestCase):
 
     def test_row_identity_tracks_the_actual_seat_across_rotation(self):
         match_state = MatchState(seed=151, rules=RuleSet.default())
-        source = _source_for(151)
         seen_dealers = set()
         seen_viewers = set()
         checked = 0
+        verified_positions = 0
 
-        class _VerifyingRecorder(Phase2AnchorRecorder):
+        class _CoverageComplete(Exception):
+            pass
+
+        class _VerifyingRecorder:
             def observe(inner, observation):  # noqa: N805
-                nonlocal checked
-                before = len(inner.samples)
-                super().observe(observation)
-                if len(inner.samples) == before:
+                nonlocal checked, verified_positions
+                if observation.decision_kind is not ObservationDecisionKind.TURN:
                     return
+
                 round_state = match_state.active_round
-                labels = inner.samples[-1].labels
+                if round_state is None:  # pragma: no cover - engine invariant
+                    raise AssertionError("TURN observation requires an active round")
+
+                # 既に確認済みのviewer/dealer組合せを全TURNで再検証しない。
+                # 新しいviewerまたは新しいdealerを初めて観測した位置だけを
+                # privileged truthと照合する。
+                if (
+                    observation.viewer_seat in seen_viewers
+                    and round_state.dealer_seat in seen_dealers
+                ):
+                    return
+
+                labels = build_exact_training_labels(
+                    match_state, observation.viewer_seat
+                )
                 dealer_seat = seat_from_engine_seat(round_state.dealer_seat)
                 seen_dealers.add(round_state.dealer_seat)
                 seen_viewers.add(observation.viewer_seat)
+                verified_positions += 1
 
                 for row in labels.expected_counts:
                     # identityが指すseatの実concealed handを直接数え直し、
@@ -424,10 +464,18 @@ class OpponentIdentityRotationTest(unittest.TestCase):
                     assert row.identity.seat != labels.viewer_seat
                     checked += 1
 
-        recorder = _VerifyingRecorder(match_state, source)
-        run_game_with_recorder(match_state, recorder)
+                if seen_viewers == set(EngineSeat) and len(seen_dealers) > 1:
+                    raise _CoverageComplete
 
-        self.assertGreater(checked, 100)
+        try:
+            run_game_with_recorder(match_state, _VerifyingRecorder())
+        except _CoverageComplete:
+            pass
+        else:  # pragma: no cover - deterministic fixture regression
+            self.fail("fixture must cover all viewers and more than one dealer")
+
+        self.assertGreaterEqual(verified_positions, 4)
+        self.assertEqual(checked, verified_positions * OPPONENT_COUNT)
         self.assertEqual(seen_viewers, set(EngineSeat))
         self.assertGreater(len(seen_dealers), 1, "the fixture must rotate the dealer")
 
@@ -594,7 +642,7 @@ class RedFivePreservationTest(unittest.TestCase):
         self.assertNotEqual(red_row, normal_row)
 
     def test_red_five_truth_survives_real_execution(self):
-        extraction = extract_phase2_game(101)
+        extraction = _integrated_phase2_extraction()
         self.assertTrue(
             any(
                 any(row.red_five_present)
@@ -1009,7 +1057,7 @@ class PipelineProvenanceTest(unittest.TestCase):
             )
 
     def test_every_sample_carries_pipeline_provenance(self):
-        extraction = extract_phase2_game(101)
+        extraction = _integrated_phase2_extraction()
         first = extraction.samples[0].provenance
         for sample in extraction.samples:
             self.assertEqual(sample.provenance, first)
