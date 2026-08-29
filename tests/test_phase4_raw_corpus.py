@@ -519,6 +519,33 @@ class CodecAndPersistenceTests(unittest.TestCase):
             ("destination",),
         )
 
+    def test_phase2_mismatch_does_not_publish_or_leave_temporary_artifact(self):
+        corpus = fixture_corpus()
+        games_by_seed = {game.seed: game for game in corpus.games}
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "lisjong_arena.phase4_raw_corpus.generation.phase4_provenance",
+                return_value=corpus.provenance,
+            ),
+            patch(
+                "lisjong_arena.phase4_raw_corpus.generation.extract_phase4_raw_game",
+                side_effect=lambda seed, rules: games_by_seed[seed],
+            ),
+            patch(
+                "lisjong_arena.phase4_raw_corpus.generation.extract_phase2_game",
+                return_value=SimpleNamespace(samples=()),
+            ),
+        ):
+            parent = Path(directory)
+            destination = parent / "corpus"
+            with self.assertRaisesRegex(
+                RuntimeError, "persisted TURN derivation differs"
+            ):
+                generate_phase4_raw_corpus(destination)
+            self.assertFalse(destination.exists())
+            self.assertEqual(tuple(parent.iterdir()), ())
+
 
 class StrictModelTests(unittest.TestCase):
     def test_checkpoint_truth_alignment_and_cutoff_fail_closed(self):

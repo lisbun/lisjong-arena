@@ -1,5 +1,8 @@
 """Fixed Issue #85 generation, strict readback and Phase 2 equality orchestration."""
 
+import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -58,34 +61,55 @@ class Phase4GenerationReport:
 
 def generate_phase4_raw_corpus(destination: str | Path) -> Phase4GenerationReport:
     """Run the fixed 1000..1007 protocol; caller cannot vary its identity."""
+    destination = Path(destination)
+    if destination.exists():
+        raise FileExistsError(f"destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
     rules = RuleSet.default()
     provenance = phase4_provenance(rules)
     started = perf_counter()
     games = tuple(extract_phase4_raw_game(seed, rules=rules) for seed in FIXED_SEEDS)
     generation_seconds = perf_counter() - started
     corpus = RawCorpus(provenance, games)
-    save_raw_corpus(corpus, destination)
-    read_started = perf_counter()
-    readback = load_raw_corpus(destination)
-    readback_seconds = perf_counter() - read_started
-    derive_started = perf_counter()
-    derived = derive_turn_samples(readback.corpus)
-    derivation_seconds = perf_counter() - derive_started
-    direct = tuple(
-        sample
-        for seed in FIXED_SEEDS
-        for sample in extract_phase2_game(seed, rules=rules).samples
+    temporary_destination = Path(
+        tempfile.mkdtemp(
+            prefix=f".{destination.name}.validation-", dir=destination.parent
+        )
     )
-    if derived != direct:
-        raise RuntimeError("Phase 4 persisted TURN derivation differs from Phase 2")
-    measurements = measure_raw_corpus(readback.corpus, readback)
-    return Phase4GenerationReport(
-        persisted=readback,
-        measurements=measurements,
-        generation_seconds=generation_seconds,
-        readback_seconds=readback_seconds,
-        derivation_seconds=derivation_seconds,
-    )
+    temporary_destination.rmdir()
+    owns_temporary_destination = False
+    try:
+        save_raw_corpus(corpus, temporary_destination)
+        owns_temporary_destination = True
+        read_started = perf_counter()
+        readback = load_raw_corpus(temporary_destination)
+        readback_seconds = perf_counter() - read_started
+        derive_started = perf_counter()
+        derived = derive_turn_samples(readback.corpus)
+        derivation_seconds = perf_counter() - derive_started
+        direct = tuple(
+            sample
+            for seed in FIXED_SEEDS
+            for sample in extract_phase2_game(seed, rules=rules).samples
+        )
+        if derived != direct:
+            raise RuntimeError("Phase 4 persisted TURN derivation differs from Phase 2")
+        measurements = measure_raw_corpus(readback.corpus, readback)
+        report = Phase4GenerationReport(
+            persisted=readback,
+            measurements=measurements,
+            generation_seconds=generation_seconds,
+            readback_seconds=readback_seconds,
+            derivation_seconds=derivation_seconds,
+        )
+        if destination.exists():
+            raise FileExistsError(f"destination already exists: {destination}")
+        os.rename(temporary_destination, destination)
+        owns_temporary_destination = False
+        return report
+    finally:
+        if owns_temporary_destination and temporary_destination.exists():
+            shutil.rmtree(temporary_destination)
 
 
 __all__ = ["Phase4GenerationReport", "generate_phase4_raw_corpus"]
