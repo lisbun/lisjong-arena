@@ -475,6 +475,47 @@ repositoryへcommitしない。
 Phase 4はPhase 5 dataset builder、split、tensor schema、model、estimator、Policy improvementを
 実装しない。raw corpusのgame groupingはfuture splitのatomic unitとして保持するだけである。
 
+### Policy performance profiling(opt-in development diagnostic、Issue #87)
+
+Issue #87で、first-party lisjong Policy(`POLICY_CATALOG`登録分だけ、Mortal等のexternal
+processは対象外)向けのopt-in performance profiling / timing path
+(`lisjong_arena.policy_performance` / `lisjong_arena.policy_performance_profile`)を
+追加した。目的は、`FiniteHorizon` / `Combined`系Policyの次の高速化対象を、実際の
+first-party evaluation workload上の実測からprofile-drivenに判断できるようにする
+ことであり、高速化そのものは行わない。
+
+```text
+performance profile = opt-in development diagnostic
+
+timing mode
+    unprofiled wall-clock performance measurement(正本)
+    candidateのchoose_action()呼び出し境界だけをperf_counter_ns()相当の
+    monotonic clockで計測する
+
+profile mode
+    instrumented hotspot discovery
+    cProfile / pstatsでcandidate decision内のfunction call count /
+    self time / cumulative timeを観測する。ここで得たelapsed timeを
+    absolute latencyやbefore/after speedupのperformance claimへ使用しない
+```
+
+既存ABBB single-round evaluation substrate(`SingleRoundEvaluationPlan` /
+`run_single_round_evaluation()` / `POLICY_CATALOG`)をそのまま再利用し、新しい
+evaluation protocolや比較semanticsは追加していない。ABBB rotation中の
+candidate Policy invocationだけを計測対象とし、candidateの`PolicySpec.factory`
+だけを計測用にwrapする(baseline側や既存のPolicy instance lifecycle — seat間・
+game間で共有しない、各game・各seatごとにfactoryから新規生成する — は変更しない)。
+計測はPolicy decisionを追加実行せず、実際に発生する1回の`choose_action()`呼び出し
+をその場で計測するだけである。初期scopeは`workers=1`のserial executionだけを正本
+とし、`run_single_round_evaluation_parallel()`は使わない。
+
+performance metricsはcanonical `GameTrace` / `DecisionTrace` / `AnalysisTrace` /
+`SingleRoundEvaluationResult`等ではない。これらのschemaへperformance fieldを
+追加しておらず、`lisjong_arena.policy_performance`が独立したArena-owned opt-in
+development diagnosticとして計測結果を持つ。Arena側でshanten / ukeire /
+completion mass / Genbutsu activation semantic / ValueAware fallback semantic /
+DP visited-state semantic等のlisjong-owned semanticを再計算・再定義することもない。
+
 RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationを、Issue #31で`LocalGameRunner` / `LocalGameResult`のcanonical implementationを、Issue #39でRiichiEnv Adapter(`lisjong_arena.riichienv.adapter`)のcanonical implementationを、Issue #43でGameTrace(`lisjong_arena.game_trace`)のcanonical implementationをArenaへ移した。GameTraceのlisjong側legacy physical copyは`lisbun/lisjong#102` / PR #103で削除済みであり、Issue #45でArenaのdependency pinもcleanup merge SHA `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期済みである。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのdependency pinもcleanup merge SHA `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)も`lisbun/lisjong#100` / PR #101で削除済みであり、Issue #41でArenaのdependency pinもこのcleanup merge SHA `3505321b62e7a2be204cc555924b485a898c8f31`へ同期済みである。これによりLocalGameRunner、RiichiEnv Adapter、GameTraceの各pillarのphysical duplicateは完全解消済みである。
 
 このcurrent stateはtarget ownershipを表さない。migration完了まではdocumentation上でcurrent / targetを明示的に区別する。

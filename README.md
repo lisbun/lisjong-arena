@@ -679,6 +679,43 @@ seed-block statistics:
 
 1 gameでも失敗した場合は既存evaluationのfail-closed挙動(partial summaryを返さずcomparison全体を失敗させる)がそのまま伝わり、CLIはsuccess summaryを出さずnon-zero exitで終了します。結果のpersistence(`--json` / `--output` / historical storage等)は行わず、stdout表示だけです。
 
+## `policy_performance_profile` CLI(opt-in performance profiling)
+
+`FiniteHorizon` / `Combined`系Policyの次の高速化対象をprofile-drivenに判断するための、first-party lisjong Policy用のopt-in development diagnosticです(Issue #87)。既存ABBB single-round evaluation substrate(`SingleRoundEvaluationPlan` / `run_single_round_evaluation()`)をそのまま再利用し、新しいevaluation protocolや比較semanticsは追加しません。**performance profile自体はcanonical evaluation result / trace ではなく、opt-inのdevelopment diagnosticです。**
+
+対象は`POLICY_CATALOG`に登録されたfirst-party lisjong Policyだけです。Mortal等のexternal process Policyは初期scope外であり、`--candidate` / `--baseline`のchoicesにも含まれません。
+
+```bash
+python -m lisjong_arena.policy_performance_profile \
+  --candidate finite-horizon \
+  --baseline two-step \
+  --seeds 0:24 \
+  --mode timing
+
+python -m lisjong_arena.policy_performance_profile \
+  --candidate combined \
+  --baseline two-step \
+  --seeds 0:24 \
+  --mode profile
+```
+
+### timing modeとprofile modeの分離
+
+`--mode timing`と`--mode profile`は排他であり、1回の実行はどちらか一方だけを計測します。
+
+- **timing mode**: unprofiled wall-clock performance measurementの正本です。candidateの`choose_action()`呼び出し境界だけを`time.perf_counter_ns()`相当のmonotonic clockで計測し、decision count / total time / mean / p50 / p95 / max / decisions-per-secondと、evaluation全体のelapsed time / games-per-secondを表示します。percentileは`ceil(percentile / 100 * n)`を1-based rankとするnearest-rank法で決定的に定義しています。
+- **profile mode**: instrumented hotspot discovery専用です。標準library `cProfile` / `pstats`でcandidateの`choose_action()`呼び出し内のfunction call count / self time / cumulative timeを観測し、self time降順のtop N(既定25、`--top`で変更可)を表示します。ここで得たelapsed timeは、instrumentation overheadを含むため**absolute latencyやbefore/after speedupのperformance claimには使用しません**(そのためのtiming modeが別途あります)。`module`はfirst-party package(`lisjong` / `lisjong_arena` / `lisjong_engine` / `riichienv`)配下のfunctionを見つけやすくするためのbest-effort hintであり、特定のfunction名をstable public schemaとして固定するものではありません。
+
+どちらのmodeも、ABBB rotation中のcandidate Policy invocationだけを計測対象とします。candidateの`PolicySpec.factory`だけを計測用にwrapし(identityは変更しません)、baseline側のPolicyや既存のPolicy instance lifecycle(seat間・game間で共有しない、各game・各seatごとにfactoryから新規生成する)は変更しません。計測のためにPolicy decisionを追加実行することはなく、実際に発生する1回の`choose_action()`呼び出しをその場で計測するだけです。Policy例外はこのinstrumentation layerが握り潰さず、既存の`SingleRoundEvaluationError`へそのまま伝播します。
+
+### serial-onlyの初期scope
+
+初期scopeでは`workers=1`のserial executionだけをperformance diagnosisの正本とします。このCLIに`--workers`optionはなく、常に既存`run_single_round_evaluation()`(serial)だけを呼びます。`run_single_round_evaluation_parallel()`は一切使わないため、worker別profile aggregationやmultiprocessing scaling profileはこのCLIのscope外です。
+
+### canonical schemaへの影響
+
+`PolicyInput` / `PolicyDecision` / `DecisionTrace` / `AnalysisTrace` / `GameTrace` / `SingleRoundEvaluationResult`等の既存canonical evaluation schemaへperformance fieldは一切追加していません。timing / profile mode計測結果(`DecisionTimingMetrics` / `ProfileFunctionStat`等)は`lisjong_arena.policy_performance`が持つ独立したArena-owned opt-in development diagnosticです。Arena側でshanten / ukeire / completion mass / Genbutsu activation semantic / ValueAware fallback semantic / DP visited-state semantic等のlisjong-owned semanticを再計算・再定義することもありません。
+
 ## Comparison artifact
 
 既存のversion付きJSON artifact契約は、AABB comparison protocol（`ComparisonPlan` / `ComparisonResult`）のみを対象とします。ABBB single-round evaluation result（`SingleRoundEvaluationResult`）のartifact保存は現時点では未実装で、必要になった時点で後続Issueとして独立に設計します。
