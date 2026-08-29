@@ -432,6 +432,49 @@ Policy呼び出しはlisjong-owned `execute_policy()`だけを使う。Arena側�
 
 このpathは現時点でGameTraceを発行しない。`GameTrace`のlisjong-engine対応、generic objective trace、replay / viewerはIssue #53のnon-goalである。AABB / ABBB evaluation protocolもこのpathへは接続しておらず、`run_policy_hanchan()`はfirst-party execution capabilityの成立確認に留まる。
 
+### Phase 4 first-party HandBelief raw corpus (Issue #85)
+
+Phase 4はfirst-party `run_hanchan()` executionを、HandBelief学習用のraw
+observation corpusとしてsource-specificに記録する。generic GameTrace、replay
+engine、dataset platformではない。player-safe historyの唯一のauthorityはengine-owned
+`RoundEvidence` / `RoundEvidenceCompletion`であり、Arenaはinternal eventからhistoryを
+再構築しない。
+
+```text
+Corpus
+  -> ordered Game (seed)
+      -> ordered Round
+          -> complete RoundEvidence stream x viewer
+          -> ordered decision checkpoint
+               frozen SeatObservation + evidence_cutoff
+          -> checkpoint-aligned training-only concealed truth
+```
+
+selectorへ実際に渡された全`SeatObservation`をcheckpointとしてfreezeする。各checkpoint
+では`build_round_evidence()`の値を一時的に保持し、局終了callbackが渡すfinal viewer
+streamについて`final[:cutoff] == checkpoint_time_evidence`をvalue equalityで確認した後、
+prefix本体を捨ててcutoffだけをraw valueへ残す。これによりPhase 3のsampleごとのprefix
+複製を避けつつ、wrong-round associationとfuture leakageをfail closedする。
+
+training-only sideはopponent logical seatと、tile kind・red identityを保持するconcealed
+physical tile multisetだけをcheckpointごとに保存する。physical tile ID、wall position、
+`MatchState` / `RoundState` snapshot、`ExactTrainingLabels`はraw sourceにしない。player-safe
+anchor derivationはtraining truthをparameterとして受け取らず、label derivationだけがtruthと
+checkpointのplayer-safe public meld / round contextを読む。TURN checkpointから再導出した
+`TrainingSample`はcurrent Phase 2 extractionとsemantic value equalityを要求する。
+
+persistenceはschema version 1のdeterministic UTF-8 JSON logical contentを、seed昇順で
+4 gamesずつ2つのstdlib gzip shardへ保存する。shard identityはuncompressed canonical JSONの
+SHA-256であり、gzip bytesはidentityではない。corpus identityもschema / protocol / source / rules /
+resolved revisions / Phase 2 semantics / ordered seeds / ordered shard digestだけをhashし、path、時刻、
+gzip metadataを含めない。shardをstagingへ書いてstrict readbackした後にmanifestを最後に置き、
+complete directoryだけをpublishする。既存destinationのoverwrite、unknown / missing / extra field、
+digest・byte count不一致、missing / extra shard、unresolved provenanceは拒否する。生成corpusは
+repositoryへcommitしない。
+
+Phase 4はPhase 5 dataset builder、split、tensor schema、model、estimator、Policy improvementを
+実装しない。raw corpusのgame groupingはfuture splitのatomic unitとして保持するだけである。
+
 RiichiLabについては、Issue #17でranked one-game orchestrationのcanonical implementationを、Issue #19でvalidation one-game orchestrationおよびexecution profile / credential / common CLI compositionのcanonical implementationを、Issue #23でWebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationを、Issue #27でprotocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationを、Issue #31で`LocalGameRunner` / `LocalGameResult`のcanonical implementationを、Issue #39でRiichiEnv Adapter(`lisjong_arena.riichienv.adapter`)のcanonical implementationを、Issue #43でGameTrace(`lisjong_arena.game_trace`)のcanonical implementationをArenaへ移した。GameTraceのlisjong側legacy physical copyは`lisbun/lisjong#102` / PR #103で削除済みであり、Issue #45でArenaのdependency pinもcleanup merge SHA `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期済みである。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのdependency pinもcleanup merge SHA `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)も`lisbun/lisjong#100` / PR #101で削除済みであり、Issue #41でArenaのdependency pinもこのcleanup merge SHA `3505321b62e7a2be204cc555924b485a898c8f31`へ同期済みである。これによりLocalGameRunner、RiichiEnv Adapter、GameTraceの各pillarのphysical duplicateは完全解消済みである。
 
 このcurrent stateはtarget ownershipを表さない。migration完了まではdocumentation上でcurrent / targetを明示的に区別する。
