@@ -222,7 +222,7 @@ retry対象は`TransportError`階層(`UnexpectedDisconnectError`を含む)だけ
 
 ## First-party lisjong-engine execution
 
-Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加した。RiichiEnv execution pathと並ぶ2本目のconcrete execution pathであり、両者を共通のbackend abstractionへは統合していません。
+Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加しました。RiichiEnv execution pathと並ぶ2本目のconcrete execution pathであり、両者を共通のbackend abstractionへは統合していません。
 
 ```text
                   lisjong-arena
