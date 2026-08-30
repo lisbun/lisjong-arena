@@ -12,30 +12,35 @@ Arenaは明示catalogからPolicy factoryを解決して既存evaluation pathへ
 
 ## Dependency
 
-Arenaはlisjongを次のfull commit SHAへexact pinする。
+Arenaのcurrent lisjong exact pinは次のfull commit SHAである。
 
 ```text
-140d0d6c88b4f1c0c78ca2413b2e93128645cd4c
+84e905d252d65eb37b722f195f2774fd5661d5af
 ```
 
-これはlisjong PR #144のactual squash merge commitで、
-`GenbutsuDefenseFiniteHorizonHandValueAwarePolicy`を含むrevisionである。
+これはlisjong PR #146のactual merge commitであり、PR #144で追加された
+`GenbutsuDefenseFiniteHorizonHandValueAwarePolicy`を引き続き含む。PR #144導入時の
+historical pinは `140d0d6c88b4f1c0c78ca2413b2e93128645cd4c` だった。
 
 ## Policy catalog
 
 `lisjong_arena.policy_catalog.POLICY_CATALOG`の対応は次のとおり。
 
 ```text
-two-step         -> TwoStepUkeirePolicy
-finite-horizon   -> FiniteHorizonCompletionPolicy
-combined         -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
-hand-value-aware -> HandValueAwareTwoStepUkeirePolicy
+two-step          -> TwoStepUkeirePolicy
+finite-horizon    -> FiniteHorizonCompletionPolicy
+combined          -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
+hand-value-aware  -> HandValueAwareTwoStepUkeirePolicy
 extended-combined -> GenbutsuDefenseFiniteHorizonHandValueAwarePolicy
+yakuhai-call      -> YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy
 ```
 
-`extended-combined`はmodule top-level factoryを使用し、既存parallel executionの
+各Policyはmodule top-level factoryを使用し、既存parallel executionの
 spawn-serialization preflightを満たす。dynamic import、plugin discovery、config-driven
 Policy loadingは導入しない。
+
+Yakuhai Call-aware Policyとのdirect comparisonは
+[`yakuhai-call-evaluation.md`](yakuhai-call-evaluation.md)を参照する。
 
 ## Gate 1 command
 
