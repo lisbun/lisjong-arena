@@ -37,6 +37,8 @@ from .tensor import (
 from .training import (
     LOCKED_DATASET_IDENTITY,
     LOCKED_RAW_CORPUS_IDENTITY,
+    FeatureCoverage,
+    aggregate_feature_coverage,
     prepare_train_validation_data,
     train_phase6_model,
     verify_phase5_validation_compatibility,
@@ -82,6 +84,7 @@ def _manifest_without_weights(
     dataset,
     result,
     training_revisions: dict[str, str],
+    feature_coverage: dict[str, object],
 ) -> dict[str, object]:
     import torch
 
@@ -99,6 +102,7 @@ def _manifest_without_weights(
         "training_source_revisions": training_revisions,
         "feature_semantics_id": FEATURE_SEMANTICS_ID,
         "feature_dimension": FEATURE_DIM,
+        "feature_coverage": feature_coverage,
         "tensorization": {
             "normalization": "fixed-semantic-scaling-no-train-statistics",
             "categorical": "fixed-one-hot-no-embeddings",
@@ -197,6 +201,34 @@ def _manifest_without_weights(
     }
 
 
+def _feature_coverage_value(value: FeatureCoverage) -> dict[str, object]:
+    return {
+        "samples": value.samples,
+        "opponent_riichi_declaration_rows": value.opponent_riichi_declaration_rows,
+        "opponent_call_history_rows": value.opponent_call_history_rows,
+        "opponent_kan_history_rows": value.opponent_kan_history_rows,
+        "meld_kind_counts": dict(
+            zip(
+                ("chi", "pon", "daiminkan", "ankan", "kakan"),
+                value.meld_kind_counts,
+                strict=True,
+            )
+        ),
+        "public_draw_source_counts": dict(
+            zip(("live_wall", "rinshan"), value.public_draw_source_counts, strict=True)
+        ),
+        "response_history_counts": {
+            f"{trigger}:{outcome}": value.response_history_counts[
+                trigger_index * 3 + outcome_index
+            ]
+            for trigger_index, trigger in enumerate(("discard", "kakan", "ankan"))
+            for outcome_index, outcome in enumerate(
+                ("no_public_response", "call", "ron")
+            )
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     import torch
 
@@ -227,6 +259,12 @@ def main(argv: list[str] | None = None) -> int:
     samples = resolve_training_samples(dataset, raw)
     baseline = verify_phase5_validation_compatibility(dataset, samples)
     data = prepare_train_validation_data(dataset, samples)
+    feature_coverage = {
+        "train": _feature_coverage_value(aggregate_feature_coverage(data.train)),
+        "validation": _feature_coverage_value(
+            aggregate_feature_coverage(data.validation)
+        ),
+    }
     del raw, samples
     gc.collect()
     result = train_phase6_model(data, dataset_identity=dataset.dataset_identity)
@@ -242,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
             dataset=dataset,
             result=result,
             training_revisions=revisions,
+            feature_coverage=feature_coverage,
         ),
     )
     output = {
@@ -253,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
         "feature_semantics_id": FEATURE_SEMANTICS_ID,
         "feature_dimension": FEATURE_DIM,
         "parameter_count": result.parameter_count,
+        "feature_coverage": feature_coverage,
         "train_samples": len(data.train),
         "validation_samples": len(data.validation),
         "phase5_validation_compatibility": expected_count_metrics_value(baseline),

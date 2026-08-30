@@ -84,6 +84,18 @@ class Phase6Example:
     row_marginals: tuple[float, float, float, float]
     column_marginals: tuple[float, ...]
     target: tuple[tuple[float, ...], ...]
+    feature_coverage: "FeatureCoverage"
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureCoverage:
+    samples: int
+    opponent_riichi_declaration_rows: int
+    opponent_call_history_rows: int
+    opponent_kan_history_rows: int
+    meld_kind_counts: tuple[int, ...]
+    public_draw_source_counts: tuple[int, ...]
+    response_history_counts: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +188,61 @@ def build_phase6_example(
         row_marginals=row_marginals,
         column_marginals=column_marginals,
         target=tuple(rows_by_wind[wind] for wind in opponent_winds),
+        feature_coverage=FeatureCoverage(
+            samples=1,
+            opponent_riichi_declaration_rows=sum(
+                value.riichi_declaration_present for value in feature.opponents
+            ),
+            opponent_call_history_rows=sum(
+                value.last_call_present for value in feature.opponents
+            ),
+            opponent_kan_history_rows=sum(
+                value.last_kan_present for value in feature.opponents
+            ),
+            meld_kind_counts=tuple(
+                sum(value.meld_kind_counts[index] for value in feature.opponents)
+                for index in range(5)
+            ),
+            public_draw_source_counts=tuple(
+                sum(
+                    value.public_draw_source_counts[index]
+                    for value in feature.opponents
+                )
+                for index in range(2)
+            ),
+            response_history_counts=feature.response_history_counts,
+        ),
+    )
+
+
+def aggregate_feature_coverage(
+    examples: tuple[Phase6Example, ...],
+) -> FeatureCoverage:
+    if not examples:
+        raise ValueError("feature coverage requires at least one example")
+    values = tuple(example.feature_coverage for example in examples)
+    return FeatureCoverage(
+        samples=sum(value.samples for value in values),
+        opponent_riichi_declaration_rows=sum(
+            value.opponent_riichi_declaration_rows for value in values
+        ),
+        opponent_call_history_rows=sum(
+            value.opponent_call_history_rows for value in values
+        ),
+        opponent_kan_history_rows=sum(
+            value.opponent_kan_history_rows for value in values
+        ),
+        meld_kind_counts=tuple(
+            sum(value.meld_kind_counts[index] for value in values) for index in range(5)
+        ),
+        public_draw_source_counts=tuple(
+            sum(value.public_draw_source_counts[index] for value in values)
+            for index in range(2)
+        ),
+        response_history_counts=tuple(
+            sum(value.response_history_counts[index] for value in values)
+            for index in range(9)
+        ),
     )
 
 
@@ -541,12 +608,14 @@ __all__ = [
     "LOCKED_DATASET_IDENTITY",
     "LOCKED_RAW_CORPUS_IDENTITY",
     "EpochLoss",
+    "FeatureCoverage",
     "InferenceThroughput",
     "Phase6Example",
     "TrainingConfig",
     "TrainingResult",
     "TrainValidationData",
     "build_phase6_example",
+    "aggregate_feature_coverage",
     "prepare_train_validation_data",
     "train_phase6_model",
     "verify_phase5_validation_compatibility",

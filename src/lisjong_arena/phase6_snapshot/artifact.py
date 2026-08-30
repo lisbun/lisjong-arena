@@ -22,6 +22,7 @@ _MANIFEST_FIELDS = {
     "training_source_revisions",
     "feature_semantics_id",
     "feature_dimension",
+    "feature_coverage",
     "tensorization",
     "model",
     "parameter_count",
@@ -103,6 +104,7 @@ def validate_manifest(value: object) -> dict[str, object]:
         raise Phase6ArtifactError("successful artifact must have zero non-convergence")
     for field in (
         "dataset_source_revisions",
+        "feature_coverage",
         "training_source_revisions",
         "model",
         "tensorization",

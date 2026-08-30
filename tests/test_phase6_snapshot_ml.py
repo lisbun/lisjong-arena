@@ -190,6 +190,7 @@ class Phase6SnapshotMlTest(unittest.TestCase):
             "training_source_revisions": {"arena": "d" * 40},
             "feature_semantics_id": FEATURE_SEMANTICS_ID,
             "feature_dimension": FEATURE_DIM,
+            "feature_coverage": {"train": {"samples": 1}},
             "tensorization": {"normalization": "fixed-semantic"},
             "model": {"family": "locked"},
             "parameter_count": parameter_count(model),
