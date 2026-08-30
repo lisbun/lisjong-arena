@@ -576,6 +576,43 @@ order statistics `[499]` / `[19499]`に固定する。row-level seamは既存abs
 training-only true tenpai stateの4 familyだけを保持する。raw conservation excessはreportするが、
 blocking判定は既存tolerance-based semantic violation rateを再利用する。
 
+### Phase 8 sequential HandBelief experiments (Issue #109)
+
+Phase 8は、Phase 5で固定したTRAIN `100..139`とVALIDATION `140..149`だけを使用する
+Arena-owned offline research boundaryである。Phase 7で開封済みのTEST `150..159`は、sequence
+feature、recurrent state、model-facing example、prediction、diagnostic、candidate selectionより前に
+除外する。reference-only inventoryも`test_sequence_count=0`をbindingし、formal CLIはTESTを選ぶ
+optionを持たない。
+
+canonical sequence keyはexactに`(GameIdentity, round_index, viewer_seat)`であり、各sequenceを
+`checkpoint_index`昇順へ並べ、game-global `anchor_index`と単調増加する`round_revision`の整合を
+検証する。stateはgame、round、viewer、partitionを跨がない。previous HandBeliefはanonymousな
+row位置ではなく`Wind -> expected_count[34]`として保持し、各anchorの`opponent_winds`順へ明示的に
+remapして4.0でscaleする。depth 1はcurrent public anchorに対する既存conditional-uniform baseline、
+S2 latentはzeroから開始し、以後は常に自己predictionを次stepへ渡す。training targetはloss以外の
+recurrent pathへ入らない。
+
+S1は919 feature + 102 previous countsを128 / 64 hidden layersへ渡す固定feed-forward family、S2は
+同じ1021 inputをhidden size 128の`GRUCell`と64 hidden headへ渡す固定familyである。両者とも136
+logitsを既存`phase6_snapshot.constraint.constrain_allocation()`へ直接渡し、制約数式を複製しない。
+reference-only inventoryのmaximum sequence lengthが64以下ならfull-sequence BPTT、超える場合だけ
+length 32のtruncated BPTTをS1/S2共通で使用する。truncationはpredicted beliefとS2 latentの値をcarryし、
+gradient historyだけをdetachする。
+
+TRAIN objectiveは全TRAIN sequenceのexpected-count cellをpoolしたMSEとし、各sequence / truncated chunkの
+meanを等重みで更新しない。各epochはchunkごとに同じpooled denominatorで勾配を蓄積し、全sequence後に
+1回だけoptimizerを更新する。weight updateはTRAINだけ、checkpoint selectionはpooled self-rollout
+VALIDATION per-tile MAEのstrictly lowerだけで行う。VALIDATION artifactはper-hand / per-game / fixed
+depth bucket / physical metrics、runtime、parameter count、throughputを保持し、physical gateを通った
+S1/S2の低MAE側だけをwinnerとする。1e-12
+absolute tieはS1を選び、winnerがsnapshot referenceを上回り10 game中6 game以上positiveの場合だけ
+Phase 9へadvanceする。条件を満たさない正式結果もPhase 8の成功として保存する。
+
+inventory、S1/S2 state_dict artifact、comparison resultは明示的なrepository外destinationへ保存し、
+overwriteを拒否する。historical dataset source revisionsと実行時dependency/runtime provenanceを分離し、
+全artifact/resultで`test_partition_evaluated=false`を必須とする。通常importはtorch-freeで、CIはsynthetic
+sequential ML testsだけを実行し、formal trainingやreal TEST inferenceを開始しない。
+
 ### Policy performance profiling(opt-in development diagnostic、Issue #87)
 
 Issue #87で、first-party lisjong Policy(`POLICY_CATALOG`登録分だけ、Mortal等のexternal
