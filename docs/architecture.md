@@ -518,6 +518,42 @@ Phase 5のnon-goalはlearned / sequential estimator、previous HandBelief / late
 generic dataset / source plugin、Mortal / human log ingestion、structural-wait predictor、Decision consumer、
 game-strength evaluation、AWS / scale infrastructureである。
 
+### Phase 6 research snapshot model (Issue #103)
+
+Phase 6はPhase 5で固定したdatasetを入力とするArena-owned offline research boundaryである。
+
+```text
+FrozenPlayerSafeAnchor
+    -> phase6-history-snapshot-v1 research feature
+    -> offline learned snapshot model
+    -> constrained 3-opponent expected-count prediction
+```
+
+feature builderの唯一のdomain inputはPhase 2 `FrozenPlayerSafeAnchor`であり、player-safeな
+`SeatObservation`とanchor時点までのordered `RoundEvidence`だけを固定長snapshotへ集約する。
+source class、game seed、anchor index、round revision、partition、dataset/example identity、source
+revision等のalignment / provenance metadataはmodel tensorへencodeしない。training label、hidden
+hand / wall truth、future evidence、reaction capability、furiten / ron legality、decision-local legal actionも
+feature pathへ流さない。`ResponseOutcome.NO_PUBLIC_RESPONSE`はpublic triggerとstructural responder
+topologyに対してpublic responseが現れなかった事実だけとして扱い、各playerが合法反応をpassした
+というhidden-dependent意味へ変換しない。broken / ambiguousなresponse epochはfail closedする。
+
+modelはexpected-countだけを予測する固定のsmall feed-forward familyであり、3 opponent rowsと
+other-hidden rowからなる4 x 34 allocationをlog-domain IPFPでpublic concealed-slot row marginalsと
+viewer-safe remaining-inventory column marginalsへ制約する。constraintはautograd graph内にあり、
+non-finite input、invalid mass、non-convergenceをclip、renormalization、conditional-uniform fallbackで
+隠さない。red-five / wait head、previous HandBelief、sequence model、Policy / danger / discard consumerは
+持たない。これはproduction `lisjong` estimatorではなく、Arenaのresearch-only training/evaluationである。
+
+PyTorchは`ml` optional dependencyに分離し、通常のArena import/runtimeはtorchを要求しない。generated
+`manifest.json` / `weights.pt` artifactはrepository外へstate_dict-onlyで保存し、dataset / feature / model /
+training provenanceとweights SHA-256をbindingする。Phase 6 orchestrationはTRAINをgradient update、
+VALIDATIONをpredeclared checkpoint selectionとmetricにだけ使用する。TEST prediction / metricsへ到達する
+optionを持たず、locked TEST partitionはfrozen checkpointをPhase 7へhandoffするまでsealedのままとする。
+
+historical `lisjong_arena.phase05_belief_slice`はdisposable experimentであり、Phase 6 formal feature schemaの
+base class、compatibility contract、canonical tensor layoutへ昇格させない。
+
 ### Policy performance profiling(opt-in development diagnostic、Issue #87)
 
 Issue #87で、first-party lisjong Policy(`POLICY_CATALOG`登録分だけ、Mortal等のexternal
