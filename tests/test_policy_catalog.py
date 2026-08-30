@@ -1,15 +1,20 @@
 """``lisjong_arena.policy_catalog``のPolicy登録契約のunit test。
 
 Policyのbehaviorそのものは検証しない。catalogが``two-step`` /
-``finite-horizon`` / ``combined`` / ``hand-value-aware``の4つであること、catalog
-keyと``PolicySpec.identity``が一致すること、factoryがtop-levelでfresh instanceを
-生成しspawn-safeであること、CLIが登録名を受理することだけを固定する。
+``finite-horizon`` / ``combined`` / ``hand-value-aware`` /
+``extended-combined``の5つであること、catalog keyと``PolicySpec.identity``が
+一致すること、factoryがtop-levelでfresh instanceを生成しspawn-safeであること、
+CLIが登録名を既存serial / parallel evaluation pathへ解決することだけを固定する。
 """
 
+import contextlib
+import io
 import unittest
+from unittest import mock
 
 from lisjong.policies import (
     FiniteHorizonCompletionPolicy,
+    GenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
     TwoStepUkeirePolicy,
@@ -20,19 +25,26 @@ from lisjong_arena.model import PolicySpec
 from lisjong_arena.policy_catalog import (
     POLICY_CATALOG,
     create_combined,
+    create_extended_combined,
     create_finite_horizon,
     create_hand_value_aware,
     create_two_step,
 )
-from lisjong_arena.single_round_compare import build_arg_parser
+from lisjong_arena.single_round_compare import _run_cli, build_arg_parser
 from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
 class CatalogContentsTest(unittest.TestCase):
-    def test_catalog_has_exactly_four_registered_policies(self) -> None:
+    def test_catalog_has_exactly_five_registered_policies(self) -> None:
         self.assertEqual(
             set(POLICY_CATALOG),
-            {"two-step", "finite-horizon", "combined", "hand-value-aware"},
+            {
+                "two-step",
+                "finite-horizon",
+                "combined",
+                "hand-value-aware",
+                "extended-combined",
+            },
         )
 
     def test_catalog_key_matches_policy_spec_identity(self) -> None:
@@ -74,6 +86,23 @@ class CatalogContentsTest(unittest.TestCase):
         self.assertEqual(args.seeds, tuple(range(100)))
         self.assertEqual(ROTATION_COUNT * len(args.seeds), 400)
 
+    def test_cli_accepts_extended_combined_vs_combined_400_game_plan(self) -> None:
+        parser = build_arg_parser(prog="test")
+        args = parser.parse_args(
+            [
+                "--candidate",
+                "extended-combined",
+                "--baseline",
+                "combined",
+                "--seeds",
+                "10000:10099",
+            ]
+        )
+        self.assertEqual(args.candidate, "extended-combined")
+        self.assertEqual(args.baseline, "combined")
+        self.assertEqual(args.seeds, tuple(range(10000, 10100)))
+        self.assertEqual(ROTATION_COUNT * len(args.seeds), 400)
+
 
 class FactoryTest(unittest.TestCase):
     def test_two_step_factory_returns_two_step_ukeire_policy(self) -> None:
@@ -94,6 +123,10 @@ class FactoryTest(unittest.TestCase):
         policy = create_hand_value_aware()
         self.assertIsInstance(policy, HandValueAwareTwoStepUkeirePolicy)
 
+    def test_extended_combined_factory_returns_extended_combined_policy(self) -> None:
+        policy = create_extended_combined()
+        self.assertIsInstance(policy, GenbutsuDefenseFiniteHorizonHandValueAwarePolicy)
+
     def test_two_step_factory_returns_a_fresh_instance_each_call(self) -> None:
         self.assertIsNot(create_two_step(), create_two_step())
 
@@ -106,12 +139,18 @@ class FactoryTest(unittest.TestCase):
     def test_hand_value_aware_factory_returns_a_fresh_instance_each_call(self) -> None:
         self.assertIsNot(create_hand_value_aware(), create_hand_value_aware())
 
+    def test_extended_combined_factory_returns_a_fresh_instance_each_call(self) -> None:
+        self.assertIsNot(create_extended_combined(), create_extended_combined())
+
     def test_catalog_factories_are_the_same_top_level_callables(self) -> None:
         self.assertIs(POLICY_CATALOG["two-step"].factory, create_two_step)
         self.assertIs(POLICY_CATALOG["finite-horizon"].factory, create_finite_horizon)
         self.assertIs(POLICY_CATALOG["combined"].factory, create_combined)
         self.assertIs(
             POLICY_CATALOG["hand-value-aware"].factory, create_hand_value_aware
+        )
+        self.assertIs(
+            POLICY_CATALOG["extended-combined"].factory, create_extended_combined
         )
 
 
@@ -127,6 +166,79 @@ class SpawnSafetyTest(unittest.TestCase):
 
     def test_hand_value_aware_spec_is_process_serializable(self) -> None:
         check_policy_spec_serializable(POLICY_CATALOG["hand-value-aware"])
+
+    def test_extended_combined_spec_is_process_serializable(self) -> None:
+        check_policy_spec_serializable(POLICY_CATALOG["extended-combined"])
+
+
+class CliResolutionTest(unittest.TestCase):
+    def test_extended_combined_vs_combined_resolves_on_serial_path(self) -> None:
+        result = object()
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                return_value=result,
+            ) as serial,
+            mock.patch(
+                "lisjong_arena.single_round_compare.format_summary",
+                return_value="ok",
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            return_code = _run_cli(
+                [
+                    "--candidate",
+                    "extended-combined",
+                    "--baseline",
+                    "combined",
+                    "--seeds",
+                    "10000",
+                    "--workers",
+                    "1",
+                ]
+            )
+
+        self.assertEqual(return_code, 0)
+        (plan,), _ = serial.call_args
+        self.assertIs(plan.candidate, POLICY_CATALOG["extended-combined"])
+        self.assertIs(plan.baseline, POLICY_CATALOG["combined"])
+
+    def test_extended_combined_vs_combined_resolves_on_parallel_path(self) -> None:
+        result = object()
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                side_effect=AssertionError("serial path must not be called"),
+            ) as serial,
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation_parallel",
+                return_value=result,
+            ) as parallel,
+            mock.patch(
+                "lisjong_arena.single_round_compare.format_summary",
+                return_value="ok",
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            return_code = _run_cli(
+                [
+                    "--candidate",
+                    "extended-combined",
+                    "--baseline",
+                    "combined",
+                    "--seeds",
+                    "10000",
+                    "--workers",
+                    "4",
+                ]
+            )
+
+        self.assertEqual(return_code, 0)
+        serial.assert_not_called()
+        (plan,), kwargs = parallel.call_args
+        self.assertIs(plan.candidate, POLICY_CATALOG["extended-combined"])
+        self.assertIs(plan.baseline, POLICY_CATALOG["combined"])
+        self.assertEqual(kwargs["max_workers"], 4)
 
 
 if __name__ == "__main__":

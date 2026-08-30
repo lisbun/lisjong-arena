@@ -599,13 +599,25 @@ python -m lisjong_arena.single_round_compare `
   --progress
 ```
 
-利用可能なPolicy名は次の4つだけです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
+利用可能なPolicy名は次の5つです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
 
 ```text
-two-step        -> TwoStepUkeirePolicy
-finite-horizon  -> FiniteHorizonCompletionPolicy
-combined        -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
-hand-value-aware -> HandValueAwareTwoStepUkeirePolicy
+two-step          -> TwoStepUkeirePolicy
+finite-horizon    -> FiniteHorizonCompletionPolicy
+combined          -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
+hand-value-aware  -> HandValueAwareTwoStepUkeirePolicy
+extended-combined -> GenbutsuDefenseFiniteHorizonHandValueAwarePolicy
+```
+
+current CombinedとExtended Combinedを比較する場合は、freshな100-seed rangeを指定して次の形でGate 1を実行します。seed選定とGate 2の詳細は[`docs/extended-combined-evaluation.md`](docs/extended-combined-evaluation.md)を参照してください。
+
+```powershell
+python -m lisjong_arena.single_round_compare `
+  --candidate extended-combined `
+  --baseline combined `
+  --seeds START:END `
+  --workers 4 `
+  --progress
 ```
 
 Policyの追加はこの明示catalogだけを正本とし、`package.module:ClassName`のようなdynamic import、entry point plugin、YAML/TOML config等は導入していません。
@@ -806,7 +818,7 @@ Windows (PowerShell) では、activateコマンドを次のように読み替え
 
 ### lisjong / lisjong-engine dependency
 
-`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは、`lisjong` PR #132（exact shanten lookup backendのruntime frontier combine高速化）のactual merge commit `6db1ddc0c6fae312801104008bf18660975f687d` です。Arena Issue #90でこのrevisionへexact pin syncしました。
+`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは、`lisjong` Issue #143 / PR #144で`GenbutsuDefenseFiniteHorizonHandValueAwarePolicy`を追加したactual squash merge commit `140d0d6c88b4f1c0c78ca2413b2e93128645cd4c` です。Arena Issue #100でこのrevisionへexact pin syncしました。
 
 `lisjong-engine` にもrelease tagがないため、同じ理由でfull commit SHAへpinしています。現在のpinは、lisjong-engine Issue #46 / PR #47 merge後の `2c5ba3969dc70705303ad8bdd79caefdd674ed5e` です。Phase 4 raw corpusは、このrevisionの`RoundEvidenceCompletion`と`run_hanchan(..., on_round_evidence_complete=...)`を利用します。`lisjong-engine` は `lisjong` にも `lisjong-arena` にも依存せず、Arenaが両者を独立したdependencyとしてconsumeします。
 
