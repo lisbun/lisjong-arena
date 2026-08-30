@@ -554,6 +554,28 @@ optionを持たず、locked TEST partitionはfrozen checkpointをPhase 7へhando
 historical `lisjong_arena.phase05_belief_slice`はdisposable experimentであり、Phase 6 formal feature schemaの
 base class、compatibility contract、canonical tensor layoutへ昇格させない。
 
+### Phase 7 frozen snapshot TEST gate (Issue #107)
+
+Phase 7は、Phase 6でfreezeしたmodelをPhase 5でlockしたTEST partitionへ一度だけ適用する
+Arena-owned offline evaluation boundaryである。training / checkpoint selectionとは独立した
+TEST-only materialization pathを持ち、formal learned TEST featureへ到達する前にdataset identity /
+membership、strict Phase 6 artifact、Phase 5 validation baseline、learned validation readback、exact
+historical Phase 5 TEST baseline recordをすべてfail closedで照合する。rounded prose値はmachine
+referenceにしない。
+
+Phase 6 manifestは`test_partition_evaluated=false`のままimmutableに保つ。TEST exposureのauthorityは、
+exact model + dataset + ordered TEST populationをbindingし、`learned_test_partition_evaluated=true`を
+保持するrepository外のversioned Phase 7 result artifactである。同じdestinationをoverwriteせず、
+generated result / predictionをGitへ保存しない。
+
+primary gateは既存Phase 5/6 expected-count measurement seamのper-tile MAEと、10 hanchanをcanonical
+game orderで扱うpaired cluster bootstrapである。bootstrapはstdlib `random.Random(0)`、20,000
+replicates、各replicate exactly 10回のwith-replacement sampling、selected anchor pool、direct
+order statistics `[499]` / `[19499]`に固定する。row-level seamは既存absolute-error aggregationを
+分解するだけで、formal subgroupはgame、viewer-relative opponent seat、public riichi state、
+training-only true tenpai stateの4 familyだけを保持する。raw conservation excessはreportするが、
+blocking判定は既存tolerance-based semantic violation rateを再利用する。
+
 ### Policy performance profiling(opt-in development diagnostic、Issue #87)
 
 Issue #87で、first-party lisjong Policy(`POLICY_CATALOG`登録分だけ、Mortal等のexternal

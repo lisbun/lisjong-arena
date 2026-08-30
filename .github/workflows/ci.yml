@@ -61,5 +61,5 @@ jobs:
       - name: Verify locked CPU PyTorch
         run: python -c "import torch; assert torch.__version__ == '2.13.0+cpu'; assert not torch.cuda.is_available()"
 
-      - name: Run Phase 6 focused tests
-        run: python -m unittest discover -s tests -p "test_phase6_snapshot*.py" -v
+      - name: Run snapshot ML focused tests
+        run: python -m unittest discover -s tests -p "test_phase?_snapshot*.py" -v
