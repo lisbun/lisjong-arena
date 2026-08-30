@@ -95,6 +95,11 @@ class Phase6SnapshotMlTest(unittest.TestCase):
         self.assertEqual(result.allocation.shape, (2, 4, 34))
         self.assertEqual(parameter_count(model), 134_856)
 
+    def test_peak_process_ram_is_measurable_on_supported_ci_and_windows(self):
+        from lisjong_arena.phase6_snapshot.training import _peak_process_ram_bytes
+
+        self.assertGreater(_peak_process_ram_bytes(), 0)
+
     def test_test_partition_is_rejected_before_model_materialization(self):
         from lisjong_arena.phase6_snapshot.training import build_phase6_example
 

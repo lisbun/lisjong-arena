@@ -372,9 +372,19 @@ def _peak_process_ram_bytes() -> int | None:
 
             counters = _Counters()
             counters.cb = ctypes.sizeof(counters)
-            process = ctypes.windll.kernel32.GetCurrentProcess()
-            if not ctypes.windll.psapi.GetProcessMemoryInfo(
-                process, ctypes.byref(counters), counters.cb
+            get_process = ctypes.windll.kernel32.GetCurrentProcess
+            get_process.restype = wintypes.HANDLE
+            get_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
+            get_memory_info.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(_Counters),
+                wintypes.DWORD,
+            ]
+            get_memory_info.restype = wintypes.BOOL
+            if not get_memory_info(
+                get_process(),
+                ctypes.byref(counters),
+                counters.cb,
             ):
                 return None
             return int(counters.PeakWorkingSetSize)
