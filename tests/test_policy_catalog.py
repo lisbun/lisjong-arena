@@ -125,9 +125,7 @@ class FactoryTest(unittest.TestCase):
 
     def test_extended_combined_factory_returns_extended_combined_policy(self) -> None:
         policy = create_extended_combined()
-        self.assertIsInstance(
-            policy, GenbutsuDefenseFiniteHorizonHandValueAwarePolicy
-        )
+        self.assertIsInstance(policy, GenbutsuDefenseFiniteHorizonHandValueAwarePolicy)
 
     def test_two_step_factory_returns_a_fresh_instance_each_call(self) -> None:
         self.assertIsNot(create_two_step(), create_two_step())
