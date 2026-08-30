@@ -7,7 +7,11 @@ from .derivation import (
     derive_turn_samples_from_game,
 )
 from .extraction import Phase4RawRecorder, extract_phase4_raw_game, phase4_provenance
-from .generation import Phase4GenerationReport, generate_phase4_raw_corpus
+from .generation import (
+    Phase4GenerationReport,
+    generate_phase4_raw_corpus,
+    generate_phase4_raw_corpus_for_seeds,
+)
 from .measurements import RawCorpusMeasurements, measure_raw_corpus
 from .model import (
     FIXED_SEEDS,
@@ -58,6 +62,7 @@ __all__ = [
     "derive_turn_samples_from_game",
     "extract_phase4_raw_game",
     "generate_phase4_raw_corpus",
+    "generate_phase4_raw_corpus_for_seeds",
     "load_raw_corpus",
     "measure_raw_corpus",
     "phase4_provenance",

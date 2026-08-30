@@ -78,10 +78,14 @@ def base_raw_game() -> RawGame:
 
 
 def fixture_corpus() -> RawCorpus:
+    return fixture_corpus_for_seeds(FIXED_SEEDS)
+
+
+def fixture_corpus_for_seeds(seeds: tuple[int, ...]) -> RawCorpus:
     base = base_raw_game()
     return RawCorpus(
         resolved_provenance(),
-        tuple(replace(base, seed=seed) for seed in FIXED_SEEDS),
+        tuple(replace(base, seed=seed) for seed in seeds),
     )
 
 
