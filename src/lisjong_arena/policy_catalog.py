@@ -1,9 +1,9 @@
 """``single_round_compare`` CLIが名前でPolicyを解決するための明示的catalog。
 
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
-``hand-value-aware``の4つだけである。ほかのfirst-party Policyが
-``lisjong.policies``からimport可能でも、consumer requirementが具体的に出るまで
-ここへは追加しない。
+``hand-value-aware`` / ``extended-combined``の5つだけである。ほかのfirst-party
+Policyが``lisjong.policies``からimport可能でも、consumer requirementが具体的に
+出るまでここへは追加しない。
 
 Policy追加の正本はこの明示catalogだけであり、``package.module:ClassName``
 のようなdynamic import、entry point plugin、filesystem discovery、YAML/TOML
@@ -16,6 +16,7 @@ local closureは使わない(``check_policy_spec_serializable()``で検証する
 
 from lisjong.policies import (
     FiniteHorizonCompletionPolicy,
+    GenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
     TwoStepUkeirePolicy,
@@ -40,6 +41,10 @@ def create_hand_value_aware() -> HandValueAwareTwoStepUkeirePolicy:
     return HandValueAwareTwoStepUkeirePolicy()
 
 
+def create_extended_combined() -> GenbutsuDefenseFiniteHorizonHandValueAwarePolicy:
+    return GenbutsuDefenseFiniteHorizonHandValueAwarePolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "two-step": PolicySpec(identity="two-step", factory=create_two_step),
     "finite-horizon": PolicySpec(
@@ -49,6 +54,9 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
     "hand-value-aware": PolicySpec(
         identity="hand-value-aware", factory=create_hand_value_aware
     ),
+    "extended-combined": PolicySpec(
+        identity="extended-combined", factory=create_extended_combined
+    ),
 }
 """登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
 
@@ -56,6 +64,7 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
 __all__ = [
     "POLICY_CATALOG",
     "create_combined",
+    "create_extended_combined",
     "create_finite_horizon",
     "create_hand_value_aware",
     "create_two_step",
