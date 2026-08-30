@@ -8,6 +8,7 @@ from lisjong.belief import SCALE, derive_remaining_tile_inventory, wind_index
 from lisjong.policy_contract import Wind
 
 from lisjong_arena.lisjong_engine.policy_input import build_policy_input
+from lisjong_arena.phase2_training_anchor.training_labels import OpponentIdentity
 from lisjong_arena.phase2_training_anchor.training_sample import TrainingSample
 from lisjong_arena.phase5_belief_dataset.baseline import BaselinePrediction
 from lisjong_arena.phase5_belief_dataset.model import (
@@ -94,6 +95,47 @@ class ExpectedCountMeasurementRecord:
             raise ValueError("one sample must contain 3 x 34 expected-count cells")
         if self.expected_count_hand_count != 3:
             raise ValueError("one sample must contain exactly three opponent hands")
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedCountRowMeasurement:
+    """Canonical expected-count absolute error for one opponent row."""
+
+    example: TurnExampleReference
+    opponent: OpponentIdentity
+    absolute_error_sum: float
+    cell_count: int = 34
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.example, TurnExampleReference):
+            raise TypeError("example must be a TurnExampleReference")
+        if not isinstance(self.opponent, OpponentIdentity):
+            raise TypeError("opponent must be an OpponentIdentity")
+        _nonnegative_finite(self.absolute_error_sum, "absolute_error_sum")
+        if self.cell_count != 34:
+            raise ValueError("one opponent row must contain 34 cells")
+
+    @property
+    def mae(self) -> float:
+        return self.absolute_error_sum / self.cell_count
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedCountRowMetrics:
+    row_count: int
+    cell_count: int
+    absolute_error_sum: float
+
+    def __post_init__(self) -> None:
+        if type(self.row_count) is not int or self.row_count <= 0:
+            raise ValueError("row_count must be a positive int")
+        if self.cell_count != self.row_count * 34:
+            raise ValueError("row metrics must contain 34 cells per row")
+        _nonnegative_finite(self.absolute_error_sum, "absolute_error_sum")
+
+    @property
+    def mae(self) -> float:
+        return self.absolute_error_sum / self.cell_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,20 +296,15 @@ def _measure_expected_count_sample(
         raise ValueError("prediction and dataset example identity differ")
     if sample.anchor.source.game_seed != example.game.game_seed:
         raise ValueError("sample and dataset game identity differ")
+    row_measurements = measure_expected_count_rows(example, sample, prediction)
     rows_by_wind = {row.wind: row for row in prediction.rows}
-    expected_winds = {row.identity.wind for row in sample.labels.expected_counts}
-    if set(rows_by_wind) != expected_winds:
-        raise ValueError("prediction rows and target opponent winds differ")
-    absolute_error = 0.0
+    absolute_error = sum(value.absolute_error_sum for value in row_measurements)
     size_error_sum = 0.0
     size_error_max = 0.0
     summed_by_tile = [0.0] * 34
     for expected_row in sample.labels.expected_counts:
         predicted_row = rows_by_wind[expected_row.identity.wind]
-        for tile_index, (predicted, realized) in enumerate(
-            zip(predicted_row.values, expected_row.counts, strict=True)
-        ):
-            absolute_error += abs(predicted - realized)
+        for tile_index, predicted in enumerate(predicted_row.values):
             summed_by_tile[tile_index] += predicted
         size_error = abs(sum(predicted_row.values) - predicted_row.concealed_slot_count)
         size_error_sum += size_error
@@ -291,6 +328,49 @@ def _measure_expected_count_sample(
         concealed_size_max_error=size_error_max,
         conservation_violated=conservation_violated,
         conservation_total_excess=conservation_excess,
+    )
+
+
+def measure_expected_count_rows(
+    example: TurnExampleReference,
+    sample: TrainingSample,
+    prediction: ExpectedCountPrediction,
+) -> tuple[ExpectedCountRowMeasurement, ...]:
+    """Expose the existing per-cell absolute errors without changing aggregation."""
+    if prediction.example != example:
+        raise ValueError("prediction and dataset example identity differ")
+    if sample.anchor.source.game_seed != example.game.game_seed:
+        raise ValueError("sample and dataset game identity differ")
+    rows_by_wind = {row.wind: row for row in prediction.rows}
+    expected_winds = {row.identity.wind for row in sample.labels.expected_counts}
+    if set(rows_by_wind) != expected_winds:
+        raise ValueError("prediction rows and target opponent winds differ")
+    return tuple(
+        ExpectedCountRowMeasurement(
+            example,
+            expected_row.identity,
+            sum(
+                abs(predicted - realized)
+                for predicted, realized in zip(
+                    rows_by_wind[expected_row.identity.wind].values,
+                    expected_row.counts,
+                    strict=True,
+                )
+            ),
+        )
+        for expected_row in sample.labels.expected_counts
+    )
+
+
+def aggregate_expected_count_rows(
+    rows: tuple[ExpectedCountRowMeasurement, ...],
+) -> ExpectedCountRowMetrics:
+    if not rows:
+        raise ValueError("row metric aggregation requires at least one row")
+    return ExpectedCountRowMetrics(
+        row_count=len(rows),
+        cell_count=sum(value.cell_count for value in rows),
+        absolute_error_sum=sum(value.absolute_error_sum for value in rows),
     )
 
 
@@ -592,14 +672,18 @@ __all__ = [
     "ExpectedCountPartitionMetrics",
     "ExpectedCountPrediction",
     "ExpectedCountPredictionRow",
+    "ExpectedCountRowMeasurement",
+    "ExpectedCountRowMetrics",
     "ExpectedCountReport",
     "GameBaselineMetrics",
     "PartitionBaselineMetrics",
     "RedFiveMetrics",
     "SampleMeasurementRecord",
     "baseline_report_value",
+    "aggregate_expected_count_rows",
     "evaluate_baseline_predictions",
     "evaluate_expected_count_predictions",
     "expected_count_metrics_value",
     "metrics_value",
+    "measure_expected_count_rows",
 ]

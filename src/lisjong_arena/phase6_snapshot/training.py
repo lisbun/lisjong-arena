@@ -155,13 +155,11 @@ def _wind_from_engine(engine_wind) -> Wind:
     return next(wind for wind in Wind if wind.value == engine_wind.value)
 
 
-def build_phase6_example(
+def materialize_snapshot_example(
     example: TurnExampleReference,
     sample: TrainingSample,
 ) -> Phase6Example:
-    """Materialize one example; the feature builder receives only the anchor."""
-    if example.partition is DatasetPartition.TEST:
-        raise ValueError("Phase 6 learned-model materialization rejects TEST")
+    """Pure partition-neutral materialization; features receive only the anchor."""
     feature = build_phase6_snapshot_feature(sample.anchor)
     opponent_winds = tuple(_wind_from_engine(value.wind) for value in feature.opponents)
     rows_by_wind = {
@@ -213,6 +211,16 @@ def build_phase6_example(
             response_history_counts=feature.response_history_counts,
         ),
     )
+
+
+def build_phase6_example(
+    example: TurnExampleReference,
+    sample: TrainingSample,
+) -> Phase6Example:
+    """Guarded Phase 6 TRAIN/VALIDATION wrapper."""
+    if example.partition is DatasetPartition.TEST:
+        raise ValueError("Phase 6 learned-model materialization rejects TEST")
+    return materialize_snapshot_example(example, sample)
 
 
 def aggregate_feature_coverage(
@@ -274,7 +282,7 @@ def prepare_train_validation_data(
     return TrainValidationData(tuple(train), tuple(validation))
 
 
-def _baseline_expected_prediction(
+def expected_count_baseline_prediction(
     reference: TurnExampleReference,
     sample: TrainingSample,
 ) -> ExpectedCountPrediction:
@@ -308,7 +316,8 @@ def verify_phase5_validation_compatibility(
     examples = tuple(value[0] for value in selected)
     selected_samples = tuple(value[1] for value in selected)
     predictions = tuple(
-        _baseline_expected_prediction(example, sample) for example, sample in selected
+        expected_count_baseline_prediction(example, sample)
+        for example, sample in selected
     )
     report = evaluate_expected_count_predictions(
         dataset.dataset_identity, examples, selected_samples, predictions
@@ -415,6 +424,31 @@ def _predict(
     if offset != len(examples):
         raise RuntimeError("inference output count differs from examples")
     return tuple(predictions), maximum_residual
+
+
+def predict_snapshot_examples(
+    model,
+    examples: tuple[Phase6Example, ...],
+    *,
+    batch_size: int = 256,
+) -> tuple[tuple[ExpectedCountPrediction, ...], float]:
+    """Run deterministic CPU eval/no-grad inference without training orchestration."""
+    if not examples:
+        raise ValueError("snapshot inference requires at least one example")
+    if type(batch_size) is not int or batch_size <= 0:
+        raise ValueError("batch_size must be a positive int")
+    import torch
+
+    model.to("cpu")
+    dataset = _tensor_partition(examples)
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+        drop_last=False,
+    )
+    return _predict(model, loader, examples)
 
 
 def _peak_process_ram_bytes() -> int | None:
