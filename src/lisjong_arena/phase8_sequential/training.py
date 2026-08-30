@@ -121,18 +121,25 @@ def _chunk_ranges(length: int, policy: BpttPolicy):
     return tuple((start, min(start + size, length)) for start in range(0, length, size))
 
 
-def _train_one_sequence(model, candidate, sequence, policy, optimizer):
+def _train_one_sequence(
+    model,
+    candidate,
+    sequence,
+    policy,
+    *,
+    objective_cell_count: int,
+):
     import torch
 
+    if type(objective_cell_count) is not int or objective_cell_count <= 0:
+        raise ValueError("objective_cell_count must be a positive int")
     rows_by_wind = None
     latent = None
     squared_error_sum = 0.0
     cell_count = 0
     maximum_residual = 0.0
     for start, stop in _chunk_ranges(len(sequence.steps), policy):
-        optimizer.zero_grad(set_to_none=True)
         chunk_squared_error = None
-        chunk_cells = 0
         for step in sequence.steps[start:stop]:
             if rows_by_wind is None:
                 _value, rows_by_wind = _initial_tensor_rows(step)
@@ -158,7 +165,6 @@ def _train_one_sequence(model, candidate, sequence, policy, optimizer):
                 if chunk_squared_error is None
                 else chunk_squared_error + step_squared_error
             )
-            chunk_cells += target.numel()
             squared_error_sum += float(step_squared_error.detach())
             cell_count += target.numel()
             maximum_residual = max(maximum_residual, constrained.maximum_residual)
@@ -166,17 +172,53 @@ def _train_one_sequence(model, candidate, sequence, policy, optimizer):
                 wind: prediction[0, index, :]
                 for index, wind in enumerate(step.opponent_winds)
             }
-        loss = chunk_squared_error / chunk_cells
+        loss = chunk_squared_error / objective_cell_count
         loss.backward()
-        if any(
-            parameter.grad is not None
-            and not bool(torch.isfinite(parameter.grad).all())
-            for parameter in model.parameters()
-        ):
-            raise RuntimeError("training produced a non-finite gradient")
-        optimizer.step()
         if policy.mode is BpttMode.TRUNCATED and stop < len(sequence.steps):
             rows_by_wind, latent = detach_recurrent_state(rows_by_wind, latent)
+    return squared_error_sum, cell_count, maximum_residual
+
+
+def _train_pooled_epoch(
+    model,
+    candidate: Candidate,
+    sequences: tuple[Phase8Sequence, ...],
+    policy: BpttPolicy,
+    optimizer,
+    order: tuple[int, ...] | list[int],
+) -> tuple[float, int, float]:
+    """Apply one Adam update for the pooled expected-count cell objective."""
+    import torch
+
+    expected_order = set(range(len(sequences)))
+    if len(order) != len(sequences) or set(order) != expected_order:
+        raise ValueError("training order must contain every sequence exactly once")
+    objective_cell_count = sum(len(sequence.steps) * 3 * 34 for sequence in sequences)
+    optimizer.zero_grad(set_to_none=True)
+    squared_error_sum = 0.0
+    cell_count = 0
+    maximum_residual = 0.0
+    for index in order:
+        sequence_error, sequence_cells, sequence_residual = _train_one_sequence(
+            model,
+            candidate,
+            sequences[index],
+            policy,
+            objective_cell_count=objective_cell_count,
+        )
+        squared_error_sum += sequence_error
+        cell_count += sequence_cells
+        maximum_residual = max(maximum_residual, sequence_residual)
+    if cell_count != objective_cell_count:
+        raise RuntimeError(
+            "TRAIN objective cell count differs from materialized targets"
+        )
+    if any(
+        parameter.grad is not None and not bool(torch.isfinite(parameter.grad).all())
+        for parameter in model.parameters()
+    ):
+        raise RuntimeError("training produced a non-finite gradient")
+    optimizer.step()
     return squared_error_sum, cell_count, maximum_residual
 
 
@@ -212,19 +254,15 @@ def train_candidate(
     started = time.perf_counter()
     for epoch in range(1, config.max_epochs + 1):
         model.train()
-        squared_error_sum = 0.0
-        cell_count = 0
         order = torch.randperm(len(train_sequences), generator=generator).tolist()
-        for index in order:
-            sequence_error, sequence_cells, _residual = _train_one_sequence(
-                model,
-                candidate,
-                train_sequences[index],
-                bptt_policy,
-                optimizer,
-            )
-            squared_error_sum += sequence_error
-            cell_count += sequence_cells
+        squared_error_sum, cell_count, _residual = _train_pooled_epoch(
+            model,
+            candidate,
+            train_sequences,
+            bptt_policy,
+            optimizer,
+            order,
+        )
         validation_rollout = self_rollout(model, candidate, validation_sequences)
         validation_metrics = _metrics(
             dataset_identity,

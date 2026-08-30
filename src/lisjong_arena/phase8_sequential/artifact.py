@@ -320,6 +320,8 @@ def validate_manifest(value: object) -> dict[str, object]:
         "workers": 0,
         "deterministic": True,
         "torch_threads": 1,
+        "objective": "pooled-expected-count-cell-weighted-mse",
+        "optimizer_update": "one-pooled-training-gradient-step-per-epoch",
         "checkpoint_selection": "strictly-lower-pooled-self-rollout-validation-mae",
         "checkpoint_tie_abs_tol": 1e-12,
     }:
@@ -669,6 +671,8 @@ def manifest_without_weights(
             "workers": config.workers,
             "deterministic": config.deterministic_algorithms,
             "torch_threads": config.torch_threads,
+            "objective": "pooled-expected-count-cell-weighted-mse",
+            "optimizer_update": "one-pooled-training-gradient-step-per-epoch",
             "checkpoint_selection": "strictly-lower-pooled-self-rollout-validation-mae",
             "checkpoint_tie_abs_tol": 1e-12,
         },

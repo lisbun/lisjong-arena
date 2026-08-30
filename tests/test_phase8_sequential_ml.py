@@ -235,6 +235,98 @@ class Phase8SequentialMlTest(unittest.TestCase):
         self.assertFalse(detached_latent.requires_grad)
         self.assertIsNone(detached_latent.grad_fn)
 
+    def test_training_weights_every_cell_not_each_sequence_or_chunk(self):
+        from lisjong_arena.phase8_sequential.training import _train_pooled_epoch
+
+        winds = tuple(Wind)[:3]
+
+        def step(target_value: float):
+            return SimpleNamespace(
+                opponent_winds=winds,
+                target=tuple((target_value,) * 34 for _wind in winds),
+            )
+
+        class ScalarModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.value = torch.nn.Parameter(torch.tensor(0.0))
+
+            def forward(self, *arguments):
+                constrained = SimpleNamespace(
+                    allocation=self.value.expand(1, 4, 34),
+                    maximum_residual=0.0,
+                )
+                if len(arguments) == 4:
+                    return constrained
+                return constrained, arguments[2]
+
+        class CountingSgd(torch.optim.SGD):
+            def __init__(self, parameters) -> None:
+                super().__init__(parameters, lr=1.0)
+                self.step_count = 0
+
+            def step(self, closure=None):
+                self.step_count += 1
+                return super().step(closure)
+
+        def train(candidate, sequences, policy):
+            model = ScalarModel()
+            optimizer = CountingSgd(model.parameters())
+            squared_error, cells, _residual = _train_pooled_epoch(
+                model,
+                candidate,
+                sequences,
+                policy,
+                optimizer,
+                list(range(len(sequences))),
+            )
+            return model.value.item(), optimizer.step_count, squared_error / cells
+
+        initial_rows = {wind: torch.zeros(34, dtype=torch.float64) for wind in winds}
+        tensor_step = (
+            torch.zeros((1, 919), dtype=torch.float32),
+            torch.zeros((1, 4), dtype=torch.float64),
+            torch.zeros((1, 34), dtype=torch.float64),
+        )
+        with (
+            patch(
+                "lisjong_arena.phase8_sequential.training._initial_tensor_rows",
+                side_effect=lambda _step: (None, dict(initial_rows)),
+            ),
+            patch(
+                "lisjong_arena.phase8_sequential.training._remap_tensor_rows",
+                return_value=torch.zeros((1, 102), dtype=torch.float32),
+            ),
+            patch(
+                "lisjong_arena.phase8_sequential.training._step_tensors",
+                return_value=tensor_step,
+            ),
+        ):
+            unequal_sequences = (
+                SimpleNamespace(steps=(step(1.0),)),
+                SimpleNamespace(steps=(step(0.0),) * 3),
+            )
+            full = BpttPolicy(BpttMode.FULL_SEQUENCE, None)
+            for candidate in Candidate:
+                value, update_count, reported_mse = train(
+                    candidate, unequal_sequences, full
+                )
+                self.assertAlmostEqual(value, 0.5, delta=1e-6)
+                self.assertEqual(update_count, 1)
+                self.assertAlmostEqual(reported_mse, 0.25)
+
+            truncated_sequence = (
+                SimpleNamespace(steps=(step(0.0),) * 32 + (step(1.0),)),
+            )
+            truncated = BpttPolicy(BpttMode.TRUNCATED, 32)
+            for candidate in Candidate:
+                value, update_count, reported_mse = train(
+                    candidate, truncated_sequence, truncated
+                )
+                self.assertAlmostEqual(value, 2.0 / 33.0, delta=1e-6)
+                self.assertEqual(update_count, 1)
+                self.assertAlmostEqual(reported_mse, 1.0 / 33.0)
+
     def test_one_epoch_training_is_deterministic_and_validation_does_not_update(self):
         from lisjong_arena.phase8_sequential.model import create_model
         from lisjong_arena.phase8_sequential.rollout import self_rollout
@@ -458,6 +550,8 @@ class Phase8SequentialMlTest(unittest.TestCase):
                 "workers": 0,
                 "deterministic": True,
                 "torch_threads": 1,
+                "objective": "pooled-expected-count-cell-weighted-mse",
+                "optimizer_update": "one-pooled-training-gradient-step-per-epoch",
                 "checkpoint_selection": "strictly-lower-pooled-self-rollout-validation-mae",
                 "checkpoint_tie_abs_tol": 1e-12,
             },
