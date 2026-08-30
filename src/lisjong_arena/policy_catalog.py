@@ -1,9 +1,9 @@
 """``single_round_compare`` CLIが名前でPolicyを解決するための明示的catalog。
 
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
-``hand-value-aware`` / ``extended-combined``の5つだけである。ほかのfirst-party
-Policyが``lisjong.policies``からimport可能でも、consumer requirementが具体的に
-出るまでここへは追加しない。
+``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call``の6つだけである。
+ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、consumer
+requirementが具体的に出るまでここへは追加しない。
 
 Policy追加の正本はこの明示catalogだけであり、``package.module:ClassName``
 のようなdynamic import、entry point plugin、filesystem discovery、YAML/TOML
@@ -20,6 +20,7 @@ from lisjong.policies import (
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
     TwoStepUkeirePolicy,
+    YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
 
 from lisjong_arena.model import PolicySpec
@@ -45,6 +46,10 @@ def create_extended_combined() -> GenbutsuDefenseFiniteHorizonHandValueAwarePoli
     return GenbutsuDefenseFiniteHorizonHandValueAwarePolicy()
 
 
+def create_yakuhai_call() -> YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy:
+    return YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "two-step": PolicySpec(identity="two-step", factory=create_two_step),
     "finite-horizon": PolicySpec(
@@ -57,6 +62,7 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
     "extended-combined": PolicySpec(
         identity="extended-combined", factory=create_extended_combined
     ),
+    "yakuhai-call": PolicySpec(identity="yakuhai-call", factory=create_yakuhai_call),
 }
 """登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
 
@@ -68,4 +74,5 @@ __all__ = [
     "create_finite_horizon",
     "create_hand_value_aware",
     "create_two_step",
+    "create_yakuhai_call",
 ]
