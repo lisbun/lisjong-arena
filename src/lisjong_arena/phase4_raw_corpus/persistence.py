@@ -1,4 +1,4 @@
-"""Two-shard gzip persistence and logical corpus identity for Phase 4."""
+"""Deterministic sharded gzip persistence and logical Phase 4 identity."""
 
 import gzip
 import hashlib

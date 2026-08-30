@@ -59,16 +59,37 @@ class Phase4GenerationReport:
         return value / self.readback_seconds
 
 
-def generate_phase4_raw_corpus(destination: str | Path) -> Phase4GenerationReport:
-    """Run the fixed 1000..1007 protocol; caller cannot vary its identity."""
+def _normalized_seeds(seeds: object) -> tuple[int, ...]:
+    if not isinstance(seeds, tuple):
+        raise TypeError("seeds must be a tuple of integers")
+    if not seeds:
+        raise ValueError("seeds must be non-empty")
+    if any(type(seed) is not int for seed in seeds):
+        raise TypeError("seeds must contain only integers")
+    if seeds != tuple(sorted(set(seeds))):
+        raise ValueError("seeds must be unique and ascending")
+    return seeds
+
+
+def generate_phase4_raw_corpus_for_seeds(
+    destination: str | Path, seeds: tuple[int, ...]
+) -> Phase4GenerationReport:
+    """Run the first-party Phase 4 protocol for an explicit ordered seed set.
+
+    Only the seed population varies.  The source remains
+    ``TwoStepUkeirePolicy x4`` under ``RuleSet.default()`` and the existing raw
+    schema, provenance checks, persistence, and Phase 2 equality validation are
+    unchanged.
+    """
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(f"destination already exists: {destination}")
+    seeds = _normalized_seeds(seeds)
     destination.parent.mkdir(parents=True, exist_ok=True)
     rules = RuleSet.default()
     provenance = phase4_provenance(rules)
     started = perf_counter()
-    games = tuple(extract_phase4_raw_game(seed, rules=rules) for seed in FIXED_SEEDS)
+    games = tuple(extract_phase4_raw_game(seed, rules=rules) for seed in seeds)
     generation_seconds = perf_counter() - started
     corpus = RawCorpus(provenance, games)
     temporary_destination = Path(
@@ -89,7 +110,7 @@ def generate_phase4_raw_corpus(destination: str | Path) -> Phase4GenerationRepor
         derivation_seconds = perf_counter() - derive_started
         direct = tuple(
             sample
-            for seed in FIXED_SEEDS
+            for seed in seeds
             for sample in extract_phase2_game(seed, rules=rules).samples
         )
         if derived != direct:
@@ -112,4 +133,13 @@ def generate_phase4_raw_corpus(destination: str | Path) -> Phase4GenerationRepor
             shutil.rmtree(temporary_destination)
 
 
-__all__ = ["Phase4GenerationReport", "generate_phase4_raw_corpus"]
+def generate_phase4_raw_corpus(destination: str | Path) -> Phase4GenerationReport:
+    """Run the fixed Issue #85 acceptance protocol for seeds 1000..1007."""
+    return generate_phase4_raw_corpus_for_seeds(destination, FIXED_SEEDS)
+
+
+__all__ = [
+    "Phase4GenerationReport",
+    "generate_phase4_raw_corpus",
+    "generate_phase4_raw_corpus_for_seeds",
+]

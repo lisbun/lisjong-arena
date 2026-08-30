@@ -464,7 +464,11 @@ checkpointのplayer-safe public meld / round contextを読む。TURN checkpoint�
 `TrainingSample`はcurrent Phase 2 extractionとsemantic value equalityを要求する。
 
 persistenceはschema version 1のdeterministic UTF-8 JSON logical contentを、seed昇順で
-4 gamesずつ2つのstdlib gzip shardへ保存する。shard identityはuncompressed canonical JSONの
+4 gamesずつstdlib gzip shardへ保存する。固定acceptance protocolの1000..1007は従来どおり
+2 shardになる一方、同じfirst-party protocolを任意のnon-empty / unique / ascending seed集合へ
+適用できる。generalizeしたのはseed populationだけであり、`TwoStepUkeirePolicy x4`、
+`RuleSet.default()`、schema、generation protocol、provenance enforcementは変更しない。
+shard identityはuncompressed canonical JSONの
 SHA-256であり、gzip bytesはidentityではない。corpus identityもschema / protocol / source / rules /
 resolved revisions / Phase 2 semantics / ordered seeds / ordered shard digestだけをhashし、path、時刻、
 gzip metadataを含めない。shardをstagingへ書いてstrict readbackした後にmanifestを最後に置き、
@@ -473,7 +477,46 @@ digest・byte count不一致、missing / extra shard、unresolved provenanceは�
 repositoryへcommitしない。
 
 Phase 4はPhase 5 dataset builder、split、tensor schema、model、estimator、Policy improvementを
-実装しない。raw corpusのgame groupingはfuture splitのatomic unitとして保持するだけである。
+所有しない。raw corpusのgame groupingはdownstream splitのatomic unitとして保持する。
+
+### Phase 5 versioned HandBelief dataset and baseline (Issue #96)
+
+Phase 5はArena-owned offline evaluation boundaryとして、Phase 4 raw corpusから
+TURN checkpointだけを選び、既存Phase 2 `TrainingSample`へ決定論的に再解決できる
+compact dataset manifestを構築する。
+
+```text
+Phase 4 RawCorpus
+    -> versioned derived HandBelief dataset
+    -> locked source-aware / game-atomic split
+    -> direct lisjong conditional-uniform baseline report
+```
+
+canonical logical unitは1 TURN anchor + 3 opponent target rowsである。derived artifactは
+raw corpus identity、source / rule / revision provenance、builder / split semantics、ordered
+game identity、raw round / checkpointへ戻るordered example reference、partition、sample count、
+target availability summaryだけを保持する。`SeatObservation`、full evidence prefix、training
+labels、concealed truthをrowごとに複製せず、complete history / truthのauthorityはPhase 4
+`RawCorpus`に残す。model-specific tensor formatもcanonical化しない。
+
+split assignmentはsource identity + game identityだけから決める。同じgameのall viewers / rounds /
+TURN anchors / opponent rows / tile cellsは同じpartitionへ置き、labels、truth、prediction、metric、
+structural-wait availabilityをsplit入力にしない。quantitative protocolはtrain 100..139、validation
+140..149、test 150..159に固定し、1000..1007 acceptance populationはcontract検証用test partitionと
+して閉じた別identityを持つ。future human / Mortal source向けplugin registryは作らない。
+
+baseline inputはfrozen player-safe anchorの`SeatObservation`を既存
+`lisjong_arena.lisjong_engine.policy_input.build_policy_input()`で変換し、public meld数だけから
+opponent concealed slotsを`13 - 3 * len(public_melds)`で導出する。self windは0とし、pinned
+`lisjong.belief.estimate_conditional_uniform_hand_belief()`を直接呼ぶ。true concealed size、hidden
+wall、future evidence、label availabilityは入力に使わない。expected-count / physical consistencyと
+red-five metricsはoffline truthとの比較で測り、structural waitはavailability / all-zero / non-zero
+coverageだけを記録してpredictionを捏造しない。per-sample recordはsource、game、partitionを保持し、
+partition / game aggregateを再計算できる。
+
+Phase 5のnon-goalはlearned / sequential estimator、previous HandBelief / latent state、ML framework、
+generic dataset / source plugin、Mortal / human log ingestion、structural-wait predictor、Decision consumer、
+game-strength evaluation、AWS / scale infrastructureである。
 
 ### Policy performance profiling(opt-in development diagnostic、Issue #87)
 

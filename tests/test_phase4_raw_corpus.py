@@ -16,6 +16,7 @@ from _phase4_raw_corpus_fixtures import (
     base_raw_game,
     direct_phase2_sample,
     fixture_corpus,
+    fixture_corpus_for_seeds,
 )
 from lisjong_engine.observation import ObservationDecisionKind
 from lisjong_engine.public_state import (
@@ -70,7 +71,10 @@ from lisjong_arena.phase4_raw_corpus.extraction import (
     Phase4RawRecorder,
     _RecordingSelector,
 )
-from lisjong_arena.phase4_raw_corpus.generation import generate_phase4_raw_corpus
+from lisjong_arena.phase4_raw_corpus.generation import (
+    generate_phase4_raw_corpus,
+    generate_phase4_raw_corpus_for_seeds,
+)
 from lisjong_arena.phase4_raw_corpus.measurements import measure_raw_corpus
 from lisjong_arena.phase4_raw_corpus.model import (
     FIXED_SEEDS,
@@ -101,10 +105,19 @@ class RawValueAndDerivationTests(unittest.TestCase):
         self.assertEqual(FIXED_SEEDS, tuple(range(1000, 1008)))
         self.assertEqual(MAX_GAMES_PER_SHARD, 4)
 
-    def test_corpus_rejects_missing_reordered_and_duplicate_games(self):
+    def test_corpus_accepts_arbitrary_nonempty_ascending_unique_seeds(self):
         corpus = fixture_corpus()
-        with self.assertRaises(ValueError):
-            RawCorpus(corpus.provenance, corpus.games[:-1])
+        self.assertEqual(
+            tuple(
+                game.seed
+                for game in RawCorpus(corpus.provenance, corpus.games[:-1]).games
+            ),
+            FIXED_SEEDS[:-1],
+        )
+        arbitrary = fixture_corpus_for_seeds((7, 11, 42))
+        self.assertEqual(tuple(game.seed for game in arbitrary.games), (7, 11, 42))
+        with self.assertRaisesRegex(ValueError, "non-empty"):
+            RawCorpus(corpus.provenance, ())
         with self.assertRaises(ValueError):
             RawCorpus(corpus.provenance, tuple(reversed(corpus.games)))
         with self.assertRaises(ValueError):
@@ -334,6 +347,21 @@ class CodecAndPersistenceTests(unittest.TestCase):
                     shard.uncompressed_bytes,
                 )
 
+    def test_arbitrary_seed_corpus_persists_and_reads_back_deterministically(self):
+        corpus = fixture_corpus_for_seeds((7, 11, 42, 60, 99))
+        with tempfile.TemporaryDirectory() as directory:
+            first = save_raw_corpus(corpus, Path(directory) / "first")
+            second = save_raw_corpus(corpus, Path(directory) / "second")
+            loaded = load_raw_corpus(Path(directory) / "first")
+        self.assertEqual(loaded.corpus, corpus)
+        self.assertEqual(
+            tuple(game.seed for game in loaded.corpus.games), (7, 11, 42, 60, 99)
+        )
+        self.assertEqual(
+            tuple(shard.seeds for shard in loaded.shards), ((7, 11, 42, 60), (99,))
+        )
+        self.assertEqual(first.corpus_identity, second.corpus_identity)
+
     def test_same_logical_value_has_same_digest_and_path_independent_identity(self):
         corpus = fixture_corpus()
         with tempfile.TemporaryDirectory() as directory:
@@ -518,6 +546,41 @@ class CodecAndPersistenceTests(unittest.TestCase):
             tuple(inspect.signature(generate_phase4_raw_corpus).parameters),
             ("destination",),
         )
+
+    def test_seed_generalized_generator_changes_only_the_population(self):
+        seeds = (7, 11, 42, 60, 99)
+        corpus = fixture_corpus_for_seeds(seeds)
+        games_by_seed = {game.seed: game for game in corpus.games}
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "lisjong_arena.phase4_raw_corpus.generation.phase4_provenance",
+                return_value=corpus.provenance,
+            ),
+            patch(
+                "lisjong_arena.phase4_raw_corpus.generation.extract_phase4_raw_game",
+                side_effect=lambda seed, rules: games_by_seed[seed],
+            ) as extractor,
+            patch(
+                "lisjong_arena.phase4_raw_corpus.generation.extract_phase2_game",
+                side_effect=lambda seed, rules: SimpleNamespace(
+                    samples=derive_turn_samples_from_game(
+                        games_by_seed[seed], corpus.provenance
+                    )
+                ),
+            ),
+        ):
+            report = generate_phase4_raw_corpus_for_seeds(
+                Path(directory) / "corpus", seeds
+            )
+        self.assertEqual(
+            tuple(call.args[0] for call in extractor.call_args_list), seeds
+        )
+        self.assertEqual(
+            tuple(game.seed for game in report.persisted.corpus.games), seeds
+        )
+        self.assertEqual(len(report.persisted.shards), 2)
+        self.assertTrue(report.phase2_equality_verified)
 
     def test_phase2_mismatch_does_not_publish_or_leave_temporary_artifact(self):
         corpus = fixture_corpus()

@@ -234,11 +234,11 @@ class RawCorpus:
         games = tuple(self.games)
         if any(not isinstance(value, RawGame) for value in games):
             raise TypeError("games must contain only RawGame")
+        if not games:
+            raise ValueError("corpus games must be non-empty")
         seeds = tuple(game.seed for game in games)
         if len(set(seeds)) != len(seeds):
             raise ValueError("game seeds must be unique")
         if seeds != tuple(sorted(seeds)):
             raise ValueError("games must be ordered by ascending seed")
-        if seeds != FIXED_SEEDS:
-            raise ValueError("corpus games must be exactly the fixed seeds 1000..1007")
         object.__setattr__(self, "games", games)
