@@ -4,10 +4,13 @@ Policyのbehaviorそのものは検証しない。catalogが``two-step`` /
 ``finite-horizon`` / ``combined`` / ``hand-value-aware`` /
 ``extended-combined``の5つであること、catalog keyと``PolicySpec.identity``が
 一致すること、factoryがtop-levelでfresh instanceを生成しspawn-safeであること、
-CLIが登録名を受理することだけを固定する。
+CLIが登録名を既存serial / parallel evaluation pathへ解決することだけを固定する。
 """
 
+import contextlib
+import io
 import unittest
+from unittest import mock
 
 from lisjong.policies import (
     FiniteHorizonCompletionPolicy,
@@ -27,7 +30,7 @@ from lisjong_arena.policy_catalog import (
     create_hand_value_aware,
     create_two_step,
 )
-from lisjong_arena.single_round_compare import build_arg_parser
+from lisjong_arena.single_round_compare import _run_cli, build_arg_parser
 from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
@@ -168,6 +171,76 @@ class SpawnSafetyTest(unittest.TestCase):
 
     def test_extended_combined_spec_is_process_serializable(self) -> None:
         check_policy_spec_serializable(POLICY_CATALOG["extended-combined"])
+
+
+class CliResolutionTest(unittest.TestCase):
+    def test_extended_combined_vs_combined_resolves_on_serial_path(self) -> None:
+        result = object()
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                return_value=result,
+            ) as serial,
+            mock.patch(
+                "lisjong_arena.single_round_compare.format_summary",
+                return_value="ok",
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            return_code = _run_cli(
+                [
+                    "--candidate",
+                    "extended-combined",
+                    "--baseline",
+                    "combined",
+                    "--seeds",
+                    "10000",
+                    "--workers",
+                    "1",
+                ]
+            )
+
+        self.assertEqual(return_code, 0)
+        (plan,), _ = serial.call_args
+        self.assertIs(plan.candidate, POLICY_CATALOG["extended-combined"])
+        self.assertIs(plan.baseline, POLICY_CATALOG["combined"])
+
+    def test_extended_combined_vs_combined_resolves_on_parallel_path(self) -> None:
+        result = object()
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                side_effect=AssertionError("serial path must not be called"),
+            ) as serial,
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation_parallel",
+                return_value=result,
+            ) as parallel,
+            mock.patch(
+                "lisjong_arena.single_round_compare.format_summary",
+                return_value="ok",
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            return_code = _run_cli(
+                [
+                    "--candidate",
+                    "extended-combined",
+                    "--baseline",
+                    "combined",
+                    "--seeds",
+                    "10000",
+                    "--workers",
+                    "4",
+                ]
+            )
+
+        self.assertEqual(return_code, 0)
+        serial.assert_not_called()
+        (plan,), kwargs = parallel.call_args
+        self.assertIs(plan.candidate, POLICY_CATALOG["extended-combined"])
+        self.assertIs(plan.baseline, POLICY_CATALOG["combined"])
+        self.assertEqual(kwargs["max_workers"], 4)
 
 
 if __name__ == "__main__":
