@@ -46,7 +46,8 @@ def create_extended_combined() -> GenbutsuDefenseFiniteHorizonHandValueAwarePoli
     return GenbutsuDefenseFiniteHorizonHandValueAwarePolicy()
 
 
-def create_yakuhai_call() -> YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy:
+def create_yakuhai_call(
+) -> YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy:
     return YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy()
 
 
