@@ -1,4 +1,4 @@
-"""Mortal 1体 + TwoStep Policy 3体のfixed-seed single-round評価。"""
+"""Mortal 1体 + selected baseline Policy 3体のfixed-seed single-round評価。"""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class MortalSingleRoundEvaluationError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class MortalSingleRoundEvaluationPlan:
-    """Mortal-vs-Three-TwoStepの4 seat rotation条件。"""
+    """Mortal 1席 + selected baseline Policy 3席の4 seat rotation条件。"""
 
     baseline: PolicySpec
     seeds: tuple[int, ...]
@@ -46,8 +46,6 @@ class MortalSingleRoundEvaluationPlan:
     def __post_init__(self) -> None:
         if not isinstance(self.baseline, PolicySpec):
             raise TypeError("baseline must be a PolicySpec")
-        if self.baseline.identity != "two-step":
-            raise ValueError("Mortal baseline must be the two-step Policy")
         if not isinstance(self.mortal_config, MortalDockerConfig):
             raise TypeError("mortal_config must be a MortalDockerConfig")
         if type(self.max_steps) is not int:

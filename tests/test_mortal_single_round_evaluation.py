@@ -115,6 +115,30 @@ class MortalSingleRoundEvaluationTest(unittest.TestCase):
         self.assertEqual(result.candidate_metrics.mean_candidate_score, 40000.0)
         self.assertEqual(progress, [(index, 8) for index in range(1, 9)])
 
+    def test_accepts_two_step_policy_spec(self) -> None:
+        plan = self.plan((0,))
+
+        self.assertIs(plan.baseline, self.baseline)
+
+    def test_accepts_non_two_step_policy_spec(self) -> None:
+        baseline = PolicySpec(identity="yakuhai-call", factory=_Policy)
+
+        plan = MortalSingleRoundEvaluationPlan(
+            baseline=baseline,
+            seeds=(0,),
+            mortal_config=self.config,
+        )
+
+        self.assertIs(plan.baseline, baseline)
+
+    def test_rejects_non_policy_spec_baseline(self) -> None:
+        with self.assertRaisesRegex(TypeError, "baseline must be a PolicySpec"):
+            MortalSingleRoundEvaluationPlan(
+                baseline=object(),
+                seeds=(0,),
+                mortal_config=self.config,
+            )
+
     def test_one_game_failure_reports_seed_rotation_and_returns_no_partial_result(
         self,
     ) -> None:
@@ -152,14 +176,6 @@ class MortalSingleRoundEvaluationTest(unittest.TestCase):
             run_mortal_single_round_evaluation(self.plan((9,)))
 
         self.assertEqual((raised.exception.seed, raised.exception.rotation), (9, 0))
-
-    def test_rejects_non_two_step_baseline(self) -> None:
-        with self.assertRaisesRegex(ValueError, "two-step"):
-            MortalSingleRoundEvaluationPlan(
-                baseline=PolicySpec(identity="finite-horizon", factory=_Policy),
-                seeds=(0,),
-                mortal_config=self.config,
-            )
 
 
 if __name__ == "__main__":
