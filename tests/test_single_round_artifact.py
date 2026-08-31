@@ -9,6 +9,7 @@ import copy
 import dataclasses
 import json
 import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,8 @@ from lisjong_arena.single_round_artifact import (
     SingleRoundArtifactPlan,
     SingleRoundExecutionProvenance,
     SingleRoundStrengthArtifact,
+    _arena_source_revision,
+    _collect_execution_provenance,
     _vcs_revision,
     load_single_round_artifact,
     merge_single_round_artifacts,
@@ -110,6 +113,9 @@ class RoundTripTest(unittest.TestCase):
             "timestamp",
         ):
             self.assertNotIn(forbidden, serialized)
+        self.assertEqual(
+            document["provenance"]["lisjong_arena_revision"], fixtures.ARENA_REVISION
+        )
         self.assertEqual(
             document["provenance"]["lisjong_revision"], fixtures.LISJONG_REVISION
         )
@@ -302,6 +308,8 @@ class FailClosedLoadTest(unittest.TestCase):
     def test_rejects_malformed_provenance(self) -> None:
         for field, value in (
             ("execution_environment", "unknown"),
+            ("lisjong_arena_revision", "not-a-full-commit"),
+            ("lisjong_arena_revision", fixtures.ARENA_REVISION.upper()),
             ("lisjong_revision", "not-a-full-commit"),
             ("lisjong_engine_revision", "not-a-full-commit"),
             ("riichienv_version", ""),
@@ -412,6 +420,112 @@ class FileHandlingTest(unittest.TestCase):
                 with self.assertRaises(OSError):
                     fixtures.save(fixtures.evaluation_result(), path)
 
+            self.assertFalse(path.exists())
+
+
+def _fake_git(
+    *,
+    tracked: bool = True,
+    status: str = "",
+    head: str = fixtures.ARENA_REVISION,
+):
+    """``git ls-files`` / ``status`` / ``rev-parse``の結果を差し替える。
+
+    実際のArena working treeの状態にtestが依存しないよう、gitの実行境界
+    だけをstubする。
+    """
+
+    def run(command, **kwargs):
+        subcommand = command[3]
+        if subcommand == "ls-files":
+            return subprocess.CompletedProcess(
+                command, 0 if tracked else 1, stdout="", stderr=""
+            )
+        if subcommand == "status":
+            return subprocess.CompletedProcess(command, 0, stdout=status, stderr="")
+        if subcommand == "rev-parse":
+            return subprocess.CompletedProcess(
+                command, 0, stdout=f"{head}\n", stderr=""
+            )
+        raise AssertionError(f"unexpected git subcommand: {subcommand!r}")
+
+    return run
+
+
+class ArenaSourceRevisionTest(unittest.TestCase):
+    """Arena自身のexact revisionは推測せず、確定できなければfail closedする。"""
+
+    def _run_with(self, runner) -> str:
+        with mock.patch(
+            "lisjong_arena.single_round_artifact.subprocess.run",
+            side_effect=runner,
+        ):
+            return _arena_source_revision()
+
+    def test_clean_source_tree_reports_the_full_head_commit_id(self) -> None:
+        self.assertEqual(
+            self._run_with(_fake_git()),
+            fixtures.ARENA_REVISION,
+        )
+
+    def test_dirty_source_tree_fails_closed(self) -> None:
+        for status in (
+            " M single_round_artifact.py\n",
+            "?? new_module.py\n",
+            "A  staged_module.py\n",
+        ):
+            with self.subTest(status=status):
+                with self.assertRaises(SingleRoundArtifactError):
+                    self._run_with(_fake_git(status=status))
+
+    def test_untracked_source_tree_fails_closed(self) -> None:
+        with self.assertRaises(SingleRoundArtifactError):
+            self._run_with(_fake_git(tracked=False))
+
+    def test_unavailable_git_fails_closed(self) -> None:
+        for error in (
+            FileNotFoundError("git"),
+            subprocess.TimeoutExpired(cmd="git", timeout=30),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with self.assertRaises(SingleRoundArtifactError):
+                    self._run_with(mock.Mock(side_effect=error))
+
+    def test_malformed_head_commit_id_fails_closed(self) -> None:
+        for head in ("HEAD", "abc123", fixtures.ARENA_REVISION.upper()):
+            with self.subTest(head=head):
+                with self.assertRaises(SingleRoundArtifactError):
+                    self._run_with(_fake_git(head=head))
+
+    def test_collected_provenance_records_the_arena_revision(self) -> None:
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_artifact.subprocess.run",
+                side_effect=_fake_git(),
+            ),
+            mock.patch(
+                "lisjong_arena.single_round_artifact._package_version",
+                return_value="0.1.0",
+            ),
+            mock.patch(
+                "lisjong_arena.single_round_artifact._vcs_revision",
+                return_value=fixtures.LISJONG_REVISION,
+            ),
+        ):
+            provenance = _collect_execution_provenance()
+
+        self.assertEqual(provenance.lisjong_arena_revision, fixtures.ARENA_REVISION)
+        self.assertEqual(provenance.lisjong_arena_version, "0.1.0")
+
+    def test_unavailable_arena_revision_prevents_artifact_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            with mock.patch(
+                "lisjong_arena.single_round_artifact.subprocess.run",
+                side_effect=_fake_git(tracked=False),
+            ):
+                with self.assertRaises(SingleRoundArtifactError):
+                    save_single_round_artifact(fixtures.evaluation_result(), path)
             self.assertFalse(path.exists())
 
 
@@ -606,6 +720,21 @@ class CompositionTest(unittest.TestCase):
             ),
         )
 
+        with self.assertRaises(SingleRoundArtifactError):
+            merge_single_round_artifacts([first, second])
+
+    def test_rejects_arena_revision_mismatch_with_the_same_version(self) -> None:
+        """同じ``lisjong-arena`` versionでもArena revisionが違えばmergeしない。"""
+        first = _artifact((1,))
+        second = _artifact(
+            (2,),
+            execution_provenance=fixtures.provenance(lisjong_arena_revision="0" * 40),
+        )
+
+        self.assertEqual(
+            first.provenance.lisjong_arena_version,
+            second.provenance.lisjong_arena_version,
+        )
         with self.assertRaises(SingleRoundArtifactError):
             merge_single_round_artifacts([first, second])
 

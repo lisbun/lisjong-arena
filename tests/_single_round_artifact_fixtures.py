@@ -28,6 +28,7 @@ from lisjong_arena.single_round_evaluation import (
     summarize_single_round_strength,
 )
 
+ARENA_REVISION = "2672cc24b90712e98d863727e3bb55785035c35b"
 LISJONG_REVISION = "b11841e287e8f11d55fe0fdaa5127ad16e00aa01"
 LISJONG_ENGINE_REVISION = "8735e89e1aea000ab59368d0368d476787827741"
 CANDIDATE = "yakuhai-call"
@@ -100,12 +101,14 @@ def canonical_summary(
 
 def provenance(
     *,
+    lisjong_arena_revision: str = ARENA_REVISION,
     lisjong_version: str = "0.1.0",
     lisjong_revision: str = LISJONG_REVISION,
 ) -> SingleRoundExecutionProvenance:
     return SingleRoundExecutionProvenance(
         execution_environment="riichienv",
         lisjong_arena_version="0.1.0",
+        lisjong_arena_revision=lisjong_arena_revision,
         lisjong_version=lisjong_version,
         lisjong_revision=lisjong_revision,
         lisjong_engine_version="0.1.0",

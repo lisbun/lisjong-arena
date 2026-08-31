@@ -68,6 +68,7 @@ def _format_provenance(cumulative: CumulativeSingleRoundStrength) -> list[str]:
         "",
         f"  {'execution environment:':<28}{provenance.execution_environment}",
         f"  {'lisjong-arena version:':<28}{provenance.lisjong_arena_version}",
+        f"  {'lisjong-arena revision:':<28}{provenance.lisjong_arena_revision}",
         f"  {'lisjong version:':<28}{provenance.lisjong_version}",
         f"  {'lisjong revision:':<28}{provenance.lisjong_revision}",
         f"  {'lisjong-engine version:':<28}{provenance.lisjong_engine_version}",

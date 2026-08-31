@@ -865,17 +865,24 @@ artifactは実行用modelとは分離したimmutable snapshotです。`PolicySpe
 
 ### Provenance policy
 
-再現性とhistorical comparisonのため、install metadataから確認できた値だけを記録します。
+再現性とhistorical comparisonのため、実際に確認できた値だけを記録します。
 
 - execution environment identity(現在は`riichienv`)
-- `lisjong-arena` distribution version
+- `lisjong-arena` distribution version + source treeのexact HEAD commit ID
 - `lisjong` version + VCS install metadataのfull commit ID
 - `lisjong-engine` version + VCS install metadataのfull commit ID
 - RiichiEnv version
 - Python version
 - artifact schema version
 
-取得できない値を推測・捏造しません。`lisjong` / `lisjong-engine`のfull commit IDを確認できない環境ではartifactを生成せずfail closedします。`lisjong-arena`自身はeditable installで実行されるためVCS revisionをinstall metadataから確認できず、distribution versionだけを記録します(既存`ComparisonArtifact`と同じ方針)。この限界のため、同じ`lisjong-arena` versionの異なるworking treeで実行したartifactは、provenance上は区別できません。
+取得できない値を推測・捏造しません。`lisjong` / `lisjong-engine`のfull commit IDを確認できない環境ではartifactを生成せずfail closedします。
+
+`lisjong-arena`自身はeditable installで実行されVCS install metadata(`direct_url.json`)にrevisionを持たないため、実行中のpackage source treeのGit HEADを読みます。記録するのは次を確認できた場合だけです。
+
+- source treeがGit work tree内でtrackされている
+- package source directoryにuncommitted変更がない(dirty working treeはHEADだけで実行コードを特定できないため、clean revisionとして記録しない)
+
+いずれも確認できない場合(wheel install、Gitを利用できない環境、無関係なrepository内のsite-packagesからの実行等)はrevisionを推測せずartifact生成をfail closedします。artifactへ保存するのはcommit IDだけで、local path・username・hostnameは保存しません。
 
 ### Multiple artifact composition
 
@@ -883,7 +890,7 @@ artifactは実行用modelとは分離したimmutable snapshotです。`PolicySpe
 
 - candidate identity / baseline identity
 - game mode / rotation semantics / `max_steps`等のevaluation parameter
-- execution provenance(異なる`lisjong` revision等はdefaultでreject)
+- execution provenance(異なる`lisjong-arena` / `lisjong` / `lisjong-engine` revision等はdefaultでreject)
 
 seedが重複する場合もrejectします。silentなdeduplicateや同一seedの二重計上はしません。schema versionとevaluation protocol identityは、artifact contract自身がconstruction時とload時にsupported値以外をfail closedするため、合成へ到達する時点で一致しています。
 

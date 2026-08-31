@@ -84,6 +84,7 @@ class SingleArtifactSummaryTest(unittest.TestCase):
             _, stdout, _ = _run([path])
 
         self.assertIn("provenance:", stdout)
+        self.assertIn(fixtures.ARENA_REVISION, stdout)
         self.assertIn(fixtures.LISJONG_REVISION, stdout)
         self.assertIn(fixtures.LISJONG_ENGINE_REVISION, stdout)
         self.assertIn("RiichiEnv version:", stdout)

@@ -16,15 +16,18 @@ artifactのserialized contractは変更しない。
 - 実行のためのobjectは復元しない。artifact planは``PolicySpec.factory``も
   executableな``SingleRoundEvaluationPlan``も持たないimmutable snapshotである
 
-Policyを実行せず、game progressionも所有しない。package versionとVCS revision
-はinstall metadataから取得し、取得できない値を推測しない。
+Policyを実行せず、game progressionも所有しない。dependency package versionと
+そのVCS revisionはinstall metadataから、Arena自身のexact revisionは実行中の
+source treeのGit HEADから取得し、いずれも取得できない値を推測しない。
 """
 
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import metadata
@@ -77,6 +80,10 @@ EXECUTION_ENVIRONMENT = "riichienv"
 
 _FULL_COMMIT_ID = re.compile(r"[0-9a-f]{40}").fullmatch
 
+_ARENA_SOURCE_DIRECTORY = Path(__file__).resolve().parent
+_ARENA_SOURCE_FILE = Path(__file__).resolve().name
+_GIT_TIMEOUT_SECONDS = 30
+
 
 class SingleRoundArtifactError(ArtifactValidationError):
     """ABBB artifactを生成、検証、または合成できない場合。"""
@@ -125,20 +132,24 @@ class SingleRoundArtifactPlan:
 
 @dataclass(frozen=True, slots=True)
 class SingleRoundExecutionProvenance:
-    """ABBB評価の実行経路と再現性に必要なpackage identity。
+    """ABBB評価の実行経路と再現性に必要なimplementation identity。
 
-    値はすべてinstall metadataから確認できたfactだけで構成し、取得できない
-    値をunknown / 空文字で埋めない。``lisjong``と``lisjong-engine``は評価
-    semanticsそのものへ影響するため、full commit IDを必須とする
-    (取得できない環境ではartifactを生成せずfail closedする)。
+    値はすべて実際に確認できたfactだけで構成し、取得できない値をunknown /
+    空文字で埋めない。``lisjong-arena`` / ``lisjong`` / ``lisjong-engine``は
+    評価semanticsそのものへ影響するため、いずれもfull commit IDを必須とする
+    (確認できない環境ではartifactを生成せずfail closedする)。
 
-    ``lisjong-arena``自身はeditable installで実行されるためVCS revisionを
-    install metadataから確認できず、推測もしない。distribution versionだけを
-    記録する既存``lisjong_arena.artifact``のprovenance思想をそのまま踏襲する。
+    ``lisjong``と``lisjong-engine``のrevisionはVCS install metadataから、
+    ``lisjong-arena``自身のrevisionは実行中のsource treeのGit HEADから取得
+    する(``_arena_source_revision()``)。distribution versionは``0.1.0``の
+    ように据え置かれることがあり、version一致だけでは同一implementationを
+    保証できないため、artifact合成のcompatibilityはこのrevisionを含めて
+    判定する。
     """
 
     execution_environment: str
     lisjong_arena_version: str
+    lisjong_arena_revision: str
     lisjong_version: str
     lisjong_revision: str
     lisjong_engine_version: str
@@ -150,6 +161,7 @@ class SingleRoundExecutionProvenance:
         for name in (
             "execution_environment",
             "lisjong_arena_version",
+            "lisjong_arena_revision",
             "lisjong_version",
             "lisjong_revision",
             "lisjong_engine_version",
@@ -166,7 +178,11 @@ class SingleRoundExecutionProvenance:
             raise ValueError(
                 f"unsupported execution environment: {self.execution_environment!r}"
             )
-        for name in ("lisjong_revision", "lisjong_engine_revision"):
+        for name in (
+            "lisjong_arena_revision",
+            "lisjong_revision",
+            "lisjong_engine_revision",
+        ):
             if _FULL_COMMIT_ID(getattr(self, name)) is None:
                 raise ValueError(f"{name} must be a lowercase full commit ID")
 
@@ -315,10 +331,65 @@ def _vcs_revision(distribution_name: str) -> str:
     return revision
 
 
+def _git_output(*arguments: str) -> str:
+    """Arena source tree上でgitをread-onlyに実行し、標準出力を返す。
+
+    machine-local pathはここでgitへ渡すだけで、artifactへは保存しない。
+    gitを実行できない、またはcommandが失敗した場合はfail closedする。
+    """
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(_ARENA_SOURCE_DIRECTORY), *arguments),
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SingleRoundArtifactError(
+            "lisjong-arena source revision cannot be verified: "
+            f"git {arguments[0]} could not be executed"
+        ) from exc
+    if completed.returncode != 0:
+        raise SingleRoundArtifactError(
+            "lisjong-arena source revision cannot be verified: "
+            f"git {arguments[0]} failed"
+        )
+    return completed.stdout
+
+
+def _arena_source_revision() -> str:
+    """実行中のArena source treeのexact HEAD commit IDを返す。
+
+    ``lisjong-arena``はeditable installで実行されるためVCS install metadata
+    (``direct_url.json``)にrevisionを持たない。代わりに、実行中のpackage
+    source treeがGit work tree内でtrackされていること、およびそのsource
+    directoryにuncommitted変更がないことを確認したうえでHEADを読む。
+
+    dirty working treeはHEADだけで実行コードを特定できないため、正常な
+    clean revisionとしては扱わない。trackされていない場所からの実行(wheel
+    installや無関係なrepository内のsite-packages等)も同様にfail closedし、
+    revisionを推測しない。
+    """
+    _git_output("ls-files", "--error-unmatch", "--", _ARENA_SOURCE_FILE)
+    if _git_output("status", "--porcelain", "--", ".").strip():
+        raise SingleRoundArtifactError(
+            "lisjong-arena source tree has uncommitted changes; "
+            "the exact implementation revision cannot be recorded"
+        )
+    revision = _git_output("rev-parse", "HEAD").strip()
+    if _FULL_COMMIT_ID(revision) is None:
+        raise SingleRoundArtifactError(
+            "lisjong-arena source revision is not a full commit ID"
+        )
+    return revision
+
+
 def _collect_execution_provenance() -> SingleRoundExecutionProvenance:
     return SingleRoundExecutionProvenance(
         execution_environment=EXECUTION_ENVIRONMENT,
         lisjong_arena_version=_package_version("lisjong-arena"),
+        lisjong_arena_revision=_arena_source_revision(),
         lisjong_version=_package_version("lisjong"),
         lisjong_revision=_vcs_revision("lisjong"),
         lisjong_engine_version=_package_version("lisjong-engine"),
@@ -457,6 +528,7 @@ def _artifact_to_dict(artifact: SingleRoundStrengthArtifact) -> dict[str, Any]:
         },
         "provenance": {
             "execution_environment": artifact.provenance.execution_environment,
+            "lisjong_arena_revision": artifact.provenance.lisjong_arena_revision,
             "lisjong_arena_version": artifact.provenance.lisjong_arena_version,
             "lisjong_engine_revision": artifact.provenance.lisjong_engine_revision,
             "lisjong_engine_version": artifact.provenance.lisjong_engine_version,
@@ -527,6 +599,7 @@ def _parse_provenance(value: object) -> SingleRoundExecutionProvenance:
         value,
         {
             "execution_environment",
+            "lisjong_arena_revision",
             "lisjong_arena_version",
             "lisjong_engine_revision",
             "lisjong_engine_version",
@@ -543,6 +616,9 @@ def _parse_provenance(value: object) -> SingleRoundExecutionProvenance:
         ),
         lisjong_arena_version=expect_str(
             raw["lisjong_arena_version"], "provenance.lisjong_arena_version"
+        ),
+        lisjong_arena_revision=expect_str(
+            raw["lisjong_arena_revision"], "provenance.lisjong_arena_revision"
         ),
         lisjong_version=expect_str(
             raw["lisjong_version"], "provenance.lisjong_version"

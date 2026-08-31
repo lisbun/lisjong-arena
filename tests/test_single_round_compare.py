@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import _single_round_artifact_fixtures as artifact_fixtures
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Seat
 
@@ -604,6 +605,11 @@ class ArtifactOutTest(unittest.TestCase):
         ]
 
     def _run(self, *extra: str) -> tuple[int, str, str, mock.Mock]:
+        """CLI wiringだけを検証するため、実行環境依存のprovenance収集はstubする。
+
+        Arena自身のrevisionはsource treeのGit HEADから取得するため、実際の
+        working tree状態へtestを依存させない。
+        """
         stdout = io.StringIO()
         stderr = io.StringIO()
         with (
@@ -611,6 +617,10 @@ class ArtifactOutTest(unittest.TestCase):
                 "lisjong_arena.single_round_compare.run_single_round_evaluation",
                 return_value=_fake_result(seeds=(0, 1)),
             ) as serial,
+            mock.patch(
+                "lisjong_arena.single_round_artifact._collect_execution_provenance",
+                return_value=artifact_fixtures.provenance(),
+            ),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):

@@ -646,10 +646,13 @@ artifactの正本はraw `SingleRoundGameResult`列(seed / rotation / candidate s
 はstrength artifactへ入れない。
 
 artifact planはfactoryを含まないimmutable snapshotであり、`PolicySpec.factory`や
-executableな`SingleRoundEvaluationPlan`をartifactから復元しない。provenanceは
-install metadataから確認できたpackage version / VCS full commit IDだけを記録し、
-取得できない値を推測しない(`lisjong` / `lisjong-engine`のrevisionを確認できない環境では
-artifactを生成せずfail closedする)。
+executableな`SingleRoundEvaluationPlan`をartifactから復元しない。provenanceは実際に
+確認できたpackage version / full commit IDだけを記録し、取得できない値を推測しない。
+`lisjong` / `lisjong-engine`のrevisionはVCS install metadataから、`lisjong-arena`自身の
+revisionはclean source treeのGit HEADから取得し、trackされていない実行やdirty working
+treeはexact implementation revisionとして扱わずartifact生成をfail closedする。
+distribution versionは据え置かれ得るため、merge compatibilityはこのrevisionを含めて
+判定する。
 
 複数artifactのcumulative aggregationはfail closedである。candidate / baseline
 identity、evaluation parameter、execution provenanceの一致とseed non-overlapを検証し、
