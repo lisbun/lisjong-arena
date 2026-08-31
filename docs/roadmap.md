@@ -378,7 +378,12 @@ artifact / provenance
 comparison / regression analysis
 ```
 
-現在version付きartifact contractはAABB comparisonに実装されている。ABBB single-round evaluationのartifact保存は未実装であり、実装済みであるかのように一般化しない。
+現在version付きartifact contractはAABB comparisonとPolicy-vs-Policy ABBB
+single-round evaluationにそれぞれ独立して実装されている。ABBB artifactは
+compatibleかつseedがnon-overlappingな複数runの再集計に対応するが、Mortal等の
+external competitorを含むすべてのevaluation pathへ一般化しない。Policy strength
+comparisonの共通規律は[`docs/policy-strength-evaluation.md`](policy-strength-evaluation.md)
+を参照する。
 
 長期的には各evaluationについてPolicy / configuration / protocol / seed / seat / metrics / implementation provenanceを追跡できる状態を目指す。
 
