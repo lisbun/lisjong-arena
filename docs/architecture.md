@@ -615,6 +615,52 @@ overwriteを拒否する。historical dataset source revisionsと実行時depend
 全artifact/resultで`test_partition_evaluated=false`を必須とする。通常importはtorch-freeで、CIはsynthetic
 sequential ML testsだけを実行し、formal trainingやreal TEST inferenceを開始しない。
 
+### ABBB strength evaluation artifact (Issue #110)
+
+Issue #110で、ABBB / `4p-red-single` strength evaluation結果を再実行せず再集計できる
+version付きimmutable JSON artifact(`lisjong_arena.single_round_artifact`)と、保存済み
+artifactを再集計するCLI(`lisjong_arena.summarize_single_round_artifacts`)を追加した。
+
+```text
+Arena evaluation
+    -> immutable versioned artifact   = measurement source of truth
+    -> derived aggregate / summary    = artifactから再生成
+    -> GitHub Issue decision log      = artifact reference + summary + decision
+```
+
+GitHub Issueはdecision logであり、measurement source of truthではない。
+
+AABB comparison用の既存`lisjong_arena.artifact`(`ComparisonArtifact` /
+`fixed-seed-seat-rotation-v1`)はprotocol semanticsが異なるため、そこへoptional field
+を追加して統合していない。ABBBは独立したschema(`abbb-single-round-v1`)とloaderを持ち、
+両者はJSON canonicalization、fail-closedなfield検証、exclusive file書き込みといった
+低レベルplumbing(`lisjong_arena._artifact_io`)だけを共有する。既存AABB artifactの
+serialized contractは変更していない。
+
+artifactの正本はraw `SingleRoundGameResult`列(seed / rotation / candidate seat /
+4 seat scores / 4 seat `SeatRoundStats`)である。derived statisticsも保存するが正本
+ではなく、load時にraw resultsから既存canonical aggregation
+(`lisjong_arena.single_round_evaluation`)で再計算し、一致しなければartifactをreject
+する。artifact層でdomain aggregationを再実装せず、現在存在しないrank semanticsを
+新設することもしない。`GameTrace`全文、`DecisionTrace`全文、Policy-internal analysis
+はstrength artifactへ入れない。
+
+artifact planはfactoryを含まないimmutable snapshotであり、`PolicySpec.factory`や
+executableな`SingleRoundEvaluationPlan`をartifactから復元しない。provenanceは実際に
+確認できたpackage version / full commit IDだけを記録し、取得できない値を推測しない。
+`lisjong` / `lisjong-engine`のrevisionはVCS install metadataから、`lisjong-arena`自身の
+revisionはclean source treeのGit HEADから取得し、trackされていない実行やdirty working
+treeはexact implementation revisionとして扱わずartifact生成をfail closedする。
+distribution versionは据え置かれ得るため、merge compatibilityはこのrevisionを含めて
+判定する。
+
+複数artifactのcumulative aggregationはfail closedである。candidate / baseline
+identity、evaluation parameter、execution provenanceの一致とseed non-overlapを検証し、
+overlapping seedをdeduplicateしない。cumulative metricsは連結したraw game resultsへ
+canonical aggregationを再適用して求め、個々のartifactのaggregate値を加重平均しない。
+統計手法の追加(信頼区間の変更、sequential test、adaptive stopping)、database、
+dashboardはこのIssueのscope外であり、artifact基盤をconsumerとして別Issueで扱う。
+
 ### Policy performance profiling(opt-in development diagnostic、Issue #87)
 
 Issue #87で、first-party lisjong Policy(`POLICY_CATALOG`登録分だけ、Mortal等のexternal

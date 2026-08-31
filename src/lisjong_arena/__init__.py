@@ -34,6 +34,18 @@ from lisjong_arena.model import (
     SingleRoundEvaluationResult,
     SingleRoundGameResult,
 )
+from lisjong_arena.single_round_artifact import (
+    SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION,
+    SINGLE_ROUND_EVALUATION_PROTOCOL,
+    CumulativeSingleRoundStrength,
+    SingleRoundArtifactError,
+    SingleRoundArtifactPlan,
+    SingleRoundExecutionProvenance,
+    SingleRoundStrengthArtifact,
+    load_single_round_artifact,
+    merge_single_round_artifacts,
+    save_single_round_artifact,
+)
 from lisjong_arena.single_round_evaluation import (
     GAME_MODE as SINGLE_ROUND_GAME_MODE,
 )
@@ -42,8 +54,10 @@ from lisjong_arena.single_round_evaluation import (
 )
 from lisjong_arena.single_round_evaluation import (
     SingleRoundEvaluationError,
+    SingleRoundStrengthSummary,
     run_single_round_evaluation,
     run_single_round_evaluation_parallel,
+    summarize_single_round_strength,
 )
 
 __version__ = "0.1.0"
@@ -54,7 +68,10 @@ __all__ = [
     "ArtifactPlan",
     "ComparisonArtifact",
     "ComparisonArtifactError",
+    "CumulativeSingleRoundStrength",
     "ROTATION_COUNT",
+    "SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION",
+    "SINGLE_ROUND_EVALUATION_PROTOCOL",
     "SINGLE_ROUND_GAME_MODE",
     "SINGLE_ROUND_ROTATION_COUNT",
     "ComparisonExecutionError",
@@ -64,16 +81,25 @@ __all__ = [
     "PolicyMetrics",
     "PolicySpec",
     "SeatResult",
+    "SingleRoundArtifactError",
+    "SingleRoundArtifactPlan",
     "SingleRoundCandidateMetrics",
     "SingleRoundEvaluationError",
     "SingleRoundEvaluationPlan",
     "SingleRoundEvaluationResult",
+    "SingleRoundExecutionProvenance",
     "SingleRoundGameResult",
+    "SingleRoundStrengthArtifact",
+    "SingleRoundStrengthSummary",
     "ExecutionProvenance",
     "load_comparison_artifact",
+    "load_single_round_artifact",
+    "merge_single_round_artifacts",
     "run_comparison",
     "run_comparison_parallel",
     "run_single_round_evaluation",
     "run_single_round_evaluation_parallel",
     "save_comparison_artifact",
+    "save_single_round_artifact",
+    "summarize_single_round_strength",
 ]
