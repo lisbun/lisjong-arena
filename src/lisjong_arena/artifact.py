@@ -21,6 +21,17 @@ from typing import Any
 
 from lisjong.policy_contract import Seat
 
+from lisjong_arena._artifact_io import (
+    ArtifactValidationError,
+    canonical_json_text,
+    expect_float,
+    expect_int,
+    expect_list,
+    expect_object,
+    expect_str,
+    read_json_document,
+    write_new_artifact_file,
+)
 from lisjong_arena.comparison import ROTATION_COUNT, aggregate_policy_metrics
 from lisjong_arena.model import (
     ComparisonResult,
@@ -37,7 +48,7 @@ _EXPECTED_RANKS = (1, 2, 3, 4)
 _FULL_COMMIT_ID = re.compile(r"[0-9a-f]{40}").fullmatch
 
 
-class ComparisonArtifactError(ValueError):
+class ComparisonArtifactError(ArtifactValidationError):
     """artifactを生成または検証できない場合。"""
 
 
@@ -327,16 +338,7 @@ def _artifact_to_dict(artifact: ComparisonArtifact) -> dict[str, Any]:
 
 
 def _serialize_artifact(artifact: ComparisonArtifact) -> str:
-    return (
-        json.dumps(
-            _artifact_to_dict(artifact),
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            indent=2,
-        )
-        + "\n"
-    )
+    return canonical_json_text(_artifact_to_dict(artifact))
 
 
 def save_comparison_artifact(
@@ -351,59 +353,11 @@ def save_comparison_artifact(
     """
     artifact = _artifact_from_result(result)
     serialized = _serialize_artifact(artifact)
-    destination = Path(path)
-    created = False
-    try:
-        with destination.open("x", encoding="utf-8", newline="\n") as stream:
-            created = True
-            stream.write(serialized)
-    except Exception:
-        if created:
-            try:
-                destination.unlink()
-            except OSError:
-                pass
-        raise
-
-
-def _expect_object(
-    value: object,
-    expected_keys: set[str],
-    context: str,
-) -> dict[str, object]:
-    if type(value) is not dict:
-        raise ComparisonArtifactError(f"{context} must be an object")
-    if set(value) != expected_keys:
-        raise ComparisonArtifactError(f"{context} fields are invalid")
-    return value
-
-
-def _expect_list(value: object, context: str) -> list[object]:
-    if type(value) is not list:
-        raise ComparisonArtifactError(f"{context} must be an array")
-    return value
-
-
-def _expect_str(value: object, context: str) -> str:
-    if type(value) is not str:
-        raise ComparisonArtifactError(f"{context} must be a string")
-    return value
-
-
-def _expect_int(value: object, context: str) -> int:
-    if type(value) is not int:
-        raise ComparisonArtifactError(f"{context} must be an integer")
-    return value
-
-
-def _expect_float(value: object, context: str) -> float:
-    if type(value) is not float:
-        raise ComparisonArtifactError(f"{context} must be a JSON number with decimals")
-    return value
+    write_new_artifact_file(Path(path), serialized)
 
 
 def _parse_plan(value: object) -> ArtifactPlan:
-    raw = _expect_object(
+    raw = expect_object(
         value,
         {
             "game_mode",
@@ -415,26 +369,26 @@ def _parse_plan(value: object) -> ArtifactPlan:
         "plan",
     )
     seeds = tuple(
-        _expect_int(seed, f"plan.seeds[{index}]")
-        for index, seed in enumerate(_expect_list(raw["seeds"], "plan.seeds"))
+        expect_int(seed, f"plan.seeds[{index}]")
+        for index, seed in enumerate(expect_list(raw["seeds"], "plan.seeds"))
     )
     return ArtifactPlan(
-        policy_a_identity=_expect_str(
+        policy_a_identity=expect_str(
             raw["policy_a_identity"],
             "plan.policy_a_identity",
         ),
-        policy_b_identity=_expect_str(
+        policy_b_identity=expect_str(
             raw["policy_b_identity"],
             "plan.policy_b_identity",
         ),
         seeds=seeds,
-        game_mode=_expect_str(raw["game_mode"], "plan.game_mode"),
-        max_steps=_expect_int(raw["max_steps"], "plan.max_steps"),
+        game_mode=expect_str(raw["game_mode"], "plan.game_mode"),
+        max_steps=expect_int(raw["max_steps"], "plan.max_steps"),
     )
 
 
 def _parse_provenance(value: object) -> ExecutionProvenance:
-    raw = _expect_object(
+    raw = expect_object(
         value,
         {
             "execution_environment",
@@ -447,27 +401,27 @@ def _parse_provenance(value: object) -> ExecutionProvenance:
         "provenance",
     )
     return ExecutionProvenance(
-        execution_environment=_expect_str(
+        execution_environment=expect_str(
             raw["execution_environment"],
             "provenance.execution_environment",
         ),
-        lisjong_arena_version=_expect_str(
+        lisjong_arena_version=expect_str(
             raw["lisjong_arena_version"],
             "provenance.lisjong_arena_version",
         ),
-        lisjong_version=_expect_str(
+        lisjong_version=expect_str(
             raw["lisjong_version"],
             "provenance.lisjong_version",
         ),
-        lisjong_revision=_expect_str(
+        lisjong_revision=expect_str(
             raw["lisjong_revision"],
             "provenance.lisjong_revision",
         ),
-        riichienv_version=_expect_str(
+        riichienv_version=expect_str(
             raw["riichienv_version"],
             "provenance.riichienv_version",
         ),
-        python_version=_expect_str(
+        python_version=expect_str(
             raw["python_version"],
             "provenance.python_version",
         ),
@@ -476,7 +430,7 @@ def _parse_provenance(value: object) -> ExecutionProvenance:
 
 def _parse_seat_result(value: object, index: int) -> SeatResult:
     context = f"seat_results[{index}]"
-    raw = _expect_object(
+    raw = expect_object(
         value,
         {
             "game_mode",
@@ -489,27 +443,27 @@ def _parse_seat_result(value: object, index: int) -> SeatResult:
         },
         context,
     )
-    seat_number = _expect_int(raw["seat"], f"{context}.seat")
+    seat_number = expect_int(raw["seat"], f"{context}.seat")
     try:
         seat = Seat(seat_number)
     except ValueError as exc:
         raise ComparisonArtifactError(f"{context}.seat is invalid") from exc
     return SeatResult(
-        seed=_expect_int(raw["seed"], f"{context}.seed"),
-        rotation=_expect_int(raw["rotation"], f"{context}.rotation"),
-        game_mode=_expect_str(raw["game_mode"], f"{context}.game_mode"),
+        seed=expect_int(raw["seed"], f"{context}.seed"),
+        rotation=expect_int(raw["rotation"], f"{context}.rotation"),
+        game_mode=expect_str(raw["game_mode"], f"{context}.game_mode"),
         seat=seat,
-        policy_identity=_expect_str(
+        policy_identity=expect_str(
             raw["policy_identity"],
             f"{context}.policy_identity",
         ),
-        score=_expect_int(raw["score"], f"{context}.score"),
-        rank=_expect_int(raw["rank"], f"{context}.rank"),
+        score=expect_int(raw["score"], f"{context}.score"),
+        rank=expect_int(raw["rank"], f"{context}.rank"),
     )
 
 
 def _parse_metrics(value: object, context: str) -> PolicyMetrics:
-    raw = _expect_object(
+    raw = expect_object(
         value,
         {
             "average_rank",
@@ -525,32 +479,32 @@ def _parse_metrics(value: object, context: str) -> PolicyMetrics:
         context,
     )
     return PolicyMetrics(
-        policy_identity=_expect_str(
+        policy_identity=expect_str(
             raw["policy_identity"],
             f"{context}.policy_identity",
         ),
-        game_count=_expect_int(raw["game_count"], f"{context}.game_count"),
-        seat_result_count=_expect_int(
+        game_count=expect_int(raw["game_count"], f"{context}.game_count"),
+        seat_result_count=expect_int(
             raw["seat_result_count"],
             f"{context}.seat_result_count",
         ),
-        average_rank=_expect_float(
+        average_rank=expect_float(
             raw["average_rank"],
             f"{context}.average_rank",
         ),
-        average_score=_expect_float(
+        average_score=expect_float(
             raw["average_score"],
             f"{context}.average_score",
         ),
-        first_count=_expect_int(raw["first_count"], f"{context}.first_count"),
-        second_count=_expect_int(raw["second_count"], f"{context}.second_count"),
-        third_count=_expect_int(raw["third_count"], f"{context}.third_count"),
-        fourth_count=_expect_int(raw["fourth_count"], f"{context}.fourth_count"),
+        first_count=expect_int(raw["first_count"], f"{context}.first_count"),
+        second_count=expect_int(raw["second_count"], f"{context}.second_count"),
+        third_count=expect_int(raw["third_count"], f"{context}.third_count"),
+        fourth_count=expect_int(raw["fourth_count"], f"{context}.fourth_count"),
     )
 
 
 def _parse_artifact(value: object) -> ComparisonArtifact:
-    raw = _expect_object(
+    raw = expect_object(
         value,
         {
             "comparison_protocol",
@@ -562,10 +516,10 @@ def _parse_artifact(value: object) -> ComparisonArtifact:
         },
         "artifact",
     )
-    schema_version = _expect_int(raw["schema_version"], "schema_version")
+    schema_version = expect_int(raw["schema_version"], "schema_version")
     if schema_version != ARTIFACT_SCHEMA_VERSION:
         raise ComparisonArtifactError(f"unsupported schema version: {schema_version!r}")
-    comparison_protocol = _expect_str(
+    comparison_protocol = expect_str(
         raw["comparison_protocol"],
         "comparison_protocol",
     )
@@ -573,7 +527,7 @@ def _parse_artifact(value: object) -> ComparisonArtifact:
         raise ComparisonArtifactError(
             f"unsupported comparison protocol: {comparison_protocol!r}"
         )
-    metrics = _expect_object(
+    metrics = expect_object(
         raw["metrics"],
         {"policy_a", "policy_b"},
         "metrics",
@@ -586,7 +540,7 @@ def _parse_artifact(value: object) -> ComparisonArtifact:
         seat_results=tuple(
             _parse_seat_result(result, index)
             for index, result in enumerate(
-                _expect_list(raw["seat_results"], "seat_results")
+                expect_list(raw["seat_results"], "seat_results")
             )
         ),
         metrics_a=_parse_metrics(metrics["policy_a"], "metrics.policy_a"),
@@ -594,38 +548,15 @@ def _parse_artifact(value: object) -> ComparisonArtifact:
     )
 
 
-def _reject_json_constant(value: str) -> None:
-    raise ComparisonArtifactError(f"non-finite JSON number is not allowed: {value}")
-
-
-def _reject_duplicate_object_keys(
-    pairs: list[tuple[str, object]],
-) -> dict[str, object]:
-    """JSON objectのduplicate keyをlast-winsで解釈せず拒否する。"""
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ComparisonArtifactError(f"duplicate JSON object key: {key!r}")
-        result[key] = value
-    return result
-
-
 def load_comparison_artifact(path: str | Path) -> ComparisonArtifact:
     """JSON fileをfail-closedに検証してimmutable artifact snapshotを返す。"""
-    source = Path(path)
     try:
-        serialized = source.read_text(encoding="utf-8")
-    except UnicodeError as exc:
-        raise ComparisonArtifactError("artifact is not valid UTF-8") from exc
-    try:
-        value = json.loads(
-            serialized,
-            parse_constant=_reject_json_constant,
-            object_pairs_hook=_reject_duplicate_object_keys,
-        )
+        value = read_json_document(Path(path))
         return _parse_artifact(value)
     except ComparisonArtifactError:
         raise
+    except ArtifactValidationError as exc:
+        raise ComparisonArtifactError(str(exc)) from exc
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise ComparisonArtifactError("artifact is malformed or inconsistent") from exc
 

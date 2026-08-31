@@ -56,7 +56,8 @@ Arenaが所有するもの:
 - raw evaluation / comparison result
 - 平均順位・平均得点・順位回数等の基本metrics
 - 再現可能なPolicy comparison protocol
-- 1 comparisonを1 fileとして保存するversion付きJSON artifact契約
+- 1 comparison / 1 ABBB runをそれぞれ1 fileとして保存するversion付きJSON artifact契約
+- 保存済みartifactの再集計とcompatibleな複数artifactのcumulative aggregation
 - external benchmark / external competitor orchestration
 
 ### lisjongに残すもの
@@ -627,6 +628,7 @@ Policyの追加はこの明示catalogだけを正本とし、`package.module:Cla
 - `--seeds N`: 単一seed(例: `--seeds 42` -> `(42,)`)
 - `--seeds START:END`: **inclusive** range(例: `--seeds 0:99` -> `0..99`の100 seeds)。comma listや複数rangeは未対応です
 - `--workers N`: positive int、既定値`1`。`workers=1`は既存`run_single_round_evaluation()`(serial)、`workers>1`は既存`run_single_round_evaluation_parallel()`(local process parallel)へそのまま委譲します
+- `--artifact-out PATH`: opt-inのartifact保存先。成功したevaluationを後から再集計できるversion付きJSON artifactとして保存します(後述の[ABBB strength evaluation artifact](#abbb-strength-evaluation-artifact))。既定では保存しません
 
 evaluation protocol(ABBB rotation、`4p-red-single`固定、Policy lifecycle、raw result canonicalization、candidate metrics aggregation、fail-closed semantics)はこのCLIから変更できません。`--protocol` / `--game-mode` / `--rotation-count`のようなoptionはありません。
 
@@ -690,7 +692,9 @@ seed-block statistics:
 
 `seed-block statistics`は同一seedの4 rotationsを1 sampling blockとして集約します。sample standard deviationはseed-block deltaに対する`n - 1` denominator、standard errorは`SD / sqrt(seed blocks)`、`normal-approx 95% interval`は`mean ± 1.96 * SE`です。1 seedだけの場合、meanとpositive / zero / negative countは表示し、SD・SE・intervalは`N/A`になります。これはdescriptive uncertainty summaryであり、statistical significanceやPolicyの自動勝敗判定は行いません。既存`SingleRoundEvaluationResult` schemaは変更せず、Policy candidateとMortal candidateのどちらも同じraw `game_results`から共通semanticで導出します。
 
-1 gameでも失敗した場合は既存evaluationのfail-closed挙動(partial summaryを返さずcomparison全体を失敗させる)がそのまま伝わり、CLIはsuccess summaryを出さずnon-zero exitで終了します。結果のpersistence(`--json` / `--output` / historical storage等)は行わず、stdout表示だけです。
+1 gameでも失敗した場合は既存evaluationのfail-closed挙動(partial summaryを返さずcomparison全体を失敗させる)がそのまま伝わり、CLIはsuccess summaryを出さずnon-zero exitで終了します。
+
+結果のpersistenceは`--artifact-out`を明示指定した場合だけ行います。指定がなければ従来どおりstdout表示だけで、fileは一切生成しません。`--artifact-out`を指定してもevaluation semantics(選択されるaction、raw game result、summary)は変わらず、保存はevaluation成功後の後段処理として実行します。
 
 ## `policy_performance_profile` CLI(opt-in performance profiling)
 
@@ -731,7 +735,7 @@ python -m lisjong_arena.policy_performance_profile \
 
 ## Comparison artifact
 
-既存のversion付きJSON artifact契約は、AABB comparison protocol（`ComparisonPlan` / `ComparisonResult`）のみを対象とします。ABBB single-round evaluation result（`SingleRoundEvaluationResult`）のartifact保存は現時点では未実装で、必要になった時点で後続Issueとして独立に設計します。
+この節のversion付きJSON artifact契約は、AABB comparison protocol（`ComparisonPlan` / `ComparisonResult`）専用です。ABBB single-round evaluation result（`SingleRoundEvaluationResult`）は意味の異なるprotocolなので、この既存schemaへoption fieldを足して統合せず、独立した契約として[ABBB strength evaluation artifact](#abbb-strength-evaluation-artifact)に実装しています（Issue #110）。両者はJSON serializationやfile書き込み等の低レベルplumbingだけを共有し、serialized schemaもloaderも別です。
 
 成功した `ComparisonResult` は、呼び出し側が明示したpathへversion付きJSON artifactとして保存できます。comparison実行自体が暗黙にfileを生成することはありません。
 
@@ -776,6 +780,118 @@ artifactは「どの比較条件・Policy identity・execution provenanceで何�
 現在のPolicy-vs-Policy execution pathは `lisjong-arena evaluation -> lisjong_arena.riichienv.LocalGameRunner -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)` です(Issue #31、Issue #39、Issue #43)。provenance取得にはpackage metadataを使い、artifact schema / provenance contract自体はIssue #31で変更していません。Arenaはすでに`riichienv==0.4.8`をdirect dependencyとして持ち、Arena-local `LocalGameRunner`はこれをdirect importします。RiichiEnv AdapterはIssue #39で、GameTraceはIssue #43で、それぞれArena-localへcanonical physical migration済みです。GameTraceのlisjong側legacy実装は`lisbun/lisjong#102` / PR #103で削除され、Arena Issue #45でexact pin syncも完了したため、`lisjong_arena.game_trace`がsole physical implementationです。
 
 artifactを保存できることとrepositoryで管理することは別です。test fixture以外の実測artifactをrepositoryへ大量commitする運用、既定保存先、retention policy、artifact repositoryは本機能の対象外です。
+
+## ABBB strength evaluation artifact
+
+ABBB / `4p-red-single` strength evaluation(`SingleRoundEvaluationResult`)は、後から再実行せずに再集計できるversion付きimmutable JSON artifactとして保存できます(Issue #110)。目的は、Policy強化のGate判断で使う実測値の正本をGitHub Issueコメントから切り離すことです。
+
+```text
+Arena evaluation
+    -> immutable versioned artifact   <- measurement source of truth
+    -> derived aggregate / summary    <- artifactから再生成
+    -> GitHub Issue decision log      <- artifact参照 + 要約 + 解釈 + 判断
+```
+
+- **Arena evaluation artifact = measurement source of truth**
+- **GitHub Issue = artifact reference + summary + interpretation + decision**
+
+GitHub Issueはraw measurement storageではありません。raw JSONをIssueコメントへ貼り付ける運用も要求しません。
+
+### 保存と再集計
+
+```bash
+python -m lisjong_arena.single_round_compare \
+  --candidate yakuhai-call \
+  --baseline combined \
+  --seeds 20200:20449 \
+  --workers 8 \
+  --artifact-out artifacts/gate2-a.json
+
+python -m lisjong_arena.single_round_compare \
+  --candidate yakuhai-call \
+  --baseline combined \
+  --seeds 20450:20824 \
+  --workers 8 \
+  --artifact-out artifacts/gate2-b.json
+
+python -m lisjong_arena.summarize_single_round_artifacts \
+  artifacts/gate2-a.json artifacts/gate2-b.json
+```
+
+`summarize_single_round_artifacts`は、1 artifactならそのrunのsummary、compatibleな複数artifactならcumulative summaryをstdoutへ表示します。strength metricsの書式は`single_round_compare`と共有のformatting seam(`lisjong_arena.single_round_summary_format`)を使うため、同じmetricが別の式・別の書式になりません。実行時固有の表示(`workers`やprogress)はartifactに存在しないため表示しません。
+
+Python APIからも同じcontractを使えます。
+
+```python
+from pathlib import Path
+
+from lisjong_arena import (
+    load_single_round_artifact,
+    merge_single_round_artifacts,
+    save_single_round_artifact,
+)
+
+save_single_round_artifact(result, Path("artifacts/gate2-a.json"))
+
+first = load_single_round_artifact(Path("artifacts/gate2-a.json"))
+second = load_single_round_artifact(Path("artifacts/gate2-b.json"))
+cumulative = merge_single_round_artifacts([first, second])
+
+print(cumulative.plan.seeds)
+print(cumulative.summary.mean_candidate_game_delta)
+print(cumulative.summary.seed_block_statistics.standard_error)
+```
+
+### 1 run = 1 immutable artifact
+
+`save_single_round_artifact()`は既存fileを上書きせず、pathが存在する場合は`FileExistsError`で失敗します(CLIは実行前にpath存在を確認し、non-zero exitします)。serializationとvalidationはfile作成前に完了し、書き込み途中で失敗した場合もpartial fileを残しません。JSONはUTF-8、key順序固定、2-space indent、末尾newline、非有限float禁止です。同一resultからは常に同一bytesへserializeされます(timestamp等のnon-deterministic fieldを持ちません)。
+
+### 保持情報
+
+初期schemaは`schema_version = 1`、evaluation protocol identityは`abbb-single-round-v1`です。readerは未知のschema versionやprotocol identityを現在仕様として推測せずfail closedします。
+
+正本はraw game-level resultです。
+
+- raw `SingleRoundGameResult`列: `seed` / `rotation` / `game_mode` / `candidate_seat` / 4 seat分の`scores` / 4 seat分の`SeatRoundStats`
+- plan snapshot: candidate identity、baseline identity、ordered seeds、`game_mode = 4p-red-single`、`rotation_count = 4`、`max_steps`
+- derived summary: candidate metrics(`mean_candidate_score` / `seat_mean_scores` / 局単位Mahjong metrics)、baseline mean score、mean candidate game delta、seed-block statistics
+- execution provenance
+
+candidate Mahjong metricsは`SeatRoundStats`から集計されるため、scoresだけでなくbaseline 3 seat分を含む`SeatRoundStats`も保持します。一方、`GameTrace`全文、`DecisionTrace`全文、Policy internal analysis(shanten / ukeire / HandBelief / danger / value estimate等)はstrength artifactへ入れません。現在の`SingleRoundGameResult`はrankを所有しないため、artifact層で新しいrank semanticsを作ることもしません。
+
+derived summaryは正本ではなくcacheです。load時にraw game resultsから既存canonical aggregation(`lisjong_arena.single_round_evaluation`)で再計算し、保存値と一致しなければartifactをrejectします。artifact moduleが同じ統計式を別実装することはありません。
+
+artifactは実行用modelとは分離したimmutable snapshotです。`PolicySpec.factory`、callable、import path、dynamic codeを保存・復元せず、artifactから実行可能な`SingleRoundEvaluationPlan`を再構成することもしません。secret / credential / environment variable / username / hostname / absolute local path等のmachine-local情報も保存しません。
+
+### Provenance policy
+
+再現性とhistorical comparisonのため、install metadataから確認できた値だけを記録します。
+
+- execution environment identity(現在は`riichienv`)
+- `lisjong-arena` distribution version
+- `lisjong` version + VCS install metadataのfull commit ID
+- `lisjong-engine` version + VCS install metadataのfull commit ID
+- RiichiEnv version
+- Python version
+- artifact schema version
+
+取得できない値を推測・捏造しません。`lisjong` / `lisjong-engine`のfull commit IDを確認できない環境ではartifactを生成せずfail closedします。`lisjong-arena`自身はeditable installで実行されるためVCS revisionをinstall metadataから確認できず、distribution versionだけを記録します(既存`ComparisonArtifact`と同じ方針)。この限界のため、同じ`lisjong-arena` versionの異なるworking treeで実行したartifactは、provenance上は区別できません。
+
+### Multiple artifact composition
+
+段階的evaluation(例: 250 seeds -> +375 seeds -> cumulative 625 seeds)のため、複数artifactを1つのcumulative summaryへ合成できます。合成はfail closedで、次のいずれかが一致しない場合は合成しません。
+
+- candidate identity / baseline identity
+- game mode / rotation semantics / `max_steps`等のevaluation parameter
+- execution provenance(異なる`lisjong` revision等はdefaultでreject)
+
+seedが重複する場合もrejectします。silentなdeduplicateや同一seedの二重計上はしません。schema versionとevaluation protocol identityは、artifact contract自身がconstruction時とload時にsupported値以外をfail closedするため、合成へ到達する時点で一致しています。
+
+合成結果の順序は入力artifact順、その中では各artifactのordered seed順を保持します。勝手にsortしてprotocol orderingを変えません。cumulative metricsは、個々のartifactのaggregate値を加重平均するのではなく、連結したraw game resultsへcanonical aggregationを再適用して求めます。したがって、同じseed集合をone-shotで実行したときのaggregationと一致します。
+
+### Storage policy
+
+artifact formatと保存APIは提供しますが、生成したrun artifactをrepositoryへcommitする運用は要求しません。保存先はローカルのartifact directory等を利用してください。repository-managed long-term archive、GitHub Release assets、外部object storage、database、dashboardは本機能のscope外です。
 
 ## 現時点で持たないもの
 

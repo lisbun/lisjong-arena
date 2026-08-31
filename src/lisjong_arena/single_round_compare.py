@@ -19,6 +19,8 @@
     既存runner
         -> run_single_round_evaluation() / run_single_round_evaluation_parallel()
     human-readable summary / optional progress presentation
+    opt-in artifact persistence
+        -> lisjong_arena.single_round_artifact (--artifact-out)
 
 ABBB rotation、``4p-red-single``固定、Policy lifecycle、raw result
 canonicalization、candidate metrics aggregation、fail-closed semanticsは
@@ -46,13 +48,16 @@ from lisjong_arena.mortal_single_round_evaluation import (
     run_mortal_single_round_evaluation,
 )
 from lisjong_arena.policy_catalog import POLICY_CATALOG
+from lisjong_arena.single_round_artifact import save_single_round_artifact
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
-    SeedBlockStatistics,
-    aggregate_seed_block_statistics,
-    mean_candidate_game_delta,
     run_single_round_evaluation,
     run_single_round_evaluation_parallel,
+    summarize_single_round_strength,
+)
+from lisjong_arena.single_round_summary_format import (
+    describe_seeds,
+    format_strength_body,
 )
 
 _PROGRESS_BAR_WIDTH = 24
@@ -141,6 +146,15 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
         "--progress",
         action="store_true",
         help="show completed games, elapsed time, and ETA on stderr",
+    )
+    parser.add_argument(
+        "--artifact-out",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "save the successful evaluation as a new immutable JSON artifact "
+            "(Policy candidates only; never overwrites an existing path)"
+        ),
     )
     parser.add_argument(
         "--mortal-image",
@@ -242,110 +256,19 @@ class _ProgressReporter:
         self._finished = True
 
 
-def _describe_seeds(seeds: tuple[int, ...]) -> str:
-    if len(seeds) == 1:
-        return f"{seeds[0]} ({len(seeds)})"
-    return f"{seeds[0]}..{seeds[-1]} ({len(seeds)})"
-
-
 _SummaryResult = SingleRoundEvaluationResult | MortalSingleRoundEvaluationResult
-
-
-def _baseline_mean_score(result: _SummaryResult) -> float:
-    """全gameのbaseline 3 seat(candidate以外)final scoreの平均。"""
-    baseline_scores = [
-        score
-        for game_result in result.game_results
-        for seat, score in enumerate(game_result.scores)
-        if seat != game_result.candidate_seat
-    ]
-    return sum(baseline_scores) / len(baseline_scores)
-
-
-def _mean_delta(result: _SummaryResult) -> float:
-    """game単位の``candidate score - baseline 3 seat平均``をgame平均したdescriptive metric。"""
-    return mean_candidate_game_delta(result.game_results)
-
-
-def _format_rate(count: int, total: int) -> str:
-    """``count / total``を``NN.N% (count/total)``、``total``が0なら``N/A``。
-
-    rate自体の計算はここで行わず、``total``が0でも``0.0%``へ誤表示しない
-    ためのformattingだけを担当する。
-    """
-    if total == 0:
-        return "N/A"
-    return f"{count / total * 100:.1f}% ({count}/{total})"
-
-
-def _format_mean(value: float | None) -> str:
-    """``None``を``0.0``へ丸めず``N/A``としてformatする。"""
-    return "N/A" if value is None else f"{value:.1f}"
-
-
-def _format_mahjong_metrics(result: _SummaryResult) -> list[str]:
-    """candidateのIssue #61 Mahjong metricsをformatする。domain aggregation
-    自体はすでに``SingleRoundCandidateMahjongMetrics``へ計算済みであり、ここは
-    表示のためのformattingだけを行う。
-    """
-    m = result.candidate_metrics.mahjong_metrics
-    return [
-        "mahjong metrics:",
-        "",
-        f"  mean round score delta:       {m.mean_round_score_delta:+.1f}",
-        "",
-        f"  win rate:                     {_format_rate(m.win_count, m.round_count)}",
-        f"  mean win points:              {_format_mean(m.mean_win_points)}",
-        "",
-        f"  deal-in rate:                 "
-        f"{_format_rate(m.deal_in_count, m.round_count)}",
-        f"  mean deal-in loss:            {_format_mean(m.mean_deal_in_loss)}",
-        "",
-        f"  exhaustive-draw tenpai rate:  "
-        f"{_format_rate(m.exhaustive_draw_tenpai_count, m.exhaustive_draw_count)}",
-        f"  mean first-tenpai turn:       {_format_mean(m.mean_first_tenpai_turn)}",
-    ]
-
-
-def _format_seed_block_statistics(statistics: SeedBlockStatistics) -> list[str]:
-    """evaluation側で導出済みのseed-block statisticsを表示する。"""
-    if statistics.sample_standard_deviation is None:
-        standard_deviation = "N/A"
-        standard_error = "N/A"
-        interval = "N/A"
-    else:
-        standard_deviation = f"{statistics.sample_standard_deviation:.1f}"
-        standard_error = f"{statistics.standard_error:.1f}"
-        interval = (
-            f"[{statistics.normal_approx_95_interval_lower:+.1f}, "
-            f"{statistics.normal_approx_95_interval_upper:+.1f}]"
-        )
-
-    return [
-        "seed-block statistics:",
-        "",
-        f"  {'seed blocks:':<32}{statistics.seed_block_count:>8}",
-        f"  {'mean delta:':<32}{statistics.mean_seed_block_delta:>+8.1f}",
-        f"  {'standard deviation:':<32}{standard_deviation:>8}",
-        f"  {'standard error:':<32}{standard_error:>8}",
-        f"  {'normal-approx 95% interval:':<32}{interval:>8}",
-        "",
-        f"  {'positive seed blocks:':<32}{statistics.positive_seed_block_count:>8}",
-        f"  {'zero seed blocks:':<32}{statistics.zero_seed_block_count:>8}",
-        f"  {'negative seed blocks:':<32}{statistics.negative_seed_block_count:>8}",
-    ]
 
 
 def format_summary(result: _SummaryResult, *, workers: int) -> str:
     """成功したsingle-round評価結果からhuman-readable summaryを組み立てる。
 
-    baseline mean scoreはraw ``game_results``から導出する。mean deltaと
-    seed-block statisticsのdomain aggregationは
-    ``lisjong_arena.single_round_evaluation``が担い、ここではformattingだけを
-    行う。7 Mahjong metrics(Issue #61)も同様にaggregation済みの値を表示する。
+    strength metricsのdomain aggregationは
+    ``lisjong_arena.single_round_evaluation.summarize_single_round_strength()``
+    が、formattingは``lisjong_arena.single_round_summary_format``が所有する。
+    このCLIは実行条件のheaderとMortal provenanceだけを足す。保存済みartifactを
+    再集計するCLIも同じseamを使うため、同じmetricが別の式・別の書式にならない。
     """
     plan = result.plan
-    metrics = result.candidate_metrics
     if isinstance(result, MortalSingleRoundEvaluationResult):
         candidate_identity = MORTAL_IDENTITY
         heading = "Single-round comparison completed"
@@ -353,33 +276,21 @@ def format_summary(result: _SummaryResult, *, workers: int) -> str:
         candidate_identity = plan.candidate.identity
         heading = "Policy comparison completed"
 
+    summary = summarize_single_round_strength(
+        result.candidate_metrics, result.game_results
+    )
     lines = [
         heading,
         "",
         "protocol:   ABBB / 4p-red-single",
         f"candidate:  {candidate_identity}",
         f"baseline:   {plan.baseline.identity}",
-        f"seeds:      {_describe_seeds(plan.seeds)}",
+        f"seeds:      {describe_seeds(plan.seeds)}",
         f"games:      {len(result.game_results)}",
         f"workers:    {workers}",
         "",
-        f"candidate mean score: {metrics.mean_candidate_score:.1f}",
-        f"baseline mean score:  {_baseline_mean_score(result):.1f}",
-        f"mean delta:            {_mean_delta(result):+.1f}",
-        "",
-        "candidate seat means:",
+        *format_strength_body(summary),
     ]
-    for seat, seat_mean_score in enumerate(metrics.seat_mean_scores):
-        lines.append(f"  seat {seat}: {seat_mean_score:.1f}")
-
-    lines.append("")
-    lines.extend(_format_mahjong_metrics(result))
-    lines.append("")
-    lines.extend(
-        _format_seed_block_statistics(
-            aggregate_seed_block_statistics(result.game_results)
-        )
-    )
 
     if isinstance(result, MortalSingleRoundEvaluationResult):
         config = result.plan.mortal_config
@@ -416,12 +327,41 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
 
     ``run_single_round_evaluation()`` / ``run_single_round_evaluation_parallel()``
     が失敗した場合はpartial summaryを出さず、non-zero exitで終了する。
+
+    ``--artifact-out``を指定した場合だけ、evaluation成功後にartifactを保存する。
+    Mortal candidate、既存path、存在しない保存先directoryは、長時間のevaluationを
+    実行する前にfail closedする。保存自体が失敗した場合はpartial fileを残さず
+    non-zero exitで終了する。artifact保存の有無はevaluation semanticsへ影響しない。
     """
     parser = build_arg_parser(prog="python -m lisjong_arena.single_round_compare")
     args = parser.parse_args(argv)
 
     is_mortal = args.candidate == MORTAL_IDENTITY
     baseline = POLICY_CATALOG[args.baseline]
+
+    artifact_path: Path | None = args.artifact_out
+    if artifact_path is not None:
+        if is_mortal:
+            print(
+                "invalid comparison: --artifact-out does not support the Mortal "
+                "candidate; only ABBB Policy strength artifacts are supported",
+                file=sys.stderr,
+            )
+            return 2
+        if artifact_path.exists():
+            print(
+                "invalid comparison: --artifact-out path already exists: "
+                f"{artifact_path}",
+                file=sys.stderr,
+            )
+            return 2
+        if not artifact_path.parent.is_dir():
+            print(
+                "invalid comparison: --artifact-out directory does not exist: "
+                f"{artifact_path.parent}",
+                file=sys.stderr,
+            )
+            return 2
 
     if is_mortal:
         if args.workers != 1:
@@ -514,6 +454,16 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     if progress_reporter is not None:
         progress_reporter.close()
     print(format_summary(result, workers=args.workers))
+
+    if artifact_path is not None:
+        try:
+            save_single_round_artifact(result, artifact_path)
+        except Exception as error:
+            print(
+                f"artifact save failed: {type(error).__name__}: {error}",
+                file=sys.stderr,
+            )
+            return 1
     return 0
 
 

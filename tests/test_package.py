@@ -7,6 +7,7 @@ import lisjong_arena.artifact
 import lisjong_arena.comparison
 import lisjong_arena.model
 import lisjong_arena.riichilab.ranked
+import lisjong_arena.single_round_artifact
 import lisjong_arena.single_round_evaluation
 
 
@@ -37,25 +38,37 @@ class PackageTest(unittest.TestCase):
                 "ComparisonExecutionError",
                 "ComparisonPlan",
                 "ComparisonResult",
+                "CumulativeSingleRoundStrength",
                 "ExecutionProvenance",
                 "PolicyFactoryNotSerializableError",
                 "PolicyMetrics",
                 "PolicySpec",
                 "ROTATION_COUNT",
+                "SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION",
+                "SINGLE_ROUND_EVALUATION_PROTOCOL",
                 "SINGLE_ROUND_GAME_MODE",
                 "SINGLE_ROUND_ROTATION_COUNT",
                 "SeatResult",
+                "SingleRoundArtifactError",
+                "SingleRoundArtifactPlan",
                 "SingleRoundCandidateMetrics",
                 "SingleRoundEvaluationError",
                 "SingleRoundEvaluationPlan",
                 "SingleRoundEvaluationResult",
+                "SingleRoundExecutionProvenance",
                 "SingleRoundGameResult",
+                "SingleRoundStrengthArtifact",
+                "SingleRoundStrengthSummary",
                 "load_comparison_artifact",
+                "load_single_round_artifact",
+                "merge_single_round_artifacts",
                 "run_comparison",
                 "run_comparison_parallel",
                 "run_single_round_evaluation",
                 "run_single_round_evaluation_parallel",
                 "save_comparison_artifact",
+                "save_single_round_artifact",
+                "summarize_single_round_strength",
             ],
         )
         for name in lisjong_arena.__all__:
@@ -74,6 +87,7 @@ class PackageTest(unittest.TestCase):
             lisjong_arena.comparison,
             lisjong_arena.model,
             lisjong_arena.riichilab.ranked,
+            lisjong_arena.single_round_artifact,
             lisjong_arena.single_round_evaluation,
         ):
             with self.subTest(module=module.__name__):

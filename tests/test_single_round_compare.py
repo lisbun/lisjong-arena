@@ -12,7 +12,9 @@ serial-parallel equivalence等のevaluation semanticsは
 import contextlib
 import dataclasses
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
@@ -24,8 +26,8 @@ from lisjong_arena.model import (
     SingleRoundGameResult,
 )
 from lisjong_arena.policy_catalog import POLICY_CATALOG
+from lisjong_arena.single_round_artifact import load_single_round_artifact
 from lisjong_arena.single_round_compare import (
-    _mean_delta,
     _run_cli,
     format_summary,
     parse_seeds,
@@ -34,6 +36,7 @@ from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
     aggregate_candidate_metrics,
     aggregate_seed_block_statistics,
+    mean_candidate_game_delta,
 )
 
 
@@ -517,7 +520,7 @@ class SummaryTest(unittest.TestCase):
             )
         )
         self.assertEqual(
-            _mean_delta(result),
+            mean_candidate_game_delta(result.game_results),
             aggregate_seed_block_statistics(result.game_results).mean_seed_block_delta,
         )
 
@@ -579,6 +582,132 @@ class MahjongMetricsSummaryTest(unittest.TestCase):
         self.assertIn("  mean deal-in loss:            5420.5", lines)
         self.assertIn("  exhaustive-draw tenpai rate:  50.0% (1/2)", lines)
         self.assertIn("  mean first-tenpai turn:       9.4", lines)
+
+
+class ArtifactOutTest(unittest.TestCase):
+    """``--artifact-out``はopt-inのpersistenceであり、evaluationを変えない。"""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+
+    def _arguments(self, *extra: str) -> list[str]:
+        return [
+            "--candidate",
+            "finite-horizon",
+            "--baseline",
+            "two-step",
+            "--seeds",
+            "0:1",
+            *extra,
+        ]
+
+    def _run(self, *extra: str) -> tuple[int, str, str, mock.Mock]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                return_value=_fake_result(seeds=(0, 1)),
+            ) as serial,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            return_code = _run_cli(self._arguments(*extra))
+        return return_code, stdout.getvalue(), stderr.getvalue(), serial
+
+    def test_saves_a_loadable_artifact_after_a_successful_evaluation(self) -> None:
+        path = self.directory / "run.json"
+
+        return_code, stdout, stderr, serial = self._run("--artifact-out", str(path))
+
+        self.assertEqual(return_code, 0)
+        self.assertEqual(stderr, "")
+        serial.assert_called_once()
+        artifact = load_single_round_artifact(path)
+        self.assertEqual(artifact.plan.candidate_identity, "finite-horizon")
+        self.assertEqual(artifact.plan.baseline_identity, "two-step")
+        self.assertEqual(artifact.plan.seeds, (0, 1))
+        self.assertEqual(artifact.game_results, _fake_result(seeds=(0, 1)).game_results)
+        self.assertIn("Policy comparison completed", stdout)
+
+    def test_saving_does_not_change_the_evaluation_or_the_summary(self) -> None:
+        path = self.directory / "run.json"
+
+        without_return, without_stdout, _, without_serial = self._run()
+        with_return, with_stdout, _, with_serial = self._run(
+            "--artifact-out", str(path)
+        )
+
+        self.assertEqual(without_return, with_return)
+        self.assertEqual(without_stdout, with_stdout)
+        self.assertEqual(without_serial.call_args.args, with_serial.call_args.args)
+        self.assertEqual(without_serial.call_args.kwargs, with_serial.call_args.kwargs)
+        self.assertEqual(
+            load_single_round_artifact(path).game_results,
+            _fake_result(seeds=(0, 1)).game_results,
+        )
+
+    def test_existing_artifact_path_is_rejected_before_execution(self) -> None:
+        path = self.directory / "run.json"
+        path.write_text("existing", encoding="utf-8")
+
+        return_code, stdout, stderr, serial = self._run("--artifact-out", str(path))
+
+        self.assertEqual(return_code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("already exists", stderr)
+        serial.assert_not_called()
+        self.assertEqual(path.read_text(encoding="utf-8"), "existing")
+
+    def test_missing_artifact_directory_is_rejected_before_execution(self) -> None:
+        path = self.directory / "absent" / "run.json"
+
+        return_code, stdout, stderr, serial = self._run("--artifact-out", str(path))
+
+        self.assertEqual(return_code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("directory does not exist", stderr)
+        serial.assert_not_called()
+
+    def test_failed_save_exits_non_zero_without_leaving_a_partial_file(self) -> None:
+        path = self.directory / "run.json"
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                return_value=_fake_result(seeds=(0, 1)),
+            ),
+            mock.patch(
+                "lisjong_arena.single_round_compare.save_single_round_artifact",
+                side_effect=OSError("disk full"),
+            ),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            return_code = _run_cli(self._arguments("--artifact-out", str(path)))
+
+        self.assertEqual(return_code, 1)
+        self.assertIn("artifact save failed", stderr.getvalue())
+        self.assertFalse(path.exists())
+
+    def test_failed_evaluation_does_not_write_an_artifact(self) -> None:
+        path = self.directory / "run.json"
+        stderr = io.StringIO()
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                side_effect=RuntimeError("boom"),
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(stderr),
+        ):
+            return_code = _run_cli(self._arguments("--artifact-out", str(path)))
+
+        self.assertEqual(return_code, 1)
+        self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":

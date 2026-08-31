@@ -139,6 +139,22 @@ class MortalSingleRoundCompareTest(unittest.TestCase):
         runner.assert_not_called()
         self.assertIn("requires --workers 1", stderr.getvalue())
 
+    def test_artifact_out_is_rejected_before_execution(self) -> None:
+        """Mortal candidateはABBB Policy strength artifact contractの対象外。"""
+        artifact_path = self.model_path.parent / "run.json"
+        arguments = self.arguments("--artifact-out", str(artifact_path))
+        stderr = io.StringIO()
+        with (
+            mock.patch(f"{_MODULE}.run_mortal_single_round_evaluation") as runner,
+            contextlib.redirect_stderr(stderr),
+        ):
+            return_code = _run_cli(arguments)
+
+        self.assertEqual(return_code, 2)
+        runner.assert_not_called()
+        self.assertIn("--artifact-out does not support the Mortal", stderr.getvalue())
+        self.assertFalse(artifact_path.exists())
+
     def test_missing_runtime_configuration_is_rejected(self) -> None:
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):

@@ -339,6 +339,74 @@ class SingleRoundGameResult:
         return self.seat_round_stats[self.candidate_seat]
 
 
+def validate_single_round_game_results(
+    game_results: object,
+    seeds: tuple[int, ...],
+) -> tuple[SingleRoundGameResult, ...]:
+    """ABBB raw game resultsがordered seedsと整合することを検証してtupleへ正規化する。
+
+    ここで固定するのはsingle-round評価protocolのraw result contractである。
+
+    - 件数は``rotations 4 x seeds``ちょうど
+    - 順序は``seed入力順 -> rotation 0..3``
+    - ``candidate_seat``は``Seat(rotation)``
+    - ``game_mode``は``4p-red-single``固定
+
+    実行結果``SingleRoundEvaluationResult``と、実行を伴わないartifact contract
+    (``lisjong_arena.single_round_artifact``)が同じraw ordering ruleを別実装
+    しないよう、両者がこの1関数を共有する。ここでは``seeds``が
+    ``_normalize_seeds()``済みであることを前提とし、seed自体の正規化はしない。
+    """
+    if isinstance(game_results, (str, bytes, bytearray)):
+        raise TypeError("game_results must be an ordered collection")
+    try:
+        results = tuple(game_results)
+    except TypeError:
+        raise TypeError("game_results must be an ordered collection") from None
+    if any(not isinstance(item, SingleRoundGameResult) for item in results):
+        raise TypeError("game_results must contain only SingleRoundGameResult")
+
+    expected_count = SINGLE_ROUND_ROTATION_COUNT * len(seeds)
+    if len(results) != expected_count:
+        raise ValueError(
+            f"game_results must contain exactly {expected_count} records "
+            f"(seeds={len(seeds)} x "
+            f"rotations={SINGLE_ROUND_ROTATION_COUNT}) but got {len(results)}"
+        )
+
+    expected_order = [
+        (seed, rotation)
+        for seed in seeds
+        for rotation in range(SINGLE_ROUND_ROTATION_COUNT)
+    ]
+    for game_result, (expected_seed, expected_rotation) in zip(results, expected_order):
+        if game_result.seed != expected_seed:
+            raise ValueError(
+                "game_results must be ordered by plan.seeds input order "
+                f"but expected seed={expected_seed!r}, got "
+                f"seed={game_result.seed!r}"
+            )
+        if game_result.rotation != expected_rotation:
+            raise ValueError(
+                "game_results must be ordered by rotation 0..3 within each "
+                f"seed but expected rotation={expected_rotation!r}, got "
+                f"rotation={game_result.rotation!r}"
+            )
+        if game_result.candidate_seat != Seat(expected_rotation):
+            raise ValueError(
+                "game_results candidate_seat must equal Seat(rotation) but "
+                f"expected {Seat(expected_rotation)!r}, got "
+                f"{game_result.candidate_seat!r}"
+            )
+        if game_result.game_mode != SINGLE_ROUND_GAME_MODE:
+            raise ValueError(
+                f"game_results must all use game_mode {SINGLE_ROUND_GAME_MODE!r} "
+                f"but got {game_result.game_mode!r}"
+            )
+
+    return results
+
+
 def _validate_bounded_count(name: str, value: object, *, maximum: int) -> None:
     if type(value) is not int:
         raise TypeError(f"{name} must be an int")
@@ -567,55 +635,11 @@ class SingleRoundEvaluationResult:
         if not isinstance(self.plan, SingleRoundEvaluationPlan):
             raise TypeError("plan must be a SingleRoundEvaluationPlan")
 
-        if isinstance(self.game_results, (str, bytes, bytearray)):
-            raise TypeError("game_results must be an ordered collection")
-        try:
-            game_results = tuple(self.game_results)
-        except TypeError:
-            raise TypeError("game_results must be an ordered collection") from None
-        if any(not isinstance(item, SingleRoundGameResult) for item in game_results):
-            raise TypeError("game_results must contain only SingleRoundGameResult")
+        game_results = validate_single_round_game_results(
+            self.game_results, self.plan.seeds
+        )
         object.__setattr__(self, "game_results", game_results)
-
         expected_count = SINGLE_ROUND_ROTATION_COUNT * len(self.plan.seeds)
-        if len(game_results) != expected_count:
-            raise ValueError(
-                f"game_results must contain exactly {expected_count} records "
-                f"(seeds={len(self.plan.seeds)} x "
-                f"rotations={SINGLE_ROUND_ROTATION_COUNT}) but got {len(game_results)}"
-            )
-
-        expected_order = [
-            (seed, rotation)
-            for seed in self.plan.seeds
-            for rotation in range(SINGLE_ROUND_ROTATION_COUNT)
-        ]
-        for game_result, (expected_seed, expected_rotation) in zip(
-            game_results, expected_order
-        ):
-            if game_result.seed != expected_seed:
-                raise ValueError(
-                    "game_results must be ordered by plan.seeds input order "
-                    f"but expected seed={expected_seed!r}, got "
-                    f"seed={game_result.seed!r}"
-                )
-            if game_result.rotation != expected_rotation:
-                raise ValueError(
-                    "game_results must be ordered by rotation 0..3 within each "
-                    f"seed but expected rotation={expected_rotation!r}, got "
-                    f"rotation={game_result.rotation!r}"
-                )
-            if game_result.candidate_seat != Seat(expected_rotation):
-                raise ValueError(
-                    "game_results candidate_seat must equal Seat(rotation) but "
-                    f"expected {Seat(expected_rotation)!r}, got "
-                    f"{game_result.candidate_seat!r}"
-                )
-            if game_result.game_mode != SINGLE_ROUND_GAME_MODE:
-                raise ValueError(
-                    f"game_results must all use game_mode {SINGLE_ROUND_GAME_MODE!r} "
-                    f"but got {game_result.game_mode!r}"
-                )
 
         if not isinstance(self.candidate_metrics, SingleRoundCandidateMetrics):
             raise TypeError("candidate_metrics must be a SingleRoundCandidateMetrics")
@@ -659,4 +683,5 @@ __all__ = [
     "SingleRoundEvaluationPlan",
     "SingleRoundEvaluationResult",
     "SingleRoundGameResult",
+    "validate_single_round_game_results",
 ]

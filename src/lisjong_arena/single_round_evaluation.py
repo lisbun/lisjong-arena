@@ -84,6 +84,24 @@ class SeedBlockStatistics:
     negative_seed_block_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class SingleRoundStrengthSummary:
+    """1つのraw game result集合から再生成できるderived strength statistics。
+
+    ここに置くのは既存canonical aggregation(``aggregate_candidate_metrics()``、
+    ``mean_baseline_score()``、``mean_candidate_game_delta()``、
+    ``aggregate_seed_block_statistics()``)の結果だけであり、新しい統計semantics
+    は導入しない。artifact persistence(``lisjong_arena.single_round_artifact``)
+    とhuman-readable summary(``lisjong_arena.single_round_summary_format``)が、
+    同じmetricを別の式で再実装しないための共通aggregation seamである。
+    """
+
+    candidate_metrics: SingleRoundCandidateMetrics
+    mean_baseline_score: float
+    mean_candidate_game_delta: float
+    seed_block_statistics: SeedBlockStatistics
+
+
 def scaled_candidate_game_delta(game_result: SingleRoundGameResult) -> int:
     """candidate-vs-baseline game deltaを3倍したexact integerで返す。
 
@@ -380,6 +398,53 @@ def aggregate_candidate_metrics(
     )
 
 
+def mean_baseline_score(
+    game_results: tuple[SingleRoundGameResult, ...],
+) -> float:
+    """全gameのbaseline 3 seat(candidate以外)final scoreの平均を返す。
+
+    baselineはgameごとにcandidate以外の3 seatを担当するため、母数は
+    ``3 * game数``のseat scoreである。candidate側の
+    ``mean_candidate_score``(母数はgame数)とは母数が異なる。
+    """
+    if not game_results:
+        raise ValueError("game_results must not be empty")
+    baseline_scores = [
+        score
+        for game_result in game_results
+        for seat, score in enumerate(game_result.scores)
+        if seat != game_result.candidate_seat
+    ]
+    return sum(baseline_scores) / len(baseline_scores)
+
+
+def summarize_single_round_strength(
+    candidate_metrics: SingleRoundCandidateMetrics,
+    game_results: tuple[SingleRoundGameResult, ...],
+) -> SingleRoundStrengthSummary:
+    """既存canonical aggregationを1つのderived strength summaryへまとめる。
+
+    ``candidate_metrics``はcallerがすでに持っているaggregation結果
+    (``SingleRoundEvaluationResult.candidate_metrics``等)をそのまま使い、
+    ここで再集計しない。残るbaseline mean score、mean candidate game delta、
+    seed-block statisticsは同じ``game_results``から既存canonical関数で導出する。
+
+    1回のrunでも、複数runのraw resultを連結したcumulative setでも、同じ
+    canonical aggregationをそのまま適用する。個々のaggregateを加重平均して
+    近似することはしない。
+    """
+    if not isinstance(candidate_metrics, SingleRoundCandidateMetrics):
+        raise TypeError("candidate_metrics must be a SingleRoundCandidateMetrics")
+    if candidate_metrics.game_count != len(game_results):
+        raise ValueError("candidate_metrics.game_count must equal len(game_results)")
+    return SingleRoundStrengthSummary(
+        candidate_metrics=candidate_metrics,
+        mean_baseline_score=mean_baseline_score(game_results),
+        mean_candidate_game_delta=mean_candidate_game_delta(game_results),
+        seed_block_statistics=aggregate_seed_block_statistics(game_results),
+    )
+
+
 def run_single_round_evaluation(
     plan: SingleRoundEvaluationPlan,
     *,
@@ -550,11 +615,14 @@ __all__ = [
     "PolicyFactoryNotSerializableError",
     "SeedBlockStatistics",
     "SingleRoundEvaluationError",
+    "SingleRoundStrengthSummary",
     "aggregate_candidate_metrics",
     "aggregate_seed_block_statistics",
     "candidate_game_delta",
+    "mean_baseline_score",
     "mean_candidate_game_delta",
     "run_single_round_evaluation",
     "run_single_round_evaluation_parallel",
     "scaled_candidate_game_delta",
+    "summarize_single_round_strength",
 ]
