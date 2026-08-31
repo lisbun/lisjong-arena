@@ -94,7 +94,7 @@ decision scopeを結果を見る前に定める。fixed / common seedsにより�
 
 ### Evidence supporting promotion
 
-promotion判断を支えるevidenceは、そevidenceを取得する時点でcandidateの調整や
+promotion判断を支えるevidenceは、そのevidenceを取得する時点でcandidateの調整や
 先行の結果確認に使っていないfresh seed populationから得る。追加evidenceは
 それまでのformal evidenceとnon-overlappingなfresh seedsを使う。必要なevidence量や
 判断基準は、evaluation目的に応じて個別のbounded Issueで事前に明示する。
