@@ -25,7 +25,7 @@ execution / observation
 
 lisjong ecosystem全体のrepository責務、repository間依存方向、長期ロードマップは[`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
 
-Arena固有の詳細な責務・ownership decisionは[Architecture](docs/architecture.md)、長期的な発展方針は[Roadmap](docs/roadmap.md)を参照してください。
+Arena固有の詳細な責務・ownership decisionは[Architecture](docs/architecture.md)、長期的な発展方針は[Roadmap](docs/roadmap.md)、Policy strength comparisonの恒久的な評価規律は[Policy strength evaluation policy](docs/policy-strength-evaluation.md)を参照してください。
 
 ## 責務
 
