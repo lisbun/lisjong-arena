@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from lisjong.policy_contract import Wind
 from lisjong_engine.seat import Seat
@@ -16,7 +17,13 @@ from lisjong_arena.phase5_belief_dataset.model import (
     GameIdentity,
     TurnExampleReference,
 )
-from lisjong_arena.phase8_sequential.data import materialize_development_sequences
+from lisjong_arena.phase8_sequential.data import (
+    materialize_development_examples,
+    materialize_development_sequences,
+)
+from lisjong_arena.phase8_sequential.evaluation import (
+    remap_predictions_by_reference,
+)
 from lisjong_arena.phase8_sequential.protocol import (
     DEPTH_BUCKETS,
     BpttMode,
@@ -142,6 +149,145 @@ class Phase8SequentialProtocolTest(unittest.TestCase):
                 for step in sequence.steps
             )
         )
+
+    def test_canonical_materialization_preserves_dataset_order_and_seals_test(self):
+        called = []
+
+        def builder(reference, _sample):
+            called.append(reference)
+            return SimpleNamespace(example=reference)
+
+        validation_141 = _reference(partition=DatasetPartition.VALIDATION, seed=141)
+        validation_140 = _reference(partition=DatasetPartition.VALIDATION, seed=140)
+        examples = materialize_development_examples(
+            (
+                validation_141,
+                _reference(partition=DatasetPartition.TEST, seed=150),
+                validation_140,
+            ),
+            (object(), object(), object()),
+            example_builder=builder,
+        )
+        self.assertEqual(called, [validation_141, validation_140])
+        self.assertEqual(
+            tuple(value.example for value in examples),
+            (validation_141, validation_140),
+        )
+        self.assertEqual(
+            tuple(value.key.game.game_seed for value in build_sequences(examples)),
+            (140, 141),
+        )
+
+    def test_prediction_identity_remap_is_exact_one_to_one_and_fail_closed(self):
+        first = _reference(partition=DatasetPartition.VALIDATION, seed=140)
+        second = _reference(partition=DatasetPartition.VALIDATION, seed=141)
+        first_prediction = SimpleNamespace(example=first)
+        second_prediction = SimpleNamespace(example=second)
+        self.assertEqual(
+            remap_predictions_by_reference(
+                (first, second), (second_prediction, first_prediction)
+            ),
+            (first_prediction, second_prediction),
+        )
+        with self.assertRaisesRegex(ValueError, "prediction identities.*unique"):
+            remap_predictions_by_reference(
+                (first, second), (first_prediction, first_prediction)
+            )
+        with self.assertRaisesRegex(ValueError, "identities differ"):
+            remap_predictions_by_reference((first, second), (first_prediction,))
+        with self.assertRaisesRegex(ValueError, "identities differ"):
+            remap_predictions_by_reference(
+                (first,),
+                (
+                    SimpleNamespace(
+                        example=replace(
+                            first, game=GameIdentity("first-party-bootstrap", 142)
+                        )
+                    ),
+                ),
+            )
+        same_identity_different_reference = replace(
+            first, partition=DatasetPartition.TRAIN
+        )
+        self.assertEqual(first.identity, same_identity_different_reference.identity)
+        with self.assertRaisesRegex(ValueError, "reference differs"):
+            remap_predictions_by_reference(
+                (first,),
+                (SimpleNamespace(example=same_identity_different_reference),),
+            )
+
+    def test_snapshot_compatibility_failure_precedes_train_candidate(self):
+        from lisjong_arena.phase8_sequential import __main__ as phase8_main
+
+        dataset = SimpleNamespace(dataset_identity="b" * 64)
+        canonical_example = SimpleNamespace(
+            example=_reference(partition=DatasetPartition.VALIDATION, seed=140)
+        )
+        frozen = SimpleNamespace(
+            model=object(),
+            manifest={
+                "runtime": {
+                    "device": "cpu",
+                    "torch_thread_count": 1,
+                    "deterministic_algorithms": True,
+                },
+                "validation_metrics": {},
+            },
+        )
+        fake_torch = SimpleNamespace(
+            set_num_threads=lambda _value: None,
+            use_deterministic_algorithms=lambda _value: None,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            arguments = SimpleNamespace(
+                artifact=str(Path(temporary) / "candidate"),
+                snapshot_artifact=str(Path(temporary) / "snapshot"),
+                raw="raw",
+                dataset="dataset",
+                inventory="inventory",
+                lisjong_revision="a" * 40,
+                engine_revision="a" * 40,
+                arena_revision="a" * 40,
+                candidate=Candidate.S1,
+            )
+            with (
+                patch.object(phase8_main, "_verify_runtime", return_value=fake_torch),
+                patch.object(phase8_main, "_installed_revision", return_value="a" * 40),
+                patch.object(
+                    phase8_main,
+                    "_load_data",
+                    return_value=(object(), dataset),
+                ),
+                patch.object(phase8_main, "_verify_inventory", return_value={}),
+                patch.object(
+                    phase8_main,
+                    "resolve_training_samples",
+                    return_value=(object(),),
+                ),
+                patch.object(
+                    phase8_main,
+                    "prepare_formal_examples",
+                    return_value=(canonical_example,),
+                ),
+                patch(
+                    "lisjong_arena.phase7_snapshot_test.evaluation.verify_frozen_artifact",
+                    return_value=(frozen, "c" * 64),
+                ),
+                patch(
+                    "lisjong_arena.phase6_snapshot.training.predict_snapshot_examples",
+                    return_value=((), 0.0),
+                ),
+                patch(
+                    "lisjong_arena.phase8_sequential.evaluation.verify_snapshot_validation_compatibility",
+                    side_effect=RuntimeError("compatibility drift"),
+                ),
+                patch(
+                    "lisjong_arena.phase8_sequential.training.train_candidate"
+                ) as train_candidate,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "compatibility drift"):
+                    phase8_main._training_command(arguments)
+                train_candidate.assert_not_called()
 
     def test_wind_keyed_state_remaps_rows_in_current_opponent_order(self):
         winds = tuple(Wind)[:3]

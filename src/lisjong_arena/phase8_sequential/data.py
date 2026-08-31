@@ -55,13 +55,13 @@ def validate_formal_dataset(dataset: BeliefDataset) -> None:
             raise ValueError(f"formal {partition.value} TURN anchor count differs")
 
 
-def materialize_development_sequences(
+def materialize_development_examples(
     references: tuple,
     samples: tuple,
     *,
     example_builder=materialize_snapshot_example,
 ):
-    """Exclude TEST before calling the Phase 6 feature/model-facing builder."""
+    """Materialize TRAIN/VALIDATION in canonical dataset order after sealing TEST."""
     if len(references) != len(samples):
         raise ValueError("references and samples must align")
     development = []
@@ -74,7 +74,24 @@ def materialize_development_sequences(
         ):
             raise ValueError("unsupported Phase 8 partition")
         development.append(example_builder(reference, sample))
-    return build_sequences(tuple(development))
+    if not development:
+        raise ValueError("Phase 8 development materialization requires examples")
+    return tuple(development)
+
+
+def materialize_development_sequences(
+    references: tuple,
+    samples: tuple,
+    *,
+    example_builder=materialize_snapshot_example,
+):
+    """Build locked sequences from canonically materialized development examples."""
+    examples = materialize_development_examples(
+        references,
+        samples,
+        example_builder=example_builder,
+    )
+    return build_sequences(examples)
 
 
 def inventory_from_dataset(dataset: BeliefDataset):
@@ -93,9 +110,13 @@ def inventory_from_dataset(dataset: BeliefDataset):
     )
 
 
-def prepare_formal_sequences(dataset: BeliefDataset, samples: tuple):
+def prepare_formal_examples(dataset: BeliefDataset, samples: tuple):
     validate_formal_dataset(dataset)
-    return materialize_development_sequences(dataset.examples, samples)
+    return materialize_development_examples(dataset.examples, samples)
+
+
+def prepare_formal_sequences(dataset: BeliefDataset, samples: tuple):
+    return build_sequences(prepare_formal_examples(dataset, samples))
 
 
 __all__ = [
@@ -103,8 +124,10 @@ __all__ = [
     "LOCKED_TRAIN_SEEDS",
     "LOCKED_VALIDATION_ANCHOR_COUNT",
     "LOCKED_VALIDATION_SEEDS",
+    "materialize_development_examples",
     "materialize_development_sequences",
     "inventory_from_dataset",
+    "prepare_formal_examples",
     "prepare_formal_sequences",
     "validate_formal_dataset",
 ]

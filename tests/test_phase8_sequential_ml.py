@@ -235,6 +235,114 @@ class Phase8SequentialMlTest(unittest.TestCase):
         self.assertFalse(detached_latent.requires_grad)
         self.assertIsNone(detached_latent.grad_fn)
 
+    def test_canonical_validation_drives_compatibility_primary_metrics_and_depth(self):
+        from lisjong_arena.phase5_belief_dataset.measurements import (
+            measure_expected_count_rows,
+        )
+        from lisjong_arena.phase8_sequential import evaluation as phase8_evaluation
+        from lisjong_arena.phase8_sequential.evaluation import (
+            evaluate_candidate,
+            metrics_value,
+            verify_snapshot_validation_compatibility,
+        )
+        from lisjong_arena.phase8_sequential.model import create_model
+        from lisjong_arena.phase8_sequential.rollout import self_rollout
+
+        temporary, original = self._two_step_sequence()
+        try:
+            validation_steps = tuple(
+                replace(
+                    step,
+                    example=replace(
+                        step.example, partition=DatasetPartition.VALIDATION
+                    ),
+                )
+                for step in original.steps
+            )
+            sequence = Phase8Sequence(
+                original.key,
+                DatasetPartition.VALIDATION,
+                validation_steps,
+            )
+            canonical_examples = tuple(reversed(validation_steps))
+            rollout = self_rollout(
+                create_model(Candidate.S1), Candidate.S1, (sequence,)
+            )
+            canonical_predictions = tuple(reversed(rollout.predictions))
+            canonical_report = evaluate_expected_count_predictions(
+                "b" * 64,
+                tuple(value.example for value in canonical_examples),
+                tuple(value.sample for value in canonical_examples),
+                canonical_predictions,
+            )
+            frozen_metrics = metrics_value(
+                canonical_report.partition_metrics[0].metrics
+            )
+            canonical = verify_snapshot_validation_compatibility(
+                "b" * 64,
+                canonical_examples,
+                rollout.predictions,
+                {"mse": 0.125, **frozen_metrics},
+            )
+            self.assertEqual(
+                tuple(value.example for value in canonical.snapshot_predictions),
+                tuple(value.example for value in canonical_examples),
+            )
+            with self.assertRaisesRegex(RuntimeError, "per_tile_mae"):
+                verify_snapshot_validation_compatibility(
+                    "b" * 64,
+                    canonical_examples,
+                    rollout.predictions,
+                    frozen_metrics
+                    | {"per_tile_mae": frozen_metrics["per_tile_mae"] + 2e-12},
+                )
+
+            actual_evaluator = phase8_evaluation.evaluate_expected_count_predictions
+            with patch(
+                "lisjong_arena.phase8_sequential.evaluation.evaluate_expected_count_predictions",
+                wraps=actual_evaluator,
+            ) as evaluator:
+                result = evaluate_candidate(
+                    Candidate.S1,
+                    (sequence,),
+                    rollout,
+                    canonical,
+                    dataset_identity="b" * 64,
+                )
+            canonical_references = tuple(value.example for value in canonical_examples)
+            self.assertEqual(evaluator.call_args_list[0].args[1], canonical_references)
+            self.assertEqual(evaluator.call_args_list[1].args[1], canonical_references)
+            self.assertEqual(
+                result.metrics.per_tile_mae,
+                canonical_report.partition_metrics[0].metrics.per_tile_mae,
+            )
+            self.assertEqual(
+                tuple(value["sample_count"] for value in result.depth_diagnostics),
+                (1, 1, 0, 0),
+            )
+            expected_depth_mae = tuple(
+                sum(
+                    row.absolute_error_sum
+                    for row in measure_expected_count_rows(
+                        example.example, example.sample, prediction
+                    )
+                )
+                / 102
+                for example, prediction in zip(
+                    validation_steps, rollout.predictions, strict=True
+                )
+            )
+            self.assertEqual(
+                result.depth_diagnostics[0]["candidate_mae"],
+                expected_depth_mae[0],
+            )
+            self.assertEqual(
+                result.depth_diagnostics[1]["candidate_mae"],
+                expected_depth_mae[1],
+            )
+        finally:
+            temporary.cleanup()
+
     def test_training_weights_every_cell_not_each_sequence_or_chunk(self):
         from lisjong_arena.phase8_sequential.training import _train_pooled_epoch
 
@@ -328,6 +436,10 @@ class Phase8SequentialMlTest(unittest.TestCase):
                 self.assertAlmostEqual(reported_mse, 1.0 / 33.0)
 
     def test_one_epoch_training_is_deterministic_and_validation_does_not_update(self):
+        from lisjong_arena.phase8_sequential.evaluation import (
+            metrics_value,
+            verify_snapshot_validation_compatibility,
+        )
         from lisjong_arena.phase8_sequential.model import create_model
         from lisjong_arena.phase8_sequential.rollout import self_rollout
         from lisjong_arena.phase8_sequential.training import (
@@ -379,49 +491,132 @@ class Phase8SequentialMlTest(unittest.TestCase):
                 .partition_metrics[0]
                 .metrics
             )
+            canonical_validation = verify_snapshot_validation_compatibility(
+                "b" * 64,
+                (validation_step,),
+                snapshot,
+                metrics_value(snapshot_metrics),
+            )
             config = TrainingConfig(max_epochs=1, patience=1)
             policy = BpttPolicy(BpttMode.FULL_SEQUENCE, None)
             arguments = dict(
                 dataset_identity="b" * 64,
                 bptt_policy=policy,
-                snapshot_validation_predictions=snapshot,
+                canonical_validation=canonical_validation,
                 config=config,
             )
-            with patch(
-                "lisjong_arena.phase8_sequential.evaluation.SNAPSHOT_VALIDATION_MAE",
-                snapshot_metrics.per_tile_mae,
-            ):
-                first = train_candidate(
-                    Candidate.S1,
-                    (train_sequence, validation_sequence),
-                    **arguments,
-                )
-                second = train_candidate(
-                    Candidate.S1,
-                    (train_sequence, validation_sequence),
-                    **arguments,
-                )
-                changed_validation = Phase8Sequence(
-                    validation_sequence.key,
-                    validation_sequence.partition,
-                    (
-                        replace(
-                            validation_step,
-                            target=tuple(
-                                tuple(4.0 - value for value in row)
-                                for row in validation_step.target
-                            ),
+            first = train_candidate(
+                Candidate.S1,
+                (train_sequence, validation_sequence),
+                **arguments,
+            )
+            second = train_candidate(
+                Candidate.S1,
+                (train_sequence, validation_sequence),
+                **arguments,
+            )
+            changed_validation = Phase8Sequence(
+                validation_sequence.key,
+                validation_sequence.partition,
+                (
+                    replace(
+                        validation_step,
+                        target=tuple(
+                            tuple(4.0 - value for value in row)
+                            for row in validation_step.target
                         ),
                     ),
-                )
-                changed = train_candidate(
-                    Candidate.S1,
-                    (train_sequence, changed_validation),
-                    **arguments,
-                )
+                ),
+            )
+            changed = train_candidate(
+                Candidate.S1,
+                (train_sequence, changed_validation),
+                **arguments,
+            )
             for name, value in first.model.state_dict().items():
                 self.assertTrue(torch.equal(value, second.model.state_dict()[name]))
                 self.assertTrue(torch.equal(value, changed.model.state_dict()[name]))
+        finally:
+            temporary.cleanup()
+
+    def test_checkpoint_selection_uses_canonical_validation_order(self):
+        from lisjong_arena.phase8_sequential import training as phase8_training
+        from lisjong_arena.phase8_sequential.evaluation import (
+            metrics_value,
+            verify_snapshot_validation_compatibility,
+        )
+        from lisjong_arena.phase8_sequential.model import create_model
+        from lisjong_arena.phase8_sequential.rollout import self_rollout
+        from lisjong_arena.phase8_sequential.training import (
+            TrainingConfig,
+            train_candidate,
+        )
+
+        temporary, train_sequence = self._two_step_sequence()
+        try:
+            validation_steps = tuple(
+                replace(
+                    step,
+                    example=replace(
+                        step.example, partition=DatasetPartition.VALIDATION
+                    ),
+                )
+                for step in train_sequence.steps
+            )
+            validation_sequence = Phase8Sequence(
+                train_sequence.key,
+                DatasetPartition.VALIDATION,
+                validation_steps,
+            )
+            canonical_examples = tuple(reversed(validation_steps))
+            snapshot_rollout = self_rollout(
+                create_model(Candidate.S1), Candidate.S1, (validation_sequence,)
+            )
+            canonical_snapshot_predictions = tuple(
+                reversed(snapshot_rollout.predictions)
+            )
+            snapshot_report = evaluate_expected_count_predictions(
+                "b" * 64,
+                tuple(value.example for value in canonical_examples),
+                tuple(value.sample for value in canonical_examples),
+                canonical_snapshot_predictions,
+            )
+            canonical = verify_snapshot_validation_compatibility(
+                "b" * 64,
+                canonical_examples,
+                snapshot_rollout.predictions,
+                metrics_value(snapshot_report.partition_metrics[0].metrics),
+            )
+            actual_evaluator = phase8_training.evaluate_expected_count_predictions
+            with patch(
+                "lisjong_arena.phase8_sequential.training.evaluate_expected_count_predictions",
+                wraps=actual_evaluator,
+            ) as evaluator:
+                result = train_candidate(
+                    Candidate.S1,
+                    (train_sequence, validation_sequence),
+                    dataset_identity="b" * 64,
+                    bptt_policy=BpttPolicy(BpttMode.FULL_SEQUENCE, None),
+                    canonical_validation=canonical,
+                    config=TrainingConfig(max_epochs=1, patience=1),
+                )
+            validation_calls = tuple(
+                call
+                for call in evaluator.call_args_list
+                if all(
+                    reference.partition is DatasetPartition.VALIDATION
+                    for reference in call.args[1]
+                )
+            )
+            self.assertEqual(len(validation_calls), 1)
+            self.assertEqual(
+                validation_calls[0].args[1],
+                tuple(value.example for value in canonical_examples),
+            )
+            self.assertEqual(
+                result.history[0].validation_mae,
+                result.validation.metrics.per_tile_mae,
+            )
         finally:
             temporary.cleanup()
 
@@ -552,6 +747,7 @@ class Phase8SequentialMlTest(unittest.TestCase):
                 "torch_threads": 1,
                 "objective": "pooled-expected-count-cell-weighted-mse",
                 "optimizer_update": "one-pooled-training-gradient-step-per-epoch",
+                "primary_validation_order": "canonical-dataset-order",
                 "checkpoint_selection": "strictly-lower-pooled-self-rollout-validation-mae",
                 "checkpoint_tie_abs_tol": 1e-12,
             },
