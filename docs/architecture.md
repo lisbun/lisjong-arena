@@ -602,9 +602,11 @@ gradient historyだけをdetachする。
 TRAIN objectiveは全TRAIN sequenceのexpected-count cellをpoolしたMSEとし、各sequence / truncated chunkの
 meanを等重みで更新しない。各epochはchunkごとに同じpooled denominatorで勾配を蓄積し、全sequence後に
 1回だけoptimizerを更新する。weight updateはTRAINだけ、checkpoint selectionはpooled self-rollout
-VALIDATION per-tile MAEのstrictly lowerだけで行う。VALIDATION artifactはper-hand / per-game / fixed
-depth bucket / physical metrics、runtime、parameter count、throughputを保持し、physical gateを通った
-S1/S2の低MAE側だけをwinnerとする。1e-12
+VALIDATION per-tile MAEのstrictly lowerだけで行う。frozen snapshot compatibilityとcandidateのprimary
+pooled VALIDATION metricはdataset canonical orderで集計し、predictionは`TurnExampleReference` identityで
+one-to-oneに対応付ける。sequence orderはself-rolloutとsequence-local depth診断だけに使用する。
+VALIDATION artifactはper-hand / per-game / fixed depth bucket / physical metrics、runtime、parameter count、
+throughputを保持し、physical gateを通ったS1/S2の低MAE側だけをwinnerとする。1e-12
 absolute tieはS1を選び、winnerがsnapshot referenceを上回り10 game中6 game以上positiveの場合だけ
 Phase 9へadvanceする。条件を満たさない正式結果もPhase 8の成功として保存する。
 

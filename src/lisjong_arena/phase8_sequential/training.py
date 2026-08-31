@@ -11,7 +11,12 @@ from lisjong_arena.phase5_belief_dataset.measurements import (
 )
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 
-from .evaluation import CandidateEvaluation, evaluate_candidate
+from .evaluation import (
+    CandidateEvaluation,
+    CanonicalValidation,
+    evaluate_candidate,
+    remap_predictions_by_reference,
+)
 from .model import S2_LATENT_DIM, create_model, parameter_count
 from .protocol import (
     BpttMode,
@@ -103,8 +108,7 @@ def _partition_sequences(
     return selected
 
 
-def _metrics(dataset_identity: str, sequences: tuple, predictions: tuple):
-    examples = flatten_sequences(sequences)
+def _metrics(dataset_identity: str, examples: tuple, predictions: tuple):
     report = evaluate_expected_count_predictions(
         dataset_identity,
         tuple(value.example for value in examples),
@@ -228,14 +232,23 @@ def train_candidate(
     *,
     dataset_identity: str,
     bptt_policy: BpttPolicy,
-    snapshot_validation_predictions: tuple,
+    canonical_validation: CanonicalValidation,
     config: TrainingConfig = FORMAL_TRAINING_CONFIG,
 ) -> TrainingResult:
     """Fit on TRAIN and select strictly by pooled self-rollout VALIDATION MAE."""
-    import torch
-
     train_sequences = _partition_sequences(sequences, DatasetPartition.TRAIN)
     validation_sequences = _partition_sequences(sequences, DatasetPartition.VALIDATION)
+    validation_references = tuple(
+        value.example for value in flatten_sequences(validation_sequences)
+    )
+    remap_predictions_by_reference(
+        validation_references, canonical_validation.snapshot_predictions
+    )
+    canonical_examples = canonical_validation.examples
+    canonical_references = tuple(value.example for value in canonical_examples)
+
+    import torch
+
     torch.manual_seed(config.seed)
     torch.use_deterministic_algorithms(config.deterministic_algorithms)
     torch.set_num_threads(config.torch_threads)
@@ -264,10 +277,13 @@ def train_candidate(
             order,
         )
         validation_rollout = self_rollout(model, candidate, validation_sequences)
+        validation_predictions = remap_predictions_by_reference(
+            canonical_references, validation_rollout.predictions
+        )
         validation_metrics = _metrics(
             dataset_identity,
-            validation_sequences,
-            validation_rollout.predictions,
+            canonical_examples,
+            validation_predictions,
         )
         validation_mae = validation_metrics.per_tile_mae
         history.append(
@@ -289,13 +305,13 @@ def train_candidate(
     train_rollout = self_rollout(model, candidate, train_sequences)
     validation_rollout = self_rollout(model, candidate, validation_sequences)
     train_metrics = _metrics(
-        dataset_identity, train_sequences, train_rollout.predictions
+        dataset_identity, flatten_sequences(train_sequences), train_rollout.predictions
     )
     validation = evaluate_candidate(
         candidate,
         validation_sequences,
         validation_rollout,
-        snapshot_validation_predictions,
+        canonical_validation,
         dataset_identity=dataset_identity,
     )
     return TrainingResult(

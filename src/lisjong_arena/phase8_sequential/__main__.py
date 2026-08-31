@@ -20,9 +20,14 @@ from .artifact import (
     save_comparison_result,
     save_model_artifact,
 )
-from .data import inventory_from_dataset, prepare_formal_sequences
-from .protocol import Candidate, inventory_value, load_inventory, save_inventory
-from .rollout import flatten_sequences
+from .data import inventory_from_dataset, prepare_formal_examples
+from .protocol import (
+    Candidate,
+    build_sequences,
+    inventory_value,
+    load_inventory,
+    save_inventory,
+)
 
 
 def _revision(value: str) -> str:
@@ -97,6 +102,22 @@ def _verify_runtime() -> object:
     return torch
 
 
+def _configure_snapshot_runtime(torch, manifest: dict[str, object]) -> None:
+    runtime = manifest.get("runtime")
+    if type(runtime) is not dict:
+        raise RuntimeError("frozen Phase 6 runtime contract is incomplete")
+    if runtime.get("device") != "cpu":
+        raise RuntimeError("frozen Phase 6 runtime device differs")
+    thread_count = runtime.get("torch_thread_count")
+    deterministic = runtime.get("deterministic_algorithms")
+    if type(thread_count) is not int or thread_count <= 0:
+        raise RuntimeError("frozen Phase 6 torch thread count is invalid")
+    if type(deterministic) is not bool:
+        raise RuntimeError("frozen Phase 6 deterministic flag is invalid")
+    torch.set_num_threads(thread_count)
+    torch.use_deterministic_algorithms(deterministic)
+
+
 def _load_data(raw_path: str, dataset_path: str):
     from .data import validate_formal_dataset
 
@@ -124,6 +145,7 @@ def _training_command(arguments) -> dict[str, object]:
     from lisjong_arena.phase6_snapshot.training import predict_snapshot_examples
     from lisjong_arena.phase7_snapshot_test.evaluation import verify_frozen_artifact
 
+    from .evaluation import verify_snapshot_validation_compatibility
     from .training import train_candidate
 
     artifact_path = Path(arguments.artifact)
@@ -140,15 +162,25 @@ def _training_command(arguments) -> dict[str, object]:
         )
     raw, dataset = _load_data(arguments.raw, arguments.dataset)
     inventory = _verify_inventory(dataset, arguments.inventory)
-    samples = resolve_training_samples(dataset, raw)
-    sequences = prepare_formal_sequences(dataset, samples)
-    validation = tuple(
-        value for value in sequences if value.partition is DatasetPartition.VALIDATION
-    )
     frozen, _manifest_sha = verify_frozen_artifact(arguments.snapshot_artifact)
-    snapshot_predictions, _residual = predict_snapshot_examples(
-        frozen.model, flatten_sequences(validation)
+    _configure_snapshot_runtime(torch, frozen.manifest)
+    samples = resolve_training_samples(dataset, raw)
+    development_examples = prepare_formal_examples(dataset, samples)
+    canonical_validation_examples = tuple(
+        value
+        for value in development_examples
+        if value.example.partition is DatasetPartition.VALIDATION
     )
+    snapshot_predictions, _residual = predict_snapshot_examples(
+        frozen.model, canonical_validation_examples
+    )
+    canonical_validation = verify_snapshot_validation_compatibility(
+        dataset.dataset_identity,
+        canonical_validation_examples,
+        snapshot_predictions,
+        frozen.manifest["validation_metrics"],
+    )
+    sequences = build_sequences(development_examples)
     from .protocol import BpttMode, BpttPolicy
 
     policy_value = inventory["bptt_policy"]
@@ -160,7 +192,7 @@ def _training_command(arguments) -> dict[str, object]:
         sequences,
         dataset_identity=dataset.dataset_identity,
         bptt_policy=policy,
-        snapshot_validation_predictions=snapshot_predictions,
+        canonical_validation=canonical_validation,
     )
     source = dataset.provenance.source_revisions
     dataset_revisions = {
