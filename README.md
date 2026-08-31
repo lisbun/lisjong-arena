@@ -599,7 +599,7 @@ python -m lisjong_arena.single_round_compare `
   --progress
 ```
 
-利用可能なPolicy名は次の5つです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
+利用可能なPolicy名は次の6つです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
 
 ```text
 two-step          -> TwoStepUkeirePolicy
@@ -607,6 +607,7 @@ finite-horizon    -> FiniteHorizonCompletionPolicy
 combined          -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
 hand-value-aware  -> HandValueAwareTwoStepUkeirePolicy
 extended-combined -> GenbutsuDefenseFiniteHorizonHandValueAwarePolicy
+yakuhai-call      -> YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy
 ```
 
 current CombinedとExtended Combinedを比較する場合は、freshな100-seed rangeを指定して次の形でGate 1を実行します。seed選定とGate 2の詳細は[`docs/extended-combined-evaluation.md`](docs/extended-combined-evaluation.md)を参照してください。
@@ -631,15 +632,15 @@ evaluation protocol(ABBB rotation、`4p-red-single`固定、Policy lifecycle、r
 
 ### Mortal candidate
 
-Issue #67で、同じCLIからMortalをcandidate、`TwoStepUkeirePolicy` 3体をbaselineとして実行する明示的なmixed single-round経路を追加しました。Mortalはlisjong `Policy`でも`PolicySpec`でもないため、`POLICY_CATALOG`には登録しません。`--candidate mortal`だけがこの専用経路を選び、`--baseline two-step`と`--workers 1`以外はfail closedします。
+Issue #67で追加したMortal専用mixed single-round経路は、Mortalをcandidate、`POLICY_CATALOG`から選択した同一baseline Policy 3体として実行します。Mortalはlisjong `Policy`でも`PolicySpec`でもないため、`POLICY_CATALOG`には登録しません。`--candidate mortal`だけがこの専用経路を選び、Mortalをbaselineには指定できません。Mortal evaluationは引き続き`--workers 1`だけを受け付けます。
 
 Mortal upstreamのDocker imageはmodelを含みません。評価前に、使用するMortal revisionからimageをbuildし、model file `mortal.pth`を別途用意してください。Arenaはimageやmodelを自動downloadせず、Dockerにも`--pull=never`を渡します。
 
 ```powershell
 python -m lisjong_arena.single_round_compare `
   --candidate mortal `
-  --baseline two-step `
-  --seeds 0 `
+  --baseline yakuhai-call `
+  --seeds 0:99 `
   --workers 1 `
   --mortal-image mortal@sha256:<image-digest> `
   --mortal-revision <Mortal-commit-or-version> `
@@ -648,7 +649,7 @@ python -m lisjong_arena.single_round_compare `
 
 `--mortal-model`はupstream Docker imageが`/mnt/mortal.pth`として読む単一fileを指定します。Arenaはその親directoryをread-only mountし、model SHA256を実行前に計算します。summaryにはDocker executable、image identity、Mortal implementation revision/version、解決済みmodel path、model SHA256、action response timeoutを表示します。
 
-各gameではMortal Docker processをfresh起動し、RiichiEnv `Observation.new_events()`の全batchをstdinへ送ってflushした後、そのdecisionに必要な1 action responseだけを有限時間待ちます。responseは`Observation.select_action_from_mjai()`でRiichiEnv actionへ解決し、malformed / illegal response、launch failure、unexpected termination、timeout、RiichiEnv failureのいずれでもTwoStepへfallbackしません。成功・失敗を問わずprocess/containerをcleanupし、1 gameでも失敗した場合は4 rotationのpartial resultを返しません。
+各gameではMortal Docker processをfresh起動し、RiichiEnv `Observation.new_events()`の全batchをstdinへ送ってflushした後、そのdecisionに必要な1 action responseだけを有限時間待ちます。responseは`Observation.select_action_from_mjai()`でRiichiEnv actionへ解決し、malformed / illegal response、launch failure、unexpected termination、timeout、RiichiEnv failureのいずれでもbaseline Policyへfallbackしません。成功・失敗を問わずprocess/containerをcleanupし、1 gameでも失敗した場合は4 rotationのpartial resultを返しません。
 
 成功時は次の形式でsummaryをstdoutへ表示します。
 

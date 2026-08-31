@@ -28,12 +28,12 @@ class MortalSingleRoundCompareTest(unittest.TestCase):
         self.model_path = Path(directory.name) / "mortal.pth"
         self.model_path.write_bytes(b"mortal-model")
 
-    def arguments(self, *extra: str) -> list[str]:
+    def arguments(self, *extra: str, baseline: str = "two-step") -> list[str]:
         return [
             "--candidate",
             "mortal",
             "--baseline",
-            "two-step",
+            baseline,
             "--seeds",
             "0",
             "--workers",
@@ -47,14 +47,16 @@ class MortalSingleRoundCompareTest(unittest.TestCase):
             *extra,
         ]
 
-    def result(self) -> MortalSingleRoundEvaluationResult:
+    def result(
+        self, *, baseline: str = "two-step"
+    ) -> MortalSingleRoundEvaluationResult:
         config = MortalDockerConfig(
             image="mortal@sha256:image",
             implementation_revision="0cff2b5",
             model_path=self.model_path,
         )
         plan = MortalSingleRoundEvaluationPlan(
-            baseline=POLICY_CATALOG["two-step"],
+            baseline=POLICY_CATALOG[baseline],
             seeds=(0,),
             mortal_config=config,
         )
@@ -104,6 +106,25 @@ class MortalSingleRoundCompareTest(unittest.TestCase):
         self.assertEqual(plan.mortal_config.image, "mortal@sha256:image")
         self.assertIn("candidate:  mortal", stdout.getvalue())
 
+    def test_cli_dispatches_yakuhai_call_baseline_from_catalog(self) -> None:
+        result = self.result(baseline="yakuhai-call")
+        stdout = io.StringIO()
+        with (
+            mock.patch(
+                f"{_MODULE}.run_mortal_single_round_evaluation",
+                return_value=result,
+            ) as mortal_runner,
+            contextlib.redirect_stdout(stdout),
+        ):
+            return_code = _run_cli(self.arguments(baseline="yakuhai-call"))
+
+        self.assertEqual(return_code, 0)
+        mortal_runner.assert_called_once()
+        plan = mortal_runner.call_args.args[0]
+        self.assertIs(plan.baseline, POLICY_CATALOG["yakuhai-call"])
+        self.assertIn("candidate:  mortal", stdout.getvalue())
+        self.assertIn("baseline:   yakuhai-call", stdout.getvalue())
+
     def test_workers_greater_than_one_is_rejected_before_execution(self) -> None:
         arguments = self.arguments()
         arguments[arguments.index("--workers") + 1] = "2"
@@ -138,16 +159,6 @@ class MortalSingleRoundCompareTest(unittest.TestCase):
         self.assertIn("--mortal-image", stderr.getvalue())
         self.assertIn("--mortal-revision", stderr.getvalue())
         self.assertIn("--mortal-model", stderr.getvalue())
-
-    def test_non_two_step_baseline_is_rejected(self) -> None:
-        arguments = self.arguments()
-        arguments[arguments.index("--baseline") + 1] = "finite-horizon"
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            return_code = _run_cli(arguments)
-
-        self.assertEqual(return_code, 2)
-        self.assertIn("baseline must be two-step", stderr.getvalue())
 
     def test_failure_prints_no_partial_summary(self) -> None:
         stdout = io.StringIO()

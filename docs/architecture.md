@@ -348,7 +348,7 @@ RiichiEnv action request
 
 runtimeはupstream Mortal Dockerfileのmjai entrypointだけを対象とするconcrete implementationであり、generic process/backend/plugin abstractionは持たない。1 gameごとにfresh process/containerを起動し、model directoryを`/mnt`へread-only mountする。stdinへ全new-events batchを送ってflushしてから1 responseを有限時間待ち、malformed / illegal response、launch / termination / timeout / environment failureをfail closedする。全終了経路でcleanupし、cleanup failureが同時に起きても元のgame failureを失わない。
 
-Mortal evaluationは`MortalSingleRoundEvaluationPlan` / `MortalSingleRoundEvaluationResult`のserial-only経路を持ち、Mortalをseat 0..3へrotationする。game mode、raw `SingleRoundGameResult`、`RoundStatsCollector`、candidate metrics aggregation、canonical order、no-partial-result semanticsは既存ABBBと同じ値・helperを再利用する。Mortalは`POLICY_CATALOG`へ登録せず、`single_round_compare --candidate mortal`の明示分岐だけから選択できる。baselineは`two-step`、workersは1に固定する。
+Mortal evaluationは`MortalSingleRoundEvaluationPlan` / `MortalSingleRoundEvaluationResult`のserial-only経路を持ち、Mortalをseat 0..3へrotationする。game mode、raw `SingleRoundGameResult`、`RoundStatsCollector`、candidate metrics aggregation、canonical order、no-partial-result semanticsは既存ABBBと同じ値・helperを再利用する。Mortalは`POLICY_CATALOG`へ登録せず、`single_round_compare --candidate mortal`の明示分岐だけから選択できる。baselineはCLIが`POLICY_CATALOG`から解決した`PolicySpec`をPlanへ渡し、workersは1に固定する。
 
 ### First-party `lisjong-engine` execution path (Issue #53)
 

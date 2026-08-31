@@ -424,12 +424,6 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     baseline = POLICY_CATALOG[args.baseline]
 
     if is_mortal:
-        if args.baseline != "two-step":
-            print(
-                "invalid comparison: Mortal baseline must be two-step",
-                file=sys.stderr,
-            )
-            return 2
         if args.workers != 1:
             print(
                 "invalid comparison: Mortal evaluation requires --workers 1",
