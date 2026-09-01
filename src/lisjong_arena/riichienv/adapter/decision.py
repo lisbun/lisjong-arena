@@ -50,12 +50,16 @@ def build_decision(
     tracker: SeatMaterializedState,
     observation: Observation,
     mapping_session: RiichiEnvActionMappingSession,
+    *,
+    new_events: list[str] | None = None,
 ) -> RiichiEnvDecision:
     """1つのObservationから検証済みPolicy contextと対応mappingを構築する。
 
     tracker、Observation、mapping sessionのseatを更新前に照合する。その後、同じ
     Observationからmappingを先に生成してsession generationを進め、続いて
-    ``PolicyInput``を構築する。後段の同期または``DecisionContext``構築が失敗しても、
+    ``PolicyInput``を構築する。``new_events``が明示された場合は同じObservationから
+    callerが取得済みのbatchとしてtrackerへ渡し、消費型``new_events()``を二重に
+    呼ばない。後段の同期または``DecisionContext``構築が失敗しても、
     以前のmappingを有効なまま残さないためである。
 
     ``DecisionContext``自身が持つ非空・actor一致・semantic重複禁止のvalidationは
@@ -76,7 +80,7 @@ def build_decision(
         )
 
     mapping = mapping_session.build(observation)
-    policy_input = build_policy_input(tracker, observation)
+    policy_input = build_policy_input(tracker, observation, new_events=new_events)
     context = DecisionContext(
         input=policy_input,
         legal_actions=mapping.candidates,

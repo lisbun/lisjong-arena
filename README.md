@@ -690,6 +690,40 @@ python -m lisjong_arena.single_round_compare `
 
 各gameではMortal Docker processをfresh起動し、RiichiEnv `Observation.new_events()`の全batchをstdinへ送ってflushした後、そのdecisionに必要な1 action responseだけを有限時間待ちます。responseは`Observation.select_action_from_mjai()`でRiichiEnv actionへ解決し、malformed / illegal response、launch failure、unexpected termination、timeout、RiichiEnv failureのいずれでもbaseline Policyへfallbackしません。成功・失敗を問わずprocess/containerをcleanupし、1 gameでも失敗した場合は4 rotationのpartial resultを返しません。
 
+### Mortal same-state decision diagnostic
+
+Issue #118の専用CLIは、Mortal mixed executionをdriverとして維持したまま、Mortalが
+実際に判断したseat-relative `Observation`へselected lisjong Policyをshadow実行する
+**strong referenceとのsame-state diagnostic**です。strength benchmarkとは別measurementであり、
+Mortalはground truthではありません。disagreementもerrorやlisjong Policyの不正解を意味しません。
+
+```powershell
+python -m lisjong_arena.mortal_decision_compare `
+  --policy combined `
+  --seeds 0:3 `
+  --mortal-image mortal@sha256:<image-digest> `
+  --mortal-revision <Mortal-commit-or-version> `
+  --mortal-model C:\models\mortal.pth
+```
+
+`--policy`はcatalog aliasまたはexplicit `lisjong.package:attribute` referenceを受け付け、
+explicit referenceでは`--policy-id`も必須です。各gameで同じfactoryからactual opponent
+3席とMortal席専用shadowを別々に生成し、Policy instance、`SeatMaterializedState`、
+`RiichiEnvActionMappingSession`を共有しません。
+
+Mortal seatでは`Observation.new_events()`を1回だけ取得し、その同じevent batchと同じ
+`Observation` objectをMortal runtimeと`build_decision()`へ渡します。Mortal responseから
+解決したActionだけを`env.step()`へ渡し、shadow actionはgame progressionへ一切流しません。
+双方のActionは同じObservation上のlegal RiichiEnv Actionとして再検証し、physical tile copyや
+consume順等のrepresentation差を除いたpurpose-specific semantic valueで比較します。
+malformed / illegal Mortal responseやshadow mapping failureはdisagreementへ丸めずfail closedします。
+
+成功resultはtyped `PolicyInput` / `DecisionTrace`を含むimmutable paired recordsをin-memoryで
+保持し、total / agreements / disagreements / agreement rate、Mortal kind / shadow kind pair、
+all / first N / kind-filtered disagreementを取得できます。初期実装ではdiagnostic artifact、
+generic persistence、canonical GameRecord、database、dashboardを持ちません。目的はdisagreement
+分布を観測し、次のrule-based / ML強化テーマを実証的に選ぶことです。
+
 成功時は次の形式でsummaryをstdoutへ表示します。
 
 ```text
@@ -945,7 +979,6 @@ artifact formatと保存APIは提供しますが、生成したrun artifactをre
 - database / artifact repository / retention policy
 - distributed / multi-machine execution / job scheduler
 - RiichiLab rankedを使ったstrength comparison protocol
-- Mortalとのmixed-agent benchmark実装 / external competitor wrapper
 - AABB / ABBBからのfirst-party `lisjong-engine` execution path利用
   (bridge自体はIssue #53で追加済みですが、evaluation protocolへは未接続です)
 - first-party `lisjong-engine` execution pathのGameTrace

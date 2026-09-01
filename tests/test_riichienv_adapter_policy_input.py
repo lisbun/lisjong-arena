@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest import mock
 
 from lisjong.policy_contract.meld import MeldKind
 from lisjong.policy_contract.policy_input import PolicyInput
@@ -103,6 +104,22 @@ def _initial_observation(**overrides) -> _FakeObservation:
 
 
 class SnapshotProjectionTest(unittest.TestCase):
+    def test_accepts_captured_new_events_without_reading_observation_again(
+        self,
+    ) -> None:
+        tracker = SeatMaterializedState(Seat.SEAT_0)
+        observation = _initial_observation()
+        captured = [json.dumps(event) for event in observation._events]
+        observation.new_events = mock.Mock(
+            side_effect=AssertionError("new_events must not be consumed twice")
+        )
+
+        policy_input = build_policy_input(tracker, observation, new_events=captured)
+
+        observation.new_events.assert_not_called()
+        self.assertEqual(policy_input.self_seat, Seat.SEAT_0)
+        self.assertEqual(policy_input.round.live_wall_tiles_remaining, 83)
+
     def test_builds_all_required_round_fields(self) -> None:
         tracker = SeatMaterializedState(Seat.SEAT_0)
         policy_input = build_policy_input(tracker, _initial_observation())
