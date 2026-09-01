@@ -310,18 +310,30 @@ class MortalDecisionComparisonSummary:
         return matches if first is None else matches[:first]
 
 
-def _count_action_kind_pairs(
-    records: tuple[MortalDecisionComparisonRecord, ...],
+def count_action_kind_pairs(
+    pairs: Iterable[tuple[RiichiEnvActionKind, RiichiEnvActionKind]],
 ) -> tuple[ActionKindPairCount, ...]:
-    counts = Counter(
-        (record.driver_mortal_action.kind, record.shadow_policy_action.kind)
-        for record in records
-    )
+    """driver / shadow kind pairをdeterministicに集計するcanonical実装。
+
+    in-memory summaryも、``mortal_decision_analysis_artifact``のartifact
+    consistency検証も、この1つの実装だけを使う。同じaggregateを別semanticで
+    再実装して正本を二重化しない。
+    """
+    counts = Counter(pairs)
     return tuple(
         ActionKindPairCount(driver_kind, shadow_kind, count)
         for (driver_kind, shadow_kind), count in sorted(
             counts.items(), key=lambda item: (item[0][0].value, item[0][1].value)
         )
+    )
+
+
+def _count_action_kind_pairs(
+    records: tuple[MortalDecisionComparisonRecord, ...],
+) -> tuple[ActionKindPairCount, ...]:
+    return count_action_kind_pairs(
+        (record.driver_mortal_action.kind, record.shadow_policy_action.kind)
+        for record in records
     )
 
 
@@ -332,5 +344,6 @@ __all__ = [
     "MortalDecisionComparisonSummary",
     "NormalizedRiichiEnvAction",
     "RiichiEnvActionKind",
+    "count_action_kind_pairs",
     "normalize_legal_riichienv_action",
 ]

@@ -394,8 +394,65 @@ Action、agreementを保持する。resultはcanonical seed -> rotation -> decis
 agreement / disagreement、agreement rate、Action-kind pair breakdown、全/first N/kind-filtered
 disagreementをin-memoryで提供する。Mortalはstrong referenceであってground truthではなく、
 disagreementはerrorではない。このmeasurementはstrength benchmarkと分離し、次のrule-based /
-ML強化テーマを実測から選ぶために使う。persistence、canonical GameRecord、database、viewer、
-dashboard、human-semantic原因分類は所有しない。
+ML強化テーマを実測から選ぶために使う。canonical GameRecord、database、viewer、dashboard、
+human-semantic原因分類は所有しない。
+
+### Mortal decision analysis artifact (Issue #126)
+
+`mortal_decision_analysis_artifact`は、上記diagnosticのsuccessful resultだけを対象にした
+opt-in offline analysis artifactを所有する。`mortal_decision_compare --artifact-dir`を
+明示指定した場合だけ生成し、未指定時のCLI behavior(summaryだけをstdoutへ出し、fileを
+生成しない)を変更しない。export有無はMortal execution、shadow Policy execution、game
+progression、paired decision semantics、objective resultのいずれも変えない。
+
+```text
+MortalDecisionEvaluationResult (in-memory 正本)
+    |
+    +-- MortalDecisionComparisonSummary -> manifest aggregate projection
+    |
+    `-- paired records
+          +-- normalized driver / shadow Action -> lossless projection
+          +-- PolicyInput   -> player-safe context projection
+          `-- DecisionTrace -> legal actions / selected action projection
+                 |
+                 v
+        staging directory -> rename -> <artifact-dir>/
+                                           manifest.json
+                                           decisions.jsonl
+```
+
+このartifactはMortal same-state diagnostic専用のconcrete consumer projectionであり、
+project-wide canonical decision recordではない。generic `PolicyInput` / `DecisionTrace` /
+`AnalysisTrace` persistence API、canonical GameRecord、training dataset schema、
+cross-environment Action schema、database、artifact repository、dashboard、viewer、
+generic query engineを導入しない。lisjong側Policy contractへ`to_json()` / `serialize()` /
+`schema_version`等を追加してgeneric persistence contract化することもしない。
+
+schema identityは`lisjong-arena-mortal-decision-analysis-v1`であり、このdiagnostic
+exportのfield semanticsだけを表す。project-wide schema versionへ昇格させない。readback時は
+unknown schema identityをfail closedし、manifestとdecision rowsの整合(件数、agreement /
+disagreement、action-kind pair、shadow Policy identity、canonical order)も検証する。
+
+情報境界として、rowへ書くのはそのdecision時点でPolicyが観測していた`PolicyInput`の
+player-safe snapshotと`DecisionTrace`のlegal / selected actionだけである。hidden opponent
+hand、wall、未来のevent、oracle / observer-only state、credential、machine-local model path
+は書かない。shanten、ukeire、danger、hand valueをArena側で新規計算しない。
+`DecisionTrace.analysis`は、既存のexplicit / safe / versioned serializerが存在しないため
+initial artifactのscope外とし、このIssueのためだけにarbitrary dataclass serializer、
+repr / `__dict__` serializer、pickle、generic AnalysisTrace registryを新設しない。
+unsupported semantic valueを`repr()`等へfallbackして成功扱いにもしない。
+
+aggregateの正本はin-memory `MortalDecisionComparisonSummary`であり、artifact側で別semantic
+のaggregateを実装しない。action-kind pair集計は`mortal_decision_comparison`のcanonical実装
+`count_action_kind_pairs()`をwriterとreadback検証の双方が共有する。execution provenanceは
+ABBB strength artifactと同じArena seam(`collect_execution_provenance()`)を再利用し、
+artifact専用のGit introspection frameworkを新設しない。
+
+disagreementだけでなく全paired decisionsを保存するのは、後続analysisで
+「このcategoryでは何件中何件disagreeしたか」というdenominatorを維持するためである。
+completeなartifactは、全gameの完了・全rowのserialization・manifest整合検証を終えてから
+staging directoryのrenameで公開し、失敗時にpartialなartifactを残さない。既存pathは
+defaultで上書きせず、retention / artifact management systemも持たない。
 
 ### First-party `lisjong-engine` execution path (Issue #53)
 

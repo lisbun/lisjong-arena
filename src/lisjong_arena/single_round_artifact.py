@@ -385,7 +385,13 @@ def _arena_source_revision() -> str:
     return revision
 
 
-def _collect_execution_provenance() -> SingleRoundExecutionProvenance:
+def collect_execution_provenance() -> SingleRoundExecutionProvenance:
+    """実行中のArena execution provenanceを実測値だけから構築する。
+
+    ABBB artifactに加えて、``lisjong_arena.mortal_decision_analysis_artifact``の
+    Mortal診断artifactも同じArena provenance seamを再利用する。artifactごとに
+    別のGit introspectionやversion取得経路を新設しないための共有点である。
+    """
     return SingleRoundExecutionProvenance(
         execution_environment=EXECUTION_ENVIRONMENT,
         lisjong_arena_version=_package_version("lisjong-arena"),
@@ -420,7 +426,7 @@ def _artifact_from_result(
         schema_version=SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION,
         evaluation_protocol=SINGLE_ROUND_EVALUATION_PROTOCOL,
         plan=plan,
-        provenance=_collect_execution_provenance(),
+        provenance=collect_execution_provenance(),
         game_results=result.game_results,
         summary=summarize_single_round_strength(
             result.candidate_metrics, result.game_results
@@ -512,6 +518,29 @@ def _summary_to_dict(summary: SingleRoundStrengthSummary) -> dict[str, Any]:
     }
 
 
+def execution_provenance_to_dict(
+    provenance: SingleRoundExecutionProvenance,
+) -> dict[str, Any]:
+    """execution provenanceをcanonical JSON objectへ変換する。
+
+    ABBB artifactとMortal診断artifactが同じprovenance fieldsを二重実装しない
+    ための共有projectionである。
+    """
+    if not isinstance(provenance, SingleRoundExecutionProvenance):
+        raise TypeError("provenance must be a SingleRoundExecutionProvenance")
+    return {
+        "execution_environment": provenance.execution_environment,
+        "lisjong_arena_revision": provenance.lisjong_arena_revision,
+        "lisjong_arena_version": provenance.lisjong_arena_version,
+        "lisjong_engine_revision": provenance.lisjong_engine_revision,
+        "lisjong_engine_version": provenance.lisjong_engine_version,
+        "lisjong_revision": provenance.lisjong_revision,
+        "lisjong_version": provenance.lisjong_version,
+        "python_version": provenance.python_version,
+        "riichienv_version": provenance.riichienv_version,
+    }
+
+
 def _artifact_to_dict(artifact: SingleRoundStrengthArtifact) -> dict[str, Any]:
     return {
         "evaluation_protocol": artifact.evaluation_protocol,
@@ -526,17 +555,7 @@ def _artifact_to_dict(artifact: SingleRoundStrengthArtifact) -> dict[str, Any]:
             "rotation_count": artifact.plan.rotation_count,
             "seeds": list(artifact.plan.seeds),
         },
-        "provenance": {
-            "execution_environment": artifact.provenance.execution_environment,
-            "lisjong_arena_revision": artifact.provenance.lisjong_arena_revision,
-            "lisjong_arena_version": artifact.provenance.lisjong_arena_version,
-            "lisjong_engine_revision": artifact.provenance.lisjong_engine_revision,
-            "lisjong_engine_version": artifact.provenance.lisjong_engine_version,
-            "lisjong_revision": artifact.provenance.lisjong_revision,
-            "lisjong_version": artifact.provenance.lisjong_version,
-            "python_version": artifact.provenance.python_version,
-            "riichienv_version": artifact.provenance.riichienv_version,
-        },
+        "provenance": execution_provenance_to_dict(artifact.provenance),
         "schema_version": artifact.schema_version,
         "summary": _summary_to_dict(artifact.summary),
     }
@@ -594,7 +613,7 @@ def _parse_plan(value: object) -> SingleRoundArtifactPlan:
     )
 
 
-def _parse_provenance(value: object) -> SingleRoundExecutionProvenance:
+def parse_execution_provenance(value: object) -> SingleRoundExecutionProvenance:
     raw = expect_object(
         value,
         {
@@ -910,7 +929,7 @@ def _parse_artifact(value: object) -> SingleRoundStrengthArtifact:
         schema_version=schema_version,
         evaluation_protocol=evaluation_protocol,
         plan=_parse_plan(raw["plan"]),
-        provenance=_parse_provenance(raw["provenance"]),
+        provenance=parse_execution_provenance(raw["provenance"]),
         game_results=tuple(
             _parse_game_result(game_result, index)
             for index, game_result in enumerate(
@@ -1026,7 +1045,10 @@ __all__ = [
     "SingleRoundArtifactPlan",
     "SingleRoundExecutionProvenance",
     "SingleRoundStrengthArtifact",
+    "collect_execution_provenance",
+    "execution_provenance_to_dict",
     "load_single_round_artifact",
     "merge_single_round_artifacts",
+    "parse_execution_provenance",
     "save_single_round_artifact",
 ]

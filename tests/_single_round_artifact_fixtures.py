@@ -126,7 +126,7 @@ def save(
 ) -> None:
     """install metadataへ依存せず、固定provenanceでartifactを保存する。"""
     with mock.patch(
-        "lisjong_arena.single_round_artifact._collect_execution_provenance",
+        "lisjong_arena.single_round_artifact.collect_execution_provenance",
         return_value=provenance()
         if execution_provenance is None
         else execution_provenance,

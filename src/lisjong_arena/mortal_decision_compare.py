@@ -2,6 +2,12 @@
 
 MortalだけをRiichiEnvへ適用し、selected lisjong Policyは同じMortal-seat
 Observation上でshadow実行する。これはstrength benchmarkとは独立したdiagnosticである。
+
+``--artifact-dir``を明示指定した場合だけ、成功したrunをoffline analysis用の
+purpose-specific artifactへexportする。未指定時の既存behavior(summaryだけを
+stdoutへ出し、fileを一切生成しない)は変更しない。export有無はMortal execution、
+shadow Policy execution、game progression、paired decision semantics、objective
+resultのいずれも変えない。
 """
 
 from __future__ import annotations
@@ -11,6 +17,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from lisjong_arena.mortal_decision_analysis_artifact import (
+    save_mortal_decision_analysis,
+)
 from lisjong_arena.mortal_decision_evaluation import (
     MortalDecisionEvaluationPlan,
     MortalDecisionEvaluationResult,
@@ -68,6 +77,15 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
         metavar="SECONDS",
     )
     parser.add_argument("--mortal-docker-executable", default="docker", metavar="PATH")
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "export the successful diagnostic as a new Mortal-decision analysis "
+            "artifact directory (never overwrites an existing path)"
+        ),
+    )
     return parser
 
 
@@ -118,6 +136,13 @@ def format_summary(result: MortalDecisionEvaluationResult) -> str:
 
 
 def _run_cli(argv: Sequence[str] | None = None) -> int:
+    """診断を実行し、``--artifact-dir``指定時だけ成功後にartifactをexportする。
+
+    既存path、存在しない親directoryは、長時間のMortal runを始める前に
+    fail closedする。export自体が失敗した場合はcompleteに見えるartifactを
+    残さずnon-zero exitで終了する。exportの有無はdiagnostic semanticsと
+    stdout summaryへ影響しない。
+    """
     parser = build_arg_parser(prog="python -m lisjong_arena.mortal_decision_compare")
     args = parser.parse_args(argv)
     try:
@@ -137,6 +162,24 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     except (OSError, PolicyReferenceError, TypeError, ValueError) as error:
         print(f"invalid diagnostic: {error}", file=sys.stderr)
         return 2
+
+    artifact_directory: Path | None = args.artifact_dir
+    if artifact_directory is not None:
+        if artifact_directory.exists():
+            print(
+                "invalid diagnostic: --artifact-dir path already exists: "
+                f"{artifact_directory}",
+                file=sys.stderr,
+            )
+            return 2
+        if not artifact_directory.parent.is_dir():
+            print(
+                "invalid diagnostic: --artifact-dir parent directory does not exist: "
+                f"{artifact_directory.parent}",
+                file=sys.stderr,
+            )
+            return 2
+
     try:
         result = run_mortal_decision_evaluation(plan)
     except Exception as error:
@@ -146,6 +189,16 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         )
         return 1
     print(format_summary(result))
+
+    if artifact_directory is not None:
+        try:
+            save_mortal_decision_analysis(result, artifact_directory)
+        except Exception as error:
+            print(
+                f"analysis artifact export failed: {type(error).__name__}: {error}",
+                file=sys.stderr,
+            )
+            return 1
     return 0
 
 

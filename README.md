@@ -720,9 +720,13 @@ malformed / illegal Mortal responseやshadow mapping failureはdisagreementへ�
 
 成功resultはtyped `PolicyInput` / `DecisionTrace`を含むimmutable paired recordsをin-memoryで
 保持し、total / agreements / disagreements / agreement rate、Mortal kind / shadow kind pair、
-all / first N / kind-filtered disagreementを取得できます。初期実装ではdiagnostic artifact、
-generic persistence、canonical GameRecord、database、dashboardを持ちません。目的はdisagreement
-分布を観測し、次のrule-based / ML強化テーマを実証的に選ぶことです。
+all / first N / kind-filtered disagreementを取得できます。目的はdisagreement分布を観測し、
+次のrule-based / ML強化テーマを実証的に選ぶことです。
+
+後続のoffline analysisのため、`--artifact-dir`を明示指定した場合だけpaired decisionsを
+local artifactへexportできます(後述の[Mortal decision analysis artifact](#mortal-decision-analysis-artifact))。
+未指定時の挙動は従来どおりで、summaryをstdoutへ出すだけでfileを一切生成しません。
+canonical GameRecord、generic persistence、database、dashboardは持ちません。
 
 成功時は次の形式でsummaryをstdoutへ表示します。
 
@@ -970,6 +974,106 @@ seedが重複する場合もrejectします。silentなdeduplicateや同一seed�
 ### Storage policy
 
 artifact formatと保存APIは提供しますが、生成したrun artifactをrepositoryへcommitする運用は要求しません。保存先はローカルのartifact directory等を利用してください。repository-managed long-term archive、GitHub Release assets、外部object storage、database、dashboardは本機能のscope外です。
+
+## Mortal decision analysis artifact
+
+Issue #126で追加した、Mortal same-state decision diagnostic専用のopt-in offline analysis
+artifactです。`mortal_decision_compare`へ`--artifact-dir`を明示指定した場合だけ生成します。
+
+```powershell
+python -m lisjong_arena.mortal_decision_compare `
+  --policy combined `
+  --seeds 0:24 `
+  --mortal-image mortal@sha256:<image-digest> `
+  --mortal-revision <Mortal-commit-or-version> `
+  --mortal-model C:\models\mortal.pth `
+  --artifact-dir .\artifacts\mortal-decision-pilot
+```
+
+### 位置付け
+
+このartifactは**Mortal same-state disagreementのexploratory offline analysis用の
+purpose-specific local artifact**です。次を明示します。
+
+- **Mortalはground truthではありません。** 強いreference policyの一例です
+- **disagreementはerrorではありません。** lisjong Policyの不正解も意味しません
+- **training datasetではありません。** supervised label corpusでもimitation learning用でもありません
+- **canonical GameRecordではありません。** project-wide decision corpus / replay schemaでもありません
+- **schemaはこのMortal diagnostic専用です。** schema identityは
+  `lisjong-arena-mortal-decision-analysis-v1`であり、project-wide schema versionへ昇格させません
+- **agreementを含む全paired decisionsを保存します。** これは後続analysisで
+  「このcategoryでは何件中何件disagreeしたか」というdenominatorを維持するためです
+- **hidden / oracle informationを含めません。** 各rowはそのdecision時点でlisjong Policyが
+  実際に観測していた情報のprojectionだけです
+- **生成したartifactをGitへcommitしません。** repository外のlocal artifact directoryへ保存してください
+- 約10,000 paired decisionsのexploratory analysisはfollow-up work itemです
+
+### Artifact構成
+
+```text
+<artifact-dir>/
+    manifest.json
+    decisions.jsonl
+```
+
+`manifest.json`はrun全体のprovenanceとaggregateを保持します。
+
+- artifact schema identity / diagnostic identity / game mode
+- shadow Policy identity、seed membership、game count
+- paired decision count、agreements、disagreements、agreement rate、action-kind pair counts
+- Mortal image identity/digest、Mortal implementation revision、model SHA-256、response timeout
+- `lisjong-arena` / `lisjong` / `lisjong-engine` / `riichienv` / Pythonのexecution provenance
+  (ABBB strength artifactと同じArena provenance seamを再利用します)
+
+manifestのaggregateはin-memory `MortalDecisionComparisonSummary`からのprojectionです。
+artifact側で別semanticのaggregateを再実装せず、正本を二重化しません。stdout summaryの
+既存挙動も変わりません。
+
+`decisions.jsonl`は1行=1 paired decisionで、canonical order
+(`seed入力順 -> rotation 0..3 -> decision ordinal`)を維持します。各rowは次を保持します。
+
+- seed、rotation、Mortal seat、decision ordinal、shadow Policy identity、agreement
+- normalized Mortal-driver action / normalized lisjong-shadow action
+  (kind、actor、tile、consume tiles、discard tsumogiriをlosslessに保持)
+- `PolicyInput`のplayer-safe projection(self seat、round context、scores、dealer / winds、
+  dora indicators、public riichi state、public discards、public melds、own hand)
+- `DecisionTrace`のlegal actions / selected action(lisjong `InternalAction`のvariant固有
+  semantic fieldをexplicitにprojection)
+
+### 含めないもの
+
+opponentのconcealed hand、wall / 王牌、未来のevent、oracle / observer-only state、
+credential、Docker configuration、Windows absolute model path等のmachine-local情報は
+保存しません。shanten、ukeire、danger、hand value、push/fold label等をArena側で
+新規計算することもしません。
+
+`DecisionTrace.analysis`のgeneric serializationは初期scope外です。lisjong-owned
+`AnalysisTrace`のexplicit / safe / versioned serializerがcurrent codebaseに存在しないため、
+このartifactのためだけにarbitrary dataclass serializer、`repr()` / `__dict__` serializer、
+pickle、generic registryを新設しません。analysis payloadはrowへ書かず、欠落を
+`analysis = 0`のようなsemanticへも変換しません。lisjong側Policy contractへ`to_json()` /
+`serialize()` / `schema_version`等のgeneric persistence APIも追加しません。
+
+### Completion / overwrite policy
+
+completeなartifactはsuccessful diagnostic runに対してだけ公開します。全gameの完了、
+全paired recordの構築、summary構築、全decision rowのserialization、manifest整合の検証を
+終えてから、staging directoryをfinal pathへrenameします。run途中やserialization途中の
+failureでは、一部だけ入った`decisions.jsonl`もcompleteに見える`manifest.json`も残しません。
+
+既存pathはdefaultで破壊的に上書きしません。指定pathが既に存在する場合、CLIは長時間の
+Mortal runを始める前にfail closedします。retention / artifact management systemは持ちません。
+
+### Readback
+
+`lisjong_arena.mortal_decision_analysis_artifact.load_mortal_decision_analysis()`で
+artifactを検証しながら読み戻せます。unknown schema identity、malformed row、manifestと
+decision rowsのinconsistency(件数、agreement / disagreement、action-kind pair、
+shadow Policy identity、canonical order)はいずれもfail closedでrejectします。
+
+読み戻したartifactからは、全decisions、disagreementsのみ、first N、driver / shadowの
+action kind filter程度のinspectionができます。SQL、DataFrame framework、database
+abstraction、generic query engineは追加しません。
 
 ## 現時点で持たないもの
 
