@@ -10,8 +10,8 @@
 
 このCLIの責務は次だけである。
 
-    Policy名解決
-        -> lisjong_arena.policy_catalog.POLICY_CATALOG
+    Policy reference解決
+        -> curated POLICY_CATALOG alias / explicit import reference
     Mortal candidate
         -> concrete Docker mixed runner (serial only)
     既存PolicySpec
@@ -47,7 +47,10 @@ from lisjong_arena.mortal_single_round_evaluation import (
     MortalSingleRoundEvaluationResult,
     run_mortal_single_round_evaluation,
 )
-from lisjong_arena.policy_catalog import POLICY_CATALOG
+from lisjong_arena.policy_reference import (
+    PolicyReferenceError,
+    resolve_policy_reference,
+)
 from lisjong_arena.single_round_artifact import save_single_round_artifact
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
@@ -61,7 +64,6 @@ from lisjong_arena.single_round_summary_format import (
 )
 
 _PROGRESS_BAR_WIDTH = 24
-_CANDIDATE_CHOICES = sorted([*POLICY_CATALOG, MORTAL_IDENTITY])
 
 
 def parse_seeds(raw: str) -> tuple[int, ...]:
@@ -120,14 +122,24 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--candidate",
         required=True,
-        choices=_CANDIDATE_CHOICES,
-        help="candidate name (registered Policy or mortal)",
+        metavar="ALIAS|MODULE:ATTRIBUTE|mortal",
+        help="candidate curated alias, explicit lisjong reference, or mortal",
+    )
+    parser.add_argument(
+        "--candidate-id",
+        metavar="IDENTITY",
+        help="required semantic identity for an explicit candidate reference",
     )
     parser.add_argument(
         "--baseline",
         required=True,
-        choices=sorted(POLICY_CATALOG),
-        help="baseline policy name",
+        metavar="ALIAS|MODULE:ATTRIBUTE",
+        help="baseline curated alias or explicit lisjong reference",
+    )
+    parser.add_argument(
+        "--baseline-id",
+        metavar="IDENTITY",
+        help="required semantic identity for an explicit baseline reference",
     )
     parser.add_argument(
         "--seeds",
@@ -314,10 +326,10 @@ def format_summary(result: _SummaryResult, *, workers: int) -> str:
 def _run_cli(argv: Sequence[str] | None = None) -> int:
     """``python -m lisjong_arena.single_round_compare``のentry point。
 
-    Policy名解決とseed解析はargparseの``choices`` / ``type``で行う。Mortalは
-    ``POLICY_CATALOG``へ登録せず、candidateの明示的な唯一の例外として扱う。
-    未知の名前やseed構文はargparse標準のfail-closed挙動(non-zero exit、usageを
-    stderrへ出力)に委ねる。Policy candidateとbaselineが同じidentityの場合は
+    Policy referenceはcandidate / baseline共通の``resolve_policy_reference()``で
+    解決する。Mortalは``POLICY_CATALOG``へ登録せず、candidateの明示的な唯一の
+    例外として扱う。未知alias、invalid import reference、missing identityは
+    fallbackせずfail closedする。Policy candidateとbaselineが同じidentityの場合は
     既存``SingleRoundEvaluationPlan``のvalidationをそのまま使い、このCLI側で
     重複したvalidation logicは持たない。
 
@@ -337,7 +349,24 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     is_mortal = args.candidate == MORTAL_IDENTITY
-    baseline = POLICY_CATALOG[args.baseline]
+    try:
+        baseline = resolve_policy_reference(
+            args.baseline, explicit_identity=args.baseline_id
+        )
+        if is_mortal:
+            if args.candidate_id is not None:
+                raise PolicyReferenceError(
+                    "--candidate-id is only valid for an explicit Policy reference, "
+                    "not the Mortal candidate"
+                )
+            candidate = None
+        else:
+            candidate = resolve_policy_reference(
+                args.candidate, explicit_identity=args.candidate_id
+            )
+    except (PolicyReferenceError, TypeError) as error:
+        print(f"invalid comparison: {error}", file=sys.stderr)
+        return 2
 
     artifact_path: Path | None = args.artifact_out
     if artifact_path is not None:
@@ -402,7 +431,7 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
             print(f"invalid comparison: {error}", file=sys.stderr)
             return 2
     else:
-        candidate = POLICY_CATALOG[args.candidate]
+        assert candidate is not None
         try:
             plan = SingleRoundEvaluationPlan(
                 candidate=candidate, baseline=baseline, seeds=args.seeds

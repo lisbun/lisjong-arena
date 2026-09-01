@@ -589,7 +589,11 @@ ABBBでは、既存の `SingleRoundEvaluationPlan` を `run_single_round_evaluat
 
 ## `single_round_compare` CLI
 
-登録済みPolicyを名前で選び、既存ABBB single-round評価(`SingleRoundEvaluationPlan` / `run_single_round_evaluation()` / `run_single_round_evaluation_parallel()`)を1コマンドで実行できる薄いdeveloper-facing CLIです(Issue #56)。新しいevaluation engineではなく、既存evaluation semanticsをそのまま呼び出すだけの層です。
+curated aliasまたは明示的なimport referenceでPolicyを選び、既存ABBB single-round評価(`SingleRoundEvaluationPlan` / `run_single_round_evaluation()` / `run_single_round_evaluation_parallel()`)を1コマンドで実行できる薄いdeveloper-facing CLIです(Issues #56 / #120)。新しいevaluation engineではなく、既存evaluation semanticsをそのまま呼び出すだけの層です。
+
+### Stable catalog alias
+
+通常のreproducible evaluationでは、Arenaがstable / curatedな名前として管理するcatalog aliasを使います。
 
 ```powershell
 python -m lisjong_arena.single_round_compare `
@@ -622,9 +626,42 @@ python -m lisjong_arena.single_round_compare `
   --progress
 ```
 
-Policyの追加はこの明示catalogだけを正本とし、`package.module:ClassName`のようなdynamic import、entry point plugin、YAML/TOML config等は導入していません。
+### Explicit import reference
 
-- `--candidate` / `--baseline`: 通常はcatalog登録名のみ受け付けます。唯一の例外として`--candidate mortal`が後述の専用mixed経路を選びます。Mortalをbaselineには指定できません。未知の名前はargparseの`choices`でparse時点でfail closedします。同じPolicy identity同士の指定は既存`SingleRoundEvaluationPlan`のvalidationにより拒否され、CLI側で重複したvalidationは持ちません
+research / development中のfirst-party `lisjong` Policyまたは引数なしtop-level factoryは、installed environmentからimport可能であれば、Arena sourceや`POLICY_CATALOG`を変更せずに`package.module:attribute`形式で指定できます。explicit referenceではsemantic identityをclass名やmodule名から暗黙生成しないため、対応する`--candidate-id` / `--baseline-id`が必須です。
+
+```powershell
+python -m lisjong_arena.single_round_compare `
+  --candidate lisjong.policies.some_new_policy:SomeNewPolicy `
+  --candidate-id some-new-policy-experiment `
+  --baseline combined `
+  --seeds 0:99 `
+  --workers 4 `
+  --progress
+```
+
+baseline側も同じresolverを使います。
+
+```powershell
+python -m lisjong_arena.single_round_compare `
+  --candidate combined `
+  --baseline lisjong.policies.some_baseline:make_policy `
+  --baseline-id experimental-baseline `
+  --seeds 0:99
+```
+
+explicit referenceで利用できることは、Arenaのcurated catalogへ正式登録されていることを意味しません。stable aliasは引き続き上記6件だけを`POLICY_CATALOG`で管理します。また、explicit identityに既存catalog aliasや`mortal`は使えず、candidate / baselineのidentityも同一にはできません。
+
+Arenaの正式な`lisjong` dependencyはexact commitへpinされています。pin更新前のlocal checkoutを試す場合は、Arenaと同じenvironmentへそのcheckoutをeditable installし、reference先をimport可能にしてください。これはArena sourceへのcatalog登録とは独立したdevelopment操作です。
+
+```powershell
+python -m pip install -e C:\Dev\lisjong
+```
+
+support対象はspawn workerから再importできるmodule-level class / factoryです。lambda、local closure、interactive-only callable、constructor kwargs / model configのserializationは対象外です。explicit referenceはfilesystem discovery、entry point plugin、YAML/TOML experiment configを導入せず、指定されたfirst-party `lisjong` attributeだけをfail closedで解決します。
+
+- `--candidate` / `--baseline`: catalog aliasまたはexplicit `package.module:attribute` referenceを受け付けます。唯一のPolicy外candidateとして`--candidate mortal`が後述の専用mixed経路を選びます。Mortalをbaselineには指定できません。unknown alias、invalid syntax、module / attribute不在、non-callable attributeは別Policyへfallbackせずfail closedします
+- `--candidate-id` / `--baseline-id`: 対応するreferenceがexplicitな場合に必須のsemantic identityです。catalog aliasではcatalog自身のidentityを使うため指定できません
 - `--seeds N`: 単一seed(例: `--seeds 42` -> `(42,)`)
 - `--seeds START:END`: **inclusive** range(例: `--seeds 0:99` -> `0..99`の100 seeds)。comma listや複数rangeは未対応です
 - `--workers N`: positive int、既定値`1`。`workers=1`は既存`run_single_round_evaluation()`(serial)、`workers>1`は既存`run_single_round_evaluation_parallel()`(local process parallel)へそのまま委譲します

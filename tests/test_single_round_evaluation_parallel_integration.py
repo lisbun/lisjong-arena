@@ -11,6 +11,8 @@ import unittest
 from lisjong.policies import MinimalPolicy, ShantenPolicy
 
 from lisjong_arena.model import PolicySpec, SingleRoundEvaluationPlan
+from lisjong_arena.policy_catalog import POLICY_CATALOG
+from lisjong_arena.policy_reference import resolve_policy_reference
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
     run_single_round_evaluation,
@@ -39,6 +41,24 @@ class SingleRoundEvaluationParallelIntegrationTest(unittest.TestCase):
 
         self.assertEqual(len(serial.game_results), ROTATION_COUNT)
         self.assertEqual(parallel_two.candidate_metrics.game_count, ROTATION_COUNT)
+
+    def test_explicit_reference_runs_through_real_spawn_workers(self) -> None:
+        explicit_candidate = resolve_policy_reference(
+            "lisjong.policies:ShantenPolicy",
+            explicit_identity="spawn-shanten-experiment",
+        )
+        plan = SingleRoundEvaluationPlan(
+            candidate=explicit_candidate,
+            baseline=POLICY_CATALOG["two-step"],
+            seeds=(_SEED,),
+        )
+
+        serial = run_single_round_evaluation(plan)
+        parallel = run_single_round_evaluation_parallel(plan, max_workers=2)
+
+        self.assertEqual(serial.game_results, parallel.game_results)
+        self.assertEqual(serial.candidate_metrics, parallel.candidate_metrics)
+        self.assertIs(explicit_candidate.factory, ShantenPolicy)
 
 
 if __name__ == "__main__":
