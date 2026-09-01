@@ -268,11 +268,8 @@ class CliDispatchTest(unittest.TestCase):
 
 class FailClosedTest(unittest.TestCase):
     def test_unknown_candidate_name_exits_2(self) -> None:
-        with (
-            contextlib.redirect_stderr(io.StringIO()) as stderr,
-            self.assertRaises(SystemExit) as caught,
-        ):
-            _run_cli(
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            return_code = _run_cli(
                 [
                     "--candidate",
                     "unknown-policy",
@@ -283,15 +280,12 @@ class FailClosedTest(unittest.TestCase):
                 ]
             )
 
-        self.assertEqual(caught.exception.code, 2)
-        self.assertIn("invalid choice", stderr.getvalue())
+        self.assertEqual(return_code, 2)
+        self.assertIn("unknown policy alias", stderr.getvalue())
 
     def test_unknown_baseline_name_exits_2(self) -> None:
-        with (
-            contextlib.redirect_stderr(io.StringIO()) as stderr,
-            self.assertRaises(SystemExit) as caught,
-        ):
-            _run_cli(
+        with contextlib.redirect_stderr(io.StringIO()) as stderr:
+            return_code = _run_cli(
                 [
                     "--candidate",
                     "finite-horizon",
@@ -302,8 +296,8 @@ class FailClosedTest(unittest.TestCase):
                 ]
             )
 
-        self.assertEqual(caught.exception.code, 2)
-        self.assertIn("invalid choice", stderr.getvalue())
+        self.assertEqual(return_code, 2)
+        self.assertIn("unknown policy alias", stderr.getvalue())
 
     def test_zero_workers_exits_2(self) -> None:
         with (

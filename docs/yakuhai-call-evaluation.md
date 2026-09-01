@@ -31,9 +31,10 @@ extended-combined -> GenbutsuDefenseFiniteHorizonHandValueAwarePolicy
 yakuhai-call      -> YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy
 ```
 
-`yakuhai-call`はmodule top-level factoryを使用し、既存parallel executionの
-spawn-serialization preflightを満たす。dynamic import、plugin discovery、
-config-driven Policy loadingは導入しない。
+`yakuhai-call` catalog entryはmodule top-level factoryを使用し、既存parallel
+executionのspawn-serialization preflightを満たす。research / development用の
+explicit import referenceはcatalog registrationと別のescape hatchであり、plugin
+discoveryやconfig-driven Policy loadingは導入しない。
 
 ## Gate 1 command
 

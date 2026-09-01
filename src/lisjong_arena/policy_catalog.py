@@ -2,12 +2,13 @@
 
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
 ``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call``の6つだけである。
-ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、consumer
-requirementが具体的に出るまでここへは追加しない。
+ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
+curated aliasとして認知するまではここへは追加しない。
 
-Policy追加の正本はこの明示catalogだけであり、``package.module:ClassName``
-のようなdynamic import、entry point plugin、filesystem discovery、YAML/TOML
-config等は導入しない。
+research / development中のPolicyは``lisjong_arena.policy_reference``が明示的な
+``package.module:attribute``だけを解決できる。これはcatalog registrationの代替
+ではなく、entry point plugin、filesystem discovery、YAML/TOML config等も導入
+しない。
 
 factoryは必ずこのmodule top-levelのimport可能なcallableとする。Windows
 ``spawn`` workerからimport / serialize可能である必要があるため、lambdaや
