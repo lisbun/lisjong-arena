@@ -612,7 +612,7 @@ class ArtifactOutTest(unittest.TestCase):
                 return_value=_fake_result(seeds=(0, 1)),
             ) as serial,
             mock.patch(
-                "lisjong_arena.single_round_artifact._collect_execution_provenance",
+                "lisjong_arena.single_round_artifact.collect_execution_provenance",
                 return_value=artifact_fixtures.provenance(),
             ),
             contextlib.redirect_stdout(stdout),

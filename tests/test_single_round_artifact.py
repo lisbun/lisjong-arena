@@ -29,8 +29,8 @@ from lisjong_arena.single_round_artifact import (
     SingleRoundExecutionProvenance,
     SingleRoundStrengthArtifact,
     _arena_source_revision,
-    _collect_execution_provenance,
     _vcs_revision,
+    collect_execution_provenance,
     load_single_round_artifact,
     merge_single_round_artifacts,
     save_single_round_artifact,
@@ -392,7 +392,7 @@ class FileHandlingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "run.json"
             with mock.patch(
-                "lisjong_arena.single_round_artifact._collect_execution_provenance",
+                "lisjong_arena.single_round_artifact.collect_execution_provenance",
                 side_effect=SingleRoundArtifactError("metadata is unavailable"),
             ):
                 with self.assertRaises(SingleRoundArtifactError):
@@ -512,7 +512,7 @@ class ArenaSourceRevisionTest(unittest.TestCase):
                 return_value=fixtures.LISJONG_REVISION,
             ),
         ):
-            provenance = _collect_execution_provenance()
+            provenance = collect_execution_provenance()
 
         self.assertEqual(provenance.lisjong_arena_revision, fixtures.ARENA_REVISION)
         self.assertEqual(provenance.lisjong_arena_version, "0.1.0")
