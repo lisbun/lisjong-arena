@@ -63,19 +63,23 @@ def _sorted_tiles(tiles) -> tuple:
 
 
 def build_policy_input(
-    tracker: SeatMaterializedState, observation: object
+    tracker: SeatMaterializedState,
+    observation: object,
+    *,
+    new_events: list[str] | None = None,
 ) -> PolicyInput:
     """`tracker`と現在の`observation`から検証済みの不変`PolicyInput`を構築する。
 
     内部で`tracker.apply_observation(observation)`を呼び、そのObservationの
-    `new_events()`をまず同期してからsnapshotを構築する。materialized state、
+    `new_events()`(またはcallerが同じObservationから取得済みの``new_events``)を
+    まず同期してからsnapshotを構築する。materialized state、
     Observation、seat・decisionのいずれかが整合しない場合は`PolicyInput`を
     返さず`AdapterSyncError`を送出する。
     """
     if observation.player_id != int(tracker.self_seat):
         raise AdapterSyncError("observation.player_id does not match tracker.self_seat")
 
-    tracker.apply_observation(observation)
+    tracker.apply_observation(observation, new_events=new_events)
 
     kyoku_identity = tracker.kyoku_identity
     if kyoku_identity is None:

@@ -231,8 +231,10 @@ fallback、retryは提供しない。
 
 これはpost-execution same-process inspectionまでのcapabilityである。JSON / database /
 historical persistence、canonical GameRecord、viewer、training dataset schema、global ID /
-timestampは導入しない。Mortal mixed、RiichiLab、first-party `lisjong-engine`、AABB / ABBB
-artifactへ自動適用せず、既存RoundStats / evaluation semanticsも変更しない。
+timestampは導入しない。RiichiLab、first-party `lisjong-engine`、AABB / ABBB artifactへ
+自動適用せず、既存RoundStats / evaluation semanticsも変更しない。Mortal mixed向けには
+Issue #118が同じlisjong-owned trace seamを利用する別のconcrete diagnosticを持つが、
+`LocalGameInspection`全体をgeneric observer frameworkへ一般化していない。
 
 ## Ownership matrix
 
@@ -349,6 +351,51 @@ RiichiEnv action request
 runtimeはupstream Mortal Dockerfileのmjai entrypointだけを対象とするconcrete implementationであり、generic process/backend/plugin abstractionは持たない。1 gameごとにfresh process/containerを起動し、model directoryを`/mnt`へread-only mountする。stdinへ全new-events batchを送ってflushしてから1 responseを有限時間待ち、malformed / illegal response、launch / termination / timeout / environment failureをfail closedする。全終了経路でcleanupし、cleanup failureが同時に起きても元のgame failureを失わない。
 
 Mortal evaluationは`MortalSingleRoundEvaluationPlan` / `MortalSingleRoundEvaluationResult`のserial-only経路を持ち、Mortalをseat 0..3へrotationする。game mode、raw `SingleRoundGameResult`、`RoundStatsCollector`、candidate metrics aggregation、canonical order、no-partial-result semanticsは既存ABBBと同じ値・helperを再利用する。Mortalは`POLICY_CATALOG`へ登録せず、`single_round_compare --candidate mortal`の明示分岐だけから選択できる。baselineはCLIが`POLICY_CATALOG`から解決した`PolicySpec`をPlanへ渡し、workersは1に固定する。
+
+### Mortal same-state decision diagnostic (Issue #118)
+
+`mortal_decision_compare`はstrength evaluation resultを拡張せず、Mortal mixed runnerの
+Mortal seatだけへopt-in shadow runtimeを追加する独立diagnosticである。
+
+```text
+same Mortal-seat Observation / captured new-events batch
+    |
+    +--> Mortal runtime -> legal RiichiEnv Action -> env.step() driver
+    |
+    `--> fresh lisjong Policy
+           + fresh SeatMaterializedState
+           + fresh RiichiEnvActionMappingSession
+           -> build_decision(captured events)
+           -> execute_policy_with_trace()
+           -> mapping.resolve()
+           -> shadow-only RiichiEnv Action
+```
+
+`Observation.new_events()`は消費型なので、runnerはMortal seatからbatchを1回だけ取得する。
+そのbatchをMortalへ送ると同時に、同じ`Observation` objectとともにexisting Adapterへ渡し、
+shadow trackerを同期する。これによりMortalとshadowがobject、seat-visible snapshot、public
+event historyのすべてで同じdecision stateを使う。hidden / oracle / observer-only stateは
+Policy pathへ入らない。
+
+Mortal Actionだけがdriverであり、shadow Actionは`env.step()`へ渡さない。comparison on/offは
+同じMortal responseに対するobjective `LocalGameResult`を変えない。shadowはactual opponent
+3席とPolicy instance / tracker / mapping sessionを共有せず、1 decisionにつきexactly onceだけ
+実行する。Mortal自体をcomparison用に二重実行しない。
+
+agreementは両Actionを同じObservation上のlegal RiichiEnv Actionとして再検証した後、
+RiichiEnv固有のkind、actor、semantic tile、consume tiles、discard tsumogiriへnormalizeして
+判定する。object identity、`repr()`、MJAI文字列一致は使わない。malformed / illegal Mortal
+response、unsupported Action、shadow execution / mapping failureはordinary disagreementにせず
+run全体をfail closedする。
+
+immutable recordはseed、rotation / Mortal seat、runner-local decision ordinal、明示的shadow
+Policy identity、typed `PolicyInput` / `DecisionTrace`、normalized Mortal-driver / Policy-shadow
+Action、agreementを保持する。resultはcanonical seed -> rotation -> decision順を検証し、total、
+agreement / disagreement、agreement rate、Action-kind pair breakdown、全/first N/kind-filtered
+disagreementをin-memoryで提供する。Mortalはstrong referenceであってground truthではなく、
+disagreementはerrorではない。このmeasurementはstrength benchmarkと分離し、次のrule-based /
+ML強化テーマを実測から選ぶために使う。persistence、canonical GameRecord、database、viewer、
+dashboard、human-semantic原因分類は所有しない。
 
 ### First-party `lisjong-engine` execution path (Issue #53)
 

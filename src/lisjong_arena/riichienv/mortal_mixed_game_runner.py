@@ -5,10 +5,20 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from lisjong.policy_contract import Policy, Seat, execute_policy
+from lisjong.policy_contract import (
+    DecisionTrace,
+    Policy,
+    Seat,
+    execute_policy,
+    execute_policy_with_trace,
+)
 from riichienv import Action as RiichiEnvAction
 from riichienv import Observation, RiichiEnv
 
+from lisjong_arena.mortal_decision_comparison import (
+    MortalDecisionComparisonRecord,
+    normalize_legal_riichienv_action,
+)
 from lisjong_arena.mortal_runtime import MortalDockerConfig, MortalDockerRuntime
 from lisjong_arena.riichienv.adapter import (
     RiichiEnvActionMappingSession,
@@ -29,6 +39,37 @@ class _PolicySeatRuntime:
     policy: Policy
     tracker: SeatMaterializedState
     mapping_session: RiichiEnvActionMappingSession
+
+
+@dataclass(frozen=True, slots=True)
+class _ShadowPolicyRuntime:
+    policy: Policy
+    identity: str
+    tracker: SeatMaterializedState
+    mapping_session: RiichiEnvActionMappingSession
+
+
+class _DecisionTraceCapture:
+    """1 shadow decisionのlisjong-owned DecisionTraceをdecision-localに保持する。"""
+
+    __slots__ = ("_trace",)
+
+    def __init__(self) -> None:
+        self._trace: DecisionTrace | None = None
+
+    def on_decision(self, trace: DecisionTrace) -> None:
+        if self._trace is not None:
+            raise LocalGameRunnerError("multiple DecisionTrace values for one decision")
+        if not isinstance(trace, DecisionTrace):
+            raise TypeError("trace must be a DecisionTrace")
+        self._trace = trace
+
+    def take(self) -> DecisionTrace:
+        if self._trace is None:
+            raise LocalGameRunnerError(
+                "shadow Policy execution did not produce a DecisionTrace"
+            )
+        return self._trace
 
 
 def _build_policy_runtimes(
@@ -57,11 +98,14 @@ class MortalMixedGameRunner:
 
     __slots__ = (
         "_game_mode",
+        "_comparison_completed",
+        "_comparison_records",
         "_max_steps",
         "_mortal_config",
         "_mortal_seat",
         "_policy_runtimes",
         "_seed",
+        "_shadow_runtime",
         "_started",
     )
 
@@ -74,6 +118,8 @@ class MortalMixedGameRunner:
         seed: int,
         game_mode: str = "4p-red-single",
         max_steps: int | None = None,
+        shadow_policy: Policy | None = None,
+        shadow_policy_identity: str | None = None,
     ) -> None:
         if not isinstance(mortal_seat, Seat):
             raise TypeError("mortal_seat must be a Seat")
@@ -89,6 +135,15 @@ class MortalMixedGameRunner:
             raise TypeError("max_steps must be an int or None")
         if max_steps is not None and max_steps <= 0:
             raise ValueError("max_steps must be positive")
+        if (shadow_policy is None) != (shadow_policy_identity is None):
+            raise ValueError(
+                "shadow_policy and shadow_policy_identity must be configured together"
+            )
+        if shadow_policy_identity is not None:
+            if type(shadow_policy_identity) is not str:
+                raise TypeError("shadow_policy_identity must be a str or None")
+            if not shadow_policy_identity:
+                raise ValueError("shadow_policy_identity must not be empty")
 
         self._seed = seed
         self._game_mode = game_mode
@@ -96,6 +151,18 @@ class MortalMixedGameRunner:
         self._mortal_seat = mortal_seat
         self._mortal_config = mortal_config
         self._policy_runtimes = _build_policy_runtimes(policies, mortal_seat)
+        self._shadow_runtime = (
+            None
+            if shadow_policy is None
+            else _ShadowPolicyRuntime(
+                policy=shadow_policy,
+                identity=shadow_policy_identity,
+                tracker=SeatMaterializedState(mortal_seat),
+                mapping_session=RiichiEnvActionMappingSession(mortal_seat),
+            )
+        )
+        self._comparison_records: list[MortalDecisionComparisonRecord] = []
+        self._comparison_completed = False
         self._started = False
 
     def _build_actions(
@@ -119,6 +186,42 @@ class MortalMixedGameRunner:
                         "Mortal returned an action that is not legal in RiichiEnv"
                     )
                 actions[player_id] = action
+                shadow_runtime = self._shadow_runtime
+                if shadow_runtime is not None:
+                    decision = build_decision(
+                        shadow_runtime.tracker,
+                        observation,
+                        shadow_runtime.mapping_session,
+                        new_events=events,
+                    )
+                    capture = _DecisionTraceCapture()
+                    selected = execute_policy_with_trace(
+                        shadow_runtime.policy,
+                        decision.context,
+                        capture,
+                    )
+                    decision_trace = capture.take()
+                    shadow_action = decision.mapping.resolve(selected)
+                    driver_normalized = normalize_legal_riichienv_action(
+                        observation, action
+                    )
+                    shadow_normalized = normalize_legal_riichienv_action(
+                        observation, shadow_action
+                    )
+                    self._comparison_records.append(
+                        MortalDecisionComparisonRecord(
+                            seed=self._seed,
+                            rotation=int(self._mortal_seat),
+                            mortal_seat=self._mortal_seat,
+                            decision_ordinal=len(self._comparison_records),
+                            shadow_policy_identity=shadow_runtime.identity,
+                            policy_input=decision.context.input,
+                            decision_trace=decision_trace,
+                            driver_mortal_action=driver_normalized,
+                            shadow_policy_action=shadow_normalized,
+                            agreement=driver_normalized == shadow_normalized,
+                        )
+                    )
                 continue
 
             runtime = self._policy_runtimes[seat]
@@ -179,7 +282,7 @@ class MortalMixedGameRunner:
             )
 
         self._process_new_events(env, round_stats, next_event_sequence, observations)
-        return LocalGameResult(
+        result = LocalGameResult(
             seed=self._seed,
             game_mode=self._game_mode,
             scores=tuple(env.scores()),
@@ -188,6 +291,18 @@ class MortalMixedGameRunner:
             decisions=decisions,
             seat_round_stats=round_stats.build(env),
         )
+        self._comparison_completed = True
+        return result
+
+    def comparison_records(self) -> tuple[MortalDecisionComparisonRecord, ...]:
+        """successful opt-in shadow run後のpaired decision snapshotを返す。"""
+        if self._shadow_runtime is None:
+            raise LocalGameRunnerError("shadow comparison is not configured")
+        if not self._comparison_completed:
+            raise LocalGameRunnerError(
+                "comparison records are available only after successful completion"
+            )
+        return tuple(self._comparison_records)
 
     def run(self) -> LocalGameResult:
         """1 game専用Mortal runtimeを起動し、全経路で終了処理する。"""

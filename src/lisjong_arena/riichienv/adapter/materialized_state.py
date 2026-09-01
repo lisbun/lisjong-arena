@@ -140,10 +140,17 @@ class SeatMaterializedState:
         """
         return self._pending_chankan_tile
 
-    def apply_observation(self, observation: object) -> None:
+    def apply_observation(
+        self,
+        observation: object,
+        *,
+        new_events: list[str] | None = None,
+    ) -> None:
         """このseatの新しいObservationが持つ`new_events()`を1回だけ適用する。
 
-        同一Observation instanceを続けて渡すと`AdapterSyncError`にする。
+        同一Observation instanceを続けて渡すと`AdapterSyncError`にする。``new_events``が
+        明示された場合は、同じObservationからcallerが直前に取得したbatchとして適用し、
+        ``observation.new_events()``を再度消費しない。
         RiichiEnv側にevent IDが存在しないため、「新しいObservation instance
         単位で1回だけ未適用分として扱う」という運用規則そのもので重複を防ぐ。
         """
@@ -154,7 +161,12 @@ class SeatMaterializedState:
         if observation is self._last_applied_observation:
             raise AdapterSyncError("this Observation instance was already applied")
 
-        events = [json.loads(raw_event) for raw_event in observation.new_events()]
+        raw_events = observation.new_events() if new_events is None else new_events
+        if not isinstance(raw_events, list):
+            raise AdapterSyncError("Observation.new_events() must be a list")
+        if any(type(raw_event) is not str for raw_event in raw_events):
+            raise AdapterSyncError("Observation.new_events() must contain only strings")
+        events = [json.loads(raw_event) for raw_event in raw_events]
         for event in events:
             self._apply_event(event)
 
