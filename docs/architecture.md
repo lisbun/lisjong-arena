@@ -750,6 +750,12 @@ lockする。`phase9_confirmatory`のformal subcommandsはreviewed merge後だ�
 guardを要求し、unit test / CI / importからreal seeds generation、feature materialization、model inferenceへ
 到達しない。
 
+preflight receiptのcreation revisionは単なる記録ではなく、preflightと全formal subcommandでcurrent
+Arena checkoutの`HEAD`およびtracked worktree/indexのclean状態へ再照合する。formal evaluationはさらに、
+lisjong / lisjong-engineのnon-editable VCS revision、RiichiEnv 0.4.8、PyTorch 2.13.0 CPUを推論前に
+exact検証するため、stale editable dependencyやrevision driftを許容しない。historical generation runtimeと
+current evaluation runtimeは引き続き別provenanceとして記録する。
+
 snapshotはPhase 6のpartition-neutral materialization/prediction、S2はPhase 8のWind-keyed previous
 belief、public conditional-uniform initialization、zero latent、own-prediction recurrenceを直接再利用する。
 Phase 8のTRAIN/VALIDATION専用sequence typeは緩めず、同じkey/order/reset integrityをTEST-onlyで
@@ -767,6 +773,8 @@ resultはraw/dataset/arm identity、generationとevaluation runtimeの分離さ�
 anchor identity、primary/per-game/leave-one-out/depth/subgroup metrics、両arm physical metrics、classification、
 no-training/no-model-selection flagを持つrepository外immutable artifactである。既存destinationを
 overwriteせず、Phase 6/8の`manifest.json`/`weights.pt`はpreflight前後とinference前後でbytesを照合する。
+depthとsubgroup diagnosticsはlocked family/groupをempty groupまで保持し、exact fields、availability、
+sample/row/cell count、null規則、Delta、全anchor coverage、pooled MAE整合をload時にも検証する。
 
 Issue #121の第一段階ではmachinery、synthetic tests、runbookだけを作成する。formal seeds
 `160..179`のgeneration/materialization/inference/result exposureは行わず、review/merge後の別作業で

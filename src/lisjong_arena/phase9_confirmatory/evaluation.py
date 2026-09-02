@@ -1,18 +1,9 @@
 """Paired frozen snapshot-vs-S2 evaluation for the Phase 9 holdout."""
 
-import json
-import platform
-import sys
 from collections import defaultdict
-from importlib.metadata import distribution
 from math import isclose
 from pathlib import Path
 
-from lisjong_engine.public_state import PublicRiichiStatus
-
-from lisjong_arena.phase2_training_anchor.training_labels import (
-    StructuralWaitUnavailableReason,
-)
 from lisjong_arena.phase5_belief_dataset.measurements import (
     ExpectedCountPrediction,
     aggregate_expected_count_rows,
@@ -42,6 +33,7 @@ from .preflight import (
     require_formal_execution_authorization,
     validate_generation_report,
     verify_artifact_state,
+    verify_formal_evaluation_runtime,
     verify_frozen_arms,
 )
 from .protocol import (
@@ -53,6 +45,7 @@ from .protocol import (
     HOLDOUT_GAME_COUNT,
     HOLDOUT_ROLE,
     HOLDOUT_SEEDS,
+    LOCKED_SUBGROUPS,
     MATERIALITY_EPSILON,
     PROTOCOL_ID,
     PairedGameCluster,
@@ -65,25 +58,10 @@ from .protocol import (
 )
 
 
-def _installed_revision(name: str) -> str | None:
-    direct_url = distribution(name).read_text("direct_url.json")
-    if direct_url is None:
-        return None
-    try:
-        value = json.loads(direct_url)
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"{name} direct_url.json is malformed") from error
-    vcs = value.get("vcs_info")
-    return vcs.get("commit_id") if type(vcs) is dict else None
-
-
 def _configure_runtime(snapshot_manifest: dict[str, object]) -> dict[str, object]:
     import torch
 
-    if sys.version_info[:2] != (3, 14):
-        raise RuntimeError("formal Phase 9 evaluation requires CPython 3.14")
-    if torch.__version__ != "2.13.0+cpu" or torch.cuda.is_available():
-        raise RuntimeError("formal Phase 9 evaluation requires PyTorch 2.13.0 CPU")
+    verified = verify_formal_evaluation_runtime()
     runtime = snapshot_manifest.get("runtime")
     if type(runtime) is not dict or runtime.get("device") != "cpu":
         raise RuntimeError("frozen snapshot runtime contract differs")
@@ -98,15 +76,10 @@ def _configure_runtime(snapshot_manifest: dict[str, object]) -> dict[str, object
     torch.set_num_threads(thread_count)
     torch.use_deterministic_algorithms(deterministic)
     return {
-        "python": platform.python_version(),
-        "torch": torch.__version__,
+        **verified,
         "device": "cpu",
         "torch_thread_count": thread_count,
         "deterministic_algorithms": deterministic,
-        "installed_revisions": {
-            "lisjong": _installed_revision("lisjong"),
-            "lisjong_engine": _installed_revision("lisjong-engine"),
-        },
     }
 
 
@@ -234,7 +207,7 @@ def _subgroup_diagnostics(examples, samples, snapshot_predictions, s2_prediction
                 tenpai = f"unavailable:{wait.unavailable_reason.value}"
             else:
                 tenpai = "tenpai" if any(wait.mask) else "non_tenpai"
-            pair = (snapshot_row, s2_row)
+            pair = (example, snapshot_row, s2_row)
             groups["opponent_relative_seat"][
                 str(opponent.viewer_relative_offset)
             ].append(pair)
@@ -242,18 +215,7 @@ def _subgroup_diagnostics(examples, samples, snapshot_predictions, s2_prediction
                 pair
             )
             groups["true_tenpai_state"][tenpai].append(pair)
-    expected = {
-        "opponent_relative_seat": ("1", "2", "3"),
-        "public_riichi_state": tuple(value.value for value in PublicRiichiStatus),
-        "true_tenpai_state": (
-            "tenpai",
-            "non_tenpai",
-            *(
-                f"unavailable:{reason.value}"
-                for reason in StructuralWaitUnavailableReason
-            ),
-        ),
-    }
+    expected = dict(LOCKED_SUBGROUPS)
     output = {}
     for family, names in expected.items():
         if not set(groups[family]).issubset(names):
@@ -276,14 +238,14 @@ def _subgroup_diagnostics(examples, samples, snapshot_predictions, s2_prediction
                 )
                 continue
             snapshot_metric = aggregate_expected_count_rows(
-                tuple(pair[0] for pair in pairs)
+                tuple(pair[1] for pair in pairs)
             )
-            s2_metric = aggregate_expected_count_rows(tuple(pair[1] for pair in pairs))
+            s2_metric = aggregate_expected_count_rows(tuple(pair[2] for pair in pairs))
             output[family].append(
                 {
                     "group": name,
                     "available": True,
-                    "sample_count": snapshot_metric.row_count,
+                    "sample_count": len({pair[0].identity for pair in pairs}),
                     "row_count": snapshot_metric.row_count,
                     "cell_count": snapshot_metric.cell_count,
                     "snapshot_mae": snapshot_metric.mae,

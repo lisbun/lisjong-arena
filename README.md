@@ -1133,15 +1133,36 @@ py -3.14 -m venv <historical-venv>
 & <historical-python> -m pip install "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@e667890f0124670a6858fba13bc41767cdc80350"
 ```
 
-current main側でartifact、checkout、treeを検証し、immutable receiptを作成します。
+formal workflow自体は、merge後のmainを新規cloneしたclean evaluation checkoutと専用venvから実行します。
+既存の開発venvや過去のeditable `lisjong` / `lisjong-engine` installは使用しません。
 
 ```powershell
-python -m lisjong_arena.phase9_confirmatory preflight `
+git clone https://github.com/lisbun/lisjong-arena.git <evaluation-checkout>
+git -C <evaluation-checkout> checkout --detach <merged-main-sha>
+py -3.14 -m venv <evaluation-venv>
+& <evaluation-python> -m pip install --upgrade pip
+& <evaluation-python> -m pip install --editable "<evaluation-checkout>[ml]"
+Set-Location <evaluation-checkout>
+```
+
+evaluation runtimeは推論前に、lisjong
+`84e905d252d65eb37b722f195f2774fd5661d5af`、lisjong-engine
+`8735e89e1aea000ab59368d0368d476787827741`のnon-editable VCS provenance、RiichiEnv 0.4.8、
+PyTorch `2.13.0+cpu`をfail closedで検証します。`direct_url.json`にVCS commitがないlocal/editable
+dependencyは拒否します。
+
+このclean checkoutからartifact、historical checkout、treeを検証し、immutable receiptを作成します。
+
+```powershell
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory preflight `
   --snapshot-artifact <phase6-model> --s2-artifact <phase8-s2> `
   --lisjong-checkout <lisjong-checkout> --engine-checkout <engine-checkout> `
   --arena-checkout <arena-checkout> --creation-revision <current-main-sha> `
   --output <preflight-json>
 ```
+
+`preflight`に加え、`generate`、`lock-holdout`、`evaluate`の各段階がreceiptのcreation revisionと
+current checkout `HEAD`を再照合し、tracked worktreeまたはindexに未commit変更があれば停止します。
 
 `generate`以降はreview/merge後の別作業でのみ、次のexplicit guardを設定して実行します。
 
@@ -1152,14 +1173,14 @@ $env:LISJONG_ARENA_PHASE9_FORMAL_EXECUTION = "approved-after-reviewed-merge"
 その後も順序を変えず、preflight receiptと前段artifactを毎回明示します。
 
 ```powershell
-python -m lisjong_arena.phase9_confirmatory generate `
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory generate `
   --preflight <preflight-json> --snapshot-artifact <phase6-model> `
   --s2-artifact <phase8-s2> --historical-python <historical-python> `
   --raw-output <fresh-raw> --report-output <generation-report>
-python -m lisjong_arena.phase9_confirmatory lock-holdout `
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory lock-holdout `
   --preflight <preflight-json> --generation-report <generation-report> `
   --raw <fresh-raw> --dataset-output <fresh-dataset>
-python -m lisjong_arena.phase9_confirmatory evaluate `
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory evaluate `
   --preflight <preflight-json> --generation-report <generation-report> `
   --raw <fresh-raw> --dataset <fresh-dataset> `
   --snapshot-artifact <phase6-model> --s2-artifact <phase8-s2> `

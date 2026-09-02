@@ -25,6 +25,7 @@ from .preflight import (
     save_preflight,
     verify_artifact_state,
     verify_current_checkout_revision,
+    verify_formal_evaluation_runtime,
 )
 
 
@@ -103,6 +104,7 @@ def _preflight_command(arguments) -> dict[str, object]:
 def _generate_command(arguments) -> dict[str, object]:
     require_formal_execution_authorization()
     preflight = load_preflight(arguments.preflight)
+    verify_current_checkout_revision(preflight["creation_software_revision"])
     verify_artifact_state(
         arguments.snapshot_artifact,
         arguments.s2_artifact,
@@ -120,6 +122,7 @@ def _generate_command(arguments) -> dict[str, object]:
 def _lock_command(arguments) -> dict[str, object]:
     require_formal_execution_authorization()
     preflight = load_preflight(arguments.preflight)
+    verify_current_checkout_revision(preflight["creation_software_revision"])
     generation = load_generation_report(arguments.generation_report)
     if generation["preflight_identity"] != preflight["preflight_identity"]:
         raise RuntimeError("generation report belongs to another preflight")
@@ -140,8 +143,11 @@ def _lock_command(arguments) -> dict[str, object]:
 
 def _evaluate_command(arguments) -> dict[str, object]:
     require_formal_execution_authorization()
-    verify_current_checkout_revision(arguments.creation_revision)
     preflight = load_preflight(arguments.preflight)
+    if arguments.creation_revision != preflight["creation_software_revision"]:
+        raise RuntimeError("evaluation revision differs from preflight")
+    verify_current_checkout_revision(preflight["creation_software_revision"])
+    verify_formal_evaluation_runtime()
     generation = load_generation_report(arguments.generation_report)
     if generation["preflight_identity"] != preflight["preflight_identity"]:
         raise RuntimeError("generation report belongs to another preflight")

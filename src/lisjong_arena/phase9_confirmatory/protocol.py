@@ -45,6 +45,12 @@ HISTORICAL_POLICY_POPULATION = "TwoStepUkeirePolicy x4"
 LOCKED_RULE_FINGERPRINT = (
     "8e22eae8b8e97c081bccf5875b4201535969a9844164b30087e602078eb75135"
 )
+EVALUATION_REVISIONS = {
+    "lisjong": "84e905d252d65eb37b722f195f2774fd5661d5af",
+    "lisjong_engine": "8735e89e1aea000ab59368d0368d476787827741",
+}
+EVALUATION_RIICHIENV_VERSION = "0.4.8"
+EVALUATION_TORCH_VERSION = "2.13.0+cpu"
 
 MATERIALITY_EPSILON = 0.0025
 BOOTSTRAP_RNG = "python-stdlib-random.Random"
@@ -55,6 +61,14 @@ BOOTSTRAP_LOWER_INDEX = 499
 BOOTSTRAP_UPPER_INDEX = 19_499
 PHYSICAL_RESIDUAL_TOLERANCE = 1e-6
 DEPTH_BUCKETS = ("depth 1", "depth 2..4", "depth 5..8", "depth 9+")
+LOCKED_SUBGROUPS = (
+    ("opponent_relative_seat", ("1", "2", "3")),
+    ("public_riichi_state", ("none", "pending", "established")),
+    (
+        "true_tenpai_state",
+        ("tenpai", "non_tenpai", "unavailable:unstable_hand_size"),
+    ),
+)
 
 
 class FamilyClassification(Enum):
@@ -263,6 +277,9 @@ __all__ = [
     "BOOTSTRAP_SEED",
     "BOOTSTRAP_UPPER_INDEX",
     "DEPTH_BUCKETS",
+    "EVALUATION_REVISIONS",
+    "EVALUATION_RIICHIENV_VERSION",
+    "EVALUATION_TORCH_VERSION",
     "FamilyClassification",
     "HISTORICAL_ARENA_REF",
     "HISTORICAL_FORBIDDEN_SEEDS",
@@ -274,6 +291,7 @@ __all__ = [
     "HOLDOUT_ROLE",
     "HOLDOUT_SEEDS",
     "LOCKED_RULE_FINGERPRINT",
+    "LOCKED_SUBGROUPS",
     "MATERIALITY_EPSILON",
     "PROTOCOL_ID",
     "PairedGameCluster",

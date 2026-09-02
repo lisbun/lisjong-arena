@@ -1,9 +1,13 @@
 """Frozen-arm and exact historical-generation preflight for Phase 9."""
 
 import hashlib
+import importlib
 import json
 import os
+import platform
 import subprocess
+import sys
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 from lisjong_arena.phase6_snapshot.artifact import (
@@ -22,6 +26,9 @@ from lisjong_arena.phase8_sequential.artifact import (
 from lisjong_arena.phase8_sequential.protocol import SEQUENCE_SEMANTICS_ID, Candidate
 
 from .protocol import (
+    EVALUATION_REVISIONS,
+    EVALUATION_RIICHIENV_VERSION,
+    EVALUATION_TORCH_VERSION,
     HISTORICAL_ARENA_REF,
     HISTORICAL_POLICY_POPULATION,
     HISTORICAL_REVISIONS,
@@ -175,10 +182,71 @@ def _git(repo: Path, *arguments: str) -> str:
 def verify_current_checkout_revision(revision: str, repo: str | Path = ".") -> str:
     """Bind declared creation provenance to the checkout running the command."""
     revision = _full_revision(revision, "creation_software_revision")
-    actual = _git(Path(repo).resolve(), "rev-parse", "HEAD")
+    repo = Path(repo).resolve()
+    expected_source = (
+        repo / "src" / "lisjong_arena" / "phase9_confirmatory" / "preflight.py"
+    ).resolve()
+    if Path(__file__).resolve() != expected_source:
+        raise RuntimeError("executing Phase 9 code is not from the current checkout")
+    actual = _git(repo, "rev-parse", "HEAD")
     if actual != revision:
         raise RuntimeError("creation revision differs from the current Arena checkout")
+    if _git(repo, "status", "--porcelain=v1", "--untracked-files=no"):
+        raise RuntimeError("current Arena checkout has tracked or staged changes")
     return actual
+
+
+def _installed_vcs_revision(name: str) -> str:
+    try:
+        direct_url = distribution(name).read_text("direct_url.json")
+    except PackageNotFoundError as error:
+        raise RuntimeError(f"formal evaluation requires installed {name}") from error
+    if direct_url is None:
+        raise RuntimeError(f"formal evaluation requires VCS provenance for {name}")
+    try:
+        value = json.loads(direct_url)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{name} direct_url.json is malformed") from error
+    if type(value) is not dict:
+        raise RuntimeError(f"{name} direct_url.json is malformed")
+    vcs = value.get("vcs_info")
+    if (
+        type(vcs) is not dict
+        or vcs.get("vcs") != "git"
+        or "dir_info" in value
+        or type(vcs.get("commit_id")) is not str
+    ):
+        raise RuntimeError(
+            f"formal evaluation rejects local/editable provenance for {name}"
+        )
+    return _full_revision(vcs["commit_id"], f"{name} installed revision")
+
+
+def verify_formal_evaluation_runtime() -> dict[str, object]:
+    """Fail before holdout inference unless the evaluation environment is exact."""
+    if sys.version_info[:2] != (3, 14):
+        raise RuntimeError("formal Phase 9 evaluation requires CPython 3.14")
+    revisions = {
+        "lisjong": _installed_vcs_revision("lisjong"),
+        "lisjong_engine": _installed_vcs_revision("lisjong-engine"),
+    }
+    if revisions != EVALUATION_REVISIONS:
+        raise RuntimeError("formal evaluation dependency revisions differ")
+    try:
+        riichienv = distribution("riichienv").version
+    except PackageNotFoundError as error:
+        raise RuntimeError("formal evaluation requires RiichiEnv") from error
+    if riichienv != EVALUATION_RIICHIENV_VERSION:
+        raise RuntimeError("formal evaluation RiichiEnv version differs")
+    torch = importlib.import_module("torch")
+    if torch.__version__ != EVALUATION_TORCH_VERSION or torch.cuda.is_available():
+        raise RuntimeError("formal Phase 9 evaluation requires PyTorch 2.13.0 CPU")
+    return {
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "riichienv": riichienv,
+        "installed_revisions": revisions,
+    }
 
 
 def _repository_state(
@@ -664,5 +732,6 @@ __all__ = [
     "verify_artifact_state",
     "verify_current_checkout_revision",
     "verify_frozen_arms",
+    "verify_formal_evaluation_runtime",
     "verify_historical_runtime",
 ]

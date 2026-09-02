@@ -18,6 +18,9 @@ from .protocol import (
     BOOTSTRAP_RNG,
     BOOTSTRAP_SEED,
     DEPTH_BUCKETS,
+    EVALUATION_REVISIONS,
+    EVALUATION_RIICHIENV_VERSION,
+    EVALUATION_TORCH_VERSION,
     HISTORICAL_ARENA_REF,
     HISTORICAL_POLICY_POPULATION,
     HISTORICAL_REVISIONS,
@@ -27,6 +30,7 @@ from .protocol import (
     HOLDOUT_ROLE,
     HOLDOUT_SEEDS,
     LOCKED_RULE_FINGERPRINT,
+    LOCKED_SUBGROUPS,
     MATERIALITY_EPSILON,
     PROTOCOL_ID,
     S2_ARTIFACT_IDENTITY,
@@ -71,9 +75,134 @@ def _digest(value: object, name: str) -> str:
 
 
 def _finite(value: object, name: str) -> float:
-    if not isinstance(value, (int, float)) or not isfinite(value):
+    if type(value) not in (int, float) or not isfinite(value):
         raise ValueError(f"{name} must be finite")
     return value
+
+
+def _validate_depth_diagnostics(value: object, anchor_count: int) -> None:
+    fields = {"bucket", "sample_count", "snapshot_mae", "s2_mae", "delta_mae"}
+    if (
+        type(value) is not list
+        or any(type(item) is not dict for item in value)
+        or [item.get("bucket") for item in value] != list(DEPTH_BUCKETS)
+    ):
+        raise ValueError("Phase 9 depth buckets differ")
+    for item in value:
+        if type(item) is not dict or set(item) != fields:
+            raise ValueError("Phase 9 depth diagnostic fields differ")
+        count = item["sample_count"]
+        if type(count) is not int or count < 0:
+            raise ValueError("Phase 9 depth sample count is invalid")
+        metrics = tuple(item[name] for name in ("snapshot_mae", "s2_mae", "delta_mae"))
+        if count == 0:
+            if metrics != (None, None, None):
+                raise ValueError("empty Phase 9 depth bucket must retain null metrics")
+            continue
+        snapshot = _finite(metrics[0], "depth snapshot MAE")
+        s2 = _finite(metrics[1], "depth S2 MAE")
+        delta = _finite(metrics[2], "depth Delta MAE")
+        if (
+            snapshot < 0
+            or s2 < 0
+            or not isclose(delta, snapshot - s2, rel_tol=0, abs_tol=1e-15)
+        ):
+            raise ValueError("Phase 9 depth diagnostic metrics differ")
+    if sum(item["sample_count"] for item in value) != anchor_count:
+        raise ValueError("Phase 9 depth diagnostics do not cover anchors")
+
+
+def _validate_subgroup_diagnostics(
+    value: object, anchor_count: int, snapshot_mae: float, s2_mae: float
+) -> None:
+    locked = dict(LOCKED_SUBGROUPS)
+    fields = {
+        "group",
+        "available",
+        "sample_count",
+        "row_count",
+        "cell_count",
+        "snapshot_mae",
+        "s2_mae",
+        "delta_mae",
+    }
+    if type(value) is not dict or set(value) != set(locked):
+        raise ValueError("Phase 9 subgroup families differ")
+    for family, names in LOCKED_SUBGROUPS:
+        groups = value[family]
+        if (
+            type(groups) is not list
+            or any(type(item) is not dict for item in groups)
+            or [item.get("group") for item in groups] != list(names)
+        ):
+            raise ValueError(f"Phase 9 {family} groups differ")
+        for item in groups:
+            if type(item) is not dict or set(item) != fields:
+                raise ValueError(f"Phase 9 {family} fields differ")
+            if type(item["available"]) is not bool:
+                raise ValueError(f"Phase 9 {family} availability is invalid")
+            counts = tuple(
+                item[name] for name in ("sample_count", "row_count", "cell_count")
+            )
+            if any(type(count) is not int or count < 0 for count in counts):
+                raise ValueError(f"Phase 9 {family} counts are invalid")
+            if counts[2] != counts[1] * 34:
+                raise ValueError(f"Phase 9 {family} count semantics differ")
+            metrics = tuple(
+                item[name] for name in ("snapshot_mae", "s2_mae", "delta_mae")
+            )
+            if counts[1] == 0:
+                if (
+                    counts[0] != 0
+                    or item["available"] is not False
+                    or metrics != (None, None, None)
+                ):
+                    raise ValueError(
+                        f"empty Phase 9 {family} group must remain unavailable/null"
+                    )
+                continue
+            if not 0 < counts[0] <= counts[1]:
+                raise ValueError(f"Phase 9 {family} sample count semantics differ")
+            if item["available"] is not True:
+                raise ValueError(f"non-empty Phase 9 {family} group is unavailable")
+            subgroup_snapshot = _finite(metrics[0], f"{family} snapshot MAE")
+            subgroup_s2 = _finite(metrics[1], f"{family} S2 MAE")
+            subgroup_delta = _finite(metrics[2], f"{family} Delta MAE")
+            if (
+                subgroup_snapshot < 0
+                or subgroup_s2 < 0
+                or not isclose(
+                    subgroup_delta,
+                    subgroup_snapshot - subgroup_s2,
+                    rel_tol=0,
+                    abs_tol=1e-15,
+                )
+            ):
+                raise ValueError(f"Phase 9 {family} metrics differ")
+        expected_rows = anchor_count * 3
+        if sum(item["row_count"] for item in groups) != expected_rows:
+            raise ValueError(f"Phase 9 {family} does not cover all target rows")
+        cells = expected_rows * 34
+        pooled_snapshot = (
+            sum(
+                item["snapshot_mae"] * item["cell_count"]
+                for item in groups
+                if item["available"]
+            )
+            / cells
+        )
+        pooled_s2 = (
+            sum(
+                item["s2_mae"] * item["cell_count"]
+                for item in groups
+                if item["available"]
+            )
+            / cells
+        )
+        if not isclose(
+            pooled_snapshot, snapshot_mae, rel_tol=0, abs_tol=1e-12
+        ) or not isclose(pooled_s2, s2_mae, rel_tol=0, abs_tol=1e-12):
+            raise ValueError(f"Phase 9 {family} pooled metrics differ")
 
 
 def _physical_validity(value: object, arm: str) -> bool:
@@ -260,18 +389,27 @@ def validate_result(value: object) -> dict[str, object]:
         != {
             "python",
             "torch",
+            "riichienv",
             "device",
             "torch_thread_count",
             "deterministic_algorithms",
             "installed_revisions",
         }
         or runtime["device"] != "cpu"
-        or runtime["torch"] != "2.13.0+cpu"
+        or runtime["torch"] != EVALUATION_TORCH_VERSION
+        or runtime["riichienv"] != EVALUATION_RIICHIENV_VERSION
+        or runtime["installed_revisions"] != EVALUATION_REVISIONS
         or runtime["deterministic_algorithms"] is not True
         or type(runtime["torch_thread_count"]) is not int
         or runtime["torch_thread_count"] <= 0
     ):
         raise ValueError("Phase 9 evaluation runtime provenance differs")
+    try:
+        python_version = tuple(int(part) for part in runtime["python"].split(".")[:2])
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("Phase 9 evaluation Python provenance differs") from error
+    if python_version != (3, 14):
+        raise ValueError("Phase 9 evaluation Python provenance differs")
     primary = value["primary_metrics"]
     snapshot_mae = _finite(primary["snapshot"]["per_tile_mae"], "snapshot MAE")
     s2_mae = _finite(primary["s2"]["per_tile_mae"], "S2 MAE")
@@ -300,6 +438,16 @@ def validate_result(value: object) -> dict[str, object]:
     if ci_lower > ci_upper:
         raise ValueError("Phase 9 CI order differs")
     diagnostics = value["diagnostics"]
+    if type(diagnostics) is not dict or set(diagnostics) != {
+        "per_game",
+        "game_direction_counts",
+        "game_macro_mean_delta_mae",
+        "median_per_game_delta_mae",
+        "leave_one_hanchan_out",
+        "sequence_depth",
+        "subgroups",
+    }:
+        raise ValueError("Phase 9 diagnostic fields differ")
     per_game = diagnostics["per_game"]
     if (
         type(per_game) is not list
@@ -369,6 +517,13 @@ def validate_result(value: object) -> dict[str, object]:
     if type(loo) is not list or len(loo) != HOLDOUT_GAME_COUNT:
         raise ValueError("Phase 9 leave-one-out diagnostics differ")
     robustness = robustness_diagnostics(clusters)
+    if any(
+        type(item) is not dict
+        or set(item) != {"omitted_source_class", "omitted_game_seed", "delta_mae"}
+        or item["omitted_source_class"] != FIRST_PARTY_SOURCE_CLASS
+        for item in loo
+    ):
+        raise ValueError("Phase 9 leave-one-out fields differ")
     if [item.get("omitted_game_seed") for item in loo] != list(HOLDOUT_SEEDS):
         raise ValueError("Phase 9 leave-one-out identities differ")
     if any(
@@ -390,11 +545,10 @@ def validate_result(value: object) -> dict[str, object]:
         abs_tol=1e-15,
     ):
         raise ValueError("Phase 9 macro/median diagnostics differ")
-    depth = diagnostics["sequence_depth"]
-    if [item.get("bucket") for item in depth] != list(DEPTH_BUCKETS):
-        raise ValueError("Phase 9 depth buckets differ")
-    if sum(item.get("sample_count", 0) for item in depth) != anchor_count:
-        raise ValueError("Phase 9 depth diagnostics do not cover anchors")
+    _validate_depth_diagnostics(diagnostics["sequence_depth"], anchor_count)
+    _validate_subgroup_diagnostics(
+        diagnostics["subgroups"], anchor_count, snapshot_mae, s2_mae
+    )
     physical = value["physical_consistency"]
     if type(physical) is not dict or set(physical) != {
         "snapshot",

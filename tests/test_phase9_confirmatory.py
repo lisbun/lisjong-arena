@@ -1,8 +1,10 @@
 """Synthetic Phase 9 protocol, data-boundary, guard, and artifact tests."""
 
 import argparse
+import copy
 import json
 import os
+import sys
 import tempfile
 import unittest
 from dataclasses import replace
@@ -22,8 +24,17 @@ from lisjong_arena.phase5_belief_dataset.persistence import (
 from lisjong_arena.phase8_sequential.evaluation import (
     remap_predictions_by_reference,
 )
-from lisjong_arena.phase9_confirmatory.__main__ import _parser
-from lisjong_arena.phase9_confirmatory.artifact import load_result, save_result
+from lisjong_arena.phase9_confirmatory.__main__ import (
+    _evaluate_command,
+    _generate_command,
+    _lock_command,
+    _parser,
+)
+from lisjong_arena.phase9_confirmatory.artifact import (
+    load_result,
+    result_with_identity,
+    save_result,
+)
 from lisjong_arena.phase9_confirmatory.data import (
     build_phase9_holdout_dataset,
     holdout_lock_value,
@@ -35,6 +46,7 @@ from lisjong_arena.phase9_confirmatory.preflight import (
     require_formal_execution_authorization,
     verify_artifact_state,
     verify_current_checkout_revision,
+    verify_formal_evaluation_runtime,
     verify_frozen_arms,
 )
 from lisjong_arena.phase9_confirmatory.protocol import (
@@ -43,12 +55,16 @@ from lisjong_arena.phase9_confirmatory.protocol import (
     BOOTSTRAP_RNG,
     BOOTSTRAP_SEED,
     DEPTH_BUCKETS,
+    EVALUATION_REVISIONS,
+    EVALUATION_RIICHIENV_VERSION,
+    EVALUATION_TORCH_VERSION,
     HISTORICAL_REVISIONS,
     HISTORICAL_TREES,
     HOLDOUT_GAME_COUNT,
     HOLDOUT_ROLE,
     HOLDOUT_SEEDS,
     LOCKED_RULE_FINGERPRINT,
+    LOCKED_SUBGROUPS,
     MATERIALITY_EPSILON,
     PROTOCOL_ID,
     S2_ARTIFACT_IDENTITY,
@@ -101,6 +117,26 @@ def _physical(passed: bool = True) -> dict[str, object]:
         "conservation_mean_excess_per_sample": 0.0,
         "blocking_gate_passed": passed,
     }
+
+
+def _subgroups(delta: float) -> dict[str, list[dict[str, object]]]:
+    row_count = HOLDOUT_GAME_COUNT * 3
+    result = {}
+    for family, names in LOCKED_SUBGROUPS:
+        result[family] = [
+            {
+                "group": name,
+                "available": index == 0,
+                "sample_count": HOLDOUT_GAME_COUNT if index == 0 else 0,
+                "row_count": row_count if index == 0 else 0,
+                "cell_count": row_count * 34 if index == 0 else 0,
+                "snapshot_mae": 0.5 if index == 0 else None,
+                "s2_mae": 0.5 - delta if index == 0 else None,
+                "delta_mae": delta if index == 0 else None,
+            }
+            for index, name in enumerate(names)
+        ]
+    return result
 
 
 def _result_value() -> dict[str, object]:
@@ -218,11 +254,12 @@ def _result_value() -> dict[str, object]:
         },
         "runtime_provenance": {
             "python": "3.14.0",
-            "torch": "2.13.0+cpu",
+            "torch": EVALUATION_TORCH_VERSION,
+            "riichienv": EVALUATION_RIICHIENV_VERSION,
             "device": "cpu",
             "torch_thread_count": 1,
             "deterministic_algorithms": True,
-            "installed_revisions": {},
+            "installed_revisions": EVALUATION_REVISIONS,
         },
         "pairing": {
             "eligible_anchor_count": HOLDOUT_GAME_COUNT,
@@ -256,7 +293,11 @@ def _result_value() -> dict[str, object]:
             "game_macro_mean_delta_mae": delta,
             "median_per_game_delta_mae": delta,
             "leave_one_hanchan_out": [
-                {"omitted_game_seed": seed, "delta_mae": delta}
+                {
+                    "omitted_source_class": "first-party-bootstrap",
+                    "omitted_game_seed": seed,
+                    "delta_mae": delta,
+                }
                 for seed in HOLDOUT_SEEDS
             ],
             "sequence_depth": [
@@ -269,7 +310,7 @@ def _result_value() -> dict[str, object]:
                 }
                 for index, bucket in enumerate(DEPTH_BUCKETS)
             ],
-            "subgroups": {},
+            "subgroups": _subgroups(delta),
         },
         "physical_consistency": {
             "snapshot": _physical(),
@@ -379,11 +420,13 @@ class Phase9ProtocolTest(unittest.TestCase):
             {"--seed", "--epsilon", "--bootstrap-replicates"}.isdisjoint(option_strings)
         )
 
-    def test_creation_revision_is_bound_to_current_checkout(self) -> None:
+    def test_creation_revision_rejects_revision_drift_and_dirty_tracked_state(
+        self,
+    ) -> None:
         revision = "a" * 40
         with patch(
             "lisjong_arena.phase9_confirmatory.preflight._git",
-            return_value=revision,
+            side_effect=(revision, ""),
         ):
             self.assertEqual(verify_current_checkout_revision(revision), revision)
         with patch(
@@ -392,6 +435,203 @@ class Phase9ProtocolTest(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "current Arena checkout"):
                 verify_current_checkout_revision(revision)
+        with patch(
+            "lisjong_arena.phase9_confirmatory.preflight.__file__",
+            str(Path.cwd() / "elsewhere" / "preflight.py"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not from the current checkout"):
+                verify_current_checkout_revision(revision)
+        for dirty in ("M  staged.py", " M worktree.py"):
+            with (
+                self.subTest(dirty=dirty),
+                patch(
+                    "lisjong_arena.phase9_confirmatory.preflight._git",
+                    side_effect=(revision, dirty),
+                ),
+                self.assertRaisesRegex(RuntimeError, "tracked or staged"),
+            ):
+                verify_current_checkout_revision(revision)
+
+    def test_every_formal_stage_revalidates_preflight_checkout(self) -> None:
+        revision = "a" * 40
+        preflight = {
+            "creation_software_revision": revision,
+            "preflight_identity": "b" * 64,
+        }
+        commands = (
+            (
+                _generate_command,
+                SimpleNamespace(
+                    preflight="preflight.json",
+                    snapshot_artifact="snapshot",
+                    s2_artifact="s2",
+                    historical_python="python",
+                    raw_output="raw",
+                    report_output="report",
+                ),
+            ),
+            (
+                _lock_command,
+                SimpleNamespace(
+                    preflight="preflight.json",
+                    generation_report="generation.json",
+                    raw="raw",
+                    dataset_output="dataset",
+                ),
+            ),
+            (
+                _evaluate_command,
+                SimpleNamespace(
+                    preflight="preflight.json",
+                    creation_revision=revision,
+                    generation_report="generation.json",
+                    raw="raw",
+                    dataset="dataset",
+                    snapshot_artifact="snapshot",
+                    s2_artifact="s2",
+                    result_output="result",
+                ),
+            ),
+        )
+        for command, arguments in commands:
+            with (
+                self.subTest(command=command.__name__),
+                patch(
+                    "lisjong_arena.phase9_confirmatory.__main__.require_formal_execution_authorization"
+                ),
+                patch(
+                    "lisjong_arena.phase9_confirmatory.__main__.load_preflight",
+                    return_value=preflight,
+                ),
+                patch(
+                    "lisjong_arena.phase9_confirmatory.__main__.verify_current_checkout_revision",
+                    side_effect=RuntimeError("revision drift"),
+                ) as verify,
+                self.assertRaisesRegex(RuntimeError, "revision drift"),
+            ):
+                command(arguments)
+            verify.assert_called_once_with(revision)
+
+    def test_formal_evaluation_runtime_requires_exact_noneditable_pins(self) -> None:
+        class FakeDistribution:
+            def __init__(self, *, version="", revision=None, editable=False):
+                self.version = version
+                self._revision = revision
+                self._editable = editable
+
+            def read_text(self, _name):
+                if self._editable:
+                    return json.dumps(
+                        {"url": "file:///local", "dir_info": {"editable": True}}
+                    )
+                return json.dumps(
+                    {
+                        "url": "https://github.com/lisbun/example.git",
+                        "vcs_info": {"vcs": "git", "commit_id": self._revision},
+                    }
+                )
+
+        def exact_distribution(name):
+            if name == "riichienv":
+                return FakeDistribution(version=EVALUATION_RIICHIENV_VERSION)
+            key = name.replace("-", "_")
+            return FakeDistribution(revision=EVALUATION_REVISIONS[key])
+
+        fake_torch = SimpleNamespace(
+            __version__=EVALUATION_TORCH_VERSION,
+            cuda=SimpleNamespace(is_available=lambda: False),
+        )
+        with (
+            patch.object(sys, "version_info", (3, 14, 0)),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.distribution",
+                side_effect=exact_distribution,
+            ),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.importlib.import_module",
+                return_value=fake_torch,
+            ),
+        ):
+            runtime = verify_formal_evaluation_runtime()
+        self.assertEqual(runtime["installed_revisions"], EVALUATION_REVISIONS)
+
+        def editable_distribution(name):
+            if name == "lisjong":
+                return FakeDistribution(editable=True)
+            return exact_distribution(name)
+
+        with (
+            patch.object(sys, "version_info", (3, 14, 0)),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.distribution",
+                side_effect=editable_distribution,
+            ),
+            self.assertRaisesRegex(RuntimeError, "local/editable"),
+        ):
+            verify_formal_evaluation_runtime()
+
+        def missing_provenance_distribution(name):
+            if name == "lisjong":
+                return SimpleNamespace(read_text=lambda _name: None)
+            return exact_distribution(name)
+
+        with (
+            patch.object(sys, "version_info", (3, 14, 0)),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.distribution",
+                side_effect=missing_provenance_distribution,
+            ),
+            self.assertRaisesRegex(RuntimeError, "VCS provenance"),
+        ):
+            verify_formal_evaluation_runtime()
+
+        def wrong_revision_distribution(name):
+            if name == "lisjong":
+                return FakeDistribution(revision="0" * 40)
+            return exact_distribution(name)
+
+        with (
+            patch.object(sys, "version_info", (3, 14, 0)),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.distribution",
+                side_effect=wrong_revision_distribution,
+            ),
+            self.assertRaisesRegex(RuntimeError, "dependency revisions"),
+        ):
+            verify_formal_evaluation_runtime()
+
+        def wrong_riichienv_distribution(name):
+            if name == "riichienv":
+                return FakeDistribution(version="0.4.9")
+            return exact_distribution(name)
+
+        with (
+            patch.object(sys, "version_info", (3, 14, 0)),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.distribution",
+                side_effect=wrong_riichienv_distribution,
+            ),
+            self.assertRaisesRegex(RuntimeError, "RiichiEnv"),
+        ):
+            verify_formal_evaluation_runtime()
+
+        wrong_torch = SimpleNamespace(
+            __version__="2.13.1+cpu",
+            cuda=SimpleNamespace(is_available=lambda: False),
+        )
+        with (
+            patch.object(sys, "version_info", (3, 14, 0)),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.distribution",
+                side_effect=exact_distribution,
+            ),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight.importlib.import_module",
+                return_value=wrong_torch,
+            ),
+            self.assertRaisesRegex(RuntimeError, "PyTorch 2.13.0 CPU"),
+        ):
+            verify_formal_evaluation_runtime()
 
 
 class Phase9DatasetTest(unittest.TestCase):
@@ -529,6 +769,48 @@ class Phase9ArtifactTest(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "logical identity"):
                 load_result(destination)
+
+    def test_result_rejects_missing_empty_and_malformed_locked_strata(self) -> None:
+        cases = {}
+        missing = copy.deepcopy(_result_value())
+        missing["diagnostics"]["subgroups"].pop("public_riichi_state")
+        cases["missing family"] = missing
+        empty = copy.deepcopy(_result_value())
+        empty["diagnostics"]["subgroups"]["true_tenpai_state"] = []
+        cases["empty family"] = empty
+        malformed = copy.deepcopy(_result_value())
+        malformed_group = malformed["diagnostics"]["subgroups"][
+            "opponent_relative_seat"
+        ][1]
+        malformed_group["available"] = True
+        cases["malformed empty group"] = malformed
+        malformed_count = copy.deepcopy(_result_value())
+        malformed_count["diagnostics"]["subgroups"]["public_riichi_state"][0][
+            "cell_count"
+        ] -= 1
+        cases["malformed count"] = malformed_count
+        for name, value in cases.items():
+            with (
+                self.subTest(name=name),
+                self.assertRaisesRegex(
+                    ValueError, "subgroup|groups|group|count semantics"
+                ),
+            ):
+                result_with_identity(value)
+
+    def test_result_rejects_malformed_depth_diagnostics(self) -> None:
+        missing_diagnostic = copy.deepcopy(_result_value())
+        missing_diagnostic["diagnostics"].pop("game_macro_mean_delta_mae")
+        with self.assertRaisesRegex(ValueError, "diagnostic fields"):
+            result_with_identity(missing_diagnostic)
+        missing_field = copy.deepcopy(_result_value())
+        missing_field["diagnostics"]["sequence_depth"][0].pop("delta_mae")
+        with self.assertRaisesRegex(ValueError, "depth diagnostic fields"):
+            result_with_identity(missing_field)
+        invented_empty_metric = copy.deepcopy(_result_value())
+        invented_empty_metric["diagnostics"]["sequence_depth"][1]["snapshot_mae"] = 0.0
+        with self.assertRaisesRegex(ValueError, "empty Phase 9 depth"):
+            result_with_identity(invented_empty_metric)
 
     def test_generation_report_binds_runtime_and_preflight(self) -> None:
         execution = {
