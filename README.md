@@ -361,6 +361,26 @@ importせず、ML extraがある場合だけlazyな`to_tensor()`で`torch.float3
 artifact、action selectionも含みません。exact 8204-index layout、normalization、bounds、fingerprint、
 fail-closed条件は[Learned Policy input schema](docs/learned-policy-input-schema.md)を参照してください。
 
+### Learned Policy Stage 2 vertical slice
+
+`lisjong_arena.learned_policy_stage2`は、この feature schema と `lisjong` の 802-action
+vocabulary を初めて接続する bounded な behavior-cloning experiment です。first-party teacher
+(`yakuhai-call` x4 / `4p-red-half` / seeds `200..215`) の実 decision から versioned dataset を
+生成し、固定した 1x128 MLP を masked cross-entropy で学習し、frozen checkpoint を TEST で
+1 回だけ評価します。
+
+```bash
+python -m lisjong_arena.learned_policy_stage2 generate --dataset DIR --report FILE
+python -m lisjong_arena.learned_policy_stage2 train    --dataset DIR --checkpoint DIR
+python -m lisjong_arena.learned_policy_stage2 test     --dataset DIR --checkpoint DIR --result FILE
+```
+
+生成した dataset / weights / result artifact は Git へ commit しません。locked protocol、
+dataset contract と hard invariants、metrics、safety checks、decision rule は
+[Learned Policy Stage 2](docs/learned-policy-stage2.md)を参照してください。これは
+experiment-local harness であり、production Learned Policy や serving Policy adapter では
+ありません。
+
 ## 最小comparison protocol
 
 ### Matchup と PolicySpec
