@@ -65,3 +65,4 @@ jobs:
         run: |
           python -m unittest discover -s tests -p "test_phase?_snapshot*.py" -v
           python -m unittest discover -s tests -p "test_phase8_sequential_ml.py" -v
+          python -m unittest discover -s tests -p "test_phase9_confirmatory_ml.py" -v
