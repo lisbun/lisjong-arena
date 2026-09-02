@@ -719,6 +719,67 @@ overwriteを拒否する。historical dataset source revisionsと実行時depend
 全artifact/resultで`test_partition_evaluated=false`を必須とする。通常importはtorch-freeで、CIはsynthetic
 sequential ML testsだけを実行し、formal trainingやreal TEST inferenceを開始しない。
 
+### Phase 9 one-shot confirmatory family gate (Issue #121)
+
+Phase 9はfrozen Phase 6 snapshotとfrozen Phase 8 S2のmodel familyをfresh holdoutで一度だけ
+比較する、Arena-ownedのbounded confirmatory boundaryである。protocol authorityは
+`lisjong-project#39`であり、Arena側はthreshold、population、model、feature、sequence semanticsを
+caller optionへしない。
+
+```text
+exact historical generation stack
+    -> fresh raw corpus seeds 160..179
+    -> separate Phase-5-compatible TEST-only dataset
+    -> identical ordered anchor population
+    -> frozen snapshot / frozen S2 self-rollout
+    -> 20-hanchan paired bootstrap + physical gate
+    -> one exhaustive family classification
+```
+
+historical generatorは`lisjong 6db1ddc...`、`lisjong-engine 8735e89...`、Arena
+`e667890...`のexact checkout/runtimeでのみ実行する。Arena commitは保存ref
+`archive/handbelief-phase5-e667890`から取得し、checkout commitとtreeをpreflight receiptへ
+記録する。`RuleSet.default()` fingerprint、`TwoStepUkeirePolicy x4`、RiichiEnv 0.4.8、runtimeの
+VCS provenanceが一致しなければgeneration前に停止する。exact pathが利用可能なので、
+provenance-independent semantic-equivalence fallbackは実装しない。
+
+fresh datasetはhistorical Phase 5 TRAIN/VALIDATION/TEST artifactへ追加せず、全20 gameを
+`confirmatory-test-only`として持つ独立artifactである。raw/dataset identity、ordered games、
+game-atomic membership、eligible TURN count、anchor/evidence/label/rule/source provenanceをprediction前に
+lockする。`phase9_confirmatory`のformal subcommandsはreviewed merge後だけ設定する明示的environment
+guardを要求し、unit test / CI / importからreal seeds generation、feature materialization、model inferenceへ
+到達しない。
+
+preflight receiptのcreation revisionは単なる記録ではなく、preflightと全formal subcommandでcurrent
+Arena checkoutの`HEAD`およびtracked worktree/indexのclean状態へ再照合する。formal evaluationはさらに、
+lisjong / lisjong-engineのnon-editable VCS revision、RiichiEnv 0.4.8、PyTorch 2.13.0 CPUを推論前に
+exact検証するため、stale editable dependencyやrevision driftを許容しない。historical generation runtimeと
+current evaluation runtimeは引き続き別provenanceとして記録する。
+
+snapshotはPhase 6のpartition-neutral materialization/prediction、S2はPhase 8のWind-keyed previous
+belief、public conditional-uniform initialization、zero latent、own-prediction recurrenceを直接再利用する。
+Phase 8のTRAIN/VALIDATION専用sequence typeは緩めず、同じkey/order/reset integrityをTEST-onlyで
+検証するPhase 9 valueを置く。両armのeligible `TurnExampleReference` identity・order・eligibilityが
+完全一致しなければ停止する。
+
+primary effectは`Delta MAE = snapshot MAE - S2 MAE`、materialityは0.0025である。uncertaintyは
+stdlib `random.Random(0)`、20,000 replicates、各replicate 20 whole matched hanchanのpercentile 95% CIに
+固定し、Phase 7の10-cluster assumptionを再利用しない。両armのphysical gateをMAE classificationより
+先に評価する。有効なcomparisonでは`Delta >= 0.0025`かつCI lower `> 0`の場合だけ
+`SEQUENTIAL FAMILY LOCKED`、他はすべて`SNAPSHOT FAMILY LOCKED`とする。source-equivalence failureは
+`REFORMULATE`、technical/physical failureは`STOP / REWORK`である。
+
+resultはraw/dataset/arm identity、generationとevaluation runtimeの分離されたprovenance、全paired
+anchor identity、primary/per-game/leave-one-out/depth/subgroup metrics、両arm physical metrics、classification、
+no-training/no-model-selection flagを持つrepository外immutable artifactである。既存destinationを
+overwriteせず、Phase 6/8の`manifest.json`/`weights.pt`はpreflight前後とinference前後でbytesを照合する。
+depthとsubgroup diagnosticsはlocked family/groupをempty groupまで保持し、exact fields、availability、
+sample/row/cell count、null規則、Delta、全anchor coverage、pooled MAE整合をload時にも検証する。
+
+Issue #121の第一段階ではmachinery、synthetic tests、runbookだけを作成する。formal seeds
+`160..179`のgeneration/materialization/inference/result exposureは行わず、review/merge後の別作業で
+一回限り実行する。
+
 ### ABBB strength evaluation artifact (Issue #110)
 
 Issue #110で、ABBB / `4p-red-single` strength evaluation結果を再実行せず再集計できる

@@ -259,6 +259,12 @@ Arenaが提供するのは特定の評価条件における比較・regression�
 
 点棒状況、順位条件、親番価値、連荘価値、オーラス判断、トップ取り、ラス回避、game-level utility等を評価する場合は、hanchan / match-level等の高コストなvalidationへ広げる。
 
+HandBelief Stage 2のPhase 9は、通常のiterative development evaluationではなく、一回限りの
+confirmatory family-selection gateとして扱う。fresh seeds `160..179`、frozen snapshot/S2、paired
+20-hanchan uncertainty、physical validity、classification ruleは`lisjong-project#39`でpre-register済みである。
+machineryのreview/merge前にholdoutを開封せず、有効結果を見てseed追加、threshold変更、再学習を行わない。
+Stage 3はPhase 9 classificationとStage 2 completion reviewの後にのみ開始する。
+
 ### Lane 2: External benchmark
 
 成熟したexternal AI等に対するlisjongのgame performanceを評価する。external benchmark全体について特定scopeを固定せず、round、east-only、hanchan、decision-specific benchmark等から評価目的に必要なscopeを選ぶ。

@@ -1100,6 +1100,100 @@ existing execution pathが同じという類似だけを理由に、generic back
 
 ## 開発環境
 
+### Phase 9 confirmatory holdout runbook
+
+`lisjong_arena.phase9_confirmatory`はIssue #121 / `lisjong-project#39`専用のbounded workflowです。
+Phase 6 snapshotとPhase 8 S2のstrict verification、exact historical checkout、fresh TEST-only dataset、
+paired 20-hanchan bootstrap、physical gate、immutable resultを次の独立boundaryで扱います。
+
+```text
+python -m lisjong_arena.phase9_confirmatory preflight ...
+python -m lisjong_arena.phase9_confirmatory generate ...
+python -m lisjong_arena.phase9_confirmatory lock-holdout ...
+python -m lisjong_arena.phase9_confirmatory evaluate ...
+```
+
+`preflight`にはlocked SHAへdetached checkoutしたlisjong / lisjong-engine / lisjong-arenaのpathと、
+repository外のfrozen snapshot / S2 artifactを渡します。Arena checkoutは
+`archive/handbelief-phase5-e667890`から取得し、commitとtreeの一致を確認してください。historical
+Python 3.14 venvはArena `e667890f0124670a6858fba13bc41767cdc80350`をVCS installし、そのhistorical
+`pyproject.toml`がpinするlisjong / engineとRiichiEnv 0.4.8を使用します。editable/local-path installは
+exact VCS provenanceを持たないためformal generationには使えません。
+
+checkoutとhistorical generation venvは、例えば次のようにGit外の作業directoryへ用意します。
+
+```powershell
+git clone --no-checkout https://github.com/lisbun/lisjong.git <lisjong-checkout>
+git -C <lisjong-checkout> checkout --detach 6db1ddc0c6fae312801104008bf18660975f687d
+git clone --no-checkout https://github.com/lisbun/lisjong-engine.git <engine-checkout>
+git -C <engine-checkout> checkout --detach 8735e89e1aea000ab59368d0368d476787827741
+git clone --branch archive/handbelief-phase5-e667890 https://github.com/lisbun/lisjong-arena.git <arena-checkout>
+git -C <arena-checkout> checkout --detach e667890f0124670a6858fba13bc41767cdc80350
+py -3.14 -m venv <historical-venv>
+& <historical-python> -m pip install "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@e667890f0124670a6858fba13bc41767cdc80350"
+```
+
+formal workflow自体は、merge後のmainを新規cloneしたclean evaluation checkoutと専用venvから実行します。
+既存の開発venvや過去のeditable `lisjong` / `lisjong-engine` installは使用しません。
+
+```powershell
+git clone https://github.com/lisbun/lisjong-arena.git <evaluation-checkout>
+git -C <evaluation-checkout> checkout --detach <merged-main-sha>
+py -3.14 -m venv <evaluation-venv>
+& <evaluation-python> -m pip install --upgrade pip
+& <evaluation-python> -m pip install --editable "<evaluation-checkout>[ml]"
+Set-Location <evaluation-checkout>
+```
+
+evaluation runtimeは推論前に、lisjong
+`84e905d252d65eb37b722f195f2774fd5661d5af`、lisjong-engine
+`8735e89e1aea000ab59368d0368d476787827741`のnon-editable VCS provenance、RiichiEnv 0.4.8、
+PyTorch `2.13.0+cpu`をfail closedで検証します。`direct_url.json`にVCS commitがないlocal/editable
+dependencyは拒否します。
+
+このclean checkoutからartifact、historical checkout、treeを検証し、immutable receiptを作成します。
+
+```powershell
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory preflight `
+  --snapshot-artifact <phase6-model> --s2-artifact <phase8-s2> `
+  --lisjong-checkout <lisjong-checkout> --engine-checkout <engine-checkout> `
+  --arena-checkout <arena-checkout> --creation-revision <current-main-sha> `
+  --output <preflight-json>
+```
+
+`preflight`に加え、`generate`、`lock-holdout`、`evaluate`の各段階がreceiptのcreation revisionと
+current checkout `HEAD`を再照合し、tracked worktreeまたはindexに未commit変更があれば停止します。
+
+`generate`以降はreview/merge後の別作業でのみ、次のexplicit guardを設定して実行します。
+
+```powershell
+$env:LISJONG_ARENA_PHASE9_FORMAL_EXECUTION = "approved-after-reviewed-merge"
+```
+
+その後も順序を変えず、preflight receiptと前段artifactを毎回明示します。
+
+```powershell
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory generate `
+  --preflight <preflight-json> --snapshot-artifact <phase6-model> `
+  --s2-artifact <phase8-s2> --historical-python <historical-python> `
+  --raw-output <fresh-raw> --report-output <generation-report>
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory lock-holdout `
+  --preflight <preflight-json> --generation-report <generation-report> `
+  --raw <fresh-raw> --dataset-output <fresh-dataset>
+& <evaluation-python> -m lisjong_arena.phase9_confirmatory evaluate `
+  --preflight <preflight-json> --generation-report <generation-report> `
+  --raw <fresh-raw> --dataset <fresh-dataset> `
+  --snapshot-artifact <phase6-model> --s2-artifact <phase8-s2> `
+  --result-output <phase9-result> --creation-revision <current-main-sha>
+```
+
+CLIはseed、epsilon、bootstrap設定、model configをoverrideできません。出力先はすべてGit外の新規pathを
+指定し、preflight receipt、raw corpus、generation report、dataset、resultの順に作成します。途中の
+identity/provenance/artifact byte mismatchでは停止し、既存destinationを上書きしません。
+
+この第一段階のPRではformal seeds `160..179`を生成・materialize・推論しておらず、family classificationも
+作成していません。merge後のformal executionは別依頼で一回だけ行います。
+
 初期基準は通常版CPython 3.14です。free-threaded build（3.14t）は、依存libraryを含む互換性を個別に検証するまで対象外とします。
 
 ```bash
