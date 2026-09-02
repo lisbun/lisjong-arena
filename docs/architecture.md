@@ -536,6 +536,31 @@ Policy呼び出しはlisjong-owned `execute_policy()`だけを使う。Arena側�
 
 このpathは現時点でGameTraceを発行しない。`GameTrace`のlisjong-engine対応、generic objective trace、replay / viewerはIssue #53のnon-goalである。AABB / ABBB evaluation protocolもこのpathへは接続しておらず、`run_policy_hanchan()`はfirst-party execution capabilityの成立確認に留まる。
 
+### Learned Policy experiment-local PolicyInput schema (Issue #129)
+
+最初のfeed-forward Learned Policy実験に必要なonline input representationは、
+`lisjong_arena.learned_policy_input`にArena-ownedのexperiment-local schemaとして置く。
+
+```text
+exact lisjong PolicyInput
+    -> arena-policy-input-feature-v1
+    -> arena-policy-input-tensor-v1 (8204 float32 values)
+```
+
+encoderの唯一のdomain inputはcurrent `PolicyInput`であり、players、dealer、discard caller、meld sourceを
+self-relative axisへrotateする。normal / red fiveを区別する37-tile axis、global `Discard.order`を保つ
+136 ordered slots、5 dora slots、4 meld slots/player、14 concealed tilesの物理上限を固定し、presenceと
+zero payloadでpaddingを明示する。上限超過、discard orderのgap / duplicate、unknown version、type拡張、
+non-finite float32化はtruncate、clip、fallbackせずfail closedにする。全8204 index descriptorと
+normalizationをversioned fingerprintで固定する。
+
+これはinput tensorizationという実験上の選択であり、`PolicyInput`のfield / visibility semanticsを
+Arenaへ移管しない。`DecisionContext.legal_actions`とlisjong action vocabulary legal maskは別経路であり、
+featureへ重複格納しない。model、teacher data、training、action selection、artifact、strength evaluationは
+Issue #129に含めない。`phase6-history-snapshot-v1` / 919 dimensionsはHandBelief専用であり、本schemaの
+base classまたは互換layoutではない。exact offset、axis、normalization、failure semanticsは
+[`learned-policy-input-schema.md`](learned-policy-input-schema.md)を正本とする。
+
 ### Phase 4 first-party HandBelief raw corpus (Issue #85)
 
 Phase 4はfirst-party `run_hanchan()` executionを、HandBelief学習用のraw

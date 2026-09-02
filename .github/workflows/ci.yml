@@ -61,8 +61,9 @@ jobs:
       - name: Verify locked CPU PyTorch
         run: python -c "import torch; assert torch.__version__ == '2.13.0+cpu'; assert not torch.cuda.is_available()"
 
-      - name: Run snapshot and sequential ML focused tests
+      - name: Run Learned Policy, snapshot, and sequential ML focused tests
         run: |
+          python -m unittest discover -s tests -p "test_learned_policy_input_ml.py" -v
           python -m unittest discover -s tests -p "test_phase?_snapshot*.py" -v
           python -m unittest discover -s tests -p "test_phase8_sequential_ml.py" -v
           python -m unittest discover -s tests -p "test_phase9_confirmatory_ml.py" -v
