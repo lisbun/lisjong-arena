@@ -336,6 +336,31 @@ descriptorと `InternalAction` の対応は1 seat・1 decisionに閉じます。
 
 actorはcaller引数として受け取らず、常に `observation.viewer_seat` から導出します。`EngineActionMapping` を直接構築した場合も、全candidateのactorが `self_seat` と一致することを生成時に検証します。
 
+## Learned Policy experiment-local input schema
+
+最初のfeed-forward Learned Policy実験向けに、current `PolicyInput`だけを入力とする
+Arena-ownedのversioned feature / tensor schemaを提供します。
+
+```python
+from lisjong_arena.learned_policy_input import (
+    build_policy_input_feature,
+    tensor_values,
+)
+
+feature = build_policy_input_feature(policy_input)
+values = tensor_values(feature)
+assert len(values) == 8204
+```
+
+`arena-policy-input-feature-v1`はseatをself-relativeへrotateし、赤牌を保持する37-tile axis、
+ordered discard / dora / meld slots、explicit presence / paddingを使います。純Python pathはtorchを
+importせず、ML extraがある場合だけlazyな`to_tensor()`で`torch.float32`へ変換できます。
+
+この表現はexperiment-localであり、lisjongの`PolicyInput` contractやcanonical production schemaへ
+昇格したものではありません。legal actions / action vocabulary mask、model、training、teacher data、
+artifact、action selectionも含みません。exact 8204-index layout、normalization、bounds、fingerprint、
+fail-closed条件は[Learned Policy input schema](docs/learned-policy-input-schema.md)を参照してください。
+
 ## 最小comparison protocol
 
 ### Matchup と PolicySpec
