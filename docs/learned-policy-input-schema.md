@@ -47,7 +47,7 @@ public moduleは`lisjong_arena.learned_policy_input`である。
 | Tensor shape | `(8204,)` |
 | Tile axis | 37 semantic tile values |
 | Relative-seat axis | self, shimocha, toimen, kamicha |
-| Fingerprint | `cb02f8ec43861d277deaed0a0592f3d08cc4f26e351d8e27550b173f9b2059de` |
+| Fingerprint | `097dd99fa2956c0c7c2e298399e6b71326753a2d810835f1f2fef224abd0ed30` |
 
 主要APIは次のとおりである。
 
@@ -59,6 +59,7 @@ public moduleは`lisjong_arena.learned_policy_input`である。
 | `schema_fingerprint(*, version=...)` | 全index semanticsとschema headerのSHA-256 |
 | `FEATURE_GROUPS` | top-level offset、length、logical shape |
 | `FEATURE_INDEX_DESCRIPTORS` | index順の一意な全8204 semantic descriptor |
+| `PADDING_SEMANTICS` | fingerprintへ含めるpresence / padding assignment |
 
 `to_tensor()`はmodel、batching、device placement、lossを所有しない単一sample adapterである。
 package importおよびpure-Python pathではtorchをimportしない。
@@ -277,12 +278,16 @@ feature_semantics_id=<literal>
 tensor_schema_version=<literal>
 dtype=<literal>
 feature_dim=<literal>
+optional_padding=presence-0,payload-all-zero
+meld_padding=all-zero
+discard_padding=all-zero
 0:<index-0 semantic descriptor>
 ...
 8203:<index-8203 semantic descriptor>
 ```
 
 全descriptorはaxis value、slot番号、normalization、presence semanticsを含み、一意である。
+schema headerはoptional payload、meld slot、discard slotのall-zero padding assignmentも固定する。
 testは`version -> expected SHA-256`をliteralとして保持し、主要group boundaryと代表indexもliteralで
 固定する。
 

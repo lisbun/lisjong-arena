@@ -42,6 +42,7 @@ from lisjong_arena.learned_policy_input import (
     MAX_GLOBAL_DISCARDS,
     MAX_LIVE_WALL_TILES,
     MAX_MELDS_PER_PLAYER,
+    PADDING_SEMANTICS,
     TENSOR_DTYPE,
     TENSOR_SCHEMA_VERSION,
     TILE_AXIS_LABELS,
@@ -72,9 +73,14 @@ _EXPECTED_TILE_LABELS = tuple(
 _EXPECTED_SEAT_LABELS = ("self", "shimocha", "toimen", "kamicha")
 _EXPECTED_RIICHI_LABELS = ("none", "declared", "accepted")
 _EXPECTED_MELD_LABELS = ("chi", "pon", "daiminkan", "ankan", "kakan")
+_EXPECTED_PADDING_SEMANTICS = (
+    "optional_padding=presence-0,payload-all-zero",
+    "meld_padding=all-zero",
+    "discard_padding=all-zero",
+)
 _SCHEMA_FINGERPRINTS = {
     "arena-policy-input-tensor-v1": (
-        "cb02f8ec43861d277deaed0a0592f3d08cc4f26e351d8e27550b173f9b2059de"
+        "097dd99fa2956c0c7c2e298399e6b71326753a2d810835f1f2fef224abd0ed30"
     )
 }
 
@@ -161,6 +167,7 @@ class LearnedPolicyInputLayoutTest(unittest.TestCase):
         self.assertEqual(TENSOR_SCHEMA_VERSION, "arena-policy-input-tensor-v1")
         self.assertEqual(TENSOR_DTYPE, "float32")
         self.assertEqual(FEATURE_DIM, 8204)
+        self.assertEqual(PADDING_SEMANTICS, _EXPECTED_PADDING_SEMANTICS)
         self.assertEqual(
             tuple(
                 (value.name, value.start, value.stop, value.logical_shape)
@@ -187,6 +194,7 @@ class LearnedPolicyInputLayoutTest(unittest.TestCase):
             "tensor_schema_version=arena-policy-input-tensor-v1\n"
             "dtype=float32\n"
             "feature_dim=8204\n"
+            + "".join(f"{value}\n" for value in _EXPECTED_PADDING_SEMANTICS)
             + "".join(
                 f"{index}:{descriptor}\n"
                 for index, descriptor in enumerate(expected_descriptors)
@@ -198,6 +206,44 @@ class LearnedPolicyInputLayoutTest(unittest.TestCase):
             _SCHEMA_FINGERPRINTS[TENSOR_SCHEMA_VERSION],
         )
         self.assertEqual(schema_fingerprint(), independent_hash)
+
+    def test_padding_assignments_are_locked_to_all_zero(self):
+        minimal_values = tensor_values(
+            build_policy_input_feature(minimal_policy_input())
+        )
+
+        # Five absent dora slots: presence plus 37-tile payload.
+        self.assertEqual(minimal_values[19:209], (0.0,) * 190)
+
+        # Four absent 86-value meld slots in every relative player row.
+        for row_start in (209, 557, 905, 1253):
+            self.assertEqual(
+                minimal_values[row_start + 4 : row_start + 348],
+                (0.0,) * 344,
+            )
+
+        # All 136 absent discard slots, each 48 values.
+        self.assertEqual(minimal_values[1601:8129], (0.0,) * 6528)
+
+        # Absent drawn tile: presence plus 37-tile payload.
+        self.assertEqual(minimal_values[8166:8204], (0.0,) * 38)
+
+        complex_values = tensor_values(
+            build_policy_input_feature(complex_policy_input())
+        )
+
+        # Present ankan with absent from-seat and called-tile payloads.
+        ankan_start = 209 + 4 + 3 * 86
+        self.assertEqual(
+            complex_values[ankan_start + 43 : ankan_start + 86], (0.0,) * 43
+        )
+
+        # Present discard with absent called-by payload.
+        first_discard_start = 1601
+        self.assertEqual(
+            complex_values[first_discard_start + 43 : first_discard_start + 48],
+            (0.0,) * 5,
+        )
 
     def test_every_index_has_one_unique_descriptor_and_literal_anchors(self):
         self.assertEqual(len(FEATURE_INDEX_DESCRIPTORS), FEATURE_DIM)

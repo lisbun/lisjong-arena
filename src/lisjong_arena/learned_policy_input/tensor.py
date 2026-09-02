@@ -29,6 +29,11 @@ from .feature import (
 TENSOR_SCHEMA_VERSION = "arena-policy-input-tensor-v1"
 TENSOR_DTYPE = "float32"
 FEATURE_DIM = 8204
+PADDING_SEMANTICS = (
+    "optional_padding=presence-0,payload-all-zero",
+    "meld_padding=all-zero",
+    "discard_padding=all-zero",
+)
 
 HONBA_SCALE = 10.0
 RIICHI_STICK_SCALE = 10.0
@@ -37,6 +42,7 @@ SCORE_SCALE = 100_000.0
 TILE_COUNT_SCALE = 4.0
 
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
+_PADDING_VALUE = 0.0
 _TILE_SLOT_DIM = 1 + TILE_AXIS_SIZE
 _MELD_SLOT_DIM = 1 + len(MELD_KIND_AXIS) + TILE_AXIS_SIZE + 1 + 4 + 1 + TILE_AXIS_SIZE
 _PLAYER_DIM = 1 + len(RIICHI_AXIS) + MAX_MELDS_PER_PLAYER * _MELD_SLOT_DIM
@@ -237,6 +243,7 @@ def schema_fingerprint(*, version: str = TENSOR_SCHEMA_VERSION) -> str:
         f"tensor_schema_version={TENSOR_SCHEMA_VERSION}",
         f"dtype={TENSOR_DTYPE}",
         f"feature_dim={FEATURE_DIM}",
+        *PADDING_SEMANTICS,
         *(f"{index}:{value}" for index, value in enumerate(FEATURE_INDEX_DESCRIPTORS)),
     )
     return hashlib.sha256(("\n".join(lines) + "\n").encode("utf-8")).hexdigest()
@@ -269,7 +276,7 @@ def _scaled(value: int, scale: float, context: str) -> float:
 def _append_optional_tile(values: list[float], tile) -> None:
     values.append(float(tile is not None))
     if tile is None:
-        values.extend((0.0,) * TILE_AXIS_SIZE)
+        values.extend((_PADDING_VALUE,) * TILE_AXIS_SIZE)
     else:
         values.extend(_one_hot(tile, TILE_AXIS))
 
@@ -277,7 +284,7 @@ def _append_optional_tile(values: list[float], tile) -> None:
 def _append_meld(values: list[float], meld: MeldFeature | None) -> None:
     values.append(float(meld is not None))
     if meld is None:
-        values.extend((0.0,) * (_MELD_SLOT_DIM - 1))
+        values.extend((_PADDING_VALUE,) * (_MELD_SLOT_DIM - 1))
         return
     values.extend(_one_hot(meld.kind, MELD_KIND_AXIS))
     values.extend(
@@ -286,7 +293,7 @@ def _append_meld(values: list[float], meld: MeldFeature | None) -> None:
     )
     values.append(float(meld.from_seat is not None))
     if meld.from_seat is None:
-        values.extend((0.0,) * len(RELATIVE_SEAT_AXIS))
+        values.extend((_PADDING_VALUE,) * len(RELATIVE_SEAT_AXIS))
     else:
         values.extend(_one_hot(meld.from_seat, RELATIVE_SEAT_AXIS))
     _append_optional_tile(values, meld.called_tile)
@@ -295,14 +302,14 @@ def _append_meld(values: list[float], meld: MeldFeature | None) -> None:
 def _append_discard(values: list[float], discard: OrderedDiscardFeature | None) -> None:
     values.append(float(discard is not None))
     if discard is None:
-        values.extend((0.0,) * (_DISCARD_SLOT_DIM - 1))
+        values.extend((_PADDING_VALUE,) * (_DISCARD_SLOT_DIM - 1))
         return
     values.extend(_one_hot(discard.discarder, RELATIVE_SEAT_AXIS))
     values.extend(_one_hot(discard.tile, TILE_AXIS))
     values.append(float(discard.tsumogiri))
     values.append(float(discard.called_by is not None))
     if discard.called_by is None:
-        values.extend((0.0,) * len(RELATIVE_SEAT_AXIS))
+        values.extend((_PADDING_VALUE,) * len(RELATIVE_SEAT_AXIS))
     else:
         values.extend(_one_hot(discard.called_by, RELATIVE_SEAT_AXIS))
 
@@ -375,6 +382,7 @@ __all__ = [
     "FEATURE_INDEX_DESCRIPTORS",
     "HONBA_SCALE",
     "LIVE_WALL_SCALE",
+    "PADDING_SEMANTICS",
     "RIICHI_STICK_SCALE",
     "SCORE_SCALE",
     "TENSOR_DTYPE",
