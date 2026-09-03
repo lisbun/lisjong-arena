@@ -310,6 +310,80 @@ class Stage3LoaderTest(unittest.TestCase):
             self.load(path)
         self.assertIn("excluded_stage2_test_seeds", str(caught.exception))
 
+    def _provenance_override(self, **overrides):
+        def edit(manifest):
+            manifest["provenance"] = {**manifest["provenance"], **overrides}
+            return manifest
+
+        return edit
+
+    def test_missing_provenance_fails_closed(self):
+        """`checkpoint_identity`はprovenanceを覆わないため、削除しても
+        self-consistencyは壊れない。loaderが明示的に拒否する必要がある。"""
+
+        def edit(manifest):
+            manifest.pop("provenance")
+            return manifest
+
+        path = write_checkpoint(self.root / "fixture", manifest_edit=edit)
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("provenance", str(caught.exception))
+
+    def test_provenance_contradicting_the_fixture_teacher_revision_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._provenance_override(lisjong_revision="0" * 40),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("contradicts", str(caught.exception))
+
+    def test_unresolved_source_revision_fails_closed(self):
+        for name in (
+            "lisjong_revision",
+            "lisjong_arena_revision",
+            "lisjong_engine_revision",
+        ):
+            with self.subTest(field=name):
+                root = self.root / f"unresolved-{name}"
+                path = write_checkpoint(
+                    root, manifest_edit=self._provenance_override(**{name: "abc123"})
+                )
+                with self.assertRaises(Stage3ArtifactError) as caught:
+                    self.load(path)
+                self.assertIn("fully-resolved", str(caught.exception))
+
+    def test_non_lowercase_hex_revision_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._provenance_override(lisjong_arena_revision="A" * 40),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("fully-resolved", str(caught.exception))
+
+    def test_malformed_provenance_shape_fails_closed(self):
+        for label, edit in (
+            ("extra field", self._provenance_override(extra="x")),
+            ("empty value", self._provenance_override(execution_environment="")),
+            ("wrong type", self._provenance_override(python_version=3)),
+        ):
+            with self.subTest(case=label):
+                root = self.root / f"shape-{label.replace(' ', '-')}"
+                path = write_checkpoint(root, manifest_edit=edit)
+                with self.assertRaises(Stage3ArtifactError):
+                    self.load(path)
+
+    def test_provenance_that_is_not_an_object_fails_closed(self):
+        def edit(manifest):
+            manifest["provenance"] = "a0666d24"
+            return manifest
+
+        path = write_checkpoint(self.root / "fixture", manifest_edit=edit)
+        with self.assertRaises(Stage3ArtifactError):
+            self.load(path)
+
     def test_loader_does_not_discover_checkpoints_under_a_parent_directory(self):
         write_checkpoint(self.root / "nested" / "fixture")
         with self.assertRaises(Stage3ArtifactError):

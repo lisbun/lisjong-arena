@@ -64,6 +64,7 @@ from lisjong_arena.single_round_artifact import collect_execution_provenance
 
 from .artifact import (
     FIXTURE_CHECKPOINT_SCHEMA_VERSION,
+    FIXTURE_PROVENANCE_FIELDS,
     ServingCheckpoint,
     load_serving_checkpoint,
 )
@@ -94,7 +95,7 @@ def _sha256(payload: bytes) -> str:
 
 def _provenance_document() -> dict[str, object]:
     provenance = collect_execution_provenance()
-    return {
+    document = {
         "execution_environment": provenance.execution_environment,
         "lisjong_arena_version": provenance.lisjong_arena_version,
         "lisjong_arena_revision": provenance.lisjong_arena_revision,
@@ -105,6 +106,10 @@ def _provenance_document() -> dict[str, object]:
         "riichienv_version": provenance.riichienv_version,
         "python_version": provenance.python_version,
     }
+    # write側とread側で同じfield契約を要求する。
+    if set(document) != FIXTURE_PROVENANCE_FIELDS:
+        raise Stage3ProtocolError("fixture provenance fields are invalid")
+    return document
 
 
 @dataclass(frozen=True, slots=True)

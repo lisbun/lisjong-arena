@@ -159,6 +159,21 @@ class Stage3PathAIdentityTest(unittest.TestCase):
                     self.require(manifest)
 
 
+class Stage3ProvenanceFieldContractTest(unittest.TestCase):
+    def test_fixture_builder_and_loader_share_one_provenance_field_set(self):
+        """write側とread側でprovenance field契約が分岐しないことを固定する。"""
+        from _learned_policy_stage3_fixtures import FIXTURE_PROVENANCE
+
+        from lisjong_arena.learned_policy_stage3.artifact import (
+            FIXTURE_PROVENANCE_FIELDS,
+        )
+
+        self.assertEqual(set(FIXTURE_PROVENANCE), set(FIXTURE_PROVENANCE_FIELDS))
+        self.assertIn("lisjong_revision", FIXTURE_PROVENANCE_FIELDS)
+        self.assertIn("lisjong_arena_revision", FIXTURE_PROVENANCE_FIELDS)
+        self.assertIn("lisjong_engine_revision", FIXTURE_PROVENANCE_FIELDS)
+
+
 class Stage3IndependentVerificationTest(unittest.TestCase):
     """smokeの独立照合が、実際に違反を数えられることを固定する。"""
 

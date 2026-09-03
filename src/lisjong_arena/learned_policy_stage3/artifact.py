@@ -26,6 +26,7 @@ locked valueは`lisjong_arena.learned_policy_stage2`をsingle source of truthと
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +72,29 @@ _ARTIFACT_CLASS_BY_SCHEMA = {
     CHECKPOINT_SCHEMA_VERSION: ArtifactClass.STAGE2_RETAINED,
     FIXTURE_CHECKPOINT_SCHEMA_VERSION: ArtifactClass.STAGE3_FIXTURE,
 }
+
+FIXTURE_PROVENANCE_FIELDS = frozenset(
+    {
+        "execution_environment",
+        "lisjong_arena_version",
+        "lisjong_arena_revision",
+        "lisjong_version",
+        "lisjong_revision",
+        "lisjong_engine_version",
+        "lisjong_engine_revision",
+        "riichienv_version",
+        "python_version",
+    }
+)
+
+# `collect_execution_provenance()`はrevisionを推測せずfail closedするため、
+# 正常に生成されたartifactのrevisionは常にfull commit IDである。
+_RESOLVED_REVISION_FIELDS = (
+    "lisjong_revision",
+    "lisjong_arena_revision",
+    "lisjong_engine_revision",
+)
+_RESOLVED_REVISION = re.compile(r"[0-9a-f]{40}")
 
 _FIXTURE_FIELDS = {
     "origin",
@@ -172,6 +196,44 @@ def _require_fixture_block(manifest: dict) -> None:
                 f"fixture {name} is not the locked Stage 3 value: "
                 f"{actual!r} != {expected!r}"
             )
+
+
+def _require_fixture_provenance(manifest: dict) -> None:
+    """fixture checkpointのtop-level provenanceを検証する。
+
+    `checkpoint_identity`はlogical identity fieldsだけを覆っており、
+    provenanceを含まない。したがってprovenanceを削除・改変しても
+    self-consistencyは壊れず、検証しなければstrict loaderを素通りする。
+
+    lisjong revisionは`fixture`が名乗るteacher source revisionと照合する。
+    `_require_fixture_block()`がその名乗り自体をlocked valueへ固定するため、
+    locked revisionとの一致はこの2段でtransitiveに保証される。ここで
+    locked valueと直接比較すると、到達不能なcheckを1つ増やすだけになる。
+
+    `python_version`やruntime versionはloader環境と一致させない。artifactは
+    生成環境とは別の環境でloadされ得るためである。
+    """
+    provenance = manifest.get("provenance")
+    if type(provenance) is not dict:
+        raise Stage3ArtifactError("fixture provenance block is missing or invalid")
+    if set(provenance) != FIXTURE_PROVENANCE_FIELDS:
+        raise Stage3ArtifactError("fixture provenance fields are invalid")
+    for name in sorted(FIXTURE_PROVENANCE_FIELDS):
+        value = provenance[name]
+        if type(value) is not str or not value:
+            raise Stage3ArtifactError(f"provenance {name} must be a non-empty string")
+    for name in _RESOLVED_REVISION_FIELDS:
+        if not _RESOLVED_REVISION.fullmatch(provenance[name]):
+            raise Stage3ArtifactError(
+                f"provenance {name} is not a fully-resolved source revision: "
+                f"{provenance[name]!r}"
+            )
+    claimed = manifest["fixture"]["teacher_source_revision"]
+    if provenance["lisjong_revision"] != claimed:
+        raise Stage3ArtifactError(
+            "provenance lisjong_revision contradicts the fixture teacher source "
+            f"revision: {provenance['lisjong_revision']!r} != {claimed!r}"
+        )
 
 
 def _require_locked_contract(manifest: dict) -> None:
@@ -290,6 +352,7 @@ def load_serving_checkpoint(path: str | Path) -> ServingCheckpoint:
         raise Stage3ArtifactError(f"unsupported checkpoint schema version: {schema!r}")
     if artifact_class is ArtifactClass.STAGE3_FIXTURE:
         _require_fixture_block(manifest)
+        _require_fixture_provenance(manifest)
     else:
         if "fixture" in manifest:
             raise Stage3ArtifactError(
@@ -341,6 +404,7 @@ def load_serving_checkpoint(path: str | Path) -> ServingCheckpoint:
 
 __all__ = [
     "FIXTURE_CHECKPOINT_SCHEMA_VERSION",
+    "FIXTURE_PROVENANCE_FIELDS",
     "ServingCheckpoint",
     "load_serving_checkpoint",
 ]

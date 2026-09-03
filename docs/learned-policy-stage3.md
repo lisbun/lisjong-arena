@@ -115,6 +115,26 @@ stage2_checkpoint_identity    is null
 
 Stage 2 schemaが`fixture` blockを持つ場合もfail closedする。
 
+さらにtop-level provenanceも検証する。`checkpoint_identity`はlogical identity
+fieldsだけを覆っておりprovenanceを含まないため、検証しないとprovenanceを削除・
+改変してもself-consistencyが壊れず、strict loaderを素通りしてしまう。
+
+```text
+provenance fieldsがFIXTURE_PROVENANCE_FIELDSとexact一致
+すべての値がnon-empty string
+lisjong_revision / lisjong_arena_revision / lisjong_engine_revision
+    が fully-resolved な40桁小文字hex
+lisjong_revision == fixture.teacher_source_revision
+```
+
+lisjong revisionは`fixture`が名乗るteacher source revisionと照合する。
+`fixture`側の名乗り自体はlocked valueへ固定済みなので、locked revisionとの
+一致はこの2段でtransitiveに保証される。
+
+`python_version`やruntime versionはloader環境と一致させない。artifactは生成
+環境とは別の環境でloadされ得るためである。provenance field契約はwrite側
+（fixture builder）とread側（loader）で同じ定数を共有する。
+
 ## Strict artifact loader
 
 `load_serving_checkpoint(path)`はexplicit pathだけを読む。implicitな
