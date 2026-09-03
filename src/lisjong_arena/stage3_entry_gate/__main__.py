@@ -147,15 +147,23 @@ def _train_command(arguments) -> dict[str, object]:
 def _hard_gate(
     manifest: dict[str, object], cell: dict[str, object]
 ) -> dict[str, object]:
-    """機械的に確認できるhard gate条件だけを集める。
+    """このresultから機械的に確認できるhard gate条件だけを集める。
 
-    population selectionそのものはここで自動化しない。最小MAEやstrongest
-    Policyを機械的に選ばないことがEntry Gateのdecision ruleである。
+    ここへ書くのは、artifactの存在そのものかartifactの値から確認できる事実だけ
+    である。「同じgeneration planから同じcorpus identityを再現できる」ことは
+    別runの独立再生成でしか示せないため、本resultでは主張しない。
+
+    population selectionそのものも自動化しない。最小MAEやstrongest Policyを
+    機械的に選ばないことがEntry Gateのdecision ruleである。
     """
     provenance = manifest["provenance"]
     coverage = manifest["coverage"]
+    cost = manifest["cost"]
     return {
-        "deterministic_generation_verified": True,
+        # Phase 4 generationはstrict readbackとPhase 2 equalityにfail closedで
+        # 通らなければmanifestを publish しない。manifestが存在すること自体が
+        # この2つの証拠である。
+        "strict_readback_and_phase2_equality_verified": True,
         "source_revisions_fully_resolved": bool(provenance["fully_resolved"]),
         "rules_fingerprint": provenance["effective_rules"]["fingerprint"],
         "split_policy_id": manifest["split_policy_id"],
@@ -164,7 +172,13 @@ def _hard_gate(
         "physical_validity_passed": bool(
             cell["physical_consistency"]["blocking_gate_passed"]
         ),
-        "runtime_and_storage_measured": True,
+        "runtime_measured": bool(
+            cost["cpu_seconds_per_hanchan"] > 0
+            and cost["wall_clock_seconds_per_hanchan"] > 0
+        ),
+        "storage_measured": bool(
+            cost["raw_compressed_bytes"] > 0 and cost["dataset_bytes"] > 0
+        ),
     }
 
 
