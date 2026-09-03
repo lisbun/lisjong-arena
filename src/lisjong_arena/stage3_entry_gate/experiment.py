@@ -194,6 +194,22 @@ def build_population_data(
     )
 
 
+def configure_torch_runtime() -> None:
+    """locked training configと同じCPU runtimeをprocessへ適用する。
+
+    `train_candidate()`はtraining process内でthread数とdeterministic algorithms
+    を設定する。cross-population evaluationは別processで動くため、同じ設定を
+    明示的に適用しないとrolloutがtraining時と別のruntimeで走る。値は
+    `FORMAL_TRAINING_CONFIG`から取り、Stage 3側で別の値を選ばない。
+    """
+    import torch
+
+    from lisjong_arena.phase8_sequential.training import FORMAL_TRAINING_CONFIG
+
+    torch.set_num_threads(FORMAL_TRAINING_CONFIG.torch_threads)
+    torch.use_deterministic_algorithms(FORMAL_TRAINING_CONFIG.deterministic_algorithms)
+
+
 def train_population_candidate(data: Stage3PopulationData):
     """fixed Phase 8 budgetでS2をtrainingする。
 
@@ -268,6 +284,7 @@ __all__ = [
     "Stage3PopulationData",
     "build_population_data",
     "conditional_uniform_reference",
+    "configure_torch_runtime",
     "evaluate_on_population",
     "evaluation_value",
     "inventory_summary",

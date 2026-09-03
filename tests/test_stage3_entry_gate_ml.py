@@ -29,6 +29,7 @@ from lisjong_arena.stage3_entry_gate.artifact import (
 from lisjong_arena.stage3_entry_gate.experiment import (
     CANDIDATE,
     build_population_data,
+    configure_torch_runtime,
     evaluate_on_population,
     evaluation_value,
     inventory_summary,
@@ -112,6 +113,14 @@ class Stage3TrainingTest(unittest.TestCase):
             "blocking_gate_passed",
         ):
             self.assertIn(name, physical)
+
+    def test_configure_torch_runtime_matches_the_locked_training_config(self):
+        import torch
+
+        torch.set_num_threads(2)
+        configure_torch_runtime()
+        self.assertEqual(torch.get_num_threads(), FORMAL_TRAINING_CONFIG.torch_threads)
+        self.assertTrue(torch.are_deterministic_algorithms_enabled())
 
     def test_self_rollout_reproduces_the_training_time_validation_metrics(self):
         evaluation = evaluate_on_population(self.result.model, self.first)

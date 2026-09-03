@@ -28,6 +28,7 @@ from lisjong_arena.stage3_entry_gate.experiment import (
     CANDIDATE,
     REFERENCE_ARM_ID,
     build_population_data,
+    configure_torch_runtime,
     evaluate_on_population,
     evaluation_value,
     inventory_summary,
@@ -171,6 +172,7 @@ def _matrix_command(arguments) -> dict[str, object]:
     result_path = Path(arguments.result)
     if result_path.exists():
         raise FileExistsError(f"result destination already exists: {result_path}")
+    configure_torch_runtime()
     population_paths = _keyed_paths(arguments.population, "--population")
     model_paths = _keyed_paths(arguments.model, "--model")
     manifests = {}
