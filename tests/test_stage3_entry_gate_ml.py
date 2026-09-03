@@ -5,7 +5,6 @@ synthetic Stage 3 populationだけを使い、formal pilot generationやTEST inf
 """
 
 import importlib.util
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,16 +14,15 @@ from _stage3_entry_gate_fixtures import STAGE3_BASE_SEEDS, stage3_population_art
 from lisjong_arena.phase8_sequential.model import S2_PARAMETER_COUNT
 from lisjong_arena.phase8_sequential.training import FORMAL_TRAINING_CONFIG
 from lisjong_arena.stage3_entry_gate.artifact import (
+    CHECKPOINT_SELECTION_RULE,
     MANIFEST_FILENAME,
-    RESULT_SCHEMA_VERSION,
     WEIGHTS_FILENAME,
     Stage3ArtifactError,
     execution_runtime_value,
     load_model,
-    load_result,
     model_manifest_without_weights,
     save_model_artifact,
-    save_result,
+    validate_model_manifest,
 )
 from lisjong_arena.stage3_entry_gate.experiment import (
     CANDIDATE,
@@ -258,6 +256,91 @@ class Stage3ModelArtifactTest(unittest.TestCase):
                         dict(self.manifest) | override,
                     )
 
+    def test_manifest_rejects_locked_contract_tampering(self):
+        """schema versionを保ったままlocked semanticsを書き換える改変を拒否する。"""
+        overrides = (
+            {"reference_arm_id": "other-reference-arm"},
+            {"feature_dimension": 918},
+            {"checkpoint_selection_rule": "lowest train MSE"},
+            {"self_rollout_failure_count": 1},
+            {
+                "training_config": dict(self.manifest["training_config"])
+                | {"max_epochs": 41}
+            },
+            {
+                "training_config": dict(self.manifest["training_config"])
+                | {"deterministic_algorithms": False}
+            },
+            {
+                "runtime": dict(self.manifest["runtime"])
+                | {
+                    "execution_source_revisions_fully_resolved": not self.manifest[
+                        "runtime"
+                    ]["execution_source_revisions_fully_resolved"]
+                }
+            },
+            {
+                "runtime": dict(self.manifest["runtime"])
+                | {"execution_source_revisions": {"lisjong": "0" * 40}}
+            },
+            {
+                "runtime": dict(self.manifest["runtime"])
+                | {
+                    "execution_source_revisions": dict(
+                        self.manifest["runtime"]["execution_source_revisions"]
+                    )
+                    | {"lisjong": "not-a-sha"}
+                }
+            },
+        )
+        for override in overrides:
+            with (
+                self.subTest(override=sorted(override)),
+                self.assertRaises(Stage3ArtifactError),
+            ):
+                validate_model_manifest(dict(self.manifest) | override)
+
+    def test_manifest_uses_the_phase8_checkpoint_tie_tolerance(self):
+        """1e-12以内のtieは改善扱いしない。単純なmin()とは選択が異なる。"""
+        history = [
+            {"epoch": 1, "train_mse": 1.0, "validation_mae": 0.5},
+            {"epoch": 2, "train_mse": 0.9, "validation_mae": 0.5 - 5e-13},
+        ]
+        base = dict(self.manifest) | {"loss_history": history}
+        # min()なら epoch 2 だが、Phase 8 の規則では epoch 1 が選ばれる。
+        self.assertEqual(
+            validate_model_manifest(base | {"selected_epoch": 1})["selected_epoch"], 1
+        )
+        with self.assertRaises(Stage3ArtifactError):
+            validate_model_manifest(base | {"selected_epoch": 2})
+
+    def test_manifest_rejects_inconsistent_within_population_validation(self):
+        record = dict(self.manifest["within_population_validation"])
+        with self.assertRaises(Stage3ArtifactError):
+            validate_model_manifest(
+                dict(self.manifest)
+                | {
+                    "within_population_validation": record
+                    | {"delta_mae_vs_conditional_uniform": 0.5}
+                }
+            )
+        physical = dict(record["physical_consistency"]) | {
+            "blocking_gate_passed": False
+        }
+        with self.assertRaises(Stage3ArtifactError):
+            validate_model_manifest(
+                dict(self.manifest)
+                | {
+                    "within_population_validation": record
+                    | {"physical_consistency": physical}
+                }
+            )
+
+    def test_manifest_checkpoint_rule_string_is_the_locked_one(self):
+        self.assertEqual(
+            self.manifest["checkpoint_selection_rule"], CHECKPOINT_SELECTION_RULE
+        )
+
     def test_manifest_rejects_a_test_evaluated_artifact(self):
         with tempfile.TemporaryDirectory() as name:
             with self.assertRaises(Stage3ArtifactError):
@@ -266,52 +349,6 @@ class Stage3ModelArtifactTest(unittest.TestCase):
                     self.result.model,
                     dict(self.manifest) | {"test_partition_evaluated": True},
                 )
-
-
-@unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")
-class Stage3ResultArtifactTest(unittest.TestCase):
-    def _value(self) -> dict[str, object]:
-        return {
-            "result_schema_version": RESULT_SCHEMA_VERSION,
-            "pilot_role": "development-only",
-            "cross_population_matrix": [],
-            "test_partition_evaluated": False,
-        }
-
-    def test_result_binds_a_logical_identity_and_refuses_overwrite(self):
-        with tempfile.TemporaryDirectory() as name:
-            destination = Path(name) / "result.json"
-            save_result(destination, self._value())
-            loaded = load_result(destination)
-            self.assertEqual(len(loaded["result_identity"]), 64)
-            with self.assertRaises(FileExistsError):
-                save_result(destination, self._value())
-
-    def test_tampered_result_fails_closed_on_load(self):
-        with tempfile.TemporaryDirectory() as name:
-            destination = Path(name) / "result.json"
-            save_result(destination, self._value())
-            value = json.loads(destination.read_text())
-            value["pilot_role"] = "formal"
-            destination.write_text(
-                json.dumps(
-                    value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                )
-            )
-            with self.assertRaises(Stage3ArtifactError):
-                load_result(destination)
-
-    def test_result_schema_version_is_required(self):
-        with tempfile.TemporaryDirectory() as name:
-            with self.assertRaises(Stage3ArtifactError):
-                save_result(
-                    Path(name) / "result.json",
-                    replace_schema(self._value(), "other"),
-                )
-
-
-def replace_schema(value: dict[str, object], version: str) -> dict[str, object]:
-    return dict(value) | {"result_schema_version": version}
 
 
 if __name__ == "__main__":

@@ -880,6 +880,35 @@ stratumだけはtraining-only labelから数えるoffline diagnosticであり、
 流さない。rare eventが0件でもrowを捏造せず、`0`をunsupported / unmeasured coverageと
 して残す。
 
+#### Artifact validation
+
+Stage 3のartifactはload時にschema versionとcanonical bytesだけでなく、protocol
+semanticsそのものをfail closedで検証する。self-consistentなsemantic tampering
+（値を書き換えてdigestを再計算する改変）を拒否することが目的である。
+
+- population manifest — `population_identity`が記録済み`population_plan`のhashで
+  あること、そのplanがlocked A / B / C planのいずれかとexact一致すること、Stage 3
+  split policy、TEST partition不在、fully resolvedなcorpus provenance、locked
+  hanchan数
+- model manifest — locked S2 config / parameter count、`reference_arm_id`、
+  feature dimension、Phase 8 `FORMAL_TRAINING_CONFIG`とのexact一致、checkpoint
+  selection ruleをPhase 8 `checkpoint_improves()`（1e-12 tie tolerance）で再導出
+  した結果との一致、CPU-only / single-thread runtime、self-rollout failure 0、
+  `Delta = conditional-uniform - sequential`のconsistency、physical gate通過
+- result artifact — development-only role、fixed candidate、conditional-uniform
+  reference arm、TEST未評価、Stage 2 formal holdoutと非累積、populations A / B / C
+  の完全性とdataset identityの相異、**3 x 3 = 9 cellが重複なく揃っていること**、
+  各cellのidentityがdeclared populationと一致すること
+
+execution runtimeのsource revisionsは、editable installでも記録できるようにする
+ため「解決済みであること」ではなく **flagが記録済みrevisionと矛盾しないこと** を
+固定する。corpus側の`fully_resolved`はPhase 4 persistenceとpopulation manifest
+validatorがhard requirementとして扱う。
+
+peak RSSはPhase 6のbest-effort helperへ委譲し、`resource`が無い環境
+（Windows）でも値を捏造せず`None`にする。Stage 3 packageはmodule scopeで
+`resource`をimportしない。
+
 生成されるraw corpus / dataset / weights / resultはrepository外のimmutable artifactで
 あり、Gitへcommitしない。pilotの実行protocol、結果、decisionは
 [`docs/stage3-entry-gate-pilot.md`](stage3-entry-gate-pilot.md)を参照する。

@@ -16,12 +16,11 @@ artifact schemaを変更せず、bindingだけをStage 3 manifestが持つ。
 生成物はGit repositoryへcommitしない。
 """
 
+import hashlib
 import json
 import os
 import platform
-import resource
 import shutil
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,8 +46,10 @@ from lisjong_arena.stage3_entry_gate.coverage import (
     measure_population_coverage,
 )
 from lisjong_arena.stage3_entry_gate.population import (
+    PILOT_HANCHAN_PER_POPULATION,
     PILOT_ROLE,
     PopulationPlan,
+    stage3_population_plans,
 )
 
 MANIFEST_FILENAME = "population.json"
@@ -91,7 +92,7 @@ class GenerationCost:
     dataset_build_seconds: float
     dataset_persistence_seconds: float
     baseline_evaluation_seconds: float
-    peak_process_ram_bytes: int
+    peak_process_ram_bytes: int | None
     raw_uncompressed_bytes: int
     raw_compressed_bytes: int
     dataset_bytes: int
@@ -156,10 +157,16 @@ class PopulationGenerationReport:
     manifest: dict[str, object]
 
 
-def _peak_process_ram_bytes() -> int:
-    """`ru_maxrss`をbytesへ正規化する（Linux/macOSのみ実行対象）。"""
-    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return usage if sys.platform == "darwin" else usage * 1024
+def _peak_process_ram_bytes() -> int | None:
+    """既存Phase 6のbest-effort peak RSS helperをそのまま使う。
+
+    `resource`はUnix限定であり、ArenaはWindowsもsupportする。Phase 8と同じく
+    Phase 6のhelperへ委譲し、取得できない環境では値を捏造せず`None`にする。
+    Issue #131のcost要求も`peak RAM where practical`である。
+    """
+    from lisjong_arena.phase6_snapshot.training import _peak_process_ram_bytes as peak
+
+    return peak()
 
 
 def runtime_value() -> dict[str, object]:
@@ -302,6 +309,72 @@ def generate_population(
             shutil.rmtree(destination)
 
 
+def _locked_plan_values() -> dict[str, dict[str, object]]:
+    return {plan.population_id: plan.plan_value() for plan in stage3_population_plans()}
+
+
+def validate_population_manifest(value: object) -> dict[str, object]:
+    """population manifestのStage 3 semanticsをfail closedで検証する。
+
+    schema versionとcanonical bytesだけでは、self-consistentなsemantic
+    tamperingを拒否できない。population identityがplanのhashであること、
+    そのplan自体がlocked A / B / C planのいずれかとexactに一致することまで
+    照合する。
+    """
+    if type(value) is not dict:
+        raise Stage3GenerationError("population manifest must be an object")
+    if value.get("manifest_schema_version") != MANIFEST_SCHEMA_VERSION:
+        raise Stage3GenerationError("population manifest schema version differs")
+    if value.get("pilot_role") != PILOT_ROLE:
+        raise Stage3GenerationError("population manifest pilot role differs")
+    if value.get("test_partition_present") is not False:
+        raise Stage3GenerationError("Stage 3 manifest must seal the TEST partition")
+    if value.get("split_policy_id") != FirstPartySplitPolicy.STAGE3_DEVELOPMENT.value:
+        raise Stage3GenerationError("population manifest split policy differs")
+    plan_value = value.get("population_plan")
+    if type(plan_value) is not dict:
+        raise Stage3GenerationError("population manifest lacks its population plan")
+    identity = value.get("population_identity")
+    expected_identity = hashlib.sha256(canonical_json_bytes(plan_value)).hexdigest()
+    if identity != expected_identity:
+        raise Stage3GenerationError(
+            "population identity is not the hash of its recorded population plan"
+        )
+    locked = _locked_plan_values()
+    population_id = plan_value.get("population_id")
+    if population_id not in locked:
+        raise Stage3GenerationError(
+            "population manifest does not name a locked Stage 3 population"
+        )
+    if plan_value != locked[population_id]:
+        raise Stage3GenerationError(
+            f"population {population_id} plan differs from the locked Stage 3 plan"
+        )
+    provenance = value.get("provenance")
+    if type(provenance) is not dict or provenance.get("fully_resolved") is not True:
+        raise Stage3GenerationError(
+            "Stage 3 manifest requires fully resolved source revisions"
+        )
+    for name in ("raw_corpus_identity", "dataset_identity"):
+        digest = value.get(name)
+        if (
+            type(digest) is not str
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise Stage3GenerationError(f"{name} must be a lowercase SHA-256")
+    coverage = value.get("coverage")
+    if type(coverage) is not dict or type(coverage.get("events")) is not dict:
+        raise Stage3GenerationError("population manifest lacks coverage events")
+    if coverage["events"].get("hanchan") != PILOT_HANCHAN_PER_POPULATION:
+        raise Stage3GenerationError(
+            "Stage 3 population must record exactly the locked hanchan count"
+        )
+    if type(value.get("cost")) is not dict:
+        raise Stage3GenerationError("population manifest lacks cost measurements")
+    return value
+
+
 def load_population_manifest(destination: str | Path) -> dict[str, object]:
     """Stage 3 population manifestをstrictに読み戻す。"""
     destination = Path(destination)
@@ -309,13 +382,7 @@ def load_population_manifest(destination: str | Path) -> dict[str, object]:
     value = json.loads(data)
     if canonical_json_bytes(value) != data:
         raise Stage3GenerationError("population manifest bytes are not canonical JSON")
-    if value.get("manifest_schema_version") != MANIFEST_SCHEMA_VERSION:
-        raise Stage3GenerationError("population manifest schema version differs")
-    if value.get("pilot_role") != PILOT_ROLE:
-        raise Stage3GenerationError("population manifest pilot role differs")
-    if value.get("test_partition_present") is not False:
-        raise Stage3GenerationError("Stage 3 manifest must seal the TEST partition")
-    return value
+    return validate_population_manifest(value)
 
 
 def load_population(destination: str | Path):
@@ -350,4 +417,5 @@ __all__ = [
     "load_population",
     "load_population_manifest",
     "runtime_value",
+    "validate_population_manifest",
 ]

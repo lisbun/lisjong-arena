@@ -1,5 +1,7 @@
 """Stage 3 Entry Gate population, split, generation seam, and coverage tests."""
 
+import ast
+import hashlib
 import sys
 import tempfile
 import unittest
@@ -22,6 +24,7 @@ from lisjong_engine.seat import Seat
 from lisjong_arena.phase2_training_anchor.extraction import (
     normalized_seat_policy_factories,
 )
+from lisjong_arena.phase4_raw_corpus.codec import canonical_json_bytes
 from lisjong_arena.phase4_raw_corpus.extraction import extract_phase4_raw_game
 from lisjong_arena.phase4_raw_corpus.generation import (
     generate_phase4_raw_corpus_for_seeds,
@@ -39,6 +42,13 @@ from lisjong_arena.phase5_belief_dataset.split import (
     partition_for_first_party_game,
 )
 from lisjong_arena.phase8_sequential.data import materialize_development_examples
+from lisjong_arena.stage3_entry_gate.artifact import (
+    RESULT_SCHEMA_VERSION,
+    Stage3ArtifactError,
+    load_result,
+    save_result,
+    validate_result_value,
+)
 from lisjong_arena.stage3_entry_gate.coverage import measure_population_coverage
 from lisjong_arena.stage3_entry_gate.experiment import (
     Stage3ExperimentError,
@@ -50,8 +60,10 @@ from lisjong_arena.stage3_entry_gate.generation import (
     MANIFEST_FILENAME,
     GenerationCost,
     Stage3GenerationError,
+    _peak_process_ram_bytes,
     generate_population,
     load_population_manifest,
+    validate_population_manifest,
 )
 from lisjong_arena.stage3_entry_gate.population import (
     MIXED_BASE_ORDER,
@@ -87,6 +99,208 @@ def _halting_factory(tag: str):
         return _HaltingPolicy(tag)
 
     return factory
+
+
+def _digest(seed: str) -> str:
+    return (seed * 64)[:64]
+
+
+def _valid_result_value() -> dict:
+    identities = {
+        "A": (_digest("a1"), _digest("a2"), _digest("a3")),
+        "B": (_digest("b1"), _digest("b2"), _digest("b3")),
+        "C": (_digest("c1"), _digest("c2"), _digest("c3")),
+    }
+    populations = {
+        key: {
+            "population_identity": value[0],
+            "raw_corpus_identity": value[1],
+            "dataset_identity": value[2],
+        }
+        for key, value in identities.items()
+    }
+    cells = []
+    for training in ("A", "B", "C"):
+        for validation in ("A", "B", "C"):
+            cells.append(
+                {
+                    "training_population_id": training,
+                    "training_population_identity": identities[training][0],
+                    "validation_population_id": validation,
+                    "validation_population_identity": identities[validation][0],
+                    "validation_dataset_identity": identities[validation][2],
+                    "sequential_validation_mae": 0.48,
+                    "conditional_uniform_validation_mae": 0.49,
+                    "delta_mae_vs_conditional_uniform": 0.49 - 0.48,
+                    "physical_consistency": {"blocking_gate_passed": True},
+                }
+            )
+    return {
+        "result_schema_version": RESULT_SCHEMA_VERSION,
+        "pilot_role": "development-only",
+        "candidate": "S2",
+        "reference_arm_id": "stage3-conditional-uniform-reference-arm-v1",
+        "populations": populations,
+        "cross_population_matrix": cells,
+        "test_partition_evaluated": False,
+        "accumulated_with_stage2_formal_holdout": False,
+    }
+
+
+class Stage3WindowsPortabilityTest(unittest.TestCase):
+    def test_stage3_package_never_imports_resource_at_module_scope(self):
+        """`resource`はUnix限定。Windowsでもplan CLIがimportできる必要がある。"""
+        package = Path(generate_population.__module__.replace(".", "/")).parent
+        root = Path(__file__).resolve().parent.parent / "src" / package
+        for path in sorted(root.glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in tree.body:
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                with self.subTest(module=path.name):
+                    self.assertNotIn("resource", names)
+
+    def test_peak_process_ram_is_best_effort(self):
+        value = _peak_process_ram_bytes()
+        self.assertTrue(value is None or (type(value) is int and value > 0))
+
+
+class Stage3PopulationManifestValidationTest(unittest.TestCase):
+    def _manifest(self, **overrides) -> dict:
+        plan = population_a_plan()
+        value = {
+            "manifest_schema_version": ("stage3-entry-gate-population-manifest-v1"),
+            "pilot_role": "development-only",
+            "population_identity": plan.population_identity,
+            "population_plan": plan.plan_value(),
+            "raw_corpus_identity": _digest("a2"),
+            "dataset_identity": _digest("a3"),
+            "split_policy_id": FirstPartySplitPolicy.STAGE3_DEVELOPMENT.value,
+            "provenance": {"fully_resolved": True},
+            "generation_runtime": {},
+            "coverage": {"events": {"hanchan": 12}},
+            "cost": {},
+            "conditional_uniform_baseline": {},
+            "test_partition_present": False,
+        }
+        return value | overrides
+
+    def test_valid_manifest_is_accepted(self):
+        self.assertEqual(
+            validate_population_manifest(self._manifest())["pilot_role"],
+            "development-only",
+        )
+
+    def test_identity_must_be_the_hash_of_the_recorded_plan(self):
+        with self.assertRaises(Stage3GenerationError):
+            validate_population_manifest(
+                self._manifest(population_identity=_digest("ff"))
+            )
+
+    def test_self_consistent_plan_tampering_is_rejected(self):
+        """planを書き換えidentityを再計算しても、locked planと違えば拒否する。"""
+        plan = population_a_plan()
+        tampered_plan = plan.plan_value() | {"seat_assignment_semantics_id": "other"}
+        identity = hashlib.sha256(canonical_json_bytes(tampered_plan)).hexdigest()
+        with self.assertRaises(Stage3GenerationError):
+            validate_population_manifest(
+                self._manifest(
+                    population_plan=tampered_plan, population_identity=identity
+                )
+            )
+
+    def test_unknown_population_id_is_rejected(self):
+        plan = population_a_plan()
+        tampered_plan = plan.plan_value() | {"population_id": "D"}
+        identity = hashlib.sha256(canonical_json_bytes(tampered_plan)).hexdigest()
+        with self.assertRaises(Stage3GenerationError):
+            validate_population_manifest(
+                self._manifest(
+                    population_plan=tampered_plan, population_identity=identity
+                )
+            )
+
+    def test_unresolved_provenance_and_wrong_split_are_rejected(self):
+        with self.assertRaises(Stage3GenerationError):
+            validate_population_manifest(
+                self._manifest(provenance={"fully_resolved": False})
+            )
+        with self.assertRaises(Stage3GenerationError):
+            validate_population_manifest(
+                self._manifest(split_policy_id=FirstPartySplitPolicy.QUANTITATIVE.value)
+            )
+
+    def test_wrong_hanchan_count_is_rejected(self):
+        with self.assertRaises(Stage3GenerationError):
+            validate_population_manifest(
+                self._manifest(coverage={"events": {"hanchan": 11}})
+            )
+
+
+class Stage3ResultValidationTest(unittest.TestCase):
+    def test_valid_three_by_three_result_round_trips(self):
+        with tempfile.TemporaryDirectory() as name:
+            destination = Path(name) / "result.json"
+            save_result(destination, _valid_result_value())
+            loaded = load_result(destination)
+            self.assertEqual(len(loaded["cross_population_matrix"]), 9)
+
+    def test_empty_matrix_is_rejected(self):
+        with self.assertRaises(Stage3ArtifactError):
+            validate_result_value(
+                _valid_result_value() | {"cross_population_matrix": []}
+            )
+
+    def test_incomplete_and_duplicated_matrix_pairs_are_rejected(self):
+        value = _valid_result_value()
+        with self.assertRaises(Stage3ArtifactError):
+            validate_result_value(
+                value
+                | {"cross_population_matrix": value["cross_population_matrix"][:8]}
+            )
+        duplicated = list(value["cross_population_matrix"][:8]) + [
+            dict(value["cross_population_matrix"][0])
+        ]
+        with self.assertRaises(Stage3ArtifactError):
+            validate_result_value(value | {"cross_population_matrix": duplicated})
+
+    def test_development_only_and_test_seal_are_enforced(self):
+        for override in (
+            {"pilot_role": "formal"},
+            {"test_partition_evaluated": True},
+            {"accumulated_with_stage2_formal_holdout": True},
+            {"candidate": "S1"},
+            {"reference_arm_id": "other"},
+        ):
+            with (
+                self.subTest(override=override),
+                self.assertRaises(Stage3ArtifactError),
+            ):
+                validate_result_value(_valid_result_value() | override)
+
+    def test_cell_identity_mismatch_is_rejected(self):
+        value = _valid_result_value()
+        cells = [dict(cell) for cell in value["cross_population_matrix"]]
+        cells[0]["validation_dataset_identity"] = _digest("ee")
+        with self.assertRaises(Stage3ArtifactError):
+            validate_result_value(value | {"cross_population_matrix": cells})
+
+    def test_inconsistent_delta_is_rejected(self):
+        value = _valid_result_value()
+        cells = [dict(cell) for cell in value["cross_population_matrix"]]
+        cells[0]["delta_mae_vs_conditional_uniform"] = 0.5
+        with self.assertRaises(Stage3ArtifactError):
+            validate_result_value(value | {"cross_population_matrix": cells})
+
+    def test_duplicate_population_datasets_are_rejected(self):
+        value = _valid_result_value()
+        populations = {key: dict(entry) for key, entry in value["populations"].items()}
+        populations["B"]["dataset_identity"] = populations["A"]["dataset_identity"]
+        with self.assertRaises(Stage3ArtifactError):
+            validate_result_value(value | {"populations": populations})
 
 
 class Stage3PopulationPlanTest(unittest.TestCase):
