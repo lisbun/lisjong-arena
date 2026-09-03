@@ -68,3 +68,4 @@ jobs:
           python -m unittest discover -s tests -p "test_phase?_snapshot*.py" -v
           python -m unittest discover -s tests -p "test_phase8_sequential_ml.py" -v
           python -m unittest discover -s tests -p "test_phase9_confirmatory_ml.py" -v
+          python -m unittest discover -s tests -p "test_stage3_entry_gate_ml.py" -v

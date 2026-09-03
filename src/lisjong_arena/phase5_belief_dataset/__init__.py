@@ -58,6 +58,9 @@ from .persistence import (
 from .pipeline import Phase5PipelineReport, pipeline_report_value, run_phase5_pipeline
 from .split import (
     QUANTITATIVE_SEEDS,
+    STAGE3_DEVELOPMENT_SEEDS,
+    STAGE3_TRAIN_SEEDS,
+    STAGE3_VALIDATION_SEEDS,
     TEST_SEEDS,
     TRAIN_SEEDS,
     VALIDATION_SEEDS,
@@ -72,6 +75,9 @@ __all__ = [
     "DATASET_MANIFEST_FILENAME",
     "DATASET_SCHEMA_VERSION",
     "QUANTITATIVE_SEEDS",
+    "STAGE3_DEVELOPMENT_SEEDS",
+    "STAGE3_TRAIN_SEEDS",
+    "STAGE3_VALIDATION_SEEDS",
     "TEST_SEEDS",
     "TRAIN_SEEDS",
     "VALIDATION_SEEDS",

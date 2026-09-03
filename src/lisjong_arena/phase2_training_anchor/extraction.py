@@ -30,6 +30,7 @@ experimentであり、本moduleはそのsemanticsを再利用も変更もしな�
 generic replay / event-sourcing / persistence frameworkは作らない。
 """
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from lisjong.policies import TwoStepUkeirePolicy
@@ -59,10 +60,36 @@ from lisjong_arena.phase2_training_anchor.training_sample import (
 FIRST_PARTY_SOURCE_CLASS = "first-party-bootstrap"
 """first-party `lisjong-engine` self-play由来のsource class identity。
 
-online trajectoryは4席とも`TwoStepUkeirePolicy`で進める。Phase 2はanchor /
-label contractを固定することが目的であり、Policy強度はここでの評価対象では
-ない。
+既定のonline trajectoryは4席とも`TwoStepUkeirePolicy`で進める。callerが
+`seat_policy_factories`でexplicitなfirst-party populationを指定した場合も
+source classは同じである。Phase 2はanchor / label contractを固定することが
+目的であり、Policy強度はここでの評価対象ではない。
 """
+
+
+SeatPolicyFactories = Mapping["EngineSeat", Callable[[], object]]
+"""1 gameのseatごとPolicy factory。`None`は既定populationを意味する。"""
+
+
+def normalized_seat_policy_factories(
+    factories: SeatPolicyFactories | None,
+) -> dict[EngineSeat, Callable[[], object]]:
+    """explicitなper-seat Policy factoryを検証して正準seat順へ正規化する。
+
+    `None`はこのmoduleの既定populationである`TwoStepUkeirePolicy x4`を意味する。
+    generic Policy configuration frameworkではなく、callerが既に決めた
+    populationをそのまま受け取るためのseamである。Policy semanticsの検証は
+    既存のlisjong execution boundaryへ委ねる。
+    """
+    if factories is None:
+        return {seat: TwoStepUkeirePolicy for seat in EngineSeat}
+    if not isinstance(factories, Mapping):
+        raise TypeError("seat policy factories must be a mapping or None")
+    if set(factories) != set(EngineSeat):
+        raise ValueError("seat policy factories must cover every engine Seat exactly")
+    if any(not callable(factories[seat]) for seat in EngineSeat):
+        raise TypeError("every seat policy factory must be callable")
+    return {seat: factories[seat] for seat in EngineSeat}
 
 
 class Phase2AnchorRecorder:
@@ -154,16 +181,22 @@ def extract_phase2_game(
     seed: int,
     *,
     rules: RuleSet | None = None,
+    seat_policy_factories: SeatPolicyFactories | None = None,
 ) -> Phase2GameExtraction:
     """1 hanchanを実行し、全TURN anchorのtraining samplesを収集する。
 
     optional targetがunavailableでもanchorはdropしない。TURN anchor数と
     sample数は常に一致する。
+
+    `seat_policy_factories`はseatごとのPolicy factoryをexplicitに指定する。
+    省略時のpopulationはこれまでどおり`TwoStepUkeirePolicy x4`であり、anchor /
+    cutoff / label semanticsはPolicy populationに依存しない。
     """
     if type(seed) is not int:
         raise TypeError("seed must be an int")
     if rules is not None and not isinstance(rules, RuleSet):
         raise TypeError("rules must be a RuleSet or None")
+    policy_factories = normalized_seat_policy_factories(seat_policy_factories)
 
     match_state = MatchState(seed=seed, rules=rules or RuleSet.default())
     source = AnchorSourceIdentity(
@@ -174,7 +207,7 @@ def extract_phase2_game(
 
     selectors: dict[EngineSeat, ActionSelector] = {}
     for engine_seat in EngineSeat:
-        delegate = PolicySeatSelector(engine_seat, TwoStepUkeirePolicy())
+        delegate = PolicySeatSelector(engine_seat, policy_factories[engine_seat]())
         selectors[engine_seat] = _Phase2Selector(delegate, recorder)
 
     run_hanchan(match_state, selectors)

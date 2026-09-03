@@ -805,6 +805,117 @@ Issue #121の第一段階ではmachinery、synthetic tests、runbookだけを作
 `160..179`のgeneration/materialization/inference/result exposureは行わず、review/merge後の別作業で
 一回限り実行する。
 
+### Stage 3 Entry Gate first-party population pilot (Issue #131)
+
+Stage 3 Entry Gateは、Phase 10へ渡すHandBelief training populationを選定するための
+Arena-ownedなbounded development boundaryである。formal TESTではなく、Stage 2 formal
+holdout結果と統計的に累積しない。protocol authorityは`lisjong-project#36`である。
+
+```text
+locked 3 population plan (exact seat identity)
+    -> Phase 4 raw corpus x population
+    -> Phase-5-compatible dataset x population (Stage 3 split)
+    -> conditional-uniform reference arm x VALIDATION population
+    -> fixed-budget Phase 8 S2 training x population
+    -> 3 x 3 cross-population self-rollout evaluation
+    -> coverage / cost / physical-validity evidence
+```
+
+#### Minimal generation seam
+
+current Phase 4 generatorは`TwoStepUkeirePolicy x4`にhardcodeされており、heterogeneous
+populationを表現できない。本Issueで追加したのは、`extract_phase2_game()` /
+`extract_phase4_raw_game()` / `generate_phase4_raw_corpus_for_seeds()`へのoptionalな
+per-seat Policy factory引数だけである。既定populationは従来どおり
+`TwoStepUkeirePolicy x4`で、raw schema、`GENERATION_PROTOCOL_ID`、source class、
+`RuleSet.default()` enforcement、shard / corpus identity計算、provenance
+enforcement、Phase 2 equality検証はいずれも変更していない。recorded executionとその
+Phase 2 equality re-runは同じseat assignmentを使うため、equality checkはheterogeneous
+populationでも意味を保つ。
+
+Phase 5へは`FirstPartySplitPolicy.STAGE3_DEVELOPMENT` (`180..191` / TRAIN `180..187` /
+VALIDATION `188..191` / TEST無し) を1つ追加しただけであり、ACCEPTANCE / QUANTITATIVE
+splitのsemanticsは変更していない。generic Policy configuration framework、plugin
+framework、YAML/TOML registry、production Policy registry、generic experiment
+frameworkは作らない。
+
+#### Population identity
+
+`lisjong_arena.stage3_entry_gate.population`は、population identityへ **seat assignment
+まで** 含める。同じPolicy集合でもseat配置が変わればtrajectory distributionが変わる
+ためである。mixed populationはbase orderを1 seatずつrotateし、12 hanchanで各Policyが
+各seatをちょうど3回担当するbalanced assignmentをprotocol invariantとして固定する
+(不成立ならfail closed)。Policy referenceの解決は既存の
+`lisjong_arena.policy_reference`だけを使い、catalogへ未登録Policyを追加しない。
+
+population identity・raw corpus identity・dataset identityのbindingは、Stage 3固有の
+population manifestが持つ。Phase 4 corpus manifest schemaへpopulation fieldを追加せず、
+historical artifact schemaを変更しない。
+
+#### Reference arm
+
+Phase 8の`CanonicalValidation` / `evaluate_candidate`はfrozen Phase 6 snapshotを
+reference armに取る。Stage 3の3 populationにはPhase 6 snapshotが存在せず、Entry Gateが
+要求するcomparatorは各VALIDATION population上のconditional-uniform baselineである。
+したがってStage 3はreference armへconditional-uniform baseline predictionをbindし、
+`Delta MAE = conditional-uniform VALIDATION MAE - S2 VALIDATION MAE`とする。Phase 8の
+snapshot semantics、`SNAPSHOT_VALIDATION_MAE`、formal population validator
+(`validate_formal_dataset`)、artifact validator、`advancement_eligible`は変更も再利用も
+しない。Stage 3 model / result artifactは別schema・別identityを持つ。
+
+trainingはPhase 8の`FORMAL_TRAINING_CONFIG`とS2 family (`459,080` parameters) をその
+まま再利用し、budget / model family / seeds / splitをcaller optionにしない。
+
+#### Cross-population boundary
+
+`TurnExampleReference.identity`はpopulationを含まないため、同じseedを使う3 population
+のanchor identityは衝突し得る。cross-population評価は評価先populationのsequencesと
+reference armだけで閉じ、predictionとreferenceをpopulation間で突き合わせない。
+
+#### Information boundary
+
+anchor stratum coverage (post-call / post-riichi / open-closed / depth) はanchorが
+freezeしたplayer-safe evidence prefixと`SeatObservation`だけから数える。true-tenpai
+stratumだけはtraining-only labelから数えるoffline diagnosticであり、feature pathへは
+流さない。rare eventが0件でもrowを捏造せず、`0`をunsupported / unmeasured coverageと
+して残す。
+
+#### Artifact validation
+
+Stage 3のartifactはload時にschema versionとcanonical bytesだけでなく、protocol
+semanticsそのものをfail closedで検証する。self-consistentなsemantic tampering
+（値を書き換えてdigestを再計算する改変）を拒否することが目的である。
+
+- population manifest — `population_identity`が記録済み`population_plan`のhashで
+  あること、そのplanがlocked A / B / C planのいずれかとexact一致すること、Stage 3
+  split policy、TEST partition不在、fully resolvedなcorpus provenance、locked
+  hanchan数。さらに`load_population()`がmanifest provenanceを **実体のraw corpus /
+  dataset provenanceへbind** する。このbindingが無いと、raw / datasetを触らず
+  manifestのsource revisionsやrules fingerprintだけを書き換えたpopulationがload
+  でき、その値が3 x 3 result artifactのpopulation provenanceへそのまま転記される
+- model manifest — locked S2 config / parameter count、`reference_arm_id`、
+  feature dimension、Phase 8 `FORMAL_TRAINING_CONFIG`とのexact一致、checkpoint
+  selection ruleをPhase 8 `checkpoint_improves()`（1e-12 tie tolerance）で再導出
+  した結果との一致、CPU-only / single-thread runtime、self-rollout failure 0、
+  `Delta = conditional-uniform - sequential`のconsistency、physical gate通過
+- result artifact — development-only role、fixed candidate、conditional-uniform
+  reference arm、TEST未評価、Stage 2 formal holdoutと非累積、populations A / B / C
+  の完全性とdataset identityの相異、**3 x 3 = 9 cellが重複なく揃っていること**、
+  各cellのidentityがdeclared populationと一致すること
+
+execution runtimeのsource revisionsは、editable installでも記録できるようにする
+ため「解決済みであること」ではなく **flagが記録済みrevisionと矛盾しないこと** を
+固定する。corpus側の`fully_resolved`はPhase 4 persistenceとpopulation manifest
+validatorがhard requirementとして扱う。
+
+peak RSSはPhase 6のbest-effort helperへ委譲し、`resource`が無い環境
+（Windows）でも値を捏造せず`None`にする。Stage 3 packageはmodule scopeで
+`resource`をimportしない。
+
+生成されるraw corpus / dataset / weights / resultはrepository外のimmutable artifactで
+あり、Gitへcommitしない。pilotの実行protocol、結果、decisionは
+[`docs/stage3-entry-gate-pilot.md`](stage3-entry-gate-pilot.md)を参照する。
+
 ### ABBB strength evaluation artifact (Issue #110)
 
 Issue #110で、ABBB / `4p-red-single` strength evaluation結果を再実行せず再集計できる

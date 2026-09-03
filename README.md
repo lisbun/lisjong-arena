@@ -1239,6 +1239,29 @@ identity/provenance/artifact byte mismatchでは停止し、既存destinationを
 この第一段階のPRではformal seeds `160..179`を生成・materialize・推論しておらず、family classificationも
 作成していません。merge後のformal executionは別依頼で一回だけ行います。
 
+### Stage 3 Entry Gate population pilot runbook
+
+`lisjong_arena.stage3_entry_gate`はIssue #131 / `lisjong-project#36`専用のbounded workflowです。
+first-party 3 populationのdevelopment-only pilotで、Phase 10へ渡すtraining populationを選定します。
+
+```text
+python -m lisjong_arena.stage3_entry_gate plan
+python -m lisjong_arena.stage3_entry_gate generate --population {A,B,C} --output <dir>
+python -m lisjong_arena.stage3_entry_gate train --population-dir <dir> --artifact <dir>
+python -m lisjong_arena.stage3_entry_gate matrix \
+    --population A=<dir> --population B=<dir> --population C=<dir> \
+    --model A=<dir> --model B=<dir> --model C=<dir> \
+    --result <file>
+```
+
+CLIはseeds、split、model family、training budget、reference armをoverrideできません。TEST partitionを
+選ぶoptionも持ちません。`generate`はfully resolvedなVCS provenanceを要求するため、lisjong /
+lisjong-engine / lisjong-arenaの3つすべてをnon-editable git installにした環境で実行します。出力先は
+すべてGit外の新規pathを指定し、既存destinationは上書きしません。
+
+protocol、実測結果、population decisionは
+[`docs/stage3-entry-gate-pilot.md`](docs/stage3-entry-gate-pilot.md)を正本とします。
+
 初期基準は通常版CPython 3.14です。free-threaded build（3.14t）は、依存libraryを含む互換性を個別に検証するまで対象外とします。
 
 ```bash
