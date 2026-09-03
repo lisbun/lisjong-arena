@@ -227,10 +227,26 @@ def peak_process_ram_bytes() -> int | None:
 
 def train_stage2_model(dataset: LoadedStage2Dataset) -> TrainingRun:
     """locked configでTRAINを学習し、VALIDATIONでcheckpointを固定する。"""
+    return train_from_split_tensors(load_split_tensors(dataset))
+
+
+def train_from_split_tensors(tensors: dict[Split, SplitTensors]) -> TrainingRun:
+    """TRAIN / VALIDATION tensorからlocked training loopを実行する。
+
+    dataset artifactの読み出しとtraining loopを分けるだけの構造であり、locked
+    model / training configは変更しない。TEST partitionはこの関数へ渡さず、
+    渡されても参照しない。
+    """
     import torch
 
     runtime = configure_deterministic_runtime()
-    tensors = load_split_tensors(dataset)
+    missing = [
+        split for split in (Split.TRAIN, Split.VALIDATION) if split not in tensors
+    ]
+    if missing:
+        raise Stage2ProtocolError(
+            f"training requires {[split.value for split in missing]} tensors"
+        )
     train = tensors[Split.TRAIN]
     validation = tensors[Split.VALIDATION]
 
@@ -349,6 +365,20 @@ def _model_block() -> dict[str, object]:
         "dropout": None,
         "normalization_layer": None,
     }
+
+
+def locked_model_block() -> dict[str, object]:
+    """locked model configのpublic accessor。
+
+    Stage 3 serving loaderがlocked architectureを再定義せず、Stage 2の値
+    そのものへ照合できるようにするためだけの読み出し口である。
+    """
+    return _model_block()
+
+
+def locked_training_block() -> dict[str, object]:
+    """locked training configのpublic accessor。"""
+    return _training_block()
 
 
 def save_checkpoint(
@@ -505,7 +535,10 @@ __all__ = [
     "configure_deterministic_runtime",
     "evaluate_masked_cross_entropy",
     "load_checkpoint",
+    "locked_model_block",
+    "locked_training_block",
     "load_split_tensors",
     "save_checkpoint",
+    "train_from_split_tensors",
     "train_stage2_model",
 ]
