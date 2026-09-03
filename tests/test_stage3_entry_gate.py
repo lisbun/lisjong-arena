@@ -48,6 +48,7 @@ from lisjong_arena.stage3_entry_gate.experiment import (
 )
 from lisjong_arena.stage3_entry_gate.generation import (
     MANIFEST_FILENAME,
+    GenerationCost,
     Stage3GenerationError,
     generate_population,
     load_population_manifest,
@@ -484,6 +485,40 @@ class Stage3ExperimentContractTest(unittest.TestCase):
     def test_reference_arm_requires_validation_examples(self):
         with self.assertRaises(Stage3ExperimentError):
             conditional_uniform_reference(self.dataset.dataset_identity, ())
+
+
+class Stage3GenerationCostTest(unittest.TestCase):
+    def _cost(self, **overrides) -> GenerationCost:
+        values = {
+            "hanchan": 12,
+            "stable_turn_anchors": 600,
+            "generation_wall_clock_seconds": 900.0,
+            "generation_cpu_seconds": 890.0,
+            "recording_wall_clock_seconds": 430.0,
+            "readback_seconds": 1.0,
+            "derivation_seconds": 2.0,
+            "dataset_build_seconds": 3.0,
+            "dataset_persistence_seconds": 0.5,
+            "baseline_evaluation_seconds": 4.0,
+            "peak_process_ram_bytes": 1024,
+            "raw_uncompressed_bytes": 2048,
+            "raw_compressed_bytes": 512,
+            "dataset_bytes": 256,
+        }
+        return GenerationCost(**(values | overrides))
+
+    def test_wall_clock_and_cpu_share_the_whole_generation_scope(self):
+        value = self._cost().cost_value()
+        self.assertEqual(value["wall_clock_seconds_per_hanchan"], 900.0 / 12)
+        self.assertEqual(value["cpu_seconds_per_hanchan"], 890.0 / 12)
+        self.assertEqual(value["wall_clock_seconds_per_anchor"], 900.0 / 600)
+        self.assertEqual(value["cpu_seconds_per_anchor"], 890.0 / 600)
+        self.assertEqual(value["recording_wall_clock_seconds_per_hanchan"], 430.0 / 12)
+        self.assertIn("Phase 2 equality re-run", value["measurement_scope"])
+
+    def test_recording_time_cannot_exceed_the_whole_generation_call(self):
+        with self.assertRaises(Stage3GenerationError):
+            self._cost(recording_wall_clock_seconds=901.0)
 
 
 class Stage3GenerationContractTest(unittest.TestCase):

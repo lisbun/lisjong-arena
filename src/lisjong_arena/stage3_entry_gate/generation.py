@@ -63,12 +63,29 @@ class Stage3GenerationError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class GenerationCost:
-    """1 populationのgeneration costの実測値。"""
+    """1 populationのgeneration costの実測値。
+
+    `generation_wall_clock_seconds`と`generation_cpu_seconds`は同じscopeを測る。
+    どちらもPhase 4 protocolの1回の実行全体、すなわち
+
+    ```text
+    12 hanchanのrecording
+        + shard persistence
+        + strict readback
+        + TURN derivation
+        + Phase 2 equality re-run (同じseat assignmentでもう1度12 hanchan実行)
+    ```
+
+    を含む。Phase 2 equality検証がpolicy実行をおよそ2倍にすることを隠さず、
+    Phase 10 projectionはこの完全なscopeを入力にする。recording部分だけの
+    内訳は`recording_wall_clock_seconds`が持つ。
+    """
 
     hanchan: int
     stable_turn_anchors: int
     generation_wall_clock_seconds: float
     generation_cpu_seconds: float
+    recording_wall_clock_seconds: float
     readback_seconds: float
     derivation_seconds: float
     dataset_build_seconds: float
@@ -79,12 +96,23 @@ class GenerationCost:
     raw_compressed_bytes: int
     dataset_bytes: int
 
+    def __post_init__(self) -> None:
+        if self.recording_wall_clock_seconds > self.generation_wall_clock_seconds:
+            raise Stage3GenerationError(
+                "recording time cannot exceed the whole generation call"
+            )
+
     def cost_value(self) -> dict[str, object]:
         return {
             "hanchan": self.hanchan,
             "stable_turn_anchors": self.stable_turn_anchors,
+            "measurement_scope": (
+                "recording + persistence + readback + derivation + "
+                "Phase 2 equality re-run"
+            ),
             "generation_wall_clock_seconds": self.generation_wall_clock_seconds,
             "generation_cpu_seconds": self.generation_cpu_seconds,
+            "recording_wall_clock_seconds": self.recording_wall_clock_seconds,
             "wall_clock_seconds_per_hanchan": (
                 self.generation_wall_clock_seconds / self.hanchan
             ),
@@ -94,6 +122,9 @@ class GenerationCost:
             ),
             "cpu_seconds_per_anchor": (
                 self.generation_cpu_seconds / self.stable_turn_anchors
+            ),
+            "recording_wall_clock_seconds_per_hanchan": (
+                self.recording_wall_clock_seconds / self.hanchan
             ),
             "readback_seconds": self.readback_seconds,
             "derivation_seconds": self.derivation_seconds,
@@ -206,12 +237,14 @@ def generate_population(
     try:
         raw_destination = destination / RAW_DIRECTORY
         cpu_started = time.process_time()
+        wall_started = time.perf_counter()
         report: Phase4GenerationReport = generate_phase4_raw_corpus_for_seeds(
             raw_destination,
             tuple(value.game_seed for value in plan.assignments),
             seat_policy_factories_by_seed=plan.seat_policy_factories_by_seed(),
         )
         generation_cpu_seconds = time.process_time() - cpu_started
+        generation_wall_clock_seconds = time.perf_counter() - wall_started
         persisted_raw = report.persisted
         pipeline: Phase5PipelineReport = run_phase5_pipeline(
             persisted_raw,
@@ -230,8 +263,9 @@ def generate_population(
         cost = GenerationCost(
             hanchan=measurements.hanchan_count,
             stable_turn_anchors=measurements.derived_turn_samples,
-            generation_wall_clock_seconds=report.generation_seconds,
+            generation_wall_clock_seconds=generation_wall_clock_seconds,
             generation_cpu_seconds=generation_cpu_seconds,
+            recording_wall_clock_seconds=report.generation_seconds,
             readback_seconds=report.readback_seconds,
             derivation_seconds=report.derivation_seconds,
             dataset_build_seconds=pipeline.dataset_build_seconds,
