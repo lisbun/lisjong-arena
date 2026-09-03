@@ -29,6 +29,21 @@ SERVING_POPULATION = "learned candidate x4"
 SERVING_ROLE = "SERVING-INTEGRATION ONLY"
 DETERMINISM_RUN_COUNT = 2
 
+# --- Path A locked Stage 2 retained-artifact identity --------------------
+
+# `lisbun/lisjong-arena #136`がPath Aとして許すのは、この3値をすべて満たす
+# exact Stage 2 artifactだけである。Stage 2 schemaを名乗るだけの別checkpointを
+# `STAGE2_RETAINED`として受理しない。
+STAGE2_CHECKPOINT_IDENTITY = (
+    "bca0a813296a41737acd2460b846d69b5165a2941fbc1d9a741914ef874714de"
+)
+STAGE2_WEIGHTS_SHA256 = (
+    "8955144775b067f4767088b23cac97d391b6acfb6ae9a587f52d1aa4c50cfe6d"
+)
+STAGE2_DATASET_IDENTITY = (
+    "bdd83880c9d588f2566608377d081935f1f6792f4fbff56c3b69a82ac0ecb29c"
+)
+
 # --- Path B development-only fixture population --------------------------
 
 FIXTURE_TRAIN_SEEDS = stage2.TRAIN_SEEDS
@@ -99,6 +114,9 @@ class Stage3Outcome(Enum):
 
 __all__ = [
     "DETERMINISM_RUN_COUNT",
+    "STAGE2_CHECKPOINT_IDENTITY",
+    "STAGE2_DATASET_IDENTITY",
+    "STAGE2_WEIGHTS_SHA256",
     "EXCLUDED_STAGE2_TEST_SEEDS",
     "FIXTURE_SEEDS",
     "FIXTURE_TRAIN_SEEDS",

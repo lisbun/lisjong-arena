@@ -8,7 +8,10 @@ from lisjong_arena.learned_policy_stage2.protocol import (
     TRAIN_SEEDS,
     VALIDATION_SEEDS,
 )
-from lisjong_arena.learned_policy_stage3.errors import Stage3ProtocolError
+from lisjong_arena.learned_policy_stage3.errors import (
+    Stage3ArtifactError,
+    Stage3ProtocolError,
+)
 from lisjong_arena.learned_policy_stage3.protocol import (
     DETERMINISM_RUN_COUNT,
     EXCLUDED_STAGE2_TEST_SEEDS,
@@ -85,6 +88,75 @@ class Stage3SeedGuardTest(unittest.TestCase):
         for guard in (require_serving_seed, require_fixture_seed):
             with self.assertRaises(TypeError):
                 guard(True)
+
+
+class Stage3PathAIdentityTest(unittest.TestCase):
+    """Path Aのexact identity gateを、weightsを用意せずに直接固定する。
+
+    real Path A artifactはStage 2 retained checkpoint bytesがないと構成できず、
+    そのbytesはGitへcommitしない。よってend-to-end loadではなくprovenance gate
+    そのものをtestする。
+    """
+
+    def locked_manifest(self, **overrides):
+        from lisjong_arena.learned_policy_stage3.protocol import (
+            STAGE2_CHECKPOINT_IDENTITY,
+            STAGE2_DATASET_IDENTITY,
+            STAGE2_WEIGHTS_SHA256,
+        )
+
+        manifest = {
+            "checkpoint_identity": STAGE2_CHECKPOINT_IDENTITY,
+            "weights_sha256": STAGE2_WEIGHTS_SHA256,
+            "dataset_identity": STAGE2_DATASET_IDENTITY,
+        }
+        manifest.update(overrides)
+        return manifest
+
+    def require(self, manifest):
+        from lisjong_arena.learned_policy_stage3.artifact import (
+            _require_stage2_retained_identity,
+        )
+
+        return _require_stage2_retained_identity(manifest)
+
+    def test_locked_constants_are_the_issue_136_values(self):
+        from lisjong_arena.learned_policy_stage3.protocol import (
+            STAGE2_CHECKPOINT_IDENTITY,
+            STAGE2_DATASET_IDENTITY,
+            STAGE2_WEIGHTS_SHA256,
+        )
+
+        self.assertEqual(
+            STAGE2_CHECKPOINT_IDENTITY,
+            "bca0a813296a41737acd2460b846d69b5165a2941fbc1d9a741914ef874714de",
+        )
+        self.assertEqual(
+            STAGE2_WEIGHTS_SHA256,
+            "8955144775b067f4767088b23cac97d391b6acfb6ae9a587f52d1aa4c50cfe6d",
+        )
+        self.assertEqual(
+            STAGE2_DATASET_IDENTITY,
+            "bdd83880c9d588f2566608377d081935f1f6792f4fbff56c3b69a82ac0ecb29c",
+        )
+
+    def test_exact_stage2_identity_is_accepted(self):
+        self.assertIsNone(self.require(self.locked_manifest()))
+
+    def test_each_identity_field_must_match_exactly(self):
+        for name in ("checkpoint_identity", "weights_sha256", "dataset_identity"):
+            with self.subTest(field=name):
+                with self.assertRaises(Stage3ArtifactError) as caught:
+                    self.require(self.locked_manifest(**{name: "0" * 64}))
+                self.assertIn(name, str(caught.exception))
+
+    def test_missing_identity_field_fails_closed(self):
+        for name in ("checkpoint_identity", "weights_sha256", "dataset_identity"):
+            with self.subTest(field=name):
+                manifest = self.locked_manifest()
+                del manifest[name]
+                with self.assertRaises(Stage3ArtifactError):
+                    self.require(manifest)
 
 
 class Stage3IndependentVerificationTest(unittest.TestCase):

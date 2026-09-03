@@ -70,7 +70,20 @@ Stage 2 artifactはrepository外で生成されたため、exact checkpoint byte
 | `STAGE2_RETAINED` | `arena-learned-policy-stage2-checkpoint-v1` | Path A: exact Stage 2 retained checkpoint |
 | `STAGE3_FIXTURE` | `arena-learned-policy-stage3-serving-fixture-v1` | Path B: Stage 3 development-only serving fixture |
 
-`artifact_class`はschema versionからのみ導出する。呼び出し側の申告では決めない。
+`artifact_class`はschema versionから導出したうえで、そのclassのprovenanceを
+exact一致で検証してはじめて確定する。呼び出し側の申告では決めない。
+
+### Path Aのexact identity
+
+Path Aとして受理するのは、次の3値をすべて満たすexact Stage 2 artifactだけである。
+Stage 2 schema versionとlocked model configを名乗るだけの別checkpointは
+`STAGE2_RETAINED`にならない。
+
+```text
+checkpoint_identity   bca0a813296a41737acd2460b846d69b5165a2941fbc1d9a741914ef874714de
+weights_sha256        8955144775b067f4767088b23cac97d391b6acfb6ae9a587f52d1aa4c50cfe6d
+dataset_identity      bdd83880c9d588f2566608377d081935f1f6792f4fbff56c3b69a82ac0ecb29c
+```
 
 ### Path B fixtureの制約
 
@@ -85,9 +98,22 @@ Stage 2 artifactはrepository外で生成されたため、exact checkpoint byte
   与え、`stage2_checkpoint_identity`は必ず`null`とする
 - **このfixtureからprediction quality / agreement / strength claimを作らない**
 
-loaderは`fixture` blockを検証し、fixture populationがexcluded TEST seedsと交差
-する場合、Stage 2 checkpoint identityを名乗る場合、Stage 2 schemaが`fixture`
-blockを持つ場合をすべてfail closedする。
+loaderは`fixture` blockのprovenanceをexact一致で検証する。excluded TEST seeds
+との非交差だけでは足りない。self-consistentなmanifestを作るだけで別population
+のartifactをserving candidateとして通せてしまうためである。
+
+```text
+protocol_id                   == arena-learned-policy-stage3-serving-v1
+train_seeds                   == 200..209
+validation_seeds              == 210..212
+excluded_stage2_test_seeds    == 213..215
+teacher_identity              == yakuhai-call
+teacher_source_revision       == locked Stage 2 teacher revision
+origin                        == stage3-development-only-serving-fixture
+stage2_checkpoint_identity    is null
+```
+
+Stage 2 schemaが`fixture` blockを持つ場合もfail closedする。
 
 ## Strict artifact loader
 
@@ -185,7 +211,7 @@ resultへ分類する。
 ```text
 artifact load wall-clock / CPU time
 artifact bytes
-peak process RAM (best-effort)
+peak process RAM after load / after smoke (best-effort)
 first-decision latency
 warm feature encode latency
 warm model-forward latency
@@ -197,6 +223,12 @@ per-hanchan wall-clock / CPU-seconds
 first decisionはwarm統計から分離する。peak RAMはStage 2と同じ
 `peak_process_ram_bytes()`のbest-effort値であり、process全体のpeak RSSなので
 `resource`を利用できないplatformでは`None`になる。
+
+process-wide peak RSSは単調増加するため、測定点を分けないとlabelが実態と
+ずれる。`peak_process_ram_bytes_after_load`は`create_serving_runtime()`が
+checkpoint load直後に確定させ、`peak_process_ram_bytes_after_smoke`はsmoke
+完走後に取得する。前者をrunner実行後に測ると、artifact load後のRAMではなく
+game execution込みのprocess peakになってしまう。
 
 runner costとinference costのmeasurement boundaryを明記し、training costとは
 混ぜない。

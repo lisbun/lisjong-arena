@@ -360,7 +360,11 @@ def run_serving_smoke(runtime: ServingRuntime) -> ServingSmokeResult:
             "artifact_bytes": checkpoint.artifact_bytes,
             "load_wall_clock_seconds": checkpoint.load_wall_clock_seconds,
             "load_cpu_seconds": checkpoint.load_cpu_seconds,
-            "peak_process_ram_bytes_after_load": peak_process_ram_bytes(),
+            # load境界で確定した値と、smoke完走後のprocess peakを分けて記録する。
+            "peak_process_ram_bytes_after_load": (
+                runtime.peak_process_ram_bytes_after_load
+            ),
+            "peak_process_ram_bytes_after_smoke": peak_process_ram_bytes(),
         },
         runs=runs,
         deterministic=deterministic,

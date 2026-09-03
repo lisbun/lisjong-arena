@@ -113,14 +113,16 @@ class Stage3LoaderTest(unittest.TestCase):
         with self.assertRaises(Stage3ArtifactError):
             self.load(path)
 
-    def test_stage2_schema_checkpoint_loads_as_a_retained_artifact(self):
-        checkpoint = self.load(write_stage2_schema_checkpoint(self.root / "retained"))
-        self.assertIs(checkpoint.artifact_class, ArtifactClass.STAGE2_RETAINED)
-        self.assertTrue(checkpoint.is_stage2_retained)
-        self.assertNotIn("fixture", checkpoint.manifest)
-        self.assertEqual(
-            checkpoint.identity_document()["artifact_class"], "STAGE2_RETAINED"
-        )
+    def test_stage2_schema_with_a_foreign_identity_is_not_a_retained_artifact(self):
+        """Stage 2 schemaを名乗るだけの別checkpointをPath Aとして受理しない。
+
+        #136のPath Aはlocked checkpoint identity / weights digest / dataset
+        identityを満たすexact artifactだけである。
+        """
+        path = write_stage2_schema_checkpoint(self.root / "retained")
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("locked Stage 2 value", str(caught.exception))
 
     def test_missing_and_extra_files_fail_closed(self):
         path = write_checkpoint(self.root / "extra")
@@ -215,6 +217,12 @@ class Stage3LoaderTest(unittest.TestCase):
             self.load(path)
 
     def test_fixture_touching_the_stage2_test_split_fails_closed(self):
+        """TEST hanchanをVALIDATIONへ紛れ込ませたfixtureを受理しない。
+
+        locked populationとのexact一致を要求するため、交差の有無を待たずに
+        population mismatchとしてfail closedする。
+        """
+
         def edit(manifest):
             manifest["fixture"] = {
                 **manifest["fixture"],
@@ -226,7 +234,9 @@ class Stage3LoaderTest(unittest.TestCase):
         path = write_checkpoint(self.root / "fixture", manifest_edit=edit)
         with self.assertRaises(Stage3ArtifactError) as caught:
             self.load(path)
-        self.assertIn("TEST", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("validation_seeds", message)
+        self.assertIn("213", message)
 
     def test_stage2_schema_carrying_a_fixture_block_fails_closed(self):
         def edit(manifest):
@@ -237,6 +247,68 @@ class Stage3LoaderTest(unittest.TestCase):
         path = write_checkpoint(self.root / "fixture", manifest_edit=edit)
         with self.assertRaises(Stage3ArtifactError):
             self.load(path)
+
+    def _fixture_override(self, **overrides):
+        def edit(manifest):
+            manifest["fixture"] = {**manifest["fixture"], **overrides}
+            manifest["checkpoint_identity"] = _identity(manifest)
+            return manifest
+
+        return edit
+
+    def test_fixture_with_a_foreign_train_population_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._fixture_override(train_seeds=list(range(300, 310))),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("train_seeds", str(caught.exception))
+
+    def test_fixture_with_a_foreign_validation_population_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._fixture_override(validation_seeds=[310, 311]),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("validation_seeds", str(caught.exception))
+
+    def test_fixture_with_a_foreign_protocol_id_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._fixture_override(protocol_id="some-other-protocol-v1"),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("protocol_id", str(caught.exception))
+
+    def test_fixture_with_a_foreign_teacher_revision_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._fixture_override(teacher_source_revision="0" * 40),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("teacher_source_revision", str(caught.exception))
+
+    def test_fixture_with_a_foreign_teacher_identity_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._fixture_override(teacher_identity="some-other-teacher"),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("teacher_identity", str(caught.exception))
+
+    def test_fixture_dropping_the_excluded_test_population_fails_closed(self):
+        path = write_checkpoint(
+            self.root / "fixture",
+            manifest_edit=self._fixture_override(excluded_stage2_test_seeds=[]),
+        )
+        with self.assertRaises(Stage3ArtifactError) as caught:
+            self.load(path)
+        self.assertIn("excluded_stage2_test_seeds", str(caught.exception))
 
     def test_loader_does_not_discover_checkpoints_under_a_parent_directory(self):
         write_checkpoint(self.root / "nested" / "fixture")

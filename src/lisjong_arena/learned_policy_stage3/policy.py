@@ -38,7 +38,10 @@ from lisjong_arena.learned_policy_stage2.protocol import (
     TORCH_THREADS,
     VOCABULARY_SIZE,
 )
-from lisjong_arena.learned_policy_stage2.training import configure_deterministic_runtime
+from lisjong_arena.learned_policy_stage2.training import (
+    configure_deterministic_runtime,
+    peak_process_ram_bytes,
+)
 
 from .artifact import ServingCheckpoint, load_serving_checkpoint
 from .errors import Stage3ServingError
@@ -69,6 +72,7 @@ class ServingRuntime:
 
     checkpoint: ServingCheckpoint
     conditions: dict
+    peak_process_ram_bytes_after_load: int | None = None
 
     @property
     def model(self):
@@ -107,7 +111,13 @@ def create_serving_runtime(checkpoint_path: str | Path) -> ServingRuntime:
         "inference_mode": True,
         "artifact_class": checkpoint.artifact_class.value,
     }
-    return ServingRuntime(checkpoint=checkpoint, conditions=conditions)
+    # peak RAMはload境界そのもので確定させる。runner実行後に測ると、artifact
+    # load後のRAMではなくgame execution込みのprocess peakになってしまう。
+    return ServingRuntime(
+        checkpoint=checkpoint,
+        conditions=conditions,
+        peak_process_ram_bytes_after_load=peak_process_ram_bytes(),
+    )
 
 
 class LearnedServingPolicy:

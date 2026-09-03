@@ -39,6 +39,8 @@ from lisjong_arena.learned_policy_stage2.protocol import (
     EXPECTED_PARAMETER_COUNT,
     FEATURE_DIMENSION,
     HIDDEN_WIDTH,
+    TEACHER_IDENTITY,
+    TEACHER_SOURCE_REVISION,
     VOCABULARY_SIZE,
     verify_contract_identity,
 )
@@ -52,7 +54,16 @@ from lisjong_arena.learned_policy_stage2.training import (
 )
 
 from .errors import Stage3ArtifactError
-from .protocol import ArtifactClass
+from .protocol import (
+    EXCLUDED_STAGE2_TEST_SEEDS,
+    FIXTURE_TRAIN_SEEDS,
+    FIXTURE_VALIDATION_SEEDS,
+    PROTOCOL_ID,
+    STAGE2_CHECKPOINT_IDENTITY,
+    STAGE2_DATASET_IDENTITY,
+    STAGE2_WEIGHTS_SHA256,
+    ArtifactClass,
+)
 
 FIXTURE_CHECKPOINT_SCHEMA_VERSION = "arena-learned-policy-stage3-serving-fixture-v1"
 
@@ -104,8 +115,35 @@ def _read_manifest(path: Path) -> dict:
     return manifest
 
 
+def _require_stage2_retained_identity(manifest: dict) -> None:
+    """Path Aがexact Stage 2 artifactであることをload時に確認する。
+
+    `#136`のPath Aはlocked checkpoint identity / weights digest / dataset
+    identityをすべて満たすexact artifactだけである。Stage 2 schema versionと
+    locked model configを名乗るだけの別checkpointを`STAGE2_RETAINED`として
+    受理しない。
+    """
+    for name, expected in (
+        ("checkpoint_identity", STAGE2_CHECKPOINT_IDENTITY),
+        ("weights_sha256", STAGE2_WEIGHTS_SHA256),
+        ("dataset_identity", STAGE2_DATASET_IDENTITY),
+    ):
+        actual = manifest.get(name)
+        if actual != expected:
+            raise Stage3ArtifactError(
+                f"retained checkpoint {name} is not the locked Stage 2 value: "
+                f"{actual!r} != {expected!r}"
+            )
+
+
 def _require_fixture_block(manifest: dict) -> None:
-    """Stage 3 fixtureがStage 2 TEST hanchanへ触れていないことをload時に確認する。"""
+    """Stage 3 fixtureがlocked fixture populationそのものであることを確認する。
+
+    excluded seedsとの非交差だけでは足りない。protocol identity、TRAIN /
+    VALIDATION population、excluded TEST population、teacher identity /
+    revisionをexact一致で要求しないと、self-consistentなmanifestを作るだけで
+    別populationのartifactをserving candidateとして通せてしまう。
+    """
     fixture = manifest.get("fixture")
     if type(fixture) is not dict or set(fixture) != _FIXTURE_FIELDS:
         raise Stage3ArtifactError("fixture provenance block is missing or invalid")
@@ -119,14 +157,21 @@ def _require_fixture_block(manifest: dict) -> None:
         value = fixture.get(name)
         if type(value) is not list or any(type(item) is not int for item in value):
             raise Stage3ArtifactError(f"fixture {name} must be an array of integers")
-    excluded = set(fixture["excluded_stage2_test_seeds"])
-    used = set(fixture["train_seeds"]) | set(fixture["validation_seeds"])
-    if not excluded:
-        raise Stage3ArtifactError("fixture must record the excluded Stage 2 TEST seeds")
-    if used & excluded:
-        raise Stage3ArtifactError(
-            "fixture population intersects the excluded Stage 2 TEST seeds"
-        )
+
+    for name, expected in (
+        ("protocol_id", PROTOCOL_ID),
+        ("train_seeds", list(FIXTURE_TRAIN_SEEDS)),
+        ("validation_seeds", list(FIXTURE_VALIDATION_SEEDS)),
+        ("excluded_stage2_test_seeds", list(EXCLUDED_STAGE2_TEST_SEEDS)),
+        ("teacher_identity", TEACHER_IDENTITY),
+        ("teacher_source_revision", TEACHER_SOURCE_REVISION),
+    ):
+        actual = fixture.get(name)
+        if actual != expected:
+            raise Stage3ArtifactError(
+                f"fixture {name} is not the locked Stage 3 value: "
+                f"{actual!r} != {expected!r}"
+            )
 
 
 def _require_locked_contract(manifest: dict) -> None:
@@ -245,10 +290,12 @@ def load_serving_checkpoint(path: str | Path) -> ServingCheckpoint:
         raise Stage3ArtifactError(f"unsupported checkpoint schema version: {schema!r}")
     if artifact_class is ArtifactClass.STAGE3_FIXTURE:
         _require_fixture_block(manifest)
-    elif "fixture" in manifest:
-        raise Stage3ArtifactError(
-            "a Stage 2 retained checkpoint must not carry a fixture block"
-        )
+    else:
+        if "fixture" in manifest:
+            raise Stage3ArtifactError(
+                "a Stage 2 retained checkpoint must not carry a fixture block"
+            )
+        _require_stage2_retained_identity(manifest)
     _require_locked_contract(manifest)
 
     weights_path = path / WEIGHTS_FILENAME
