@@ -3,13 +3,17 @@
 import os
 import shutil
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 
 from lisjong_engine.rules import RuleSet
 
-from lisjong_arena.phase2_training_anchor.extraction import extract_phase2_game
+from lisjong_arena.phase2_training_anchor.extraction import (
+    SeatPolicyFactories,
+    extract_phase2_game,
+)
 from lisjong_arena.phase4_raw_corpus.derivation import derive_turn_samples
 from lisjong_arena.phase4_raw_corpus.extraction import (
     extract_phase4_raw_game,
@@ -71,25 +75,55 @@ def _normalized_seeds(seeds: object) -> tuple[int, ...]:
     return seeds
 
 
+def _normalized_seat_policy_factories_by_seed(
+    factories_by_seed: Mapping[int, SeatPolicyFactories] | None,
+    seeds: tuple[int, ...],
+) -> dict[int, SeatPolicyFactories | None]:
+    """Bind one explicit seat Policy assignment to every generated seed."""
+    if factories_by_seed is None:
+        return dict.fromkeys(seeds)
+    if not isinstance(factories_by_seed, Mapping):
+        raise TypeError("seat policy factories by seed must be a mapping or None")
+    if set(factories_by_seed) != set(seeds):
+        raise ValueError(
+            "seat policy factories must cover every generated seed exactly"
+        )
+    return {seed: factories_by_seed[seed] for seed in seeds}
+
+
 def generate_phase4_raw_corpus_for_seeds(
-    destination: str | Path, seeds: tuple[int, ...]
+    destination: str | Path,
+    seeds: tuple[int, ...],
+    *,
+    seat_policy_factories_by_seed: Mapping[int, SeatPolicyFactories] | None = None,
 ) -> Phase4GenerationReport:
     """Run the first-party Phase 4 protocol for an explicit ordered seed set.
 
-    Only the seed population varies.  The source remains
-    ``TwoStepUkeirePolicy x4`` under ``RuleSet.default()`` and the existing raw
-    schema, provenance checks, persistence, and Phase 2 equality validation are
-    unchanged.
+    The seed population and, when ``seat_policy_factories_by_seed`` is given, the
+    per-seed first-party Policy seat assignment are the only inputs that vary.
+    The default source remains ``TwoStepUkeirePolicy x4``, and ``RuleSet.default()``,
+    the raw schema, provenance checks, persistence, and Phase 2 equality validation
+    are unchanged.  Both the recorded execution and its Phase 2 equality re-run use
+    the same seat assignment for a seed, so the equality check stays meaningful for
+    heterogeneous populations.
     """
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(f"destination already exists: {destination}")
     seeds = _normalized_seeds(seeds)
+    factories_by_seed = _normalized_seat_policy_factories_by_seed(
+        seat_policy_factories_by_seed, seeds
+    )
     destination.parent.mkdir(parents=True, exist_ok=True)
     rules = RuleSet.default()
     provenance = phase4_provenance(rules)
     started = perf_counter()
-    games = tuple(extract_phase4_raw_game(seed, rules=rules) for seed in seeds)
+    games = tuple(
+        extract_phase4_raw_game(
+            seed, rules=rules, seat_policy_factories=factories_by_seed[seed]
+        )
+        for seed in seeds
+    )
     generation_seconds = perf_counter() - started
     corpus = RawCorpus(provenance, games)
     temporary_destination = Path(
@@ -111,7 +145,9 @@ def generate_phase4_raw_corpus_for_seeds(
         direct = tuple(
             sample
             for seed in seeds
-            for sample in extract_phase2_game(seed, rules=rules).samples
+            for sample in extract_phase2_game(
+                seed, rules=rules, seat_policy_factories=factories_by_seed[seed]
+            ).samples
         )
         if derived != direct:
             raise RuntimeError("Phase 4 persisted TURN derivation differs from Phase 2")

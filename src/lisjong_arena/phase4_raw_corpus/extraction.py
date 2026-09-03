@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 
-from lisjong.policies import TwoStepUkeirePolicy
 from lisjong_engine.driver import ActionSelector, run_hanchan
 from lisjong_engine.match_state import MatchState
 from lisjong_engine.observation import SeatObservation
@@ -13,7 +12,11 @@ from lisjong_engine.rules import RuleSet
 from lisjong_engine.seat import Seat
 
 from lisjong_arena.lisjong_engine.policy_selector import PolicySeatSelector
-from lisjong_arena.phase2_training_anchor.extraction import FIRST_PARTY_SOURCE_CLASS
+from lisjong_arena.phase2_training_anchor.extraction import (
+    FIRST_PARTY_SOURCE_CLASS,
+    SeatPolicyFactories,
+    normalized_seat_policy_factories,
+)
 from lisjong_arena.phase2_training_anchor.pipeline_provenance import (
     collect_pipeline_provenance,
 )
@@ -148,17 +151,30 @@ class _RecordingSelector:
         return self._delegate(observation, options)
 
 
-def extract_phase4_raw_game(seed: int, *, rules: RuleSet | None = None) -> RawGame:
+def extract_phase4_raw_game(
+    seed: int,
+    *,
+    rules: RuleSet | None = None,
+    seat_policy_factories: SeatPolicyFactories | None = None,
+) -> RawGame:
+    """1 hanchanをrecordし、raw observation corpusのgame valueを返す。
+
+    `seat_policy_factories`はseatごとのPolicy factoryをexplicitに指定する。
+    省略時のpopulationはこれまでどおり`TwoStepUkeirePolicy x4`である。raw
+    schema、checkpoint semantics、training truth semanticsはPolicy populationに
+    依存しない。
+    """
     if type(seed) is not int:
         raise TypeError("seed must be an int")
     effective_rules = rules or RuleSet.default()
     if not isinstance(effective_rules, RuleSet):
         raise TypeError("rules must be a RuleSet or None")
+    policy_factories = normalized_seat_policy_factories(seat_policy_factories)
     match_state = MatchState(seed=seed, rules=effective_rules)
     recorder = Phase4RawRecorder(match_state)
     selectors = {
         seat: _RecordingSelector(
-            PolicySeatSelector(seat, TwoStepUkeirePolicy()), recorder
+            PolicySeatSelector(seat, policy_factories[seat]()), recorder
         )
         for seat in Seat
     }

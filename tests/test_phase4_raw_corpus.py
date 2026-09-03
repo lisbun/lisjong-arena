@@ -525,11 +525,13 @@ class CodecAndPersistenceTests(unittest.TestCase):
             ),
             patch(
                 "lisjong_arena.phase4_raw_corpus.generation.extract_phase4_raw_game",
-                side_effect=lambda seed, rules: games_by_seed[seed],
+                side_effect=lambda seed, rules, seat_policy_factories: games_by_seed[
+                    seed
+                ],
             ) as extractor,
             patch(
                 "lisjong_arena.phase4_raw_corpus.generation.extract_phase2_game",
-                side_effect=lambda seed, rules: SimpleNamespace(
+                side_effect=lambda seed, rules, seat_policy_factories: SimpleNamespace(
                     samples=derive_turn_samples_from_game(
                         games_by_seed[seed], corpus.provenance
                     )
@@ -539,6 +541,10 @@ class CodecAndPersistenceTests(unittest.TestCase):
             report = generate_phase4_raw_corpus(Path(directory) / "corpus")
         self.assertEqual(
             tuple(call.args[0] for call in extractor.call_args_list), FIXED_SEEDS
+        )
+        self.assertEqual(
+            {call.kwargs["seat_policy_factories"] for call in extractor.call_args_list},
+            {None},
         )
         self.assertEqual(len(report.persisted.shards), 2)
         self.assertTrue(report.phase2_equality_verified)
@@ -559,11 +565,13 @@ class CodecAndPersistenceTests(unittest.TestCase):
             ),
             patch(
                 "lisjong_arena.phase4_raw_corpus.generation.extract_phase4_raw_game",
-                side_effect=lambda seed, rules: games_by_seed[seed],
+                side_effect=lambda seed, rules, seat_policy_factories: games_by_seed[
+                    seed
+                ],
             ) as extractor,
             patch(
                 "lisjong_arena.phase4_raw_corpus.generation.extract_phase2_game",
-                side_effect=lambda seed, rules: SimpleNamespace(
+                side_effect=lambda seed, rules, seat_policy_factories: SimpleNamespace(
                     samples=derive_turn_samples_from_game(
                         games_by_seed[seed], corpus.provenance
                     )
@@ -593,7 +601,9 @@ class CodecAndPersistenceTests(unittest.TestCase):
             ),
             patch(
                 "lisjong_arena.phase4_raw_corpus.generation.extract_phase4_raw_game",
-                side_effect=lambda seed, rules: games_by_seed[seed],
+                side_effect=lambda seed, rules, seat_policy_factories: games_by_seed[
+                    seed
+                ],
             ),
             patch(
                 "lisjong_arena.phase4_raw_corpus.generation.extract_phase2_game",
