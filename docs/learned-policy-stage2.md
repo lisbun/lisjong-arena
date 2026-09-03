@@ -112,6 +112,11 @@ manifestは少なくとも次をbindする。
 - action vocabulary version、size、fingerprint
 - `dataset_identity` = `dataset_identity`自身を除いたcanonical manifestのsha256
 
+protocolが名乗る`TEACHER_SOURCE_REVISION`と、provenanceが記録するactual
+`lisjong_revision`の一致をwriteとreadの双方で要求する。これを照合しないと、同じ
+action vocabularyのまま`yakuhai-call`の実装だけが変わった別revisionで生成した
+datasetが、protocol上は旧revisionを名乗ったまま成立してしまう。
+
 `collect_execution_provenance()`はsource treeがdirtyな場合にfail closedする。
 そのためdataset生成はcommit後に実行する。`Stage2DatasetWriter(..., provenance=...)`の
 明示指定はfixture / testのためだけの入口である。
@@ -127,6 +132,10 @@ writeとreadの双方でfail closedに検証する。
 - decision ordinalはgameごとに0起点で連続、rowはseed昇順にgroup化
 - seed populationは`200..215`と完全一致し、splitはwhole hanchanで交差しない
 - schema / vocabulary / manifest / digest mismatchはsilent fallbackせずfail closed
+- `load_checkpoint()`はmodel / training config、parameter count、weights digest、
+  self-consistentな`checkpoint_identity`に加えて、manifestのfeature / vocabulary
+  blockをlocked Stage 2 identityそのものと照合する。identityを正しく再計算した
+  self-consistentなartifactであっても、schema / vocabulary identityが異なれば受理しない
 
 hidden opponent hand、wall truth、future state、future outcome、oracle informationは
 rowへ入れない。featureはStage 1 encoderの出力をそのまま保持し、Stage 2側で再定義・
@@ -220,3 +229,10 @@ checkpointに対してTESTを1回評価する。`test`を再実行するとTEST 
 
 `train`はTEST exposure前にcheckpoint identityと`weights_sha256`を出力する。この2値を
 result recordへ残してからTESTを評価する。
+
+### Portability
+
+Stage 2のmoduleはUnix専用の`resource`をtop-levelでimportしない。peak RAMは
+best-effortの`peak_process_ram_bytes()`で取得し、`resource`を利用できないplatform
+（Windows等）では`None`を記録する。Issue #133もpeak RAMを「where practical」として
+おり、RAM測定不能をStage 2全体の起動不能にしない。

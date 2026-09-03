@@ -17,7 +17,6 @@ CEだけで行い、TEST partitionはtraining pathから参照しない。
 import hashlib
 import json
 import platform
-import resource
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +25,7 @@ from tempfile import mkdtemp
 
 from lisjong_arena._artifact_io import canonical_json_text
 
-from .artifact import LoadedStage2Dataset
+from .artifact import LoadedStage2Dataset, feature_block, vocabulary_block
 from .errors import Stage2ArtifactError, Stage2ProtocolError
 from .network import create_model, masked_cross_entropy, parameter_count
 from .protocol import (
@@ -203,13 +202,27 @@ class TrainingRun:
     selected_epoch: int
     selected_validation_choice_masked_ce: float
     wall_clock_seconds: float
-    peak_process_ram_bytes: int
+    peak_process_ram_bytes: int | None
     runtime: dict[str, object]
 
 
-def _peak_process_ram_bytes() -> int:
-    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return int(usage) * 1024 if platform.system() == "Linux" else int(usage)
+def peak_process_ram_bytes() -> int | None:
+    """best-effortなpeak RSS。取得できないplatformでは`None`を返す。
+
+    `resource`はUnix系専用であり、このrepositoryはWindows / PowerShellでの利用も
+    案内している。Issue #133もpeak RAMを「where practical」としているため、
+    測定不能をStage 2全体の起動不能にしない。既存Phase 6と同じく、測定できない
+    場合は`None`を記録する。
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except OSError, ValueError:
+        return None
+    return int(usage) if platform.system() == "Darwin" else int(usage) * 1024
 
 
 def train_stage2_model(dataset: LoadedStage2Dataset) -> TrainingRun:
@@ -289,7 +302,7 @@ def train_stage2_model(dataset: LoadedStage2Dataset) -> TrainingRun:
         selected_epoch=best_epoch,
         selected_validation_choice_masked_ce=best_metric,
         wall_clock_seconds=wall_clock,
-        peak_process_ram_bytes=_peak_process_ram_bytes(),
+        peak_process_ram_bytes=peak_process_ram_bytes(),
         runtime=runtime,
     )
 
@@ -445,6 +458,14 @@ def load_checkpoint(path: str | Path) -> LoadedCheckpoint:
         raise Stage2ArtifactError("checkpoint training config is not the locked one")
     if manifest.get("parameter_count") != EXPECTED_PARAMETER_COUNT:
         raise Stage2ArtifactError("checkpoint parameter count is not the locked one")
+    if manifest.get("feature") != feature_block():
+        raise Stage2ArtifactError(
+            "checkpoint feature schema identity is not the locked Stage 2 one"
+        )
+    if manifest.get("vocabulary") != vocabulary_block():
+        raise Stage2ArtifactError(
+            "checkpoint action vocabulary identity is not the locked Stage 2 one"
+        )
     if manifest.get("checkpoint_identity") != checkpoint_identity(manifest):
         raise Stage2ArtifactError(
             "checkpoint_identity does not match the manifest content"
@@ -480,6 +501,7 @@ __all__ = [
     "TrainingRun",
     "checkpoint_identity",
     "choice_row_selector",
+    "peak_process_ram_bytes",
     "configure_deterministic_runtime",
     "evaluate_masked_cross_entropy",
     "load_checkpoint",

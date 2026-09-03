@@ -1,5 +1,6 @@
 """Learned Policy Stage 2 protocol, dataset artifact, and coverage tests."""
 
+import ast
 import json
 import tempfile
 import unittest
@@ -15,6 +16,8 @@ from _learned_policy_stage2_fixtures import (
     write_synthetic_dataset,
 )
 
+from lisjong_arena import learned_policy_stage2
+from lisjong_arena._artifact_io import canonical_json_text
 from lisjong_arena.learned_policy_stage2 import (
     Stage2ArtifactError,
     Stage2ContractIdentityError,
@@ -28,6 +31,7 @@ from lisjong_arena.learned_policy_stage2.artifact import (
     LEGAL_MASK_FILENAME,
     MANIFEST_FILENAME,
     ROWS_FILENAME,
+    dataset_identity,
     load_dataset,
 )
 from lisjong_arena.learned_policy_stage2.coverage import build_coverage
@@ -339,6 +343,68 @@ class DatasetArtifactTest(unittest.TestCase):
         (path / LEGAL_MASK_FILENAME).unlink()
         with self.assertRaises(Stage2ArtifactError):
             load_dataset(path)
+
+
+class TeacherRevisionBindingTest(unittest.TestCase):
+    """protocolが名乗るteacher revisionとactual provenanceの一致を要求する。"""
+
+    def setUp(self):
+        self._temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self._temporary.name)
+        self.addCleanup(self._temporary.cleanup)
+
+    def test_writer_rejects_provenance_from_another_lisjong_revision(self):
+        provenance = dict(FIXTURE_PROVENANCE)
+        provenance["lisjong_revision"] = "b" * 40
+        with self.assertRaises(Stage2ArtifactError):
+            Stage2DatasetWriter(self.root / "dataset", provenance=provenance)
+        self.assertFalse((self.root / "dataset").exists())
+
+    def test_self_consistent_artifact_from_another_revision_is_rejected(self):
+        """identityを正しく再計算したartifactでもrevision mismatchはrejectされる。"""
+        path = self.root / "dataset"
+        write_synthetic_dataset(path)
+        target = path / MANIFEST_FILENAME
+        document = json.loads(target.read_text(encoding="utf-8"))
+        document["provenance"]["lisjong_revision"] = "b" * 40
+        document["dataset_identity"] = dataset_identity(document)
+        target.write_text(canonical_json_text(document), encoding="utf-8", newline="\n")
+
+        # the tampered manifest is internally self-consistent ...
+        self.assertEqual(
+            json.loads(target.read_text(encoding="utf-8"))["dataset_identity"],
+            dataset_identity(json.loads(target.read_text(encoding="utf-8"))),
+        )
+        # ... and is still rejected, because it is not the locked teacher revision.
+        with self.assertRaises(Stage2ArtifactError):
+            load_dataset(path)
+
+
+class PortabilityTest(unittest.TestCase):
+    """Unix専用moduleへのtop-level依存でStage 2が起動不能にならないこと。"""
+
+    def test_no_stage2_module_imports_resource_at_top_level(self):
+        package = Path(learned_policy_stage2.__file__).parent
+        offenders = []
+        for source in sorted(package.glob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"))
+            for node in tree.body:
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    names = [node.module]
+                if "resource" in names:
+                    offenders.append(source.name)
+        self.assertEqual(offenders, [])
+
+    def test_peak_process_ram_is_best_effort(self):
+        from lisjong_arena.learned_policy_stage2.training import (
+            peak_process_ram_bytes,
+        )
+
+        value = peak_process_ram_bytes()
+        self.assertTrue(value is None or (type(value) is int and value > 0))
 
 
 class CoverageTest(unittest.TestCase):

@@ -239,6 +239,68 @@ class Stage2TrainingTest(unittest.TestCase):
         with self.assertRaises(Stage2ArtifactError):
             load_checkpoint(self.root / "checkpoint")
 
+    def _tamper_checkpoint(self, mutate):
+        """manifestを改変し、checkpoint_identityを正しく再計算して書き戻す。"""
+        from lisjong_arena._artifact_io import canonical_json_text
+        from lisjong_arena.learned_policy_stage2.training import (
+            MANIFEST_FILENAME,
+            checkpoint_identity,
+            save_checkpoint,
+            train_stage2_model,
+        )
+
+        run = train_stage2_model(self.dataset)
+        save_checkpoint(self.root / "checkpoint", self.dataset, run)
+        target = self.root / "checkpoint" / MANIFEST_FILENAME
+        document = json.loads(target.read_text(encoding="utf-8"))
+        mutate(document)
+        document["checkpoint_identity"] = checkpoint_identity(document)
+        target.write_text(canonical_json_text(document), encoding="utf-8", newline="\n")
+        # the tampered manifest is internally self-consistent
+        reloaded = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual(reloaded["checkpoint_identity"], checkpoint_identity(reloaded))
+        return self.root / "checkpoint"
+
+    def test_self_consistent_foreign_feature_schema_is_rejected(self):
+        from lisjong_arena.learned_policy_stage2.training import load_checkpoint
+
+        def mutate(document):
+            document["feature"]["schema_fingerprint"] = "0" * 64
+
+        path = self._tamper_checkpoint(mutate)
+        with self.assertRaises(Stage2ArtifactError):
+            load_checkpoint(path)
+
+    def test_self_consistent_foreign_feature_dimension_is_rejected(self):
+        from lisjong_arena.learned_policy_stage2.training import load_checkpoint
+
+        def mutate(document):
+            document["feature"]["dimension"] = FEATURE_DIMENSION + 1
+
+        path = self._tamper_checkpoint(mutate)
+        with self.assertRaises(Stage2ArtifactError):
+            load_checkpoint(path)
+
+    def test_self_consistent_foreign_vocabulary_is_rejected(self):
+        from lisjong_arena.learned_policy_stage2.training import load_checkpoint
+
+        def mutate(document):
+            document["vocabulary"]["version"] = "lisjong-action-vocabulary-2"
+
+        path = self._tamper_checkpoint(mutate)
+        with self.assertRaises(Stage2ArtifactError):
+            load_checkpoint(path)
+
+    def test_self_consistent_foreign_vocabulary_fingerprint_is_rejected(self):
+        from lisjong_arena.learned_policy_stage2.training import load_checkpoint
+
+        def mutate(document):
+            document["vocabulary"]["fingerprint"] = "0" * 64
+
+        path = self._tamper_checkpoint(mutate)
+        with self.assertRaises(Stage2ArtifactError):
+            load_checkpoint(path)
+
     def test_existing_checkpoint_destination_is_never_overwritten(self):
         from lisjong_arena.learned_policy_stage2.training import (
             save_checkpoint,

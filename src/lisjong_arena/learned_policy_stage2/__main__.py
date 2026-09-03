@@ -12,8 +12,6 @@ frozen checkpointに対してTESTを1回評価し、その実行でのみTEST ex
 """
 
 import argparse
-import platform
-import resource
 import sys
 import time
 from pathlib import Path
@@ -33,6 +31,7 @@ from .decision_rule import classify_outcome
 from .protocol import ORDERED_SEEDS, Split, verify_contract_identity
 from .recording import RowEncodeCost, build_decision_rows, record_teacher_game
 from .serving_check import run_serving_path_check
+from .training import peak_process_ram_bytes
 
 
 def _write_json(path: Path, document: dict) -> None:
@@ -40,11 +39,6 @@ def _write_json(path: Path, document: dict) -> None:
         raise FileExistsError(f"{path} already exists")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(canonical_json_text(document), encoding="utf-8", newline="\n")
-
-
-def _peak_ram_bytes() -> int:
-    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return int(usage) * 1024 if platform.system() == "Linux" else int(usage)
 
 
 def _generate(arguments: argparse.Namespace) -> int:
@@ -125,7 +119,7 @@ def _generate(arguments: argparse.Namespace) -> int:
                 entry["feature_encode_seconds_total"] for entry in measurements
             )
             / dataset.row_count,
-            "peak_process_ram_bytes": _peak_ram_bytes(),
+            "peak_process_ram_bytes": peak_process_ram_bytes(),
         },
         "storage": {
             "file_bytes": file_bytes,

@@ -170,7 +170,7 @@ def _digest(value: object, context: str) -> str:
     return text
 
 
-def _feature_block() -> dict[str, object]:
+def feature_block() -> dict[str, object]:
     return {
         "semantics_id": LOCKED_FEATURE_SEMANTICS_ID,
         "tensor_schema_version": LOCKED_TENSOR_SCHEMA_VERSION,
@@ -180,7 +180,7 @@ def _feature_block() -> dict[str, object]:
     }
 
 
-def _vocabulary_block() -> dict[str, object]:
+def vocabulary_block() -> dict[str, object]:
     return {
         "version": LOCKED_VOCABULARY_VERSION,
         "size": VOCABULARY_SIZE,
@@ -342,6 +342,11 @@ class Stage2DatasetWriter:
         )
         if set(self._provenance) != _PROVENANCE_FIELDS:
             raise Stage2ArtifactError("provenance fields are invalid")
+        if any(
+            type(value) is not str or not value for value in self._provenance.values()
+        ):
+            raise Stage2ArtifactError("provenance values must be non-empty strings")
+        _require_locked_teacher_revision(self._provenance)
         self._staging = Path(
             mkdtemp(prefix=f".{destination.name}-staging-", dir=destination.parent)
         )
@@ -451,8 +456,8 @@ class Stage2DatasetWriter:
             manifest: dict[str, object] = {
                 "dataset_schema_version": DATASET_SCHEMA_VERSION,
                 "protocol": _protocol_block(),
-                "feature": _feature_block(),
-                "vocabulary": _vocabulary_block(),
+                "feature": feature_block(),
+                "vocabulary": vocabulary_block(),
                 "provenance": dict(self._provenance),
                 "games": [entry.to_document() for entry in games],
                 "totals": {
@@ -561,6 +566,23 @@ class LoadedStage2Dataset:
         return sum(1 for value in values if not isfinite(value))
 
 
+def _require_locked_teacher_revision(provenance: dict) -> None:
+    """actual lisjong revisionがlocked teacher source revisionと一致することを要求する。
+
+    protocolは`TEACHER_SOURCE_REVISION`を名乗り、provenanceは実際にinstallされた
+    revisionを記録する。両者を照合しないと、同じaction vocabularyのまま
+    `yakuhai-call`の実装だけが変わった別revisionで生成したdatasetが、protocol上は
+    旧revisionを名乗ったまま成立してしまう。
+    """
+    actual = provenance["lisjong_revision"]
+    if actual != TEACHER_SOURCE_REVISION:
+        raise _error(
+            "dataset lisjong provenance revision does not match the locked "
+            f"Stage 2 teacher source revision: {actual!r} != "
+            f"{TEACHER_SOURCE_REVISION!r}"
+        )
+
+
 def _validate_manifest(manifest: object) -> dict:
     document = _expect_object(manifest, _MANIFEST_FIELDS, "manifest")
     if document["dataset_schema_version"] != DATASET_SCHEMA_VERSION:
@@ -574,13 +596,13 @@ def _validate_manifest(manifest: object) -> dict:
         raise _error("dataset protocol does not match the locked Stage 2 protocol")
 
     feature = _expect_object(document["feature"], _FEATURE_FIELDS, "feature")
-    if feature != _feature_block():
+    if feature != feature_block():
         raise _error("dataset feature schema identity is not supported")
 
     vocabulary = _expect_object(
         document["vocabulary"], _VOCABULARY_FIELDS, "vocabulary"
     )
-    if vocabulary != _vocabulary_block():
+    if vocabulary != vocabulary_block():
         raise _error("dataset action vocabulary identity is not supported")
 
     provenance = _expect_object(
@@ -589,6 +611,7 @@ def _validate_manifest(manifest: object) -> dict:
     for name, value in provenance.items():
         if type(value) is not str or not value:
             raise _error(f"provenance.{name} must be a non-empty string")
+    _require_locked_teacher_revision(provenance)
 
     games = document["games"]
     if type(games) is not list or len(games) != HANCHAN_COUNT:
@@ -769,5 +792,7 @@ __all__ = [
     "Stage2DatasetWriter",
     "Stage2RowRecord",
     "dataset_identity",
+    "feature_block",
     "load_dataset",
+    "vocabulary_block",
 ]

@@ -10,6 +10,7 @@ from lisjong_arena.learned_policy_stage2.model import Stage2DecisionRow
 from lisjong_arena.learned_policy_stage2.protocol import (
     FEATURE_DIMENSION,
     ORDERED_SEEDS,
+    TEACHER_SOURCE_REVISION,
     VOCABULARY_SIZE,
     action_family,
     split_for_seed,
@@ -20,7 +21,7 @@ FIXTURE_PROVENANCE = {
     "lisjong_arena_version": "0.1.0",
     "lisjong_arena_revision": "0" * 40,
     "lisjong_version": "0.1.0",
-    "lisjong_revision": "1" * 40,
+    "lisjong_revision": TEACHER_SOURCE_REVISION,
     "lisjong_engine_version": "0.1.0",
     "lisjong_engine_revision": "2" * 40,
     "riichienv_version": "0.4.8",
