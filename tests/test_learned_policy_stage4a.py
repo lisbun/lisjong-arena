@@ -410,6 +410,64 @@ class Stage4aFreezeRecordTest(unittest.TestCase):
         with self.assertRaises(Stage4aFreezeError):
             verify_freeze_binding(freeze, tampered)
 
+    def test_tampered_metadata_fails_the_checkpoint_binding(self):
+        """freeze recordだけを書き換えたbundleをbindさせない。
+
+        identity / digestが一致していても、Gate 0のaudit recordとして記録した
+        checkpoint-derived metadataとgeneration provenanceが実manifestと
+        食い違えばfail closedする。
+        """
+        tampers = (
+            ("checkpoint", "selected_epoch", 999),
+            ("checkpoint", "parameter_count", 42),
+            ("checkpoint", "selected_validation_choice_masked_ce", 0.5),
+            ("checkpoint", "weights_bytes", 1),
+            ("checkpoint", "format_note", "no note"),
+            ("checkpoint", "feature", {"semantics_id": "other"}),
+            ("checkpoint", "vocabulary", {"version": "other"}),
+            ("checkpoint", "model", {"model_id": "other"}),
+            ("checkpoint", "training", {"loss": "other"}),
+            ("generation", "teacher_identity", "other-teacher"),
+            ("generation", "teacher_source_revision", "f" * 40),
+            ("generation", "row_count", 7),
+            ("generation", "train_seeds", list(CANDIDATE_GENERATION_SEEDS[:2])),
+            ("source_revisions", "lisjong_revision", "f" * 40),
+            ("source_revisions", "lisjong_arena_revision", "f" * 40),
+            ("source_revisions", "lisjong_engine_revision", "f" * 40),
+        )
+        for block, name, value in tampers:
+            document = json.loads(json.dumps(self.document))
+            document[block][name] = value
+            with self.assertRaises(Stage4aFreezeError, msg=f"{block}.{name}"):
+                verify_freeze_binding(Stage4aFreeze(document=document), self.checkpoint)
+
+    def test_dropped_or_extra_bound_fields_fail_the_binding(self):
+        for block, name in (
+            ("checkpoint", "selected_epoch"),
+            ("generation", "row_count"),
+        ):
+            document = json.loads(json.dumps(self.document))
+            document[block].pop(name)
+            with self.assertRaises(Stage4aFreezeError):
+                verify_freeze_binding(Stage4aFreeze(document=document), self.checkpoint)
+
+        document = json.loads(json.dumps(self.document))
+        document["source_revisions"]["extra_revision"] = "f" * 40
+        with self.assertRaises(Stage4aFreezeError):
+            verify_freeze_binding(Stage4aFreeze(document=document), self.checkpoint)
+
+    def test_an_inconsistent_retention_path_is_rejected(self):
+        document = json.loads(json.dumps(self.document))
+        document["retention"]["checkpoint_relative_path"] = "somewhere/else"
+        with self.assertRaises(Stage4aFreezeError):
+            parse_freeze_document(document)
+
+    def test_a_non_numeric_selected_validation_ce_is_rejected(self):
+        document = json.loads(json.dumps(self.document))
+        document["checkpoint"]["selected_validation_choice_masked_ce"] = "1.5"
+        with self.assertRaises(Stage4aFreezeError):
+            parse_freeze_document(document)
+
     def test_a_missing_or_malformed_record_is_rejected(self):
         with TemporaryDirectory() as directory:
             bundle = Path(directory)

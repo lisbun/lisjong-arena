@@ -100,6 +100,22 @@ class Stage4aRetainedBundleTest(unittest.TestCase):
         with self.assertRaises(Stage4aFreezeError):
             strict_readback(other.bundle_path)
 
+    def test_tampered_freeze_metadata_fails_the_strict_readback(self):
+        """freeze recordのaudit metadataだけを書き換えたbundleを通さない。"""
+        record = self.target.freeze_record_path
+        # per-field網羅はtorchを起動しない`verify_freeze_binding`側のtestが持つ。
+        # ここではon-disk strict readback pathが実際に拒否することだけを見る。
+        for block, name, value in (
+            ("checkpoint", "selected_epoch", 999),
+            ("generation", "teacher_identity", "other-teacher"),
+        ):
+            document = json.loads(record.read_text(encoding="utf-8"))
+            document[block][name] = value
+            record.unlink()
+            record.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaises(Stage4aFreezeError, msg=f"{block}.{name}"):
+                strict_readback(self.target.bundle_path)
+
     def test_an_existing_freeze_record_is_never_overwritten(self):
         with self.assertRaises(FileExistsError):
             write_freeze_record(self.checkpoint, target=self.target)
@@ -135,6 +151,15 @@ class Stage4aCandidatePolicyTest(unittest.TestCase):
         record = self.target.freeze_record_path
         document = json.loads(record.read_text(encoding="utf-8"))
         document["checkpoint"]["dataset_identity"] = "e" * 64
+        record.unlink()
+        record.write_text(json.dumps(document), encoding="utf-8")
+        with self.assertRaises(Stage4aFreezeError):
+            self._create()
+
+    def test_tampered_source_revisions_are_rejected_when_binding_the_candidate(self):
+        record = self.target.freeze_record_path
+        document = json.loads(record.read_text(encoding="utf-8"))
+        document["source_revisions"]["lisjong_revision"] = "f" * 40
         record.unlink()
         record.write_text(json.dumps(document), encoding="utf-8")
         with self.assertRaises(Stage4aFreezeError):

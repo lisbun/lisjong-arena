@@ -300,6 +300,11 @@ def parse_freeze_document(value: object) -> Stage4aFreeze:
     missing / unknown fieldとschema・purpose・protocol mismatchを受理しない。
     candidate identityはcheckpoint identityからの導出値と一致しなければ
     ならず、free-form aliasをここで通さない。
+
+    ここが固定するのはdocument単体で判定できるlocked Stage 4a contract
+    (schema / purpose / excluded seed declarations / locked population /
+    retention pathの内部整合)である。retained checkpointとの照合は
+    ``verify_freeze_binding()``が担う。
     """
     document = _expect_object(value, _FREEZE_FIELDS, "root")
     if document["freeze_record_schema_version"] != FREEZE_RECORD_SCHEMA_VERSION:
@@ -325,6 +330,11 @@ def parse_freeze_document(value: object) -> Stage4aFreeze:
     for name in ("weights_bytes", "parameter_count", "selected_epoch"):
         if type(checkpoint[name]) is not int:
             raise Stage4aFreezeError(f"freeze record checkpoint.{name} must be an int")
+    if type(checkpoint["selected_validation_choice_masked_ce"]) not in (int, float):
+        raise Stage4aFreezeError(
+            "freeze record checkpoint.selected_validation_choice_masked_ce must be "
+            "a number"
+        )
     if checkpoint["feature"] != feature_block():
         raise Stage4aFreezeError("freeze record feature block is not the locked one")
     if checkpoint["vocabulary"] != vocabulary_block():
@@ -374,6 +384,12 @@ def parse_freeze_document(value: object) -> Stage4aFreeze:
     retention = _expect_object(document["retention"], _RETENTION_FIELDS, "retention")
     for name in sorted(_RETENTION_FIELDS):
         _expect_str(retention[name], f"retention.{name}")
+    expected_relative_path = f"{retention['key']}/{BUNDLE_CHECKPOINT_DIRNAME}"
+    if retention["checkpoint_relative_path"] != expected_relative_path:
+        raise Stage4aFreezeError(
+            "freeze record retention.checkpoint_relative_path is not consistent "
+            "with the retention key"
+        )
 
     identity = _expect_str(document["candidate_identity"], "candidate_identity")
     if identity != derive_candidate_identity(checkpoint["identity"]):
@@ -384,31 +400,30 @@ def parse_freeze_document(value: object) -> Stage4aFreeze:
     return Stage4aFreeze(document=document)
 
 
-def build_freeze_document(
-    checkpoint: ServingCheckpoint, *, target: RetentionTarget
-) -> dict[str, Any]:
-    """retained checkpoint manifestからStage 4a freeze documentを構築する。
+def _checkpoint_bound_blocks(checkpoint: ServingCheckpoint) -> dict[str, Any]:
+    """freeze recordのうち、retained checkpointへbindするblockを1箇所で作る。
 
-    生成populationはcheckpoint manifest側の宣言を正本として読み、locked
-    Stage 4a populationと一致しない場合はfail closedする。held-out seedが
-    generation pathへ入っていないことを、記録ではなく検証で固定する。
+    ``build_freeze_document()``が書き込む値と``verify_freeze_binding()``が
+    照合する値を同じprojectionから得るため、bindするfieldの一覧が2箇所へ
+    分岐しない。ここへfieldを足せばwrite側とverify側の両方が同時に追従する。
+
+    生成populationはcheckpoint manifest側の宣言を正本として読む。locked
+    Stage 4a populationとの一致は``parse_freeze_document()``が別途固定する。
     """
     if not isinstance(checkpoint, ServingCheckpoint):
         raise TypeError("checkpoint must be a ServingCheckpoint")
-    if not isinstance(target, RetentionTarget):
-        raise TypeError("target must be a RetentionTarget")
-
     manifest = checkpoint.manifest
     generation = manifest.get("fixture")
     if type(generation) is not dict:
         raise Stage4aFreezeError(
             "the retained checkpoint does not declare its generation population"
         )
-    document = {
-        "freeze_record_schema_version": FREEZE_RECORD_SCHEMA_VERSION,
-        "protocol_id": PROTOCOL_ID,
-        "purpose": CANDIDATE_PURPOSE,
-        "candidate_identity": derive_candidate_identity(checkpoint.identity),
+    provenance = manifest.get("provenance")
+    if type(provenance) is not dict:
+        raise Stage4aFreezeError(
+            "the retained checkpoint does not declare its source revisions"
+        )
+    return {
         "checkpoint": {
             "schema_version": manifest["checkpoint_schema_version"],
             "identity": checkpoint.identity,
@@ -435,7 +450,28 @@ def build_freeze_document(
             "teacher_source_revision": generation["teacher_source_revision"],
             "row_count": generation["row_count"],
         },
-        "source_revisions": dict(manifest["provenance"]),
+        "source_revisions": dict(provenance),
+    }
+
+
+def build_freeze_document(
+    checkpoint: ServingCheckpoint, *, target: RetentionTarget
+) -> dict[str, Any]:
+    """retained checkpoint manifestからStage 4a freeze documentを構築する。
+
+    checkpointへbindするblockは``_checkpoint_bound_blocks()``が作る。held-out
+    seedがgeneration pathへ入っていないことは、記録ではなく
+    ``parse_freeze_document()``の検証で固定する。
+    """
+    if not isinstance(target, RetentionTarget):
+        raise TypeError("target must be a RetentionTarget")
+
+    document = {
+        "freeze_record_schema_version": FREEZE_RECORD_SCHEMA_VERSION,
+        "protocol_id": PROTOCOL_ID,
+        "purpose": CANDIDATE_PURPOSE,
+        "candidate_identity": derive_candidate_identity(checkpoint.identity),
+        **_checkpoint_bound_blocks(checkpoint),
         "retention": target.to_document(),
         "strength_claim": None,
     }
@@ -468,30 +504,35 @@ def load_freeze_record(bundle_path: str | Path) -> Stage4aFreeze:
 def verify_freeze_binding(freeze: Stage4aFreeze, checkpoint: ServingCheckpoint) -> None:
     """freeze recordがretained checkpointそのものへbindしていることを確認する。
 
-    checkpointを差し替えた場合、identity / digest / byte countのいずれかが
+    identityとdigestだけでなく、freeze recordがGate 0のaudit recordとして
+    記録するcheckpoint-derived metadata(parameter count、selected epoch、
+    selected validation CE、feature / vocabulary / model / training block)、
+    generation provenance(population、teacher identity / revision、row
+    count)、source revisionsも実manifestへ再照合する。freeze recordだけを
+    後から書き換えたbundleがstrict readbackを素通りしない。
+
+    checkpointを差し替えた場合も、identity / digest / byte countのいずれかが
     必ず食い違うため、ここでfail closedする。
     """
     if not isinstance(freeze, Stage4aFreeze):
         raise TypeError("freeze must be a Stage4aFreeze")
     if not isinstance(checkpoint, ServingCheckpoint):
         raise TypeError("checkpoint must be a ServingCheckpoint")
-    manifest = checkpoint.manifest
-    for name, frozen, actual in (
-        (
-            "checkpoint schema version",
-            freeze.checkpoint_schema_version,
-            manifest["checkpoint_schema_version"],
-        ),
-        ("checkpoint identity", freeze.checkpoint_identity, checkpoint.identity),
-        ("dataset identity", freeze.dataset_identity, checkpoint.dataset_identity),
-        ("weights sha256", freeze.weights_sha256, checkpoint.weights_sha256),
-        ("weights bytes", freeze.weights_bytes, manifest["weights_bytes"]),
-    ):
-        if frozen != actual:
+
+    for block_name, expected in _checkpoint_bound_blocks(checkpoint).items():
+        frozen = freeze.document.get(block_name)
+        if type(frozen) is not dict or set(frozen) != set(expected):
             raise Stage4aFreezeError(
-                f"retained {name} does not match the freeze record: "
-                f"{actual!r} != {frozen!r}"
+                f"freeze record {block_name} fields do not match the retained "
+                "checkpoint"
             )
+        for name, value in expected.items():
+            if frozen[name] != value:
+                raise Stage4aFreezeError(
+                    f"retained {block_name}.{name} does not match the freeze "
+                    f"record: {value!r} != {frozen[name]!r}"
+                )
+
     derived = derive_candidate_identity(checkpoint.identity)
     if freeze.candidate_identity != derived:
         raise Stage4aFreezeError(
