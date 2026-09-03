@@ -235,6 +235,29 @@ class Stage3ModelArtifactTest(unittest.TestCase):
                     | {"loss_history": history, "selected_epoch": 1},
                 )
 
+    def test_manifest_records_execution_source_revisions(self):
+        runtime = self.manifest["runtime"]
+        self.assertEqual(runtime["device"], "cpu")
+        self.assertIs(runtime["cuda_available"], False)
+        self.assertEqual(
+            set(runtime["execution_source_revisions"]),
+            {"lisjong", "lisjong_engine", "lisjong_arena"},
+        )
+        self.assertIn("execution_source_revisions_fully_resolved", runtime)
+
+    def test_manifest_rejects_a_non_cpu_or_multi_thread_runtime(self):
+        for override in (
+            {"runtime": dict(self.manifest["runtime"]) | {"cuda_available": True}},
+            {"runtime": dict(self.manifest["runtime"]) | {"torch_thread_count": 4}},
+        ):
+            with tempfile.TemporaryDirectory() as name:
+                with self.assertRaises(Stage3ArtifactError):
+                    save_model_artifact(
+                        Path(name) / "model",
+                        self.result.model,
+                        dict(self.manifest) | override,
+                    )
+
     def test_manifest_rejects_a_test_evaluated_artifact(self):
         with tempfile.TemporaryDirectory() as name:
             with self.assertRaises(Stage3ArtifactError):

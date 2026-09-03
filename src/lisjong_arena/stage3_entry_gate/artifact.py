@@ -68,7 +68,13 @@ def execution_runtime_value() -> dict[str, object]:
     ここへそのまま記録し、`2.13.0+cpu`であるかのように書き換えない。
     """
     import torch
+    from lisjong_engine.rules import RuleSet
 
+    from lisjong_arena.phase2_training_anchor.pipeline_provenance import (
+        collect_pipeline_provenance,
+    )
+
+    revisions = collect_pipeline_provenance(RuleSet.default()).source_revisions
     return {
         "python": platform.python_version(),
         "python_version_info": list(sys.version_info[:3]),
@@ -77,6 +83,13 @@ def execution_runtime_value() -> dict[str, object]:
         "cuda_available": bool(torch.cuda.is_available()),
         "torch_thread_count": torch.get_num_threads(),
         "platform": platform.platform(),
+        # corpus生成時のrevisionとは別のprovenanceとして記録する。
+        "execution_source_revisions": {
+            "lisjong": revisions.lisjong,
+            "lisjong_engine": revisions.lisjong_engine,
+            "lisjong_arena": revisions.lisjong_arena,
+        },
+        "execution_source_revisions_fully_resolved": revisions.fully_resolved,
     }
 
 
@@ -172,6 +185,13 @@ def validate_model_manifest(value: object) -> dict[str, object]:
         raise Stage3ArtifactError("locked S2 model config differs")
     if value.get("test_partition_evaluated") is not False:
         raise Stage3ArtifactError("Stage 3 must not evaluate a TEST partition")
+    runtime = value.get("runtime")
+    if type(runtime) is not dict:
+        raise Stage3ArtifactError("execution runtime record is missing")
+    if runtime.get("device") != "cpu" or runtime.get("cuda_available") is not False:
+        raise Stage3ArtifactError("Stage 3 pilot execution is CPU-only")
+    if runtime.get("torch_thread_count") != 1:
+        raise Stage3ArtifactError("Stage 3 pilot execution is single-threaded")
     for name in ("raw_corpus_identity", "dataset_identity", "inventory_identity"):
         _digest(value.get(name), name)
     _digest(value.get("training_population_identity"), "training_population_identity")
