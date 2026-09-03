@@ -50,6 +50,7 @@ SERVING_DEVICE = "cpu"
 class ServingDecisionSample:
     """1 decisionのserving-path latency内訳。selectionには影響しない。"""
 
+    started_at: float
     legal_action_count: int
     selected_index: int
     feature_encode_seconds: float
@@ -117,17 +118,29 @@ class LearnedServingPolicy:
     状態には依存しない。
     """
 
-    __slots__ = ("_runtime", "_samples")
+    __slots__ = ("_runtime", "_samples", "_finite_logit_checks", "_non_finite_logits")
 
     def __init__(self, runtime: ServingRuntime) -> None:
         if not isinstance(runtime, ServingRuntime):
             raise TypeError("runtime must be a ServingRuntime")
         self._runtime = runtime
         self._samples: list[ServingDecisionSample] = []
+        self._finite_logit_checks = 0
+        self._non_finite_logits = 0
 
     @property
     def samples(self) -> tuple[ServingDecisionSample, ...]:
         return tuple(self._samples)
+
+    @property
+    def finite_logit_checks(self) -> int:
+        """finiteness checkを実際に通過したdecision数。"""
+        return self._finite_logit_checks
+
+    @property
+    def non_finite_logits(self) -> int:
+        """non-finite logitsを観測した回数。観測時点でfail closedする。"""
+        return self._non_finite_logits
 
     def _encode(self, policy_input):
         """Stage 1 encoderだけをfeatureのsingle source of truthとして使う。"""
@@ -153,7 +166,9 @@ class LearnedServingPolicy:
                 f"got {tuple(logits.shape)}"
             )
         if not bool(torch.isfinite(logits).all()):
+            self._non_finite_logits += 1
             raise Stage3ServingError("model produced non-finite logits")
+        self._finite_logit_checks += 1
         return logits
 
     def _select(self, logits, decision: DecisionContext) -> tuple[int, InternalAction]:
@@ -198,6 +213,7 @@ class LearnedServingPolicy:
 
         self._samples.append(
             ServingDecisionSample(
+                started_at=started,
                 legal_action_count=sum(1 for _ in decision.legal_actions),
                 selected_index=index,
                 feature_encode_seconds=encode_seconds,
@@ -237,8 +253,12 @@ class ServingLatencySummary:
 
 
 def summarize_latency(samples) -> ServingLatencySummary:
-    """decision sampleをwarm統計へ集約する。1件目はwarm統計へ入れない。"""
-    samples = tuple(samples)
+    """decision sampleをwarm統計へ集約する。
+
+    cold-start costをwarm統計へ混ぜないため、seat単位の呼び出し順ではなく実際の
+    呼び出し時刻でsortし、process全体で最初のdecisionだけを分離する。
+    """
+    samples = tuple(sorted(samples, key=lambda item: item.started_at))
     if not samples:
         raise Stage3ServingError("latency summary requires at least one decision")
     warm = samples[1:] or samples

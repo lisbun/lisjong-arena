@@ -111,29 +111,48 @@ class HanchanSmokeResult:
         }
 
 
-def _verify_decision(context: DecisionContext, selected) -> int:
-    """実行されたactionが当該decisionのlegal set上でcanonicalであることを確認する。
+@dataclass(slots=True)
+class _VerificationTally:
+    """独立照合で実際に観測した違反件数。0であることを後段でfail closedする。"""
+
+    decisions: int = 0
+    foreign_action_object: int = 0
+    masked_illegal_selection: int = 0
+    resolve_failure: int = 0
+
+
+def _verify_decision(
+    context: DecisionContext, selected, tally: "_VerificationTally"
+) -> int:
+    """実行されたactionが当該decisionのlegal set上でcanonicalであることを数える。
 
     adapter側の主張ではなく、記録されたexecution observationから独立に照合する。
+    違反はここでraiseせずtallyへ計上し、hanchan完了時にまとめてfail closedする。
+    そうしないと「0件だった」という報告値が、instrumentationではなくcodeの
+    literalになってしまう。
     """
+    tally.decisions += 1
     if not any(selected is action for action in context.legal_actions):
-        raise Stage3ServingError("executed action is not the decision's legal object")
+        tally.foreign_action_object += 1
     mask = build_legal_action_mask(context)
     index = encode_action(selected)
     if not mask[index]:
-        raise Stage3ServingError("executed action index is not legal in its own mask")
-    if resolve_legal_action(index, context) is not selected:
-        raise Stage3ServingError(
-            "resolve_legal_action did not return the executed action"
-        )
+        tally.masked_illegal_selection += 1
+    try:
+        resolved = resolve_legal_action(index, context)
+    except Exception:
+        tally.resolve_failure += 1
+        return index
+    if resolved is not selected:
+        tally.resolve_failure += 1
     return index
 
 
-def _observe_execution(inspection, policies) -> tuple[str, int, dict]:
+def _observe_execution(inspection, policies) -> tuple[str, "_VerificationTally", dict]:
     """記録されたdecisionを照合し、trace digestとper-seat index列を返す。"""
     lines: list[str] = []
     per_seat: dict[int, list[int]] = {int(seat): [] for seat in Seat}
-    decisions = 0
+    tally = _VerificationTally()
     for step in inspection.step_observations:
         for observation in step.seat_decisions:
             trace = observation.decision_trace
@@ -141,11 +160,10 @@ def _observe_execution(inspection, policies) -> tuple[str, int, dict]:
                 input=observation.policy_input,
                 legal_actions=trace.legal_actions,
             )
-            index = _verify_decision(context, trace.selected_action)
+            index = _verify_decision(context, trace.selected_action, tally)
             seat = int(observation.seat)
             per_seat[seat].append(index)
             lines.append(f"{step.step_ordinal}\t{seat}\t{index}")
-            decisions += 1
 
     for seat, indices in per_seat.items():
         selected = [sample.selected_index for sample in policies[Seat(seat)].samples]
@@ -154,12 +172,12 @@ def _observe_execution(inspection, policies) -> tuple[str, int, dict]:
                 f"seat {seat} executed indices differ from the model selections"
             )
     digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
-    return digest, decisions, per_seat
+    return digest, tally, per_seat
 
 
 def run_serving_hanchan(
     runtime: ServingRuntime, seed: int
-) -> tuple[HanchanSmokeResult, tuple]:
+) -> tuple[HanchanSmokeResult, tuple, "_VerificationTally", int]:
     """1 seedをlearned candidate x4で完走させ、observationを照合する。"""
     require_serving_seed(seed)
     policies = {seat: runtime.create_policy() for seat in Seat}
@@ -179,14 +197,26 @@ def run_serving_hanchan(
     wall_clock = time.perf_counter() - wall_start
     cpu_seconds = time.process_time() - cpu_start
 
-    digest, decisions, _ = _observe_execution(recorder.snapshot(), policies)
-    if decisions != result.decisions:
+    digest, tally, _ = _observe_execution(recorder.snapshot(), policies)
+    if tally.decisions != result.decisions:
         raise Stage3ServingError(
             "observed decision count does not match the executed decision count"
         )
-    samples = tuple(
-        sample for seat in Seat for sample in policies[Seat(int(seat))].samples
-    )
+    if (
+        tally.foreign_action_object
+        or tally.masked_illegal_selection
+        or tally.resolve_failure
+    ):
+        raise Stage3ServingError(
+            f"serving safety verification failed on seed {seed}: {tally}"
+        )
+    checks = sum(policies[seat].finite_logit_checks for seat in Seat)
+    non_finite = sum(policies[seat].non_finite_logits for seat in Seat)
+    if non_finite or checks != tally.decisions:
+        raise Stage3ServingError(
+            f"logit finiteness was not established for every decision on seed {seed}"
+        )
+    samples = tuple(sample for seat in Seat for sample in policies[seat].samples)
     return (
         HanchanSmokeResult(
             seed=seed,
@@ -199,6 +229,8 @@ def run_serving_hanchan(
             cpu_seconds=cpu_seconds,
         ),
         samples,
+        tally,
+        non_finite,
     )
 
 
@@ -231,20 +263,35 @@ def run_serving_plan(runtime: ServingRuntime, run_ordinal: int) -> ServingSmokeR
     """locked serving planを1回実行する。"""
     results = []
     samples: list = []
+    tallies: list = []
+    non_finite = 0
     for seed in SERVING_SEEDS:
-        hanchan, hanchan_samples = run_serving_hanchan(runtime, seed)
+        hanchan, hanchan_samples, tally, hanchan_non_finite = run_serving_hanchan(
+            runtime, seed
+        )
         results.append(hanchan)
         samples.extend(hanchan_samples)
+        tallies.append(tally)
+        non_finite += hanchan_non_finite
     if len(results) != SERVING_HANCHAN_COUNT:
         raise Stage3ServingError("serving plan did not run the locked hanchan count")
 
+    # execute_policy()のvalidation失敗はrunnerをabortさせるため、planがここへ到達
+    # した時点で0件であることが確定している。他の値はadapter instrumentationと
+    # 独立照合の実測値であり、codeのliteralではない。
     counters = SafetyCounters(
-        decisions=len(samples),
-        masked_illegal_selection=0,
-        resolve_failure=0,
+        decisions=sum(tally.decisions for tally in tallies),
+        masked_illegal_selection=sum(
+            tally.masked_illegal_selection for tally in tallies
+        ),
+        resolve_failure=sum(tally.resolve_failure for tally in tallies),
         policy_validation_failure=0,
-        non_finite_logits=0,
+        non_finite_logits=non_finite,
     )
+    if counters.decisions != len(samples):
+        raise Stage3ServingError(
+            "verified decision count does not match the recorded model selections"
+        )
     return ServingSmokeRun(
         run_ordinal=run_ordinal,
         hanchan=tuple(results),
