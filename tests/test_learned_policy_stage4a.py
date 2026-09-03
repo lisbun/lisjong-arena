@@ -9,6 +9,7 @@ readback、screening classificationを高速に固定する。
 import json
 import unittest
 from inspect import signature
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -28,6 +29,7 @@ from lisjong_arena.learned_policy_stage2.protocol import (
     VALIDATION_SEEDS,
 )
 from lisjong_arena.learned_policy_stage3.protocol import SERVING_SEEDS
+from lisjong_arena.learned_policy_stage4a.__main__ import main as cli_main
 from lisjong_arena.learned_policy_stage4a.candidate import (
     BUNDLE_CHECKPOINT_DIRNAME,
     CANDIDATE_PURPOSE,
@@ -35,6 +37,7 @@ from lisjong_arena.learned_policy_stage4a.candidate import (
     FREEZE_RECORD_SCHEMA_VERSION,
     Stage4aFreeze,
     build_freeze_document,
+    freeze_candidate,
     load_freeze_record,
     parse_freeze_document,
     resolve_retention_target,
@@ -264,6 +267,39 @@ class Stage4aRetentionTargetTest(unittest.TestCase):
                         key="stage4a/run-1",
                     )
         self.assertIn("already exists", str(caught.exception))
+
+    def test_gate_0_refuses_to_generate_into_an_existing_bundle(self):
+        """generationより前にdestinationをfail closedし、上書きを試みない。"""
+        with TemporaryDirectory() as directory:
+            target = retention_target(Path(directory), key="run-1")
+            target.bundle_path.mkdir(parents=True)
+            with mock.patch(
+                "lisjong_arena.learned_policy_stage4a.candidate"
+                ".build_fixture_checkpoint",
+                side_effect=AssertionError("generation must not start"),
+            ):
+                with self.assertRaises(Stage4aRetentionError):
+                    freeze_candidate(target)
+
+    def test_the_cli_reports_a_blocked_retention_as_the_locked_outcome(self):
+        with TemporaryDirectory() as directory:
+            with mock.patch("sys.stdout", new=StringIO()) as stdout:
+                with mock.patch("sys.stderr", new=StringIO()):
+                    status = cli_main(
+                        [
+                            "freeze",
+                            "--retention-backend",
+                            "session-workspace",
+                            "--retention-root",
+                            directory,
+                            "--retention-key",
+                            "learned-stage4a/screen-1",
+                        ]
+                    )
+        self.assertEqual(status, 1)
+        self.assertIn(
+            Stage4aOutcome.ARTIFACT_RETENTION_BLOCKED.value, stdout.getvalue()
+        )
 
     def test_a_declared_non_ephemeral_root_resolves(self):
         with TemporaryDirectory() as directory:
