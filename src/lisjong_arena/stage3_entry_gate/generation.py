@@ -402,6 +402,15 @@ def load_population(destination: str | Path):
         raise Stage3GenerationError("raw corpus and dataset provenance differ")
     if not dataset.provenance.source_revisions.fully_resolved:
         raise Stage3GenerationError("Stage 3 requires fully resolved source revisions")
+    # manifest provenanceを実体のcorpus / dataset provenanceへbindする。
+    # このbindingが無いと、raw / datasetを触らずにmanifestのsource revisionsや
+    # rules fingerprintだけを書き換えたpopulationがloadでき、その値が3 x 3
+    # result artifactのpopulation provenanceへそのまま転記されてしまう。
+    # Issue #131のhard gateはexact Policy / rules / source provenanceを要求する。
+    if manifest["provenance"] != _provenance_value(dataset.provenance):
+        raise Stage3GenerationError(
+            "manifest provenance differs from the persisted corpus / dataset provenance"
+        )
     return manifest, persisted_raw, persisted_dataset
 
 

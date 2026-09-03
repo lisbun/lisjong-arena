@@ -889,7 +889,10 @@ semanticsそのものをfail closedで検証する。self-consistentなsemantic 
 - population manifest — `population_identity`が記録済み`population_plan`のhashで
   あること、そのplanがlocked A / B / C planのいずれかとexact一致すること、Stage 3
   split policy、TEST partition不在、fully resolvedなcorpus provenance、locked
-  hanchan数
+  hanchan数。さらに`load_population()`がmanifest provenanceを **実体のraw corpus /
+  dataset provenanceへbind** する。このbindingが無いと、raw / datasetを触らず
+  manifestのsource revisionsやrules fingerprintだけを書き換えたpopulationがload
+  でき、その値が3 x 3 result artifactのpopulation provenanceへそのまま転記される
 - model manifest — locked S2 config / parameter count、`reference_arm_id`、
   feature dimension、Phase 8 `FORMAL_TRAINING_CONFIG`とのexact一致、checkpoint
   selection ruleをPhase 8 `checkpoint_improves()`（1e-12 tie tolerance）で再導出

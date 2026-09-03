@@ -57,11 +57,16 @@ from lisjong_arena.stage3_entry_gate.experiment import (
     validate_stage3_dataset,
 )
 from lisjong_arena.stage3_entry_gate.generation import (
+    DATASET_DIRECTORY,
     MANIFEST_FILENAME,
+    MANIFEST_SCHEMA_VERSION,
+    RAW_DIRECTORY,
     GenerationCost,
     Stage3GenerationError,
     _peak_process_ram_bytes,
+    _provenance_value,
     generate_population,
+    load_population,
     load_population_manifest,
     validate_population_manifest,
 )
@@ -238,6 +243,86 @@ class Stage3PopulationManifestValidationTest(unittest.TestCase):
             validate_population_manifest(
                 self._manifest(coverage={"events": {"hanchan": 11}})
             )
+
+
+class Stage3PopulationProvenanceBindingTest(unittest.TestCase):
+    """manifest provenanceが実体のcorpus / dataset provenanceへbindされること。
+
+    このbindingが無いと、raw / datasetを一切触らずmanifestのsource revisionsや
+    rules fingerprintだけを書き換えたpopulationがloadでき、その値がそのまま
+    3 x 3 result artifactのpopulation provenanceへ転記されてしまう。
+    """
+
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.root = Path(self._directory.name) / "population"
+        self.root.mkdir(parents=True)
+        persisted_raw, dataset = stage3_population_artifacts(self.root)
+        self.plan = population_a_plan()
+        self.manifest = {
+            "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
+            "pilot_role": "development-only",
+            "population_identity": self.plan.population_identity,
+            "population_plan": self.plan.plan_value(),
+            "raw_corpus_identity": persisted_raw.corpus_identity,
+            "dataset_identity": dataset.dataset_identity,
+            "split_policy_id": FirstPartySplitPolicy.STAGE3_DEVELOPMENT.value,
+            "provenance": _provenance_value(dataset.provenance),
+            "generation_runtime": {},
+            "coverage": {"events": {"hanchan": 12}},
+            "cost": {},
+            "conditional_uniform_baseline": {},
+            "test_partition_present": False,
+        }
+        self._write(self.manifest)
+
+    def tearDown(self):
+        self._directory.cleanup()
+
+    def _write(self, manifest: dict) -> None:
+        (self.root / MANIFEST_FILENAME).write_bytes(canonical_json_bytes(manifest))
+
+    def test_directory_layout_matches_the_generator(self):
+        self.assertTrue((self.root / RAW_DIRECTORY).is_dir())
+        self.assertTrue((self.root / DATASET_DIRECTORY).is_dir())
+
+    def test_matching_provenance_loads(self):
+        manifest, persisted_raw, persisted_dataset = load_population(self.root)
+        self.assertEqual(manifest["raw_corpus_identity"], persisted_raw.corpus_identity)
+        self.assertEqual(
+            manifest["provenance"],
+            _provenance_value(persisted_dataset.dataset.provenance),
+        )
+
+    def test_self_consistent_source_revision_tampering_is_rejected(self):
+        """revisionを別SHAへ書き換え、fully_resolvedもcanonical bytesも保つ改変。"""
+        provenance = dict(self.manifest["provenance"])
+        provenance["source_revisions"] = dict(provenance["source_revisions"]) | {
+            "lisjong": "9" * 40
+        }
+        self.assertIs(provenance["fully_resolved"], True)
+        self._write(self.manifest | {"provenance": provenance})
+        # manifest単体としてはvalidであることを先に確認しておく。
+        validate_population_manifest(load_population_manifest(self.root))
+        with self.assertRaises(Stage3GenerationError):
+            load_population(self.root)
+
+    def test_self_consistent_rules_fingerprint_tampering_is_rejected(self):
+        provenance = dict(self.manifest["provenance"])
+        provenance["effective_rules"] = dict(provenance["effective_rules"]) | {
+            "fingerprint": "b" * 64
+        }
+        self._write(self.manifest | {"provenance": provenance})
+        with self.assertRaises(Stage3GenerationError):
+            load_population(self.root)
+
+    def test_label_semantics_tampering_is_rejected(self):
+        provenance = dict(self.manifest["provenance"]) | {
+            "label_semantics_id": "other-label-semantics-v9"
+        }
+        self._write(self.manifest | {"provenance": provenance})
+        with self.assertRaises(Stage3GenerationError):
+            load_population(self.root)
 
 
 class Stage3ResultValidationTest(unittest.TestCase):
