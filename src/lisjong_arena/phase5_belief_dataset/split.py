@@ -25,17 +25,37 @@ STAGE3_DEVELOPMENT_SEEDS = STAGE3_TRAIN_SEEDS + STAGE3_VALIDATION_SEEDS
 しない。TEST partitionを持たないことがこのsplitのprotocol invariantである。
 """
 
+KAN_COVERAGE_TRAIN_SEEDS = tuple(range(306, 324))
+KAN_COVERAGE_VALIDATION_SEEDS = tuple(range(324, 330))
+KAN_COVERAGE_DEVELOPMENT_SEEDS = (
+    KAN_COVERAGE_TRAIN_SEEDS + KAN_COVERAGE_VALIDATION_SEEDS
+)
+"""Arena #146 kan coverage-source qualification向けのdevelopment-only seed population。
+
+#131の`180..191`はhistorical Stage 3 Entry Gate populationであり、本successor
+pilotへ再利用しない。`306..329`は`281..305`までのlocked rangeの後続にある
+freshな連続rangeであり、`180..191`と同じくdevelopment-onlyである。将来の
+formal confirmatory TESTへも転用しない。TEST partitionを持たないことは
+`STAGE3_DEVELOPMENT`と同じprotocol invariantである。
+
+TRAIN / VALIDATIONというnamingは、existing Phase 5 materialization contractを
+そのまま使うためのdevelopment partition名であり、Arena #146ではmodel training /
+checkpoint selectionを行わない。
+"""
+
 
 class FirstPartySplitPolicy(Enum):
     ACCEPTANCE = "first-party-seeds-1000-1007-all-test-v1"
     QUANTITATIVE = "first-party-seeds-100-159-40-10-10-v1"
     STAGE3_DEVELOPMENT = "first-party-seeds-180-191-8-4-development-only-v1"
+    KAN_COVERAGE_DEVELOPMENT = "first-party-seeds-306-329-18-6-development-only-v1"
 
 
 _EXPECTED_SEEDS = {
     FirstPartySplitPolicy.ACCEPTANCE: FIXED_SEEDS,
     FirstPartySplitPolicy.QUANTITATIVE: QUANTITATIVE_SEEDS,
     FirstPartySplitPolicy.STAGE3_DEVELOPMENT: STAGE3_DEVELOPMENT_SEEDS,
+    FirstPartySplitPolicy.KAN_COVERAGE_DEVELOPMENT: KAN_COVERAGE_DEVELOPMENT_SEEDS,
 }
 
 
@@ -61,6 +81,12 @@ def partition_for_first_party_game(
         if game_seed in STAGE3_VALIDATION_SEEDS:
             return DatasetPartition.VALIDATION
         raise ValueError("stage 3 development split requires seeds 180..191")
+    if policy is FirstPartySplitPolicy.KAN_COVERAGE_DEVELOPMENT:
+        if game_seed in KAN_COVERAGE_TRAIN_SEEDS:
+            return DatasetPartition.TRAIN
+        if game_seed in KAN_COVERAGE_VALIDATION_SEEDS:
+            return DatasetPartition.VALIDATION
+        raise ValueError("kan coverage development split requires seeds 306..329")
     if game_seed in TRAIN_SEEDS:
         return DatasetPartition.TRAIN
     if game_seed in VALIDATION_SEEDS:
@@ -94,6 +120,9 @@ def assign_first_party_games(
 
 
 __all__ = [
+    "KAN_COVERAGE_DEVELOPMENT_SEEDS",
+    "KAN_COVERAGE_TRAIN_SEEDS",
+    "KAN_COVERAGE_VALIDATION_SEEDS",
     "QUANTITATIVE_SEEDS",
     "STAGE3_DEVELOPMENT_SEEDS",
     "STAGE3_TRAIN_SEEDS",
