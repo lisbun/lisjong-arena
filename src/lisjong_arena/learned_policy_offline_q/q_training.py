@@ -479,6 +479,8 @@ def load_checkpoint(path: str | Path) -> LoadedQCheckpoint:
             "checkpoint state_dict does not match the locked model"
         ) from error
     model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
     return LoadedQCheckpoint(
         path=path,
         manifest=manifest,

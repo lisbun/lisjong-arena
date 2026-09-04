@@ -30,7 +30,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from lisjong.action_vocabulary import build_legal_action_mask
-from lisjong.policy_contract.action import DiscardAction
 
 from lisjong_arena.learned_policy_input import build_policy_input_feature, tensor_values
 from lisjong_arena.learned_policy_stage2.recording import (
@@ -40,21 +39,15 @@ from lisjong_arena.learned_policy_stage2.recording import (
     iter_recorded_decisions,
 )
 
+from .activation import is_eligible_ordinary_discard_choice
 from .errors import OfflineQTransitionError
 from .model import MacroTransitionRow
-from .protocol import (
-    MINIMUM_CHOICE_LEGAL_ACTION_COUNT,
-    REWARD_SCORE_DIVISOR,
-    action_family,
-)
+from .protocol import REWARD_SCORE_DIVISOR, action_family
 
 
 def is_eligible_ordinary_discard(decision: RecordedDecision) -> bool:
     """全legal_actionsがDiscardActionかつchoice decision (>=2) の場合だけTrue。"""
-    legal_actions = decision.context.legal_actions
-    if len(legal_actions) < MINIMUM_CHOICE_LEGAL_ACTION_COUNT:
-        return False
-    return all(isinstance(action, DiscardAction) for action in legal_actions)
+    return is_eligible_ordinary_discard_choice(decision.context.legal_actions)
 
 
 def _round_key(decision: RecordedDecision) -> tuple[str, int, int]:

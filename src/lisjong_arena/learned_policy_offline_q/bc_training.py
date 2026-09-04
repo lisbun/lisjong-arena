@@ -440,6 +440,8 @@ def load_checkpoint(path: str | Path) -> LoadedBcCheckpoint:
             "checkpoint state_dict does not match the locked model"
         ) from error
     model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
     return LoadedBcCheckpoint(path=path, manifest=manifest, model=model)
 
 
