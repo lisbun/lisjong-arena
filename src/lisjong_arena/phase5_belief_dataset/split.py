@@ -44,11 +44,32 @@ checkpoint selectionを行わない。
 """
 
 
+MIX_PILOT_TRAIN_SEEDS = tuple(range(330, 348))
+MIX_PILOT_VALIDATION_SEEDS = tuple(range(348, 354))
+MIX_PILOT_DEVELOPMENT_SEEDS = MIX_PILOT_TRAIN_SEEDS + MIX_PILOT_VALIDATION_SEEDS
+"""Arena #148 population-mix pilot向けのdevelopment-only seed population。
+
+#131の`180..191`と#146の`306..329`はそれぞれhistorical Stage 3 Entry Gate /
+coverage-source qualification populationであり、本successor pilotへ再利用しない。
+`330..353`は`306..329`の直後にあるfreshな連続rangeであり、同じくdevelopment-only
+である。将来のformal confirmatory TESTへも転用しない。TEST partitionを持たない
+ことは`STAGE3_DEVELOPMENT` / `KAN_COVERAGE_DEVELOPMENT`と同じprotocol invariant
+である。
+
+本pilotの3 armは **意図的に同じordered seedsを共有する**。同じinitial game
+randomnessに対してpopulation constructionだけを変えるdevelopment comparisonで
+あり、seed reuse事故ではない。armごとに独立したpopulation identity / raw corpus /
+datasetを持つ。population差でtrajectoryが分岐するため、同一seedをpaired hidden
+-state sampleとしては扱わない。
+"""
+
+
 class FirstPartySplitPolicy(Enum):
     ACCEPTANCE = "first-party-seeds-1000-1007-all-test-v1"
     QUANTITATIVE = "first-party-seeds-100-159-40-10-10-v1"
     STAGE3_DEVELOPMENT = "first-party-seeds-180-191-8-4-development-only-v1"
     KAN_COVERAGE_DEVELOPMENT = "first-party-seeds-306-329-18-6-development-only-v1"
+    MIX_PILOT_DEVELOPMENT = "first-party-seeds-330-353-18-6-development-only-v1"
 
 
 _EXPECTED_SEEDS = {
@@ -56,6 +77,7 @@ _EXPECTED_SEEDS = {
     FirstPartySplitPolicy.QUANTITATIVE: QUANTITATIVE_SEEDS,
     FirstPartySplitPolicy.STAGE3_DEVELOPMENT: STAGE3_DEVELOPMENT_SEEDS,
     FirstPartySplitPolicy.KAN_COVERAGE_DEVELOPMENT: KAN_COVERAGE_DEVELOPMENT_SEEDS,
+    FirstPartySplitPolicy.MIX_PILOT_DEVELOPMENT: MIX_PILOT_DEVELOPMENT_SEEDS,
 }
 
 
@@ -87,6 +109,12 @@ def partition_for_first_party_game(
         if game_seed in KAN_COVERAGE_VALIDATION_SEEDS:
             return DatasetPartition.VALIDATION
         raise ValueError("kan coverage development split requires seeds 306..329")
+    if policy is FirstPartySplitPolicy.MIX_PILOT_DEVELOPMENT:
+        if game_seed in MIX_PILOT_TRAIN_SEEDS:
+            return DatasetPartition.TRAIN
+        if game_seed in MIX_PILOT_VALIDATION_SEEDS:
+            return DatasetPartition.VALIDATION
+        raise ValueError("mix pilot development split requires seeds 330..353")
     if game_seed in TRAIN_SEEDS:
         return DatasetPartition.TRAIN
     if game_seed in VALIDATION_SEEDS:
@@ -123,6 +151,9 @@ __all__ = [
     "KAN_COVERAGE_DEVELOPMENT_SEEDS",
     "KAN_COVERAGE_TRAIN_SEEDS",
     "KAN_COVERAGE_VALIDATION_SEEDS",
+    "MIX_PILOT_DEVELOPMENT_SEEDS",
+    "MIX_PILOT_TRAIN_SEEDS",
+    "MIX_PILOT_VALIDATION_SEEDS",
     "QUANTITATIVE_SEEDS",
     "STAGE3_DEVELOPMENT_SEEDS",
     "STAGE3_TRAIN_SEEDS",
