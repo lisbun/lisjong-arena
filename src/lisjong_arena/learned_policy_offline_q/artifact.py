@@ -555,6 +555,18 @@ class LoadedOfflineQDataset:
             raise TypeError("split must be a Split")
         return tuple(index for index, row in enumerate(self.rows) if row.split is split)
 
+    def feature_bytes(self) -> bytes:
+        return (self.path / FEATURES_FILENAME).read_bytes()
+
+    def legal_mask_bytes(self) -> bytes:
+        return (self.path / LEGAL_MASK_FILENAME).read_bytes()
+
+    def next_feature_bytes(self) -> bytes:
+        return (self.path / NEXT_FEATURES_FILENAME).read_bytes()
+
+    def next_legal_mask_bytes(self) -> bytes:
+        return (self.path / NEXT_LEGAL_MASK_FILENAME).read_bytes()
+
     def feature_row(self, index: int) -> array:
         return self._read_row(FEATURES_FILENAME, _FEATURE_ROW_BYTES, index, "f")
 
