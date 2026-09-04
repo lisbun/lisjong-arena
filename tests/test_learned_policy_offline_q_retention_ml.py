@@ -6,6 +6,7 @@ BC / Q checkpointの複製・freeze record・strict readbackだけを検証す�
 """
 
 import importlib.util
+import json
 import shutil
 import tempfile
 import unittest
@@ -18,13 +19,16 @@ from lisjong_arena.learned_policy_offline_q.bc_training import (
     save_checkpoint as save_bc_checkpoint,
 )
 from lisjong_arena.learned_policy_offline_q.bc_training import train_bc_model
+from lisjong_arena.learned_policy_offline_q.errors import OfflineQArtifactError
 from lisjong_arena.learned_policy_offline_q.q_training import (
     save_checkpoint as save_q_checkpoint,
 )
 from lisjong_arena.learned_policy_offline_q.q_training import train_q_model
 from lisjong_arena.learned_policy_offline_q.retention import (
+    FREEZE_RECORD_FILENAME,
     Stage4aRetentionError,
     freeze_candidates,
+    load_freeze_record,
     strict_readback,
 )
 
@@ -76,6 +80,58 @@ class RetentionGateTest(unittest.TestCase):
         reloaded = strict_readback(self.retention_root / "offlineq" / "run-1")
         self.assertEqual(reloaded.bc_checkpoint.identity, self.bc_checkpoint.identity)
         self.assertEqual(reloaded.q_checkpoint.identity, self.q_checkpoint.identity)
+
+    def test_freeze_record_uses_the_actual_bc_and_q_bundle_layout(self):
+        """freeze recordのrelative pathは実際に書かれたdirectory名
+        (bc-checkpoint / q-checkpoint) を指す。Stage 4aのsingle-checkpoint
+        layout（``<key>/checkpoint``）を誤って引き継がない。
+        """
+        with mock.patch(_EPHEMERAL_PATCH, return_value=()):
+            freeze, _ = freeze_candidates(
+                bc_checkpoint_path=self.bc_checkpoint.path,
+                q_checkpoint_path=self.q_checkpoint.path,
+                backend="test-store",
+                root=self.retention_root,
+                key="offlineq/run-1",
+            )
+        self.assertEqual(
+            freeze.bc_checkpoint_relative_path, "offlineq/run-1/bc-checkpoint"
+        )
+        self.assertEqual(
+            freeze.q_checkpoint_relative_path, "offlineq/run-1/q-checkpoint"
+        )
+        bundle_path = self.retention_root / "offlineq" / "run-1"
+        self.assertTrue((bundle_path / "bc-checkpoint").is_dir())
+        self.assertTrue((bundle_path / "q-checkpoint").is_dir())
+        # Round-tripping via load_freeze_record (a nested, multi-segment key)
+        # must not double the "offlineq" segment or otherwise corrupt the path.
+        reloaded_freeze = load_freeze_record(bundle_path)
+        self.assertEqual(reloaded_freeze.key, "offlineq/run-1")
+        self.assertEqual(
+            reloaded_freeze.bc_checkpoint_relative_path, "offlineq/run-1/bc-checkpoint"
+        )
+
+    def test_a_relative_path_inconsistent_with_the_key_fails_closed(self):
+        with mock.patch(_EPHEMERAL_PATCH, return_value=()):
+            freeze_candidates(
+                bc_checkpoint_path=self.bc_checkpoint.path,
+                q_checkpoint_path=self.q_checkpoint.path,
+                backend="test-store",
+                root=self.retention_root,
+                key="offlineq/run-1",
+            )
+        bundle_path = self.retention_root / "offlineq" / "run-1"
+        record_path = bundle_path / FREEZE_RECORD_FILENAME
+        document = json.loads(record_path.read_text(encoding="utf-8"))
+        document["retention"]["bc_checkpoint_relative_path"] = (
+            "offlineq/run-1/checkpoint"
+        )
+        record_path.write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(OfflineQArtifactError):
+            load_freeze_record(bundle_path)
 
     def test_a_second_freeze_at_the_same_key_is_write_once(self):
         with mock.patch(_EPHEMERAL_PATCH, return_value=()):

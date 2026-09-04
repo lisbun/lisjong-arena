@@ -18,10 +18,7 @@ from lisjong_arena._artifact_io import (
     read_json_document,
     write_new_artifact_file,
 )
-from lisjong_arena.learned_policy_stage4a.candidate import (
-    RetentionTarget,
-    resolve_retention_target,
-)
+from lisjong_arena.learned_policy_stage4a.candidate import resolve_retention_target
 from lisjong_arena.learned_policy_stage4a.errors import Stage4aRetentionError
 
 from . import bc_training, q_training
@@ -43,16 +40,36 @@ _FREEZE_FIELDS = {
     "retention",
     "strength_claim",
 }
+_RETENTION_FIELDS = {
+    "backend",
+    "key",
+    "bc_checkpoint_relative_path",
+    "q_checkpoint_relative_path",
+}
+
+
+def _relative_path(key: str, dirname: str) -> str:
+    return f"{key}/{dirname}"
 
 
 @dataclass(frozen=True, slots=True)
 class OfflineQFreeze:
-    """BC / Q checkpointのfrozen identityとretention reference。"""
+    """BC / Q checkpointのfrozen identityとretention reference。
+
+    Stage 4aの``RetentionTarget.to_document()``はsingle checkpoint bundle
+    （``<key>/checkpoint``）を前提にしており、Offline Qが実際に持つ2つの
+    checkpoint（``<key>/bc-checkpoint`` / ``<key>/q-checkpoint``）とは
+    layoutが違う。取り違えを避けるため、このmoduleは自分のbundle layoutに
+    合わせたrelative pathを自前で持つ。
+    """
 
     dataset_identity: str
     bc_checkpoint_identity: str
     q_checkpoint_identity: str
-    retention: RetentionTarget
+    backend: str
+    key: str
+    bc_checkpoint_relative_path: str
+    q_checkpoint_relative_path: str
 
     def to_document(self) -> dict[str, object]:
         return {
@@ -62,7 +79,12 @@ class OfflineQFreeze:
             "teacher_source_revision": TEACHER_SOURCE_REVISION,
             "bc_checkpoint_identity": self.bc_checkpoint_identity,
             "q_checkpoint_identity": self.q_checkpoint_identity,
-            "retention": self.retention.to_document(),
+            "retention": {
+                "backend": self.backend,
+                "key": self.key,
+                "bc_checkpoint_relative_path": self.bc_checkpoint_relative_path,
+                "q_checkpoint_relative_path": self.q_checkpoint_relative_path,
+            },
             "strength_claim": None,
         }
 
@@ -103,7 +125,12 @@ def freeze_candidates(
             dataset_identity=bc_checkpoint.manifest["dataset_identity"],
             bc_checkpoint_identity=bc_checkpoint.identity,
             q_checkpoint_identity=q_checkpoint.identity,
-            retention=target,
+            backend=target.backend,
+            key=target.key,
+            bc_checkpoint_relative_path=_relative_path(
+                target.key, BC_CHECKPOINT_DIRNAME
+            ),
+            q_checkpoint_relative_path=_relative_path(target.key, Q_CHECKPOINT_DIRNAME),
         )
         write_new_artifact_file(
             target.bundle_path / FREEZE_RECORD_FILENAME,
@@ -127,6 +154,14 @@ class RetainedCandidates:
 
 
 def load_freeze_record(bundle_path: str | Path) -> OfflineQFreeze:
+    """freeze recordを読む。
+
+    ``bundle_path``は常にcaller（``strict_readback`` / CLI）が明示的に渡す
+    実在directoryであり、``root``や``bundle_path``をkeyから逆算しない
+    （複数segmentを持つkeyから``root``を再構築しようとすると、単純な
+    ``parent``切り出しはkeyを二重に含んでしまう）。relative pathは
+    ``key``から機械的に再構築し、記録値と一致することだけを確認する。
+    """
     path = Path(bundle_path) / FREEZE_RECORD_FILENAME
     document = expect_object(read_json_document(path), _FREEZE_FIELDS, "freeze record")
     if document["freeze_record_schema_version"] != FREEZE_RECORD_SCHEMA_VERSION:
@@ -136,15 +171,26 @@ def load_freeze_record(bundle_path: str | Path) -> OfflineQFreeze:
     if document["strength_claim"] is not None:
         raise OfflineQArtifactError("freeze record must not carry a strength claim")
     retention = expect_object(
-        document["retention"],
-        {"backend", "key", "checkpoint_relative_path"},
-        "freeze record retention",
+        document["retention"], _RETENTION_FIELDS, "freeze record retention"
     )
-    target = RetentionTarget(
-        backend=expect_str(retention["backend"], "retention.backend"),
-        root=Path(bundle_path).parent.resolve(),
-        key=expect_str(retention["key"], "retention.key"),
+    key = expect_str(retention["key"], "retention.key")
+    bc_relative_path = expect_str(
+        retention["bc_checkpoint_relative_path"],
+        "retention.bc_checkpoint_relative_path",
     )
+    q_relative_path = expect_str(
+        retention["q_checkpoint_relative_path"], "retention.q_checkpoint_relative_path"
+    )
+    if bc_relative_path != _relative_path(key, BC_CHECKPOINT_DIRNAME):
+        raise OfflineQArtifactError(
+            "freeze record bc_checkpoint_relative_path does not match the locked "
+            "bundle layout"
+        )
+    if q_relative_path != _relative_path(key, Q_CHECKPOINT_DIRNAME):
+        raise OfflineQArtifactError(
+            "freeze record q_checkpoint_relative_path does not match the locked "
+            "bundle layout"
+        )
     return OfflineQFreeze(
         dataset_identity=expect_str(document["dataset_identity"], "dataset_identity"),
         bc_checkpoint_identity=expect_str(
@@ -153,12 +199,21 @@ def load_freeze_record(bundle_path: str | Path) -> OfflineQFreeze:
         q_checkpoint_identity=expect_str(
             document["q_checkpoint_identity"], "q_checkpoint_identity"
         ),
-        retention=target,
+        backend=expect_str(retention["backend"], "retention.backend"),
+        key=key,
+        bc_checkpoint_relative_path=bc_relative_path,
+        q_checkpoint_relative_path=q_relative_path,
     )
 
 
 def strict_readback(bundle_path: str | Path) -> RetainedCandidates:
-    """retained bundleを再readbackし、freeze recordとcheckpoint identityを照合する。"""
+    """retained bundleを再readbackし、freeze recordとcheckpoint identityを照合する。
+
+    checkpointの実際の読み出しは、常にcaller-suppliedの``bundle_path``直下
+    （``BC_CHECKPOINT_DIRNAME`` / ``Q_CHECKPOINT_DIRNAME``）から行う。
+    freeze record内のrelative pathはaudit / tamper-detection用の記録であり、
+    ここから実際のfile pathを逆算しない。
+    """
     bundle_path = Path(bundle_path)
     freeze = load_freeze_record(bundle_path)
     bc_checkpoint = bc_training.load_checkpoint(bundle_path / BC_CHECKPOINT_DIRNAME)

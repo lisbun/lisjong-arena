@@ -1,16 +1,19 @@
 """Arm B (support-restricted Offline Q) training and checkpoint tests (Issue #140)."""
 
 import importlib.util
+import json
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from _learned_policy_offline_q_artifact_fixtures import (
     FIXTURE_PROVENANCE,
     write_synthetic_dataset,
 )
 
+from lisjong_arena.learned_policy_offline_q import q_training
 from lisjong_arena.learned_policy_offline_q.artifact import OfflineQDatasetWriter
 from lisjong_arena.learned_policy_offline_q.errors import (
     OfflineQArtifactError,
@@ -20,18 +23,24 @@ from lisjong_arena.learned_policy_offline_q.model import MacroTransitionRow
 from lisjong_arena.learned_policy_offline_q.protocol import (
     DATASET_ORDERED_SEEDS,
     FEATURE_DIMENSION,
+    GAMMA,
+    MAXIMUM_EPOCHS,
     VOCABULARY_SIZE,
     Split,
     action_family,
     split_for_seed,
 )
 from lisjong_arena.learned_policy_offline_q.q_training import (
+    compute_td_targets,
     load_checkpoint,
     save_checkpoint,
     train_q_model,
     train_support_mask,
 )
-from lisjong_arena.learned_policy_offline_q.split_tensors import load_split_tensors
+from lisjong_arena.learned_policy_offline_q.split_tensors import (
+    OfflineQSplitTensors,
+    load_split_tensors,
+)
 
 
 def _mask(indices) -> tuple[bool, ...]:
@@ -158,10 +167,19 @@ class QTrainingTest(unittest.TestCase):
         actual = {index for index in range(VOCABULARY_SIZE) if bool(mask[index])}
         self.assertEqual(actual, expected)
 
-    def test_training_selects_a_checkpoint_and_round_trips_it(self):
+    def test_training_takes_the_fixed_final_iteration_and_round_trips_it(self):
         run = train_q_model(self.dataset)
+        # No cross-epoch VALIDATION selection: the checkpoint is always the
+        # final of MAXIMUM_EPOCHS outer iterations, never a "best" epoch chosen
+        # by comparing Huber loss against a moving bootstrap target.
+        self.assertEqual(run.selected_epoch, MAXIMUM_EPOCHS)
+        self.assertEqual(len(run.history), MAXIMUM_EPOCHS)
+        self.assertEqual(
+            run.final_validation_huber_loss, run.history[-1].validation_huber_loss
+        )
         checkpoint = save_checkpoint(self.checkpoint_path, self.dataset, run)
         self.assertEqual(checkpoint.manifest["dataset_identity"], self.dataset.identity)
+        self.assertEqual(checkpoint.manifest["selected_epoch"], MAXIMUM_EPOCHS)
         reloaded = load_checkpoint(self.checkpoint_path)
         self.assertEqual(reloaded.identity, checkpoint.identity)
         self.assertTrue(reloaded.supported_indices)
@@ -182,6 +200,27 @@ class QTrainingTest(unittest.TestCase):
         with self.assertRaises(OfflineQArtifactError):
             load_checkpoint(self.checkpoint_path)
 
+    def test_tampered_supported_indices_with_a_stale_digest_fails_closed(self):
+        """supported_indicesを書き換えてcanonical manifestを再保存すると、
+        (raw list, digest)の食い違いでstrict loadがfail closedする。
+        `checkpoint_identity`はdigestだけをhashするため、この照合が無いと
+        raw listの改ざんは検出できない。
+        """
+        run = train_q_model(self.dataset)
+        checkpoint = save_checkpoint(self.checkpoint_path, self.dataset, run)
+        manifest_path = checkpoint.path / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # Widen supported_indices without updating supported_indices_digest or
+        # checkpoint_identity -- this is exactly the kind of tamper that a
+        # digest-less identity would silently accept.
+        manifest["supported_indices"] = sorted(set(manifest["supported_indices"]) | {5})
+        manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(OfflineQArtifactError):
+            load_checkpoint(self.checkpoint_path)
+
 
 @unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class CoverageGapTest(unittest.TestCase):
@@ -196,6 +235,130 @@ class CoverageGapTest(unittest.TestCase):
         dataset = _build_dataset_with_a_coverage_gap(self.destination)
         with self.assertRaises(OfflineQProtocolError):
             train_q_model(dataset)
+
+
+def _stub_tensors(*, reward, terminal, next_legal_mask):
+    """手計算で検証できる、小さく明示的なOfflineQSplitTensors。"""
+    import torch
+
+    count = len(reward)
+    legal_mask = torch.zeros(count, VOCABULARY_SIZE, dtype=torch.bool)
+    legal_mask[:, 0] = True
+    legal_mask[:, 1] = True
+    return OfflineQSplitTensors(
+        split=Split.TRAIN,
+        features=torch.zeros(count, FEATURE_DIMENSION),
+        legal_mask=legal_mask,
+        behavior_action_index=torch.zeros(count, dtype=torch.long),
+        reward=torch.tensor(reward, dtype=torch.float32),
+        terminal=torch.tensor(terminal, dtype=torch.bool),
+        next_features=torch.zeros(count, FEATURE_DIMENSION),
+        next_legal_mask=torch.tensor(next_legal_mask, dtype=torch.bool),
+        row_indices=tuple(range(count)),
+    )
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
+class TdTargetComputationTest(unittest.TestCase):
+    """terminal / nonterminal targetの数値を、既知の出力を返すstub modelで直接検証する。"""
+
+    def _stub_model(self, action_values: dict[int, float]):
+        import torch
+
+        class _StubQModel(torch.nn.Module):
+            def forward(self, features):
+                batch = features.shape[0]
+                out = torch.full(
+                    (batch, VOCABULARY_SIZE), float("-inf"), dtype=torch.float32
+                )
+                for index, value in action_values.items():
+                    out[:, index] = value
+                return out
+
+        return _StubQModel()
+
+    def test_terminal_target_equals_reward_exactly_and_ignores_the_target_model(self):
+        import torch
+
+        tensors = _stub_tensors(
+            reward=[0.5, -0.3],
+            terminal=[True, True],
+            next_legal_mask=[[False] * VOCABULARY_SIZE] * 2,
+        )
+        support_mask = torch.zeros(VOCABULARY_SIZE, dtype=torch.bool)
+        # A model that would blow up training if ever invoked for a terminal
+        # row: it only defines Q-values for an index no terminal row could
+        # legally reach.
+        stub = self._stub_model({999: 1_000_000.0})
+        targets = compute_td_targets(stub, tensors, support_mask)
+        self.assertTrue(torch.allclose(targets, torch.tensor([0.5, -0.3])))
+
+    def test_nonterminal_target_bootstraps_only_over_supported_next_actions(self):
+        import torch
+
+        next_mask_row = [False] * VOCABULARY_SIZE
+        next_mask_row[0] = True
+        next_mask_row[1] = True
+        next_mask_row[2] = True  # legal but not TRAIN-supported
+        tensors = _stub_tensors(
+            reward=[1.0], terminal=[False], next_legal_mask=[next_mask_row]
+        )
+        support_mask = torch.zeros(VOCABULARY_SIZE, dtype=torch.bool)
+        support_mask[0] = True
+        support_mask[1] = True
+        stub = self._stub_model({0: 2.0, 1: 5.0, 2: 100.0})
+        targets = compute_td_targets(stub, tensors, support_mask)
+        # index 2 has the highest raw Q-value but is excluded from the max
+        # because it is not TRAIN-supported; the max over {0: 2.0, 1: 5.0} is
+        # 5.0, so target = reward + gamma * 5.0.
+        expected = 1.0 + GAMMA * 5.0
+        self.assertTrue(torch.allclose(targets, torch.tensor([expected])))
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
+class HardTargetSyncTest(unittest.TestCase):
+    def test_target_network_is_frozen_within_an_epoch_and_resynced_between_epochs(
+        self,
+    ):
+        import torch
+
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        dataset = write_synthetic_dataset(tmp / "dataset", rows_per_game=6)
+        tensors = load_split_tensors(dataset)
+
+        captured: list[dict[str, torch.Tensor]] = []
+        real_compute_td_targets = q_training.compute_td_targets
+
+        def spy(target_model, tensors_arg, support_mask):
+            captured.append(
+                {
+                    name: value.clone()
+                    for name, value in target_model.state_dict().items()
+                }
+            )
+            return real_compute_td_targets(target_model, tensors_arg, support_mask)
+
+        with mock.patch.object(q_training, "compute_td_targets", side_effect=spy):
+            q_training.train_from_split_tensors(tensors)
+
+        # Two compute_td_targets calls per epoch: one for the TRAIN targets
+        # (right after the hard sync) and one inside evaluate_huber_loss for
+        # VALIDATION (same target_model, not yet re-synced).
+        self.assertEqual(len(captured), MAXIMUM_EPOCHS * 2)
+
+        def equal_state(a, b) -> bool:
+            return all(torch.equal(a[name], b[name]) for name in a)
+
+        # Frozen within epoch 1: the TRAIN-target snapshot and the
+        # VALIDATION-target snapshot must be byte-identical (no online update
+        # happened to the target network between them).
+        self.assertTrue(equal_state(captured[0], captured[1]))
+
+        # Re-synced between epoch 1 and epoch 2: epoch 2's target snapshot
+        # must differ from epoch 1's, because the online model trained on
+        # epoch 1's batches before epoch 2's sync copied its weights in.
+        self.assertFalse(equal_state(captured[0], captured[2]))
 
 
 if __name__ == "__main__":

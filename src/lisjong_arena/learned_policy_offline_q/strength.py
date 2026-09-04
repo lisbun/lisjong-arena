@@ -34,7 +34,8 @@ from lisjong_arena.single_round_evaluation import (
 from .errors import OfflineQError
 from .protocol import STRENGTH_SCREEN_SEEDS, OfflineQOutcome, require_screening_seed
 from .retention import RetainedCandidates
-from .serving import create_bc_hybrid_runtime, create_q_hybrid_runtime
+from .serving import HybridPolicy, create_bc_hybrid_runtime, create_q_hybrid_runtime
+from .support import support_set_identity
 
 CANDIDATE_IDENTITY_PREFIX = "offlineq-q:"
 BASELINE_IDENTITY_PREFIX = "offlineq-bc:"
@@ -44,34 +45,129 @@ class OfflineQStrengthError(OfflineQError):
     """Q-vs-BC ABBB screening境界の違反。"""
 
 
-def build_specs(retained: RetainedCandidates) -> tuple[PolicySpec, PolicySpec]:
-    """retained candidateから、同一support setを持つQ / BC hybrid specを作る。"""
+class _PolicyInstanceRegistry:
+    """factoryをwrapし、ABBB runnerが生成した全HybridPolicy instanceを回収する。
+
+    既存``run_single_round_evaluation()``はgame / seatごとにfresh Policy
+    instanceを``spec.factory()``から生成して使い捨てる。ABBB protocol自体は
+    変更せず、そのinstance群への参照だけをここで保持し、実行後にlearned
+    activation / scaffold fallback / support fallback rateを再構成する。
+    """
+
+    __slots__ = ("_create", "instances")
+
+    def __init__(self, create) -> None:
+        self._create = create
+        self.instances: list[HybridPolicy] = []
+
+    def create_policy(self) -> HybridPolicy:
+        policy = self._create()
+        self.instances.append(policy)
+        return policy
+
+
+@dataclass(frozen=True, slots=True)
+class ActivationDiagnostics:
+    """strength population全体でのlearned activation / fallback集計。"""
+
+    policy_instance_count: int
+    total_decisions: int
+    total_activations: int
+    total_scaffold_fallbacks: int
+    total_support_fallbacks: int
+
+    @property
+    def activation_rate(self) -> float:
+        return self.total_activations / self.total_decisions
+
+    @property
+    def scaffold_fallback_rate(self) -> float:
+        return self.total_scaffold_fallbacks / self.total_decisions
+
+    @property
+    def support_fallback_rate(self) -> float:
+        return self.total_support_fallbacks / self.total_decisions
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "policy_instance_count": self.policy_instance_count,
+            "total_decisions": self.total_decisions,
+            "total_activations": self.total_activations,
+            "activation_rate": self.activation_rate,
+            "total_scaffold_fallbacks": self.total_scaffold_fallbacks,
+            "scaffold_fallback_rate": self.scaffold_fallback_rate,
+            "total_support_fallbacks": self.total_support_fallbacks,
+            "support_fallback_rate": self.support_fallback_rate,
+        }
+
+
+def _collect_activation_diagnostics(
+    instances: list[HybridPolicy],
+) -> ActivationDiagnostics:
+    total_decisions = sum(len(policy.samples) for policy in instances)
+    if total_decisions == 0:
+        raise OfflineQStrengthError("strength screen produced no decisions to diagnose")
+    return ActivationDiagnostics(
+        policy_instance_count=len(instances),
+        total_decisions=total_decisions,
+        total_activations=sum(policy.activation_count for policy in instances),
+        total_scaffold_fallbacks=sum(
+            policy.scaffold_fallback_count for policy in instances
+        ),
+        total_support_fallbacks=sum(
+            policy.support_fallback_count for policy in instances
+        ),
+    )
+
+
+def build_specs(
+    retained: RetainedCandidates,
+) -> tuple[PolicySpec, PolicySpec, _PolicyInstanceRegistry, _PolicyInstanceRegistry]:
+    """retained candidateから、同一support setを持つQ / BC hybrid specを作る。
+
+    support setのcanonical digestを両方のPolicySpec identityへ明示的に
+    埋め込む。Q checkpointのsupported_indicesを差し替えると、Q identityだけ
+    でなくBC identityも変わるため、「同じbaseline identityのままBC hybridの
+    fallback境界を変える」ことができない。
+    """
     supported = retained.q_checkpoint.supported_indices
+    digest = support_set_identity(supported)
     q_runtime = create_q_hybrid_runtime(
         retained.q_checkpoint.path, supported_indices=supported
     )
     bc_runtime = create_bc_hybrid_runtime(
         retained.bc_checkpoint.path, supported_indices=supported
     )
+    q_registry = _PolicyInstanceRegistry(q_runtime.create_policy)
+    bc_registry = _PolicyInstanceRegistry(bc_runtime.create_policy)
     candidate = PolicySpec(
-        identity=f"{CANDIDATE_IDENTITY_PREFIX}{retained.q_checkpoint.identity}",
-        factory=q_runtime.create_policy,
+        identity=(
+            f"{CANDIDATE_IDENTITY_PREFIX}{retained.q_checkpoint.identity}"
+            f"+support:{digest}"
+        ),
+        factory=q_registry.create_policy,
     )
     baseline = PolicySpec(
-        identity=f"{BASELINE_IDENTITY_PREFIX}{retained.bc_checkpoint.identity}",
-        factory=bc_runtime.create_policy,
+        identity=(
+            f"{BASELINE_IDENTITY_PREFIX}{retained.bc_checkpoint.identity}"
+            f"+support:{digest}"
+        ),
+        factory=bc_registry.create_policy,
     )
-    return candidate, baseline
+    return candidate, baseline, q_registry, bc_registry
 
 
-def build_screening_plan(retained: RetainedCandidates) -> SingleRoundEvaluationPlan:
+def build_screening_plan(
+    retained: RetainedCandidates,
+) -> tuple[SingleRoundEvaluationPlan, _PolicyInstanceRegistry, _PolicyInstanceRegistry]:
     """locked ordered seeds (281..305) でQ-vs-BC ABBB planを組み立てる。"""
-    candidate, baseline = build_specs(retained)
+    candidate, baseline, q_registry, bc_registry = build_specs(retained)
     for seed in STRENGTH_SCREEN_SEEDS:
         require_screening_seed(seed)
-    return SingleRoundEvaluationPlan(
+    plan = SingleRoundEvaluationPlan(
         candidate=candidate, baseline=baseline, seeds=STRENGTH_SCREEN_SEEDS
     )
+    return plan, q_registry, bc_registry
 
 
 def classify_value_q_signal(statistics: SeedBlockStatistics) -> OfflineQOutcome:
@@ -101,6 +197,8 @@ class StrengthMeasurement:
     artifact: SingleRoundStrengthArtifact
     summary: SingleRoundStrengthSummary
     outcome: OfflineQOutcome
+    candidate_diagnostics: ActivationDiagnostics
+    baseline_diagnostics: ActivationDiagnostics
     wall_clock_seconds: float
     cpu_seconds: float
 
@@ -109,6 +207,8 @@ class StrengthMeasurement:
             "candidate_identity": self.artifact.plan.candidate_identity,
             "baseline_identity": self.artifact.plan.baseline_identity,
             "outcome": self.outcome.value,
+            "candidate_diagnostics": self.candidate_diagnostics.to_document(),
+            "baseline_diagnostics": self.baseline_diagnostics.to_document(),
             "wall_clock_seconds": self.wall_clock_seconds,
             "cpu_seconds": self.cpu_seconds,
         }
@@ -121,7 +221,7 @@ def run_strength_screen(
     progress_callback=None,
 ) -> StrengthMeasurement:
     """Q-vs-BCのcontrolled comparisonを実行し、artifactを保存してから読み直す。"""
-    plan = build_screening_plan(retained)
+    plan, q_registry, bc_registry = build_screening_plan(retained)
 
     wall_started = time.perf_counter()
     cpu_started = time.process_time()
@@ -147,6 +247,8 @@ def run_strength_screen(
         artifact=artifact,
         summary=summary,
         outcome=outcome,
+        candidate_diagnostics=_collect_activation_diagnostics(q_registry.instances),
+        baseline_diagnostics=_collect_activation_diagnostics(bc_registry.instances),
         wall_clock_seconds=wall_clock_seconds,
         cpu_seconds=cpu_seconds,
     )
@@ -155,6 +257,7 @@ def run_strength_screen(
 __all__ = [
     "BASELINE_IDENTITY_PREFIX",
     "CANDIDATE_IDENTITY_PREFIX",
+    "ActivationDiagnostics",
     "OfflineQStrengthError",
     "StrengthMeasurement",
     "build_screening_plan",

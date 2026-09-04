@@ -56,7 +56,7 @@ class SmokeGameMeasurement:
         }
 
 
-def _run_once(runtime: HybridRuntime, seed: int) -> tuple[SmokeGameMeasurement, tuple]:
+def _run_once(runtime: HybridRuntime, seed: int) -> tuple[SmokeGameMeasurement, dict]:
     policies = {seat: runtime.create_policy() for seat in Seat}
     if len({id(policy) for policy in policies.values()}) != len(policies):
         raise OfflineQSmokeError("each seat must use a distinct Policy instance")
@@ -68,7 +68,11 @@ def _run_once(runtime: HybridRuntime, seed: int) -> tuple[SmokeGameMeasurement, 
     wall_clock = time.perf_counter() - wall_start
     cpu_seconds = time.process_time() - cpu_start
 
-    samples = tuple(sample for policy in policies.values() for sample in policy.samples)
+    per_seat_actions = {
+        seat: tuple(sample.selected_action for sample in policy.samples)
+        for seat, policy in policies.items()
+    }
+    decision_count = sum(len(actions) for actions in per_seat_actions.values())
     measurement = SmokeGameMeasurement(
         seed=seed,
         result=result,
@@ -79,18 +83,23 @@ def _run_once(runtime: HybridRuntime, seed: int) -> tuple[SmokeGameMeasurement, 
         support_fallback_count=sum(
             policy.support_fallback_count for policy in policies.values()
         ),
-        decision_count=len(samples),
+        decision_count=decision_count,
         wall_clock_seconds=wall_clock,
         cpu_seconds=cpu_seconds,
     )
-    return measurement, samples
+    return measurement, per_seat_actions
 
 
 def run_smoke_game(runtime: HybridRuntime, seed: int) -> SmokeGameMeasurement:
-    """1 seedをdeterministic repeatで2回実行し、結果が一致することを確認する。"""
+    """1 seedをdeterministic repeatで2回実行し、結果が一致することを確認する。
+
+    aggregate counts（scores / decision countなど）だけでなく、seatごとの
+    selected actionの列そのものを比較する。異なるdecision trajectoryでも
+    aggregate countだけが偶然一致するケースを見逃さないためである。
+    """
     require_smoke_seed(seed)
-    first, _ = _run_once(runtime, seed)
-    second, _ = _run_once(runtime, seed)
+    first, first_actions = _run_once(runtime, seed)
+    second, second_actions = _run_once(runtime, seed)
     if (
         first.result.scores != second.result.scores
         or first.result.ranks != second.result.ranks
@@ -98,6 +107,7 @@ def run_smoke_game(runtime: HybridRuntime, seed: int) -> SmokeGameMeasurement:
         or first.activation_count != second.activation_count
         or first.scaffold_fallback_count != second.scaffold_fallback_count
         or first.support_fallback_count != second.support_fallback_count
+        or first_actions != second_actions
     ):
         raise OfflineQSmokeError(
             f"seed {seed} is not deterministic across repeated runs"

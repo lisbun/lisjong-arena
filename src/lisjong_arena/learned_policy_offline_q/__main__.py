@@ -158,7 +158,7 @@ def _train_q(arguments: argparse.Namespace) -> int:
     print(f"dataset_identity={dataset.identity}")
     print(f"checkpoint_identity={checkpoint.identity}")
     print(f"selected_epoch={run.selected_epoch}")
-    print(f"selected_validation_huber_loss={run.selected_validation_huber_loss:.6f}")
+    print(f"final_validation_huber_loss={run.final_validation_huber_loss:.6f}")
     print(f"supported_indices={int(run.support_mask.sum())}")
     return 0
 
@@ -243,7 +243,7 @@ def _freeze(arguments: argparse.Namespace) -> int:
         return 1
     print(f"bc_checkpoint_identity={freeze.bc_checkpoint_identity}")
     print(f"q_checkpoint_identity={freeze.q_checkpoint_identity}")
-    print(f"retention_key={freeze.retention.key}")
+    print(f"retention_key={freeze.key}")
     return 0
 
 

@@ -24,6 +24,7 @@ from lisjong_arena.learned_policy_offline_q.strength import (
     build_specs,
     classify_value_q_signal,
 )
+from lisjong_arena.learned_policy_offline_q.support import support_set_identity
 from lisjong_arena.single_round_evaluation import SeedBlockStatistics
 
 _EPHEMERAL_PATCH = "lisjong_arena.learned_policy_stage4a.candidate._ephemeral_roots"
@@ -97,16 +98,30 @@ class BuildSpecsTest(unittest.TestCase):
             )
 
     def test_specs_have_distinct_identities_bound_to_checkpoints(self):
-        candidate, baseline = build_specs(self.retained)
+        candidate, baseline, _, _ = build_specs(self.retained)
         self.assertNotEqual(candidate.identity, baseline.identity)
         self.assertIn(self.retained.q_checkpoint.identity, candidate.identity)
         self.assertIn(self.retained.bc_checkpoint.identity, baseline.identity)
 
-    def test_specs_produce_fresh_policy_instances(self):
-        candidate, baseline = build_specs(self.retained)
+    def test_both_identities_are_bound_to_the_same_support_set_digest(self):
+        """Q checkpointのsupport setを差し替えると、baseline (BC) identityも
+        変わらなければならない: 同じidentityのままBC hybridのfallback境界を
+        変えられてはならない。
+        """
+        candidate, baseline, _, _ = build_specs(self.retained)
+        digest = support_set_identity(self.retained.q_checkpoint.supported_indices)
+        self.assertIn(f"+support:{digest}", candidate.identity)
+        self.assertIn(f"+support:{digest}", baseline.identity)
+
+    def test_specs_produce_fresh_policy_instances_collected_by_the_registry(self):
+        candidate, baseline, q_registry, bc_registry = build_specs(self.retained)
         first = candidate.factory()
         second = candidate.factory()
         self.assertIsNot(first, second)
+        self.assertEqual(list(q_registry.instances), [first, second])
+        self.assertEqual(bc_registry.instances, [])
+        baseline.factory()
+        self.assertEqual(len(bc_registry.instances), 1)
 
 
 if __name__ == "__main__":

@@ -64,13 +64,19 @@ def _require_eval_cpu(model) -> None:
 
 @dataclass(frozen=True, slots=True)
 class HybridDecisionSample:
-    """1 decisionのserving-path latency / activation内訳。selectionには影響しない。"""
+    """1 decisionのserving-path latency / activation内訳。selectionには影響しない。
+
+    ``selected_action``はdeterminism検証（同一seedを2回実行してこのfieldの
+    列が一致することを確認する）のためだけに保持する。値そのものは
+    ``decision.legal_actions``内のcanonical objectをそのまま指す。
+    """
 
     started_at: float
     used_learned_model: bool
     ineligible_for_learned: bool
     support_incomplete: bool
     legal_action_count: int
+    selected_action: InternalAction
     choose_action_seconds: float
 
 
@@ -254,6 +260,7 @@ class HybridPolicy:
                 ineligible_for_learned=ineligible,
                 support_incomplete=support_incomplete,
                 legal_action_count=legal_action_count,
+                selected_action=action,
                 choose_action_seconds=time.perf_counter() - started,
             )
         )

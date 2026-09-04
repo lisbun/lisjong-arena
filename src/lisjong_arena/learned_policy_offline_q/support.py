@@ -11,12 +11,28 @@ TEST split rowはここでは一切読まない。data coverageが不十分な�
 この報告を見た人間 / bounded Issue判断に委ね、このmoduleでは自動確定しない。
 """
 
+import hashlib
 from dataclasses import dataclass
+
+from lisjong_arena._artifact_io import canonical_json_text
 
 from .artifact import LoadedOfflineQDataset
 from .protocol import Split
 
 LEGAL_ACTION_COUNT_BUCKETS = (2, 3, 4, 5, 6, 7, 8)
+
+
+def support_set_identity(supported_indices) -> str:
+    """`supported_indices`集合のcanonical sha256 digestを返す。
+
+    Q checkpointのlogical identityと、BC hybrid / Q hybridのserving
+    identityへ同じsupport setを使ったことをbindするためのcompact identityで
+    ある。indexの並び順に依存せず、setとして同じ内容なら常に同じ値になる。
+    """
+    payload = canonical_json_text(
+        {"supported_indices": sorted(int(index) for index in supported_indices)}
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _legal_indices(dataset: LoadedOfflineQDataset, index: int) -> frozenset[int]:
@@ -147,4 +163,5 @@ __all__ = [
     "SupportGateReport",
     "build_support_gate_report",
     "is_support_complete",
+    "support_set_identity",
 ]

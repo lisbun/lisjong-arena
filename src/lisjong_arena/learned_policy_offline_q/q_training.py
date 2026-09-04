@@ -10,15 +10,25 @@ Offline Q dataset (eligible ordinary-discard source states only)
                     a' restricted to next-state legal actions that are also
                     TRAIN-supported)
     -> Huber(Q(s, a_behavior), y), Adam(lr=1e-3, weight_decay=0),
-       batch 256, <=20 epochs, patience 4, epoch-level hard target sync
-    -> lowest VALIDATION selected-action Huber loss
+       batch 256, fixed MAXIMUM_EPOCHS outer iterations, epoch-level hard target sync
+    -> final iteration's model (no cross-iteration VALIDATION selection)
     -> frozen checkpoint artifact + sha256
 ```
 
 Stage 2の1x128 MLP実装をQ-value modelとしてそのまま再利用する。target network
 はepoch開始時にonline networkの重みをhard syncするだけで、1 epoch内は固定
-した target に対して回帰する（moving targetへの直接依存を避ける）。TESTは
-このmoduleへ渡さない。VALIDATION metricsはstrength evidenceとして扱わない。
+した target に対して回帰する（moving targetへの直接依存を避ける）。
+
+**checkpoint selectionはVALIDATION lossの epoch間比較で行わない。** fitted-Q
+のouter iterationごとにbootstrap targetそのものが変わるため、
+``y_k = r + gamma * max Q_{k-1}(s')`` に対する``loss(Q_k, y_k)``は
+epoch間で同じ尺度を測っていない。value伝播が浅い初期epochほどtargetが
+単純でlossが小さく見えるだけの場合があり、これを「良いcheckpoint」として
+拾うと伝播が終わる前のmodelを誤選択する。したがって固定回数
+``MAXIMUM_EPOCHS``のouter iterationを実行し、**最終iterationのmodelを
+無条件に採用する**。VALIDATION Huber lossは全epochについて診断用historyへ
+記録するが、selection criterionとしては使わない。TESTはこのmoduleへ渡さない。
+VALIDATION metricsはstrength evidenceとして扱わない。
 """
 
 import hashlib
@@ -39,7 +49,6 @@ from .protocol import (
     DATALOADER_SEED,
     DATALOADER_WORKERS,
     DETERMINISTIC_ALGORITHMS,
-    EARLY_STOP_PATIENCE,
     EXPECTED_PARAMETER_COUNT,
     FEATURE_DIMENSION,
     GAMMA,
@@ -58,6 +67,7 @@ from .protocol import (
 )
 from .q_network import masked_max_q, q_value_at
 from .split_tensors import OfflineQSplitTensors, load_split_tensors
+from .support import support_set_identity
 
 CHECKPOINT_SCHEMA_VERSION = "arena-learned-policy-offlineq-q-checkpoint-v1"
 MANIFEST_FILENAME = "manifest.json"
@@ -71,9 +81,10 @@ _LOGICAL_IDENTITY_FIELDS = (
     "model",
     "training",
     "selected_epoch",
-    "selected_validation_huber_loss",
+    "final_validation_huber_loss",
     "parameter_count",
     "weights_sha256",
+    "supported_indices_digest",
 )
 
 
@@ -151,11 +162,20 @@ class EpochRecord:
 
 @dataclass(frozen=True, slots=True)
 class TrainingRun:
+    """fixed MAXIMUM_EPOCHS outer iterationのfinal iteration結果。
+
+    ``selected_epoch``は常に``MAXIMUM_EPOCHS``（=最終iteration）であり、
+    VALIDATION lossを比較して選んだ値ではない。moving targetの下で
+    epoch間のVALIDATION Huber lossを比較して checkpoint を選ぶと、
+    value伝播が浅い初期epochを誤って「良い」と判定し得るため
+    （bootstrap targetそのものがepochごとに変わる）、この比較は行わない。
+    """
+
     model: object
     support_mask: object
     history: tuple[EpochRecord, ...]
     selected_epoch: int
-    selected_validation_huber_loss: float
+    final_validation_huber_loss: float
     wall_clock_seconds: float
     peak_process_ram_bytes: int | None
     runtime: dict[str, object]
@@ -205,10 +225,6 @@ def train_from_split_tensors(
     )
 
     history: list[EpochRecord] = []
-    best_state: dict[str, object] | None = None
-    best_epoch = 0
-    best_metric = float("inf")
-    epochs_without_improvement = 0
     start = time.perf_counter()
 
     for epoch in range(1, MAXIMUM_EPOCHS + 1):
@@ -236,6 +252,9 @@ def train_from_split_tensors(
         if seen != train.row_count:
             raise OfflineQProtocolError("training epoch did not visit every TRAIN row")
 
+        # VALIDATIONはdiagnostic historyとしてのみ記録する。moving target下で
+        # epoch間のHuber lossを比較してcheckpointを選ぶと、value伝播が浅い
+        # epochを誤って「良い」と判定し得るため、selectionには使わない。
         validation_metric, _ = evaluate_huber_loss(
             model, target_model, validation, support_mask
         )
@@ -246,29 +265,16 @@ def train_from_split_tensors(
                 validation_huber_loss=validation_metric,
             )
         )
-        if validation_metric < best_metric:
-            best_metric = validation_metric
-            best_epoch = epoch
-            best_state = {
-                name: tensor.detach().clone()
-                for name, tensor in model.state_dict().items()
-            }
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
-            if epochs_without_improvement >= EARLY_STOP_PATIENCE:
-                break
 
     wall_clock = time.perf_counter() - start
-    if best_state is None:
-        raise OfflineQProtocolError("training produced no validated checkpoint")
-    model.load_state_dict(best_state, strict=True)
+    if not history:
+        raise OfflineQProtocolError("training produced no completed outer iteration")
     return TrainingRun(
         model=model,
         support_mask=support_mask,
         history=tuple(history),
-        selected_epoch=best_epoch,
-        selected_validation_huber_loss=best_metric,
+        selected_epoch=history[-1].epoch,
+        final_validation_huber_loss=history[-1].validation_huber_loss,
         wall_clock_seconds=wall_clock,
         peak_process_ram_bytes=peak_process_ram_bytes(),
         runtime=runtime,
@@ -298,13 +304,12 @@ def _training_block() -> dict[str, object]:
         "weight_decay": WEIGHT_DECAY,
         "batch_size": BATCH_SIZE,
         "maximum_epochs": MAXIMUM_EPOCHS,
-        "early_stop_patience": EARLY_STOP_PATIENCE,
         "training_seed": TRAINING_SEED,
         "dataloader_seed": DATALOADER_SEED,
         "dataloader_workers": DATALOADER_WORKERS,
         "torch_threads": TORCH_THREADS,
         "deterministic_algorithms": DETERMINISTIC_ALGORITHMS,
-        "checkpoint_selection": "lowest_validation_selected_action_huber_loss",
+        "checkpoint_selection": "fixed_final_iteration",
     }
 
 
@@ -365,8 +370,9 @@ def save_checkpoint(
             "training": _training_block(),
             "parameter_count": parameter_count(run.model),
             "supported_indices": supported_indices,
+            "supported_indices_digest": support_set_identity(supported_indices),
             "selected_epoch": run.selected_epoch,
-            "selected_validation_huber_loss": run.selected_validation_huber_loss,
+            "final_validation_huber_loss": run.final_validation_huber_loss,
             "epoch_history": [record.to_document() for record in run.history],
             "weights_bytes": len(weights),
             "weights_sha256": _sha256(weights),
@@ -457,6 +463,15 @@ def load_checkpoint(path: str | Path) -> LoadedQCheckpoint:
         or len(set(supported_indices)) != len(supported_indices)
     ):
         raise OfflineQArtifactError("checkpoint supported_indices is malformed")
+    if manifest.get("supported_indices_digest") != support_set_identity(
+        supported_indices
+    ):
+        # supported_indices_digest (not the raw list) is what checkpoint_identity()
+        # hashes below, so a tampered raw list with a stale-but-matching digest
+        # would otherwise slip past the checkpoint_identity check entirely.
+        raise OfflineQArtifactError(
+            "checkpoint supported_indices does not match its own digest"
+        )
     if manifest.get("checkpoint_identity") != checkpoint_identity(manifest):
         raise OfflineQArtifactError(
             "checkpoint_identity does not match the manifest content"
