@@ -97,9 +97,13 @@ class ComparisonIntegrationTest(unittest.TestCase):
         self.assertEqual(artifact.metrics_a, serial.metrics_a)
         self.assertEqual(artifact.metrics_b, serial.metrics_b)
         self.assertEqual(artifact.provenance.execution_environment, "riichienv")
+        # `pyproject.toml`のcurrent lisjong pinをそのまま固定する。Arena #146で
+        # PR #152のcoverage Policyを含むrevisionへpinを更新したため、この値も
+        # 同じrevisionを指す。Stage 2のhistorical `TEACHER_SOURCE_REVISION`は
+        # 別のartifact identityであり、ここでは変更しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "a0666d24e66179a45fd6e231a3cbd489b492d162",
+            "99a30c267a3c3e301e132c8799726eb10e012a95",
         )
 
 

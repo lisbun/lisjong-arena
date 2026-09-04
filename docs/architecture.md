@@ -916,6 +916,156 @@ peak RSSはPhase 6のbest-effort helperへ委譲し、`resource`が無い環境
 あり、Gitへcommitしない。pilotの実行protocol、結果、decisionは
 [`docs/stage3-entry-gate-pilot.md`](stage3-entry-gate-pilot.md)を参照する。
 
+### Stage 3 kan coverage-source qualification (Issue #146)
+
+Arena #131は`ENTRY GATE REFORMULATE`で完了し、3 populationすべてで`daiminkan` /
+`ankan` / `kakan` / `rinshan_draw`が0件という構造的coverage holeを残した。
+`lisjong #151` / PR #152で追加された`KanCoverageYakuhaiCallPolicy`は、そのholeを
+埋めるためのdeterministic training coverage sourceである。Issue #146は、この
+Policyをfirst-party generationへ投入したときに
+
+```text
+legal kan opportunity
+    -> Policy-selected kan
+    -> confirmed kan / explicitly-accounted non-confirm path
+    -> rinshan / physical accounting
+    -> HandBelief raw corpus / dataset
+```
+
+を欠落・捏造なくaccountできるかを確認するsuccessor pilotである。
+
+```text
+kan-capable coverage source
+!= stronger Policy
+!= current strength baseline
+!= final HandBelief training population
+```
+
+positive outcomeは次のpopulation-mix designへ進む根拠になるだけであり、final
+training population lockでもPhase 10 activationでもない。
+
+#### Historical isolation
+
+#131のhistorical protocol / seeds / population identity / artifact validatorsは
+変更しない。`STAGE3_DEVELOPMENT_SEEDS` (`180..191`)、Population A / B / C plan、
+`FirstPartySplitPolicy.STAGE3_DEVELOPMENT`、#131 result documentはそのままである。
+successor pilotは`lisjong_arena.stage3_kan_coverage`という独立packageと、
+`FirstPartySplitPolicy.KAN_COVERAGE_DEVELOPMENT` (`306..329` / TRAIN `306..323` /
+VALIDATION `324..329` / TEST無し) だけを追加する。`306..329`はStage 1/2 formal split
+(`100..159`)、Phase 9 confirmatory holdout (`160..179`)、#131 development population
+(`180..191`)、Stage 4a / Offline Qのlocked range (`220..305`) のいずれとも重ならず、
+plan構築時にfail closedで検証する。
+
+#131の`PopulationPlan`はordered seeds `180..191`へlockされたprotocol invariantを持つ
+ため、successor planはそのlockを緩めず独立の`KanCoveragePopulationPlan`として持ち、
+`SeatPolicyReference` / `GameSeatAssignment`というidentity valueだけを再利用する。
+
+#### Opportunity diagnostic seam
+
+「kan eventが何件出たか」だけでは、rare kindの0件がsourceの不具合なのか単に機会が
+無かったのかを分離できない。したがって`DecisionContext.legal_actions`をsource of
+truthとして、kind別に
+
+```text
+legal opportunities
+legal opportunities with a winning action also legal
+eligible no-win kan opportunities
+selected kan actions
+```
+
+を数える。`KanCoverageYakuhaiCallPolicy`はwinning actionをkanより優先するため、
+**winning + kanのdecisionはkanを選ぶべきdecisionではない**。selection contractの
+対象はeligible no-win opportunityだけであり、そこでkanを選ばないdecisionだけを
+source contract violationとして扱う。
+
+このdiagnosticは既存Policy factory seamをwrapする観測用Policyだけで成立させる。
+Phase 2 / Phase 4のrecording path、`PolicySeatSelector`、Policy contractは変更せず、
+generic DecisionRecord / replay platform / decision persistence frameworkも作らない。
+observerはPolicyがdecisionで実際に見た`DecisionContext`だけを読むため、opportunity
+判定はPolicy-visible informationだけで閉じている。
+
+Phase 4 protocolは同じseat assignmentでrecording runとPhase 2 equality re-runの2回
+Policyを実行する。observerはPolicy instanceごとにpassを分け、同じ(seed, seat)の全pass
+がexactに一致することを検証してからcanonical passだけを採用する。一致しない場合は
+非決定的実行としてfail closedする。
+
+#### selected / confirmed / rinshanのaccounting
+
+selected kan、confirmed kan、rinshan drawは同一視しない。current engine semanticsでは
+少なくとも槍槓ron（加槓・国士暗槓）と、同じ打牌に対する他家のron / callが、selected
+kanのlegalなnon-confirm pathである。confirmed kanでも四槓散了で局が終了する場合は
+rinshanへ進まない。これらを`missing`と誤分類しない。
+
+推測を挟まないために、selected decisionとpublic evidenceは既存artifactだけで一意に
+bindする。
+
+```text
+KanDecisionRecord(game_seed, viewer_seat, decision_index)
+    -> raw corpusの同じseatのcheckpoint列のdecision_index番目
+    -> checkpoint.evidence_cutoff
+    -> 同じviewerのplayer-safe evidence streamのsuffix
+```
+
+bindingは`build_policy_input(checkpoint.observation)`がdecision時点の
+`DecisionContext.input`とexact一致することで検証し、件数・順序が一致しない場合は
+silentに受け入れずfail closedする。confirmed / explicit non-confirm / unaccountedは
+別countとして残し、`unaccounted`を0扱いしない。
+
+confirmationはactorとkan kindだけでは判定しない。成立したpublic meldの`meld_type` /
+`tiles` / `from_seat` / `called_tile`をselected actionのsemantic fieldと照合し、
+一致しないものはconfirmed扱いせず`unaccounted`とする。「そのseatが同じ種類のkanを
+した」ではなく「選んだsemantic actionに対応するmeldが成立した」ことを確認する。
+tile値の比較は既存`domain_conversion.tile_from_public_tile()`だけを使い、独自の
+変換規則を作らない。加槓は元Ponの残り2枚が`KakanAction`へ保持されないため、
+照合を`from_seat` / `called_tile` / `added_tile`の包含 / 4枚であることに留める。
+
+大明槓の成立は`MeldCalledEvidence`、加槓・暗槓の成立は`KanConfirmedEvidence`が単一の
+sourceであるという既存engine contractをそのまま使い、Arena側でkan eventを再定義
+しない。
+
+#### Dataset compatibility
+
+eventが発生しただけではqualificationしない。fresh raw corpusからPhase 5-compatible
+development datasetまでmaterializeし、kan eventが起きたgameがdataset materialization
+でsilent dropされていないことをseed単位でtraceableに検証する。physical accountingは
+既存contractがそのまま担う。`OpponentExpectedCounts`はconcealed sizeとの一致を
+constructorでfail closedし、`materialize_snapshot_example()`はrow / column marginalの
+total massとother-hidden massの非負性を検証し、Phase 5のconditional-uniform baseline
+がconservation / concealed-size inconsistency metricsを再計算する。本Issueでは
+S2 modelをtrainingしない。
+
+#### Classification
+
+outcomeは実行前にlockしたdeterministic ruleで1つだけ決める。
+
+```text
+KAN COVERAGE SOURCE QUALIFIED FOR MIX DESIGN
+KAN COVERAGE SOURCE EMPIRICALLY INSUFFICIENT
+KAN COVERAGE ACCOUNTING REFORMULATE
+SEED PLAN REFORMULATE
+STOP / INVALID
+```
+
+Policy contractはdecision単位である。複数kan kindが同時にlegalなdecisionでは、
+どれか1つのkanを選べばcontractを満たすため、選ばれなかったkindを違反として扱わない。
+zero-count kindは
+
+```text
+eligible no-win opportunity = 0        -> UNMEASURED / ABSENT IN PILOT
+そのkindを含むeligible decisionのうち
+    kanを一切選ばなかったdecisionが存在 -> SOURCE CONTRACT VIOLATION
+violationなし / そのkindは選ばれず      -> OPPORTUNITY OBSERVED / NOT SELECTED
+そのkind自身が選ばれた                  -> OBSERVED
+```
+
+として区別し、3 kindすべての観測をqualificationの必須条件にしない。結果を見てから
+seedを追加・置換しない。
+
+生成されるraw corpus / dataset / resultはrepository外のimmutable artifactであり、
+Gitへcommitしない。pilotのprotocol・結果・decisionは
+[`docs/stage3-kan-coverage-qualification.md`](stage3-kan-coverage-qualification.md)を
+参照する。
+
 ### ABBB strength evaluation artifact (Issue #110)
 
 Issue #110で、ABBB / `4p-red-single` strength evaluation結果を再実行せず再集計できる
