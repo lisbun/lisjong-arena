@@ -1262,6 +1262,26 @@ lisjong-engine / lisjong-arenaの3つすべてをnon-editable git installにし�
 protocol、実測結果、population decisionは
 [`docs/stage3-entry-gate-pilot.md`](docs/stage3-entry-gate-pilot.md)を正本とします。
 
+### Stage 3 kan coverage-source qualification runbook
+
+`lisjong_arena.stage3_kan_coverage`はIssue #146専用のbounded workflowです。Issue #131が残した
+kan / rinshan coverage holeに対して、`lisjong #151` / PR #152の`KanCoverageYakuhaiCallPolicy`を
+HandBelief training coverage sourceとしてqualificationします。これはstrength evaluationでも
+final training populationの選定でもありません。
+
+```text
+python -m lisjong_arena.stage3_kan_coverage plan
+python -m lisjong_arena.stage3_kan_coverage qualify --output <dir>
+python -m lisjong_arena.stage3_kan_coverage classify --population-dir <dir> --result-dir <dir>
+```
+
+CLIはseeds、split、population、roleをoverrideできません。結果を見てからseedを追加・置換する
+optionも持ちません。`qualify`はfully resolvedなVCS provenanceを要求するため、Stage 3 Entry Gateと
+同じくnon-editable git installの環境で実行します。
+
+protocol、実測結果、classificationは
+[`docs/stage3-kan-coverage-qualification.md`](docs/stage3-kan-coverage-qualification.md)を正本とします。
+
 初期基準は通常版CPython 3.14です。free-threaded build（3.14t）は、依存libraryを含む互換性を個別に検証するまで対象外とします。
 
 ```bash
