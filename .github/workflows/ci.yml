@@ -67,6 +67,7 @@ jobs:
           python -m unittest discover -s tests -p "test_learned_policy_stage2_ml.py" -v
           python -m unittest discover -s tests -p "test_learned_policy_stage3_ml.py" -v
           python -m unittest discover -s tests -p "test_learned_policy_stage4a_ml.py" -v
+          python -m unittest discover -s tests -p "test_learned_policy_offline_q_*_ml.py" -v
           python -m unittest discover -s tests -p "test_phase?_snapshot*.py" -v
           python -m unittest discover -s tests -p "test_phase8_sequential_ml.py" -v
           python -m unittest discover -s tests -p "test_phase9_confirmatory_ml.py" -v

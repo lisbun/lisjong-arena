@@ -5,6 +5,7 @@ Git work tree等）は`lisbun/lisjong-arena #138`のtest suiteが正本であり
 BC / Q checkpointの複製・freeze record・strict readbackだけを検証する。
 """
 
+import importlib.util
 import shutil
 import tempfile
 import unittest
@@ -28,8 +29,10 @@ from lisjong_arena.learned_policy_offline_q.retention import (
 )
 
 _EPHEMERAL_PATCH = "lisjong_arena.learned_policy_stage4a.candidate._ephemeral_roots"
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
 
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class RetentionGateTest(unittest.TestCase):
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp())

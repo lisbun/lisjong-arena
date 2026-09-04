@@ -1,5 +1,6 @@
 """BC hybrid / Q hybrid serving Policy tests (Issue #140)."""
 
+import importlib.util
 import shutil
 import tempfile
 import unittest
@@ -117,14 +118,20 @@ class HybridServingTestBase:
         self.assertEqual(policy.support_fallback_count, 1)
 
 
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class BcHybridServingTest(HybridServingTestBase, unittest.TestCase):
     arm_name = "bc"
 
 
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class QHybridServingTest(HybridServingTestBase, unittest.TestCase):
     arm_name = "q"
 
 
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class QHybridSupportBindingTest(unittest.TestCase):
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp())

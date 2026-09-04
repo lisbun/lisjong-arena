@@ -1,5 +1,6 @@
 """One-shot TEST diagnostics tests (Issue #140)."""
 
+import importlib.util
 import shutil
 import tempfile
 import unittest
@@ -16,7 +17,10 @@ from lisjong_arena.learned_policy_offline_q.protocol import Split
 from lisjong_arena.learned_policy_offline_q.q_training import train_q_model
 from lisjong_arena.learned_policy_offline_q.split_tensors import load_split_tensors
 
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class ExposureEvaluationTest(unittest.TestCase):
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp())

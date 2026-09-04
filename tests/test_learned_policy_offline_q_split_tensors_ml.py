@@ -1,5 +1,6 @@
 """Offline Q split-tensor loading tests (Issue #140)."""
 
+import importlib.util
 import shutil
 import tempfile
 import unittest
@@ -10,7 +11,10 @@ from _learned_policy_offline_q_artifact_fixtures import write_synthetic_dataset
 from lisjong_arena.learned_policy_offline_q.protocol import Split
 from lisjong_arena.learned_policy_offline_q.split_tensors import load_split_tensors
 
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class SplitTensorsTest(unittest.TestCase):
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp())

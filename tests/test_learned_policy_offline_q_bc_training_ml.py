@@ -1,5 +1,6 @@
 """Arm A (BC control) training and checkpoint tests (Issue #140)."""
 
+import importlib.util
 import shutil
 import tempfile
 import unittest
@@ -14,7 +15,10 @@ from lisjong_arena.learned_policy_offline_q.bc_training import (
 )
 from lisjong_arena.learned_policy_offline_q.errors import OfflineQArtifactError
 
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class BcTrainingTest(unittest.TestCase):
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp())

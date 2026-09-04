@@ -1,5 +1,6 @@
 """Q-vs-BC ABBB strength screen wiring tests (Issue #140)."""
 
+import importlib.util
 import shutil
 import tempfile
 import unittest
@@ -42,6 +43,10 @@ def _statistics(lower, upper) -> SeedBlockStatistics:
     )
 
 
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class ClassifyValueQSignalTest(unittest.TestCase):
     def test_positive_interval_is_signal(self):
         self.assertEqual(
@@ -66,6 +71,7 @@ class ClassifyValueQSignalTest(unittest.TestCase):
             classify_value_q_signal(_statistics(None, None))
 
 
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class BuildSpecsTest(unittest.TestCase):
     def setUp(self):
         self._tmp = Path(tempfile.mkdtemp())
