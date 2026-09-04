@@ -161,17 +161,36 @@ def kakan_action(rank: int = 5) -> KakanAction:
     )
 
 
+KAN_FIXTURE_RANK = {
+    PublicMeldType.DAIMINKAN: 3,
+    PublicMeldType.ANKAN: 4,
+    PublicMeldType.KAKAN: 5,
+}
+"""fixture actionとevidence meldでtile semanticsを一致させるためのkind別rank。
+
+`daiminkan_action()` / `ankan_action()` / `kakan_action()`の既定rankと揃える。
+accountingがselected actionとpublic meldをsemanticに照合するため、両者が
+一致していないとconfirmedにならない。
+"""
+
+
 def declared_kan_stream(
     meld_type: PublicMeldType,
     *,
     actor: Seat = Seat.EAST,
+    rank: int | None = None,
+    from_seat: Seat = Seat.SOUTH,
     confirmed: bool = True,
     rinshan: bool = True,
     chankan_ron: bool = False,
     abortive_after_confirm: bool = False,
 ) -> tuple:
     """加槓・暗槓のdeclared -> confirmed -> rinshan evidence列。"""
-    meld = public_meld_of(meld_type, 3)
+    meld = public_meld_of(
+        meld_type,
+        KAN_FIXTURE_RANK[meld_type] if rank is None else rank,
+        from_seat=from_seat,
+    )
     trigger = (
         ResponseTrigger.KAKAN
         if meld_type is PublicMeldType.KAKAN
@@ -231,6 +250,8 @@ def daiminkan_stream(
     called_by: Seat | None = None,
     ron: bool = False,
     rinshan: bool = True,
+    rank: int | None = None,
+    meld_from_seat: Seat | None = None,
 ) -> tuple:
     """大明槓のresponse epoch解決evidence列。"""
     stream = [
@@ -266,7 +287,17 @@ def daiminkan_stream(
             outcome=ResponseOutcome.CALL,
         )
     )
-    stream.append(MeldCalledEvidence(caller, public_meld_of(meld_type, 3), 0))
+    stream.append(
+        MeldCalledEvidence(
+            caller,
+            public_meld_of(
+                meld_type,
+                KAN_FIXTURE_RANK[PublicMeldType.DAIMINKAN] if rank is None else rank,
+                from_seat=target if meld_from_seat is None else meld_from_seat,
+            ),
+            0,
+        )
+    )
     if caller is actor and rinshan:
         stream.append(DrawEvidence(actor, DrawSource.RINSHAN))
     return tuple(stream)
@@ -421,9 +452,15 @@ def kan_opportunity_diagnostic_value(
     ankan: tuple[int, int] = (5, 5),
     kakan: tuple[int, int] = (0, 0),
     violations: int = 0,
+    unconverted: dict[str, int] | None = None,
 ) -> dict:
-    """`(eligible no-win opportunities, selected)`だけを動かすdiagnostic value。"""
+    """`(eligible no-win opportunities, selected)`だけを動かすdiagnostic value。
+
+    `unconverted`は、そのkindを含むeligible decisionのうちkanを一切選ばなかった
+    decision数（decision-level contract violationとの交差）である。
+    """
     pairs = {"daiminkan": daiminkan, "ankan": ankan, "kakan": kakan}
+    unconverted = unconverted or {}
     return {
         "diagnostic_schema_version": DIAGNOSTIC_SCHEMA_VERSION,
         "total_decisions": 10_000,
@@ -434,6 +471,9 @@ def kan_opportunity_diagnostic_value(
                 "legal_candidate_actions": eligible,
                 "legal_opportunities_with_winning_action": 0,
                 "eligible_no_win_opportunities": eligible,
+                "eligible_no_win_opportunities_without_kan_selection": (
+                    unconverted.get(kind, 0)
+                ),
                 "selected": selected,
             }
             for kind, (eligible, selected) in pairs.items()

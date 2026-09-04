@@ -18,15 +18,22 @@ outcomeであり、measurementからは導出しない。したがってこのmo
 ## zero-count kindの解釈
 
 ```text
-eligible no-win opportunity = 0 かつ selected = 0
+eligible no-win opportunity = 0
     -> UNMEASURED / ABSENT IN PILOT
 
-eligible no-win opportunity > 0 かつ selected = 0
+そのkindを含むeligible no-win decisionのうち、kanを一切選ばなかったdecisionが存在
     -> source contract violation
+
+eligible no-win opportunity > 0、violationなし、そのkind自身は選ばれなかった
+    -> OPPORTUNITY OBSERVED / NOT SELECTED
+
+そのkind自身が選ばれた
+    -> OBSERVED
 ```
 
-この2つを混同しない。3 kindすべてが観測されることはqualificationの必須条件
-ではない。
+Policy contractはdecision単位である。複数kan kindが同時にlegalなdecisionでは、
+どれか1つのkanを選べばcontractを満たすため、選ばれなかったkindを違反として
+扱わない。3 kindすべてが観測されることはqualificationの必須条件ではない。
 """
 
 import json
@@ -51,6 +58,7 @@ RESULT_FILENAME = "result.json"
 
 UNMEASURED = "UNMEASURED / ABSENT IN PILOT"
 OBSERVED = "OBSERVED"
+OPPORTUNITY_OBSERVED = "OPPORTUNITY OBSERVED / NOT SELECTED"
 CONTRACT_VIOLATION = "SOURCE CONTRACT VIOLATION"
 
 
@@ -59,15 +67,22 @@ class KanCoverageResultError(ValueError):
 
 
 def kind_interpretation(diagnostic: dict, kind: str) -> str:
-    """kan kindごとのzero-count解釈をexplicitに分類する。"""
+    """kan kindごとのzero-count解釈をexplicitに分類する。
+
+    Policy contractはdecision単位である。複数kan kindが同時にlegalなdecisionで
+    どれか1つのkanを選べばcontractは満たされるため、選ばれなかったkindの
+    `selected == 0`をcontract violationとして扱わない。violationは、そのkindを
+    含むeligible no-win decisionのうち **kanを一切選ばなかった** decisionが存在
+    する場合だけである。
+    """
     counts = diagnostic["by_kind"][kind]
-    eligible = counts["eligible_no_win_opportunities"]
-    selected = counts["selected"]
-    if eligible == 0:
+    if counts["eligible_no_win_opportunities"] == 0:
         return UNMEASURED
-    if selected == 0:
+    if counts["eligible_no_win_opportunities_without_kan_selection"] > 0:
         return CONTRACT_VIOLATION
-    return OBSERVED
+    if counts["selected"] > 0:
+        return OBSERVED
+    return OPPORTUNITY_OBSERVED
 
 
 def classify(manifest: dict) -> tuple[str, tuple[str, ...]]:
@@ -189,7 +204,7 @@ def validate_result_value(value: object) -> dict[str, object]:
     ):
         raise KanCoverageResultError("result must interpret every kan kind")
     if any(
-        row not in (UNMEASURED, OBSERVED, CONTRACT_VIOLATION)
+        row not in (UNMEASURED, OBSERVED, OPPORTUNITY_OBSERVED, CONTRACT_VIOLATION)
         for row in interpretation.values()
     ):
         raise KanCoverageResultError("unknown kan kind interpretation")
@@ -246,6 +261,7 @@ def load_result(destination: str | Path) -> dict[str, object]:
 __all__ = [
     "CONTRACT_VIOLATION",
     "OBSERVED",
+    "OPPORTUNITY_OBSERVED",
     "RESULT_FILENAME",
     "UNMEASURED",
     "KanCoverageResultError",

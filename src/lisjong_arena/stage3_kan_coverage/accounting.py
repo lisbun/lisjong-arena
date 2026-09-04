@@ -42,7 +42,6 @@ generic replay platform / event-sourcing framework / decision database は
 
 from dataclasses import dataclass
 
-from lisjong.policy_contract import Seat as PolicySeat
 from lisjong_engine.public_state import PublicMeldType
 from lisjong_engine.round_event import DrawSource
 from lisjong_engine.round_evidence import (
@@ -54,10 +53,16 @@ from lisjong_engine.round_evidence import (
 )
 from lisjong_engine.seat import Seat
 
-from lisjong_arena.lisjong_engine.domain_conversion import seat_from_engine_seat
+from lisjong_arena.lisjong_engine.domain_conversion import (
+    seat_from_engine_seat,
+    tile_from_public_tile,
+)
 from lisjong_arena.lisjong_engine.policy_input import build_policy_input
 from lisjong_arena.phase4_raw_corpus.model import RawCorpus
-from lisjong_arena.stage3_kan_coverage.opportunity import KanOpportunityDiagnostic
+from lisjong_arena.stage3_kan_coverage.opportunity import (
+    KanOpportunityDiagnostic,
+    tile_descriptor_value,
+)
 from lisjong_arena.stage3_kan_coverage.protocol import (
     ACCOUNTING_SCHEMA_VERSION,
     KAN_KINDS,
@@ -82,6 +87,73 @@ _ENGINE_SEAT_BY_SEAT = {seat_from_engine_seat(seat): seat for seat in Seat}
 
 class KanAccountingError(RuntimeError):
     """selected kanとpublic evidenceのbindingが成立しない場合。"""
+
+
+def _meld_tile_values(meld) -> list[list[object]]:
+    """public meldの牌を、selected action descriptorと同じtile vocabularyへ射影する。
+
+    既存`domain_conversion.tile_from_public_tile()`だけを使い、独自の変換規則を
+    作らない。physical copy identityはlisjong Tile valueに存在しないため比較へ
+    持ち込まない。
+    """
+    return sorted(tile_descriptor_value(tile_from_public_tile(t)) for t in meld.tiles)
+
+
+def _meld_from_seat_value(meld) -> int | None:
+    if meld.from_seat is None:
+        return None
+    return int(seat_from_engine_seat(meld.from_seat))
+
+
+def _meld_called_tile_value(meld) -> list[object] | None:
+    if meld.called_tile is None:
+        return None
+    return tile_descriptor_value(tile_from_public_tile(meld.called_tile))
+
+
+def _removed_one(tiles: list[list[object]], value: object) -> list[list[object]] | None:
+    """multisetから1枚だけ取り除く。含まれなければ`None`。"""
+    remaining = list(tiles)
+    try:
+        remaining.remove(value)
+    except ValueError:
+        return None
+    return remaining
+
+
+def _meld_matches_selected_kan(meld, descriptor: dict[str, object]) -> bool:
+    """成立したpublic meldが、selectedだったkan actionのsemanticsと一致するか。
+
+    「そのseatが同じ種類のkanをした」ではなく「選んだsemantic actionに対応する
+    meldが成立した」ことまで確認する。加槓のみ、元Ponの残り2枚が`KakanAction`へ
+    保持されない（`docs/internal-action-model.md`）ため、`called_tile` /
+    `added_tile` / `from_seat` / 4枚であることまでを照合する。
+    """
+    kind = descriptor["kind"]
+    if meld.meld_type is not _MELD_TYPE_BY_KIND[kind]:
+        return False
+    tiles = _meld_tile_values(meld)
+    if kind == "daiminkan":
+        expected = sorted([descriptor["called_tile"], *descriptor["consumed_tiles"]])
+        return (
+            _meld_from_seat_value(meld) == descriptor["target"]
+            and _meld_called_tile_value(meld) == descriptor["called_tile"]
+            and tiles == expected
+        )
+    if kind == "ankan":
+        return (
+            meld.from_seat is None
+            and meld.called_tile is None
+            and tiles == sorted(descriptor["tiles"])
+        )
+    if _meld_from_seat_value(meld) != descriptor["from_seat"]:
+        return False
+    if _meld_called_tile_value(meld) != descriptor["called_tile"]:
+        return False
+    remaining = _removed_one(tiles, descriptor["called_tile"])
+    if remaining is None:
+        return False
+    return len(tiles) == 4 and descriptor["added_tile"] in remaining
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,35 +220,48 @@ def classify_selected_kan(
     stream: tuple,
     cutoff: int,
     *,
-    kind: str,
+    descriptor: dict[str, object],
     actor: Seat,
-    target: Seat | None,
 ) -> tuple[str, str, bool, bool]:
     """1件のselected kanをpublic evidence suffixから分類する。
 
     返り値は`(outcome, detail, rinshan_expected, rinshan_observed)`である。
     `stream`はactor自身のplayer-safe evidence列、`cutoff`はそのdecision時点の
-    evidence prefix長である。
+    evidence prefix長、`descriptor`は選択されたkan actionのsemantic descriptor
+    である。
+
+    confirmationはactorとkan kindだけでは判定しない。成立したpublic meldが
+    selected actionのsemanticsと一致することまで照合し、一致しないものは
+    silentにconfirmed扱いせず`unaccounted`とする。
     """
+    kind = descriptor.get("kind")
     if kind not in _MELD_TYPE_BY_KIND:
         raise KanAccountingError(f"unknown kan kind {kind!r}")
-    meld_type = _MELD_TYPE_BY_KIND[kind]
+    if descriptor.get("actor") != int(seat_from_engine_seat(actor)):
+        raise KanAccountingError(
+            "the selected kan actor differs from the observed seat"
+        )
     if kind == "daiminkan":
-        if target is None:
-            raise KanAccountingError("a daiminkan account requires its target seat")
         for index, evidence in enumerate(stream[cutoff:], start=cutoff):
             if isinstance(evidence, MeldCalledEvidence):
-                if evidence.seat is actor and evidence.meld.meld_type is meld_type:
-                    expected, observed, detail = _rinshan_after_confirmation(
-                        stream, index + 1, actor
+                if evidence.seat is not actor:
+                    return (
+                        NON_CONFIRM,
+                        "another seat's call resolved the discard response epoch first",
+                        False,
+                        False,
                     )
-                    return CONFIRMED, detail, expected, observed
-                return (
-                    NON_CONFIRM,
-                    "another seat's call resolved the discard response epoch first",
-                    False,
-                    False,
+                if not _meld_matches_selected_kan(evidence.meld, descriptor):
+                    return (
+                        UNACCOUNTED,
+                        "the called meld does not match the selected daiminkan",
+                        False,
+                        False,
+                    )
+                expected, observed, detail = _rinshan_after_confirmation(
+                    stream, index + 1, actor
                 )
+                return CONFIRMED, detail, expected, observed
             if isinstance(evidence, RoundEndedEvidence):
                 return NON_CONFIRM, _round_end_detail(evidence), False, False
             if isinstance(evidence, DrawEvidence):
@@ -189,18 +274,24 @@ def classify_selected_kan(
         )
     declared = False
     for index, evidence in enumerate(stream[cutoff:], start=cutoff):
-        if (
-            isinstance(evidence, KanDeclaredEvidence)
-            and evidence.seat is actor
-            and evidence.meld.meld_type is meld_type
-        ):
+        if isinstance(evidence, KanDeclaredEvidence) and evidence.seat is actor:
+            if not _meld_matches_selected_kan(evidence.meld, descriptor):
+                return (
+                    UNACCOUNTED,
+                    f"the declared meld does not match the selected {kind}",
+                    False,
+                    False,
+                )
             declared = True
             continue
-        if (
-            isinstance(evidence, KanConfirmedEvidence)
-            and evidence.seat is actor
-            and evidence.meld.meld_type is meld_type
-        ):
+        if isinstance(evidence, KanConfirmedEvidence) and evidence.seat is actor:
+            if not _meld_matches_selected_kan(evidence.meld, descriptor):
+                return (
+                    UNACCOUNTED,
+                    f"the confirmed meld does not match the selected {kind}",
+                    False,
+                    False,
+                )
             if not declared:
                 return (
                     UNACCOUNTED,
@@ -284,17 +375,11 @@ def account_selected_kans(
             for value in raw_round.viewer_evidence
             if value.viewer_seat is record.viewer_seat
         )
-        descriptor = record.selected_action_value()
-        target = descriptor.get("target")
-        target_seat = (
-            None if target is None else _ENGINE_SEAT_BY_SEAT[PolicySeat(target)]
-        )
         outcome, detail, expected, observed = classify_selected_kan(
             stream,
             checkpoint.evidence_cutoff,
-            kind=record.selected_kind,
+            descriptor=record.selected_action_value(),
             actor=record.viewer_seat,
-            target=target_seat,
         )
         accounts.append(
             SelectedKanAccount(

@@ -54,10 +54,11 @@ VALIDATION_SEEDS = KAN_COVERAGE_VALIDATION_SEEDS
 PILOT_HANCHAN = len(ORDERED_SEEDS)
 
 PLAN_SCHEMA_VERSION = "stage3-kan-coverage-population-plan-v1"
-MANIFEST_SCHEMA_VERSION = "stage3-kan-coverage-population-manifest-v1"
-DIAGNOSTIC_SCHEMA_VERSION = "stage3-kan-coverage-diagnostic-v1"
-ACCOUNTING_SCHEMA_VERSION = "stage3-kan-coverage-accounting-v1"
-RESULT_SCHEMA_VERSION = "stage3-kan-coverage-result-v1"
+"""population planのschema。planとpopulation identityはreviewのfixで変わらない。"""
+MANIFEST_SCHEMA_VERSION = "stage3-kan-coverage-population-manifest-v2"
+DIAGNOSTIC_SCHEMA_VERSION = "stage3-kan-coverage-diagnostic-v2"
+ACCOUNTING_SCHEMA_VERSION = "stage3-kan-coverage-accounting-v2"
+RESULT_SCHEMA_VERSION = "stage3-kan-coverage-result-v2"
 
 KAN_KINDS = ("daiminkan", "ankan", "kakan")
 """public `PublicMeldType`と同じkan kind名。新しいvocabularyを作らない。"""
@@ -82,11 +83,14 @@ RETRY_RULE = (
     "the ordered seed population are replaced or extended after execution"
 )
 CLASSIFICATION_RULE = (
-    "QUALIFIED requires every hard validity gate, zero selection-contract "
-    "violations, zero unaccounted selected kan, zero missing rinshan on confirmed "
-    "kan with an expected continuation, and at least one eligible no-win kan "
-    "opportunity that materializes as a confirmed kan with an observed rinshan "
-    "draw retained by the dataset; a kan kind with zero eligible no-win "
+    "QUALIFIED requires every hard validity gate, zero decision-level "
+    "selection-contract violations, zero unaccounted selected kan, zero missing "
+    "rinshan on confirmed kan with an expected continuation, and at least one "
+    "eligible no-win kan opportunity that materializes as a confirmed kan whose "
+    "public meld matches the selected action, with an observed rinshan draw "
+    "retained by the dataset; the Policy contract is per decision, so a kan kind "
+    "that was legal but not itself selected in a decision that did select some "
+    "kan is not a violation, and a kan kind with zero eligible no-win "
     "opportunities is UNMEASURED / ABSENT IN PILOT, not a failure"
 )
 

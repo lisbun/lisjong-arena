@@ -68,6 +68,7 @@ from lisjong_arena.stage3_kan_coverage.generation import (
 from lisjong_arena.stage3_kan_coverage.opportunity import (
     KanOpportunityError,
     KanOpportunityObserver,
+    action_descriptor,
 )
 from lisjong_arena.stage3_kan_coverage.population import (
     KanCoveragePopulationError,
@@ -89,6 +90,7 @@ from lisjong_arena.stage3_kan_coverage.protocol import (
 from lisjong_arena.stage3_kan_coverage.result import (
     CONTRACT_VIOLATION,
     OBSERVED,
+    OPPORTUNITY_OBSERVED,
     UNMEASURED,
     KanCoverageResultError,
     classify,
@@ -302,6 +304,7 @@ class KanOpportunityAccountingTest(unittest.TestCase):
                         "legal_candidate_actions": 1,
                         "legal_opportunities_with_winning_action": 0,
                         "eligible_no_win_opportunities": 1,
+                        "eligible_no_win_opportunities_without_kan_selection": 0,
                         "selected": 1,
                     },
                 )
@@ -325,6 +328,56 @@ class KanOpportunityAccountingTest(unittest.TestCase):
         record = diagnostic.records[0]
         self.assertEqual(record.selected_kind, "daiminkan")
         self.assertEqual(len(record.candidates), 4)
+
+    def test_a_multiple_kind_decision_reports_no_kind_contract_violation(self):
+        """4候補から1つのkanを選ぶdecisionは、どのkindでも違反にならない。"""
+        diagnostic = _observe(
+            decision_with(
+                discard_action(),
+                ankan_action(4),
+                kakan_action(5),
+                daiminkan_action(3),
+            )
+        ).diagnostic_value()
+        self.assertEqual(diagnostic["selection_contract_violations"], 0)
+        for kind in ("daiminkan", "ankan", "kakan"):
+            with self.subTest(kind=kind):
+                counts = diagnostic["by_kind"][kind]
+                self.assertEqual(counts["eligible_no_win_opportunities"], 1)
+                self.assertEqual(
+                    counts["eligible_no_win_opportunities_without_kan_selection"], 0
+                )
+                self.assertNotEqual(
+                    kind_interpretation(diagnostic, kind), CONTRACT_VIOLATION
+                )
+        self.assertEqual(kind_interpretation(diagnostic, "daiminkan"), OBSERVED)
+        self.assertEqual(kind_interpretation(diagnostic, "ankan"), OPPORTUNITY_OBSERVED)
+
+    def test_an_unconverted_kind_is_counted_against_every_legal_kind(self):
+        class _DiscardOnlyPolicy:
+            def choose_action(self, decision):
+                return next(
+                    action
+                    for action in decision.legal_actions
+                    if type(action).__name__ == "DiscardAction"
+                )
+
+        diagnostic = _observe(
+            decision_with(discard_action(), ankan_action(4), kakan_action(5)),
+            policy=_DiscardOnlyPolicy,
+        ).diagnostic_value()
+        self.assertEqual(diagnostic["selection_contract_violations"], 1)
+        for kind in ("ankan", "kakan"):
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    diagnostic["by_kind"][kind][
+                        "eligible_no_win_opportunities_without_kan_selection"
+                    ],
+                    1,
+                )
+                self.assertEqual(
+                    kind_interpretation(diagnostic, kind), CONTRACT_VIOLATION
+                )
 
     def test_legal_action_input_order_does_not_change_the_diagnostic(self):
         actions = (
@@ -415,17 +468,21 @@ class KanEvidenceAccountingTest(unittest.TestCase):
     def _classify(self, stream, **kwargs):
         return classify_selected_kan(stream, 0, **kwargs)
 
+    @staticmethod
+    def _descriptor(action):
+        """selected kan actionのsemantic descriptor。"""
+        return action_descriptor(action)
+
     def test_confirmed_declared_kan_binds_to_its_rinshan_draw(self):
-        for kind, meld_type in (
-            ("ankan", PublicMeldType.ANKAN),
-            ("kakan", PublicMeldType.KAKAN),
+        for kind, meld_type, action in (
+            ("ankan", PublicMeldType.ANKAN, ankan_action()),
+            ("kakan", PublicMeldType.KAKAN, kakan_action()),
         ):
             with self.subTest(kind=kind):
                 outcome, _detail, expected, observed = self._classify(
                     declared_kan_stream(meld_type),
-                    kind=kind,
+                    descriptor=self._descriptor(action),
                     actor=Seat.EAST,
-                    target=None,
                 )
                 self.assertEqual(outcome, CONFIRMED)
                 self.assertTrue(expected)
@@ -434,9 +491,8 @@ class KanEvidenceAccountingTest(unittest.TestCase):
     def test_chankan_ron_is_an_explicit_non_confirm_path(self):
         outcome, detail, expected, observed = self._classify(
             declared_kan_stream(PublicMeldType.KAKAN, chankan_ron=True),
-            kind="kakan",
+            descriptor=self._descriptor(kakan_action()),
             actor=Seat.EAST,
-            target=None,
         )
         self.assertEqual(outcome, NON_CONFIRM)
         self.assertIn("ron", detail)
@@ -446,9 +502,8 @@ class KanEvidenceAccountingTest(unittest.TestCase):
     def test_four_kans_abortive_draw_is_not_a_missing_rinshan(self):
         outcome, detail, expected, observed = self._classify(
             declared_kan_stream(PublicMeldType.ANKAN, abortive_after_confirm=True),
-            kind="ankan",
+            descriptor=self._descriptor(ankan_action()),
             actor=Seat.EAST,
-            target=None,
         )
         self.assertEqual(outcome, CONFIRMED)
         self.assertIn("four_kans", detail)
@@ -466,9 +521,8 @@ class KanEvidenceAccountingTest(unittest.TestCase):
                     ).DrawSource.LIVE_WALL,
                 ),
             ),
-            kind="ankan",
+            descriptor=self._descriptor(ankan_action()),
             actor=Seat.EAST,
-            target=None,
         )
         self.assertEqual(outcome, CONFIRMED)
         self.assertTrue(expected)
@@ -476,7 +530,9 @@ class KanEvidenceAccountingTest(unittest.TestCase):
 
     def test_daiminkan_confirms_through_its_called_meld(self):
         outcome, _detail, expected, observed = self._classify(
-            daiminkan_stream(), kind="daiminkan", actor=Seat.EAST, target=Seat.SOUTH
+            daiminkan_stream(),
+            descriptor=self._descriptor(daiminkan_action()),
+            actor=Seat.EAST,
         )
         self.assertEqual(outcome, CONFIRMED)
         self.assertTrue(expected)
@@ -485,9 +541,8 @@ class KanEvidenceAccountingTest(unittest.TestCase):
     def test_daiminkan_lost_to_a_ron_is_an_explicit_non_confirm_path(self):
         outcome, detail, _expected, _observed = self._classify(
             daiminkan_stream(ron=True),
-            kind="daiminkan",
+            descriptor=self._descriptor(daiminkan_action()),
             actor=Seat.EAST,
-            target=Seat.SOUTH,
         )
         self.assertEqual(outcome, NON_CONFIRM)
         self.assertIn("ron", detail)
@@ -495,46 +550,101 @@ class KanEvidenceAccountingTest(unittest.TestCase):
     def test_daiminkan_lost_to_another_call_is_an_explicit_non_confirm_path(self):
         outcome, detail, _expected, _observed = self._classify(
             daiminkan_stream(called_by=Seat.WEST),
-            kind="daiminkan",
+            descriptor=self._descriptor(daiminkan_action()),
             actor=Seat.EAST,
-            target=Seat.SOUTH,
         )
         self.assertEqual(outcome, NON_CONFIRM)
         self.assertIn("another seat", detail)
 
     def test_an_unresolved_selected_kan_is_unaccounted(self):
-        for kind, target in (("ankan", None), ("daiminkan", Seat.SOUTH)):
-            with self.subTest(kind=kind):
+        for action in (ankan_action(), daiminkan_action()):
+            with self.subTest(kind=type(action).__name__):
                 outcome, _detail, _expected, _observed = self._classify(
-                    (), kind=kind, actor=Seat.EAST, target=target
+                    (), descriptor=self._descriptor(action), actor=Seat.EAST
                 )
                 self.assertEqual(outcome, UNACCOUNTED)
 
     def test_a_confirmation_without_its_declaration_is_unaccounted(self):
-        stream = declared_kan_stream(PublicMeldType.ANKAN)[2:]
-        outcome, _detail, _expected, _observed = self._classify(
-            stream, kind="ankan", actor=Seat.EAST, target=None
+        stream = declared_kan_stream(PublicMeldType.ANKAN)[3:]
+        outcome, detail, _expected, _observed = self._classify(
+            stream, descriptor=self._descriptor(ankan_action()), actor=Seat.EAST
         )
         self.assertEqual(outcome, UNACCOUNTED)
+        self.assertIn("without its public declaration", detail)
 
     def test_a_terminal_round_without_a_declaration_is_unaccounted(self):
         outcome, _detail, _expected, _observed = self._classify(
             (RoundEndedEvidence(kind=RoundEndKind.EXHAUSTIVE_DRAW),),
-            kind="kakan",
+            descriptor=self._descriptor(kakan_action()),
             actor=Seat.EAST,
-            target=None,
         )
         self.assertEqual(outcome, UNACCOUNTED)
 
-    def test_a_daiminkan_account_requires_its_target_seat(self):
+    def test_a_confirmed_meld_must_match_the_selected_action_semantics(self):
+        """actor + kan kindだけでconfirmed扱いしない。"""
+        mismatches = (
+            (
+                "daiminkan from a different discarder",
+                daiminkan_stream(meld_from_seat=Seat.WEST),
+                daiminkan_action(),
+            ),
+            (
+                "daiminkan on a different tile",
+                daiminkan_stream(rank=7),
+                daiminkan_action(),
+            ),
+            (
+                "ankan on different tiles",
+                declared_kan_stream(PublicMeldType.ANKAN, rank=9),
+                ankan_action(),
+            ),
+            (
+                "kakan from a different pon source",
+                declared_kan_stream(PublicMeldType.KAKAN, from_seat=Seat.WEST),
+                kakan_action(),
+            ),
+            (
+                "kakan on a different tile",
+                declared_kan_stream(PublicMeldType.KAKAN, rank=8),
+                kakan_action(),
+            ),
+        )
+        for label, stream, action in mismatches:
+            with self.subTest(case=label):
+                outcome, detail, expected, observed = self._classify(
+                    stream, descriptor=self._descriptor(action), actor=Seat.EAST
+                )
+                self.assertEqual(outcome, UNACCOUNTED)
+                self.assertIn("does not match the selected", detail)
+                self.assertFalse(expected)
+                self.assertFalse(observed)
+
+    def test_a_matching_meld_still_confirms_for_every_kind(self):
+        cases = (
+            (daiminkan_stream(), daiminkan_action()),
+            (declared_kan_stream(PublicMeldType.ANKAN), ankan_action()),
+            (declared_kan_stream(PublicMeldType.KAKAN), kakan_action()),
+        )
+        for stream, action in cases:
+            with self.subTest(kind=type(action).__name__):
+                outcome, _detail, expected, observed = self._classify(
+                    stream, descriptor=self._descriptor(action), actor=Seat.EAST
+                )
+                self.assertEqual(outcome, CONFIRMED)
+                self.assertTrue(expected)
+                self.assertTrue(observed)
+
+    def test_a_mismatched_actor_fails_closed(self):
         with self.assertRaises(KanAccountingError):
             self._classify(
-                daiminkan_stream(), kind="daiminkan", actor=Seat.EAST, target=None
+                daiminkan_stream(),
+                descriptor=self._descriptor(daiminkan_action()),
+                actor=Seat.SOUTH,
             )
 
     def test_an_unknown_kan_kind_fails_closed(self):
         with self.assertRaises(KanAccountingError):
-            self._classify((), kind="pon", actor=Seat.EAST, target=None)
+            self._classify((), descriptor={"kind": "pon", "actor": 0}, actor=Seat.EAST)
 
     def test_decision_count_mismatch_is_not_silently_accepted(self):
         diagnostic = _observe(decision_with(ankan_action(), discard_action()))
@@ -663,11 +773,34 @@ class KanCoverageResultTest(unittest.TestCase):
         self.assertEqual(classify(manifest)[0], QUALIFIED)
 
     def test_an_unconverted_eligible_opportunity_is_a_contract_violation(self):
-        diagnostic = kan_opportunity_diagnostic_value(kakan=(3, 0), violations=3)
+        diagnostic = kan_opportunity_diagnostic_value(
+            kakan=(3, 0), violations=3, unconverted={"kakan": 3}
+        )
         self.assertEqual(kind_interpretation(diagnostic, "kakan"), CONTRACT_VIOLATION)
         manifest = population_manifest_value()
         manifest["kan_opportunity_diagnostic"] = diagnostic
         self.assertEqual(classify(manifest)[0], ACCOUNTING_REFORMULATE)
+
+    def test_a_legal_but_unselected_kind_is_not_a_contract_violation(self):
+        """複数kan kindが同時にlegalなdecisionで選ばれなかったkindは違反ではない。
+
+        Policy contractはdecision単位であり、どれか1つのkanを選べば満たされる。
+        このcaseでもresultはQUALIFIEDのまま保存できなければならない。
+        """
+        diagnostic = kan_opportunity_diagnostic_value(
+            daiminkan=(1, 1), ankan=(1, 0), kakan=(1, 0), violations=0
+        )
+        self.assertEqual(kind_interpretation(diagnostic, "daiminkan"), OBSERVED)
+        self.assertEqual(kind_interpretation(diagnostic, "ankan"), OPPORTUNITY_OBSERVED)
+        self.assertEqual(kind_interpretation(diagnostic, "kakan"), OPPORTUNITY_OBSERVED)
+        manifest = population_manifest_value()
+        manifest["kan_opportunity_diagnostic"] = diagnostic
+        manifest["kan_accounting"]["totals"] = kan_accounting_totals(
+            selected=1, confirmed=1
+        )
+        self.assertEqual(classify(manifest)[0], QUALIFIED)
+        value = result_value(manifest)
+        self.assertIsInstance(validate_result_value(value), dict)
 
     def test_an_unaccounted_selected_kan_reformulates_the_accounting(self):
         manifest = population_manifest_value()

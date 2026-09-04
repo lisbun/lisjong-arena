@@ -65,9 +65,17 @@ class KanOpportunityError(RuntimeError):
     """kan opportunity diagnosticのcontract violation。"""
 
 
-def _tile_value(tile: object) -> list[object]:
+def tile_descriptor_value(tile: object) -> list[object]:
+    """Tileのsemantic descriptor値。既存`tile_sort_key()`だけを使う。
+
+    physical copy identityを持たないlisjong Tile valueの同値性をJSON primitive
+    として表現する。accounting側でpublic meldと照合する際も同じ関数を使う。
+    """
     category, rank, is_red = tile_sort_key(tile)
     return [category, rank, is_red]
+
+
+_tile_value = tile_descriptor_value
 
 
 def kan_action_kind(action: object) -> str | None:
@@ -298,6 +306,15 @@ class KanOpportunityDiagnostic:
         return tuple(value for value in self.records if value.selected_kan)
 
     def kind_counts(self, kind: str) -> dict[str, int]:
+        """kan kind別のopportunity counts。
+
+        `selected`はこのkind自身が選ばれた回数であり、Policy contractの成否では
+        ない。複数kan kindが同時にlegalなdecisionでは、どれか1つのkanを選べば
+        contractを満たすため、選ばれなかったkindの`selected`が0でも違反ではない。
+        contract違反はdecision単位でしか判定できないので、そのkindを含む
+        eligible decisionのうち **kanを一切選ばなかった** decision数を
+        `eligible_no_win_opportunities_without_kan_selection`として別に持つ。
+        """
         with_kind = tuple(
             value for value in self.records if kind in value.candidate_kinds
         )
@@ -309,6 +326,9 @@ class KanOpportunityDiagnostic:
             ),
             "legal_opportunities_with_winning_action": len(with_kind) - len(eligible),
             "eligible_no_win_opportunities": len(eligible),
+            "eligible_no_win_opportunities_without_kan_selection": sum(
+                1 for value in eligible if not value.selected_kan
+            ),
             "selected": sum(1 for value in self.records if value.selected_kind == kind),
         }
 
@@ -412,5 +432,6 @@ __all__ = [
     "KanOpportunityObserver",
     "action_descriptor",
     "kan_action_kind",
+    "tile_descriptor_value",
     "winning_action_kind",
 ]

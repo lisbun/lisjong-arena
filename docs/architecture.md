@@ -1011,6 +1011,14 @@ bindingは`build_policy_input(checkpoint.observation)`がdecision時点の
 silentに受け入れずfail closedする。confirmed / explicit non-confirm / unaccountedは
 別countとして残し、`unaccounted`を0扱いしない。
 
+confirmationはactorとkan kindだけでは判定しない。成立したpublic meldの`meld_type` /
+`tiles` / `from_seat` / `called_tile`をselected actionのsemantic fieldと照合し、
+一致しないものはconfirmed扱いせず`unaccounted`とする。「そのseatが同じ種類のkanを
+した」ではなく「選んだsemantic actionに対応するmeldが成立した」ことを確認する。
+tile値の比較は既存`domain_conversion.tile_from_public_tile()`だけを使い、独自の
+変換規則を作らない。加槓は元Ponの残り2枚が`KakanAction`へ保持されないため、
+照合を`from_seat` / `called_tile` / `added_tile`の包含 / 4枚であることに留める。
+
 大明槓の成立は`MeldCalledEvidence`、加槓・暗槓の成立は`KanConfirmedEvidence`が単一の
 sourceであるという既存engine contractをそのまま使い、Arena側でkan eventを再定義
 しない。
@@ -1038,12 +1046,16 @@ SEED PLAN REFORMULATE
 STOP / INVALID
 ```
 
+Policy contractはdecision単位である。複数kan kindが同時にlegalなdecisionでは、
+どれか1つのkanを選べばcontractを満たすため、選ばれなかったkindを違反として扱わない。
 zero-count kindは
 
 ```text
-eligible no-win opportunity = 0    -> UNMEASURED / ABSENT IN PILOT
-eligible no-win opportunity > 0
-    かつ selected = 0              -> source contract violation
+eligible no-win opportunity = 0        -> UNMEASURED / ABSENT IN PILOT
+そのkindを含むeligible decisionのうち
+    kanを一切選ばなかったdecisionが存在 -> SOURCE CONTRACT VIOLATION
+violationなし / そのkindは選ばれず      -> OPPORTUNITY OBSERVED / NOT SELECTED
+そのkind自身が選ばれた                  -> OBSERVED
 ```
 
 として区別し、3 kindすべての観測をqualificationの必須条件にしない。結果を見てから
