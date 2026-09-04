@@ -168,6 +168,10 @@ def load_freeze_record(bundle_path: str | Path) -> OfflineQFreeze:
         raise OfflineQArtifactError("unsupported freeze record schema version")
     if document["protocol_id"] != PROTOCOL_ID:
         raise OfflineQArtifactError("freeze record protocol_id is not the locked one")
+    if document["teacher_source_revision"] != TEACHER_SOURCE_REVISION:
+        raise OfflineQArtifactError(
+            "freeze record teacher_source_revision is not the locked one"
+        )
     if document["strength_claim"] is not None:
         raise OfflineQArtifactError("freeze record must not carry a strength claim")
     retention = expect_object(

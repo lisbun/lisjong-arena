@@ -97,9 +97,14 @@ def _row(
     return MacroTransitionRow(**kwargs)
 
 
-def _build_dataset_with_a_coverage_gap(destination: Path):
+def _build_dataset_with_a_coverage_gap(destination: Path, *, gap_next_legal_indices):
     """TRAINのbehavior supportは{0,1}に固定し、1つのTRAIN gameだけ
-    next legal indicesが{2,3}（support外）しか持たないnonterminal rowを持つ。
+    ``gap_next_legal_indices``をnext legal indicesに持つnonterminal rowを持つ。
+
+    呼び出し側は、TRAIN support {0,1}に対して全く重ならないcase（例: {2,3}）と、
+    一部だけ重なるcase（例: {0,2}）の両方を渡せる。locked contractはどちらも
+    fail closedを要求する -- 「1つでもTRAIN-unsupportedなnext legal actionが
+    あればそのtransitionをbootstrapへ使わない」。
     """
     writer = OfflineQDatasetWriter(destination, provenance=FIXTURE_PROVENANCE)
     try:
@@ -119,7 +124,7 @@ def _build_dataset_with_a_coverage_gap(destination: Path):
                         legal_indices=(0, 1),
                         behavior_index=0,
                         terminal=False,
-                        next_legal_indices=(2, 3),
+                        next_legal_indices=gap_next_legal_indices,
                     ),
                 )
             else:
@@ -232,7 +237,21 @@ class CoverageGapTest(unittest.TestCase):
     def test_unsupported_next_actions_fail_closed_instead_of_silently_extrapolating(
         self,
     ):
-        dataset = _build_dataset_with_a_coverage_gap(self.destination)
+        dataset = _build_dataset_with_a_coverage_gap(
+            self.destination, gap_next_legal_indices=(2, 3)
+        )
+        with self.assertRaises(OfflineQProtocolError):
+            train_q_model(dataset)
+
+    def test_partially_unsupported_next_actions_fail_closed_too(self):
+        """next legal {0,2}のうちTRAIN supportは{0,1}なので、action 0が
+        supportedであっても action 2 がunsupportedである限りこのtransition
+        全体をbootstrapへ使ってはいけない。intersectionが非空だからといって
+        通してはならない。
+        """
+        dataset = _build_dataset_with_a_coverage_gap(
+            self.destination, gap_next_legal_indices=(0, 2)
+        )
         with self.assertRaises(OfflineQProtocolError):
             train_q_model(dataset)
 
@@ -293,7 +312,33 @@ class TdTargetComputationTest(unittest.TestCase):
         targets = compute_td_targets(stub, tensors, support_mask)
         self.assertTrue(torch.allclose(targets, torch.tensor([0.5, -0.3])))
 
-    def test_nonterminal_target_bootstraps_only_over_supported_next_actions(self):
+    def test_nonterminal_target_bootstraps_over_fully_supported_next_actions(self):
+        import torch
+
+        next_mask_row = [False] * VOCABULARY_SIZE
+        next_mask_row[0] = True
+        next_mask_row[1] = True
+        tensors = _stub_tensors(
+            reward=[1.0], terminal=[False], next_legal_mask=[next_mask_row]
+        )
+        support_mask = torch.zeros(VOCABULARY_SIZE, dtype=torch.bool)
+        support_mask[0] = True
+        support_mask[1] = True
+        stub = self._stub_model({0: 2.0, 1: 5.0})
+        targets = compute_td_targets(stub, tensors, support_mask)
+        expected = 1.0 + GAMMA * 5.0
+        self.assertTrue(torch.allclose(targets, torch.tensor([expected])))
+
+    def test_nonterminal_target_fails_closed_when_any_next_legal_action_is_unsupported(
+        self,
+    ):
+        """next legal {0,1,2}のうちTRAIN supportは{0,1}のみ。action 0, 1が
+        supportedであっても action 2 がunsupportedである限り、locked contract
+        はこのtransition全体をbootstrapへ使うことを禁じる。intersectionが
+        非空（{0,1}）だからといって、その部分集合だけでmaxを取って通しては
+        いけない -- 崩れた場合、次のstateで実際には選べたはずのunsupported
+        actionへ暗黙にvalueが染み出す。
+        """
         import torch
 
         next_mask_row = [False] * VOCABULARY_SIZE
@@ -307,12 +352,8 @@ class TdTargetComputationTest(unittest.TestCase):
         support_mask[0] = True
         support_mask[1] = True
         stub = self._stub_model({0: 2.0, 1: 5.0, 2: 100.0})
-        targets = compute_td_targets(stub, tensors, support_mask)
-        # index 2 has the highest raw Q-value but is excluded from the max
-        # because it is not TRAIN-supported; the max over {0: 2.0, 1: 5.0} is
-        # 5.0, so target = reward + gamma * 5.0.
-        expected = 1.0 + GAMMA * 5.0
-        self.assertTrue(torch.allclose(targets, torch.tensor([expected])))
+        with self.assertRaises(OfflineQProtocolError):
+            compute_td_targets(stub, tensors, support_mask)
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")

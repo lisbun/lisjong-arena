@@ -133,6 +133,26 @@ class RetentionGateTest(unittest.TestCase):
         with self.assertRaises(OfflineQArtifactError):
             load_freeze_record(bundle_path)
 
+    def test_a_tampered_teacher_source_revision_fails_closed(self):
+        with mock.patch(_EPHEMERAL_PATCH, return_value=()):
+            freeze_candidates(
+                bc_checkpoint_path=self.bc_checkpoint.path,
+                q_checkpoint_path=self.q_checkpoint.path,
+                backend="test-store",
+                root=self.retention_root,
+                key="offlineq/run-1",
+            )
+        bundle_path = self.retention_root / "offlineq" / "run-1"
+        record_path = bundle_path / FREEZE_RECORD_FILENAME
+        document = json.loads(record_path.read_text(encoding="utf-8"))
+        document["teacher_source_revision"] = "not-the-locked-revision"
+        record_path.write_text(
+            json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(OfflineQArtifactError):
+            load_freeze_record(bundle_path)
+
     def test_a_second_freeze_at_the_same_key_is_write_once(self):
         with mock.patch(_EPHEMERAL_PATCH, return_value=()):
             freeze_candidates(

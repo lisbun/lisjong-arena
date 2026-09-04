@@ -106,15 +106,18 @@ def compute_td_targets(target_model, tensors: OfflineQSplitTensors, support_mask
         nonterminal = ~tensors.terminal
         if bool(nonterminal.any()):
             next_q = target_model(tensors.next_features[nonterminal])
-            restricted_mask = tensors.next_legal_mask[
-                nonterminal
-            ] & support_mask.unsqueeze(0)
-            if not bool(restricted_mask.any(dim=-1).all()):
+            next_legal = tensors.next_legal_mask[nonterminal]
+            unsupported_next_legal = next_legal & ~support_mask.unsqueeze(0)
+            if bool(unsupported_next_legal.any()):
                 raise OfflineQProtocolError(
-                    "a nonterminal transition has no TRAIN-supported next action; "
-                    "data coverage is insufficient for the fitted-Q target "
-                    "(see the support gate report -- OFFLINE Q DATA COVERAGE BLOCKED)"
+                    "a nonterminal transition has a next legal discard action "
+                    "that is not TRAIN-supported; the locked contract requires "
+                    "every next-state legal discard index to be TRAIN-supported "
+                    "before that transition may be used for the fitted-Q "
+                    "bootstrap target (see the support gate report -- "
+                    "OFFLINE Q DATA COVERAGE BLOCKED)"
                 )
+            restricted_mask = next_legal & support_mask.unsqueeze(0)
             max_next_q = masked_max_q(next_q, restricted_mask)
             targets[nonterminal] = (
                 tensors.reward[nonterminal] + GAMMA * max_next_q.detach()
