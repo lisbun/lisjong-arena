@@ -81,6 +81,56 @@ def kind_interpretation(diagnostic: dict, kind: str) -> str:
     return OPPORTUNITY_OBSERVED
 
 
+ARM_EVIDENCE_FIELDS = (
+    "arm_id",
+    "provenance",
+    "coverage",
+    "dataset_retention",
+    "generation_cost",
+    "population_plan",
+    "source_attribution",
+    "split_policy_id",
+    "test_partition_present",
+)
+"""result artifactのarm entryが、classificationを再導出するために持つ必要のあるfield。
+
+これらが揃っていない限り、`validate_result_value()`はoutcomeをrecorded evidence
+から再導出できない。artifactが自分のoutcomeを証明できることをcontractにする。
+"""
+
+
+def arm_manifest_view(arm_id: str, entry: dict) -> dict[str, object]:
+    """result artifactのarm entryを、`classify()`が読むmanifest viewへ射影する。
+
+    result artifactはpopulation manifestそのものを埋め込まないが、
+    classificationに必要なevidence（provenance / coverage / retention / cost /
+    plan / source attribution）はarm entryへbindしている。この関数はそのentryを
+    manifest shapeへ写すだけで、値を再計算も補完もしない。欠けているfieldは
+    fail closedする。
+    """
+    if type(entry) is not dict:
+        raise MixResultError(f"arm {arm_id} entry is not an object")
+    missing = [name for name in ARM_EVIDENCE_FIELDS if name not in entry]
+    if missing:
+        raise MixResultError(
+            f"arm {arm_id} entry lacks the evidence needed to re-derive the "
+            f"outcome: {missing}"
+        )
+    if entry["arm_id"] != arm_id:
+        raise MixResultError(f"arm {arm_id} entry records a different arm id")
+    return {
+        "arm_id": arm_id,
+        "provenance": entry["provenance"],
+        "coverage": entry["coverage"],
+        "dataset_retention": entry["dataset_retention"],
+        "cost": entry["generation_cost"],
+        "population_plan": entry["population_plan"],
+        "source_attribution": entry["source_attribution"],
+        "split_policy_id": entry["split_policy_id"],
+        "test_partition_present": entry["test_partition_present"],
+    }
+
+
 def hard_validity(manifest: dict, cells: list) -> dict[str, object]:
     """1 armのhard validity gate。artifactの値から確認できる事実だけを集める。
 
@@ -331,6 +381,13 @@ def selected_recipe(
     lockするのは **recipe** であり、このpilotのrealized gamesではない。
     development seeds `330..353`はfinal population identityへlockせず、
     Phase 10ではfresh seedsを使う。
+
+    したがってrecipeへは **seedを含むidentityを一切入れない**。
+    `FirstPartySplitPolicy.MIX_PILOT_DEVELOPMENT`のvalueは
+    `first-party-seeds-330-353-18-6-development-only-v1`であり、名前そのものが
+    pilot seed rangeへbindされている。これをrecipeへ入れるとrecipeの文字列
+    identityにpilot seedsが残るため、seed-independentな`split_semantics`
+    （whole-hanchan単位 / TRAIN + VALIDATION / TESTなし）だけを持つ。
     """
     arm_id = {MIX_LOCKED_LOW: "B", MIX_LOCKED_MEDIUM: "C"}.get(outcome)
     if arm_id is None:
@@ -364,15 +421,24 @@ def selected_recipe(
         "anchor_semantics_id": provenance["anchor_semantics_id"],
         "evidence_cutoff_semantics_id": provenance["evidence_cutoff_semantics_id"],
         "label_semantics_id": provenance["label_semantics_id"],
-        "split_policy_id": manifest["split_policy_id"],
+        # split policy **id** はseed rangeを名前に含む
+        # (`first-party-seeds-330-353-...`) ため、recipeへ入れない。recipeが
+        # 必要とするのはseed-independentなsplit semanticsだけである。
+        "split_semantics": {
+            "unit": "whole hanchan",
+            "partitions": ["TRAIN", "VALIDATION"],
+            "test_partition_present": False,
+        },
         "sequential_family": "phase8 S2 previous-belief GRU-cell family",
         "development_seeds_reused_for_phase10": False,
     }
 
 
 __all__ = [
+    "ARM_EVIDENCE_FIELDS",
     "CANDIDATE_ARM_IDS",
     "MixResultError",
+    "arm_manifest_view",
     "classify",
     "coverage_accounting",
     "hard_validity",

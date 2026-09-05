@@ -168,7 +168,17 @@ def _train_command(arguments) -> dict[str, object]:
 
 
 def _arm_value(manifest: dict, data, model_manifest: dict) -> dict[str, object]:
+    """1 armのresult entry。
+
+    `validate_result_value()`はこのentryからoutcomeを再導出するため、
+    classificationに必要なevidence（`arm_id` / provenance / coverage /
+    retention / cost / plan / source attribution / split policy /
+    TEST partition flag）をすべてbindする。
+    """
     return {
+        "arm_id": manifest["arm_id"],
+        "split_policy_id": manifest["split_policy_id"],
+        "test_partition_present": manifest["test_partition_present"],
         "population_identity": data.population_identity,
         "population_plan": manifest["population_plan"],
         "raw_corpus_identity": data.raw_corpus_identity,

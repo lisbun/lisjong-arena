@@ -17,6 +17,7 @@ from _stage3_kan_coverage_fixtures import _base_raw_game
 from lisjong_arena.phase4_raw_corpus.model import RawCorpus
 from lisjong_arena.phase4_raw_corpus.persistence import save_raw_corpus
 from lisjong_arena.phase5_belief_dataset.pipeline import run_phase5_pipeline
+from lisjong_arena.stage3_mix_pilot.comparison import compare_against_control
 from lisjong_arena.stage3_mix_pilot.experiment import CANDIDATE, REFERENCE_ARM_ID
 from lisjong_arena.stage3_mix_pilot.population import mix_arm_plan
 from lisjong_arena.stage3_mix_pilot.protocol import (
@@ -33,6 +34,11 @@ from lisjong_arena.stage3_mix_pilot.protocol import (
     SELECTION_RULE,
     SPLIT_POLICY,
     VALIDATION_SEEDS,
+)
+from lisjong_arena.stage3_mix_pilot.result import (
+    arm_manifest_view,
+    classify,
+    selected_recipe,
 )
 
 ARM_DATASET_IDENTITIES = {
@@ -361,13 +367,70 @@ def comparison_rows(regressed: tuple[str, ...] = ()) -> list[dict]:
     return rows
 
 
+def arm_entry_value(arm_id: str, manifest: dict | None = None) -> dict:
+    """result artifactの1 arm entry。
+
+    `validate_result_value()`はこのentryからoutcomeを再導出するため、
+    classificationに必要なevidenceをすべて持たせる。
+    """
+    manifest = manifest or arm_manifest_value(arm_id)
+    return {
+        "arm_id": arm_id,
+        "population_identity": manifest["population_identity"],
+        "population_plan": manifest["population_plan"],
+        "raw_corpus_identity": ARM_RAW_IDENTITIES[arm_id],
+        "dataset_identity": ARM_DATASET_IDENTITIES[arm_id],
+        "provenance": manifest["provenance"],
+        "coverage": manifest["coverage"],
+        "generation_cost": manifest["cost"],
+        "cost_rates": manifest["cost_rates"],
+        "distribution_effect": manifest["distribution_effect"],
+        "source_attribution": manifest["source_attribution"],
+        "dataset_retention": manifest["dataset_retention"],
+        "split_policy_id": manifest["split_policy_id"],
+        "test_partition_present": manifest["test_partition_present"],
+    }
+
+
+def derived_comparison_rows(cells: list) -> list:
+    """matrixのper-hanchan measurementから実際に導出したpaired comparison rows。
+
+    artifact validatorが同じ再導出を行うため、fixtureも手書きせず導出する。
+    """
+    by_pair = {
+        (c["training_population_id"], c["validation_population_id"]): c for c in cells
+    }
+    return [
+        compare_against_control(
+            candidate_arm_id=candidate,
+            validation_arm_id=validation,
+            control_cell=by_pair[(CONTROL_ARM_ID, validation)],
+            candidate_cell=by_pair[(candidate, validation)],
+        )
+        for candidate in ARM_IDS
+        if candidate != CONTROL_ARM_ID
+        for validation in ARM_IDS
+    ]
+
+
 def result_value(
     *,
-    outcome: str = "MIX LOCKED — 12.5% AUGMENTATION",
     cells: list | None = None,
     comparisons: list | None = None,
+    manifests: dict | None = None,
 ) -> dict:
-    """schema上well-formedなmix pilot result value。"""
+    """内部整合したmix pilot result value。
+
+    outcome / gates / selected_recipe は、armのevidenceと再導出したpaired
+    comparisonからlocked selection ruleで導く。fixtureがoutcomeを勝手に
+    名乗らないので、validatorのre-derivation contractと矛盾しない。
+    """
+    manifests = manifests or {arm_id: arm_manifest_value(arm_id) for arm_id in ARM_IDS}
+    cells = matrix_cells() if cells is None else cells
+    comparisons = derived_comparison_rows(cells) if comparisons is None else comparisons
+    arms = {arm_id: arm_entry_value(arm_id, manifests[arm_id]) for arm_id in ARM_IDS}
+    views = {arm_id: arm_manifest_view(arm_id, arms[arm_id]) for arm_id in ARM_IDS}
+    outcome, reasons, gates = classify(views, cells, comparisons)
     return {
         "result_schema_version": RESULT_SCHEMA_VERSION,
         "pilot_role": PILOT_ROLE,
@@ -376,22 +439,13 @@ def result_value(
         "retry_rule": RETRY_RULE,
         "selection_rule": SELECTION_RULE,
         "evaluation_runtime": {"device": "cpu"},
-        "arms": {
-            arm_id: {
-                "population_identity": mix_arm_plan(arm_id).population_identity,
-                "raw_corpus_identity": ARM_RAW_IDENTITIES[arm_id],
-                "dataset_identity": ARM_DATASET_IDENTITIES[arm_id],
-            }
-            for arm_id in ARM_IDS
-        },
-        "cross_population_matrix": cells if cells is not None else matrix_cells(),
-        "paired_comparisons": (
-            comparisons if comparisons is not None else comparison_rows()
-        ),
-        "gates": {},
+        "arms": arms,
+        "cross_population_matrix": cells,
+        "paired_comparisons": comparisons,
+        "gates": gates,
         "outcome": outcome,
-        "outcome_reasons": ["fixture"],
-        "selected_recipe": None,
+        "outcome_reasons": list(reasons),
+        "selected_recipe": selected_recipe(outcome, views),
         "test_partition_evaluated": False,
         "accumulated_with_historical_evidence": False,
     }

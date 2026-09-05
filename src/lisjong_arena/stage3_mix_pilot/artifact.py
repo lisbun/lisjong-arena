@@ -29,6 +29,10 @@ from lisjong_arena.stage3_entry_gate.artifact import (
     CHECKPOINT_SELECTION_RULE,
     execution_runtime_value,
 )
+from lisjong_arena.stage3_mix_pilot.comparison import (
+    MixComparisonError,
+    compare_against_control,
+)
 from lisjong_arena.stage3_mix_pilot.experiment import CANDIDATE, REFERENCE_ARM_ID
 from lisjong_arena.stage3_mix_pilot.protocol import (
     ARM_IDS,
@@ -40,6 +44,12 @@ from lisjong_arena.stage3_mix_pilot.protocol import (
     PILOT_ROLE,
     RESULT_SCHEMA_VERSION,
     SELECTION_RULE,
+)
+from lisjong_arena.stage3_mix_pilot.result import (
+    MixResultError,
+    arm_manifest_view,
+    classify,
+    selected_recipe,
 )
 
 MANIFEST_FILENAME = "manifest.json"
@@ -429,7 +439,15 @@ def _validate_matrix(value: dict, identities: dict[str, dict]) -> None:
         raise MixArtifactError("matrix does not cover every train/validation pair")
 
 
-def _validate_comparisons(value: dict) -> None:
+def _validate_comparisons(value: dict) -> list:
+    """paired comparisonを、matrixのper-hanchan measurementから再導出して照合する。
+
+    符号の整合だけを見ると、self-consistentに捏造したcomparison（例えばpooled
+    deltaとintervalだけを都合よく書き換えたrow）が通ってしまう。したがって
+    recorded matrix cellの`per_game`から`compare_against_control()`を再実行し、
+    pooled delta、per-hanchan delta、deterministic bootstrap interval、
+    classificationまでexact一致を要求する。
+    """
     comparisons = value.get("paired_comparisons")
     candidates = tuple(name for name in ARM_IDS if name != CONTROL_ARM_ID)
     if type(comparisons) is not list or len(comparisons) != len(candidates) * len(
@@ -438,6 +456,27 @@ def _validate_comparisons(value: dict) -> None:
         raise MixArtifactError(
             "result must compare every candidate arm on every evaluation population"
         )
+    cell_by_pair = {
+        (cell["training_population_id"], cell["validation_population_id"]): cell
+        for cell in value["cross_population_matrix"]
+    }
+    expected_rows = []
+    for candidate in candidates:
+        for validation in ARM_IDS:
+            try:
+                expected_rows.append(
+                    compare_against_control(
+                        candidate_arm_id=candidate,
+                        validation_arm_id=validation,
+                        control_cell=cell_by_pair[(CONTROL_ARM_ID, validation)],
+                        candidate_cell=cell_by_pair[(candidate, validation)],
+                    )
+                )
+            except MixComparisonError as exc:
+                raise MixArtifactError(
+                    f"paired comparison {candidate}/{validation} cannot be "
+                    f"re-derived from the recorded matrix: {exc}"
+                ) from exc
     seen = set()
     for row in comparisons:
         if type(row) is not dict:
@@ -453,21 +492,68 @@ def _validate_comparisons(value: dict) -> None:
             raise MixArtifactError("paired comparisons must use the control arm")
         if row.get("classification") not in (CLEAR_REGRESSION, NO_CLEAR_REGRESSION):
             raise MixArtifactError("unknown paired comparison classification")
-        for name in ("interval_lower", "interval_upper", "pooled_delta_mae"):
-            if type(row.get(name)) not in (int, float):
-                raise MixArtifactError(f"paired comparison {name} is invalid")
-        if row["interval_lower"] > row["interval_upper"]:
-            raise MixArtifactError("paired comparison interval bounds are inverted")
-        expected = (
-            CLEAR_REGRESSION if row["interval_upper"] < 0 else NO_CLEAR_REGRESSION
-        )
-        if row["classification"] != expected:
+    by_pair = {
+        (row["candidate_arm_id"], row["validation_population_id"]): row
+        for row in comparisons
+    }
+    for expected in expected_rows:
+        key = (expected["candidate_arm_id"], expected["validation_population_id"])
+        recorded = by_pair.get(key)
+        if recorded is None:
             raise MixArtifactError(
-                "paired comparison classification differs from the locked rule"
+                f"paired comparison {key[0]}/{key[1]} is missing from the result"
             )
-        rows = row.get("per_hanchan_delta_mae")
-        if type(rows) is not list or not rows:
-            raise MixArtifactError("paired comparison lacks per-hanchan deltas")
+        if recorded != expected:
+            raise MixArtifactError(
+                f"paired comparison {key[0]}/{key[1]} differs from the comparison "
+                "re-derived from the recorded per-hanchan measurements"
+            )
+    return expected_rows
+
+
+def _validate_classification(value: dict, comparisons: list) -> None:
+    """outcome / gates / selected_recipeを、recorded evidenceから再導出して照合する。
+
+    outcomeをartifactのfreeなstringにしない。arm entryが持つprovenance /
+    coverage / dataset retention / cost / population plan / source attribution と、
+    recorded matrix、再導出済みpaired comparisonでlocked selection ruleをもう一度
+    走らせ、outcome、その理由、gate detail、locked recipeがexactに一致することを
+    要求する。
+
+    これがないと、`MIX LOCKED`を名乗りながら`gates`が空で`selected_recipe`が
+    `null`のartifactがwell-formedとして通ってしまう。
+    """
+    try:
+        views = {
+            arm_id: arm_manifest_view(arm_id, value["arms"][arm_id])
+            for arm_id in ARM_IDS
+        }
+        outcome, reasons, gates = classify(
+            views, value["cross_population_matrix"], comparisons
+        )
+    except MixResultError as exc:
+        raise MixArtifactError(
+            f"the recorded evidence cannot be classified: {exc}"
+        ) from exc
+    if value["outcome"] != outcome:
+        raise MixArtifactError(
+            f"recorded outcome {value['outcome']!r} differs from the outcome "
+            f"re-derived from the recorded evidence ({outcome!r})"
+        )
+    if value["outcome_reasons"] != list(reasons):
+        raise MixArtifactError(
+            "recorded outcome reasons differ from the re-derived reasons"
+        )
+    if value.get("gates") != gates:
+        raise MixArtifactError(
+            "recorded gate detail differs from the gates re-derived from the "
+            "recorded evidence"
+        )
+    if value.get("selected_recipe") != selected_recipe(outcome, views):
+        raise MixArtifactError(
+            "recorded selected recipe differs from the recipe the locked "
+            "selection rule derives for this outcome"
+        )
 
 
 def validate_result_value(value: object) -> dict[str, object]:
@@ -517,7 +603,8 @@ def validate_result_value(value: object) -> dict[str, object]:
     if len(dataset_identities) != len(ARM_IDS):
         raise MixArtifactError("arm dataset identities must be distinct")
     _validate_matrix(value, identities)
-    _validate_comparisons(value)
+    comparisons = _validate_comparisons(value)
+    _validate_classification(value, comparisons)
     return value
 
 

@@ -583,11 +583,22 @@ physical metrics（対角cell）:
 | dataset bytes / hanchan | 137,055 | 135,046 | 133,493 |
 | training wall-clock (18 hanchan TRAIN) | 2,071.9 s | 2,130.3 s | 2,068.6 s |
 
-generation costは1回の`generate`呼び出し全体（recording + persistence + strict
-readback + TURN derivation + Phase 2 equality re-run + dataset build +
-conditional-uniform baseline）を含む。**3 armのcostはほぼ同一であり、
-augmentation fractionによるcost差はwall-clockの実行contentionより小さい。**
-mix選択をcostだけで決めていない。
+`wall_clock_seconds_per_hanchan` / `cpu_seconds_per_hanchan` のscopeは
+**Phase 4 generation protocol** である。すなわち
+
+```text
+recording + shard persistence + strict readback + TURN derivation
++ Phase 2 equality re-run（同じseat assignmentで24 hanchanをもう1度実行）
+```
+
+であり、timerは`generate_phase4_raw_corpus_for_seeds()`の終了時点で止まる。
+**Phase 5 dataset buildとconditional-uniform baseline評価はこの数値に含まれない**
+（それぞれ`dataset_build_seconds` / `dataset_persistence_seconds` /
+`baseline_evaluation_seconds`として別に記録している）。Phase 2 equality検証が
+policy実行をおよそ2倍にしており、recording単独はその概ね半分である。
+
+**3 armのcostはほぼ同一であり、augmentation fractionによるcost差はwall-clockの
+実行contentionより小さい。** mix選択をcostだけで決めていない。
 
 ### 本pilotで観測されなかったstrata
 
@@ -714,7 +725,8 @@ Phase 10 refinementで次を扱う。**本Issue内ではPhase 10を開始しな�
 
 - fresh scale seed plan（`330..353`を転用しない）
 - generation / training scale と、そのcompute / storage projection
-  （本pilotの実測 `約 265 CPU-s / hanchan`、`約 88 KB compressed / hanchan`、
+  （本pilotの実測 `約 265 CPU-s / hanchan`（Phase 4 generation protocolのscope。
+  dataset buildとbaseline評価は別計上）、`約 88 KB compressed / hanchan`、
   `約 135 KB dataset / hanchan`、`約 468 anchors / hanchan` をinputにする）
 - local vs AWS decision
 - scaleでankan / kakanのkind別rateを再測定するか

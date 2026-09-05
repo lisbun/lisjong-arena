@@ -989,12 +989,24 @@ class ClassificationTest(unittest.TestCase):
         self.assertEqual(gate["hanchan_generated"], PILOT_HANCHAN_PER_ARM)
 
 
+def _scalars(value):
+    """dict / listを再帰的に降りてscalarだけを列挙する。"""
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _scalars(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _scalars(item)
+    else:
+        yield value
+
+
 class SelectedRecipeTest(unittest.TestCase):
     def test_no_recipe_is_locked_for_a_reformulate_outcome(self):
         self.assertIsNone(selected_recipe(INCONCLUSIVE, arm_manifests()))
         self.assertIsNone(selected_recipe(STOP_INVALID, arm_manifests()))
 
-    def test_the_recipe_locks_sources_and_fraction_but_not_the_pilot_seeds(self):
+    def test_the_recipe_locks_sources_and_fraction(self):
         recipe = selected_recipe(MIX_LOCKED_LOW, arm_manifests())
         self.assertEqual(recipe["selected_arm_id"], "B")
         self.assertEqual(recipe["augmentation_seat_slot_fraction"], 0.125)
@@ -1003,8 +1015,40 @@ class SelectedRecipeTest(unittest.TestCase):
             recipe["augmentation_source"]["identity"], AUGMENTATION_IDENTITY
         )
         self.assertIs(recipe["development_seeds_reused_for_phase10"], False)
-        self.assertNotIn("ordered_seeds", recipe)
-        self.assertNotIn(330, json.loads(json.dumps(recipe)).values())
+
+    def test_the_recipe_carries_no_pilot_seed_bound_identity(self):
+        """recipeはPhase 10へ渡すものなので、pilot seedsをどこにも残さない。
+
+        `ordered_seeds`のようなkeyが無いことだけでは足りない。split policyの
+        **value** は`first-party-seeds-330-353-...`であり、名前そのものがpilot
+        seed rangeへbindされている。recipeのscalarを再帰的に走査して、seed値も
+        seed-bound identifierも残っていないことを固定する。
+        """
+        for outcome in (MIX_LOCKED_LOW, MIX_LOCKED_MEDIUM):
+            recipe = selected_recipe(outcome, arm_manifests())
+            with self.subTest(outcome=outcome):
+                self.assertNotIn("ordered_seeds", recipe)
+                self.assertNotIn("split_policy_id", recipe)
+                for scalar in _scalars(recipe):
+                    if isinstance(scalar, bool):
+                        continue
+                    if isinstance(scalar, int):
+                        self.assertNotIn(scalar, ORDERED_SEEDS)
+                    if isinstance(scalar, str):
+                        self.assertNotIn(SPLIT_POLICY.value, scalar)
+                        self.assertNotIn("330-353", scalar)
+                        self.assertNotIn("330..353", scalar)
+
+    def test_the_recipe_keeps_seed_independent_split_semantics(self):
+        recipe = selected_recipe(MIX_LOCKED_LOW, arm_manifests())
+        self.assertEqual(
+            recipe["split_semantics"],
+            {
+                "unit": "whole hanchan",
+                "partitions": ["TRAIN", "VALIDATION"],
+                "test_partition_present": False,
+            },
+        )
 
     def test_the_medium_recipe_records_the_higher_fraction(self):
         recipe = selected_recipe(MIX_LOCKED_MEDIUM, arm_manifests())
@@ -1021,31 +1065,115 @@ class ResultArtifactTest(unittest.TestCase):
             self.assertEqual(loaded["outcome"], MIX_LOCKED_LOW)
             self.assertEqual(len(loaded["cross_population_matrix"]), 9)
             self.assertEqual(len(loaded["paired_comparisons"]), 6)
+            self.assertTrue(loaded["gates"]["hard_validity"]["A"]["passed"])
+            self.assertEqual(loaded["selected_recipe"]["selected_arm_id"], "B")
+
+    def test_an_outcome_that_the_recorded_evidence_does_not_support_is_rejected(self):
+        """outcomeはfreeなstringではなく、recorded evidenceから再導出される。"""
+        value = result_value()
+        self.assertEqual(value["outcome"], MIX_LOCKED_LOW)
+        value["outcome"] = MIX_LOCKED_MEDIUM
+        with self.assertRaises(MixArtifactError):
+            validate_result_value(value)
+
+    def test_a_locked_outcome_without_gates_or_recipe_is_rejected(self):
+        """`MIX LOCKED` を名乗りながら証拠が空のartifactを通さない。"""
+        for field, empty in (("gates", {}), ("selected_recipe", None)):
+            value = result_value()
+            value[field] = empty
+            with self.subTest(field=field), self.assertRaises(MixArtifactError):
+                validate_result_value(value)
+
+    def test_a_recipe_that_the_selection_rule_did_not_derive_is_rejected(self):
+        value = result_value()
+        value["selected_recipe"] = dict(value["selected_recipe"]) | {
+            "augmentation_seat_slot_fraction": 0.25
+        }
+        with self.assertRaises(MixArtifactError):
+            validate_result_value(value)
+
+    def test_tampered_gate_detail_is_rejected(self):
+        value = result_value()
+        gates = json.loads(json.dumps(value["gates"]))
+        gates["coverage_source_accounting"]["B"]["confirmed_kan"] = 999
+        value["gates"] = gates
+        with self.assertRaises(MixArtifactError):
+            validate_result_value(value)
+
+    def test_arm_entries_must_carry_the_evidence_the_outcome_rests_on(self):
+        for field in ("source_attribution", "dataset_retention", "provenance"):
+            value = result_value()
+            del value["arms"]["B"][field]
+            with self.subTest(field=field), self.assertRaises(MixArtifactError):
+                validate_result_value(value)
+
+    def test_a_self_consistent_but_fabricated_comparison_is_rejected(self):
+        """符号だけ整合した偽comparisonを、matrixからの再導出で拒否する。
+
+        `pooled_delta` / interval / classification は互いに整合しているが、
+        recorded per-hanchan measurementからは導出できない値である。
+        """
+        value = result_value()
+        rows = json.loads(json.dumps(value["paired_comparisons"]))
+        rows[0]["pooled_delta_mae"] = 0.05
+        rows[0]["interval_lower"] = 0.04
+        rows[0]["interval_upper"] = 0.06
+        rows[0]["classification"] = NO_CLEAR_REGRESSION
+        value["paired_comparisons"] = rows
+        with self.assertRaises(MixArtifactError):
+            validate_result_value(value)
+
+    def test_a_comparison_whose_interval_was_widened_is_rejected(self):
+        value = result_value()
+        rows = json.loads(json.dumps(value["paired_comparisons"]))
+        rows[0]["interval_lower"] = rows[0]["interval_lower"] - 1.0
+        value["paired_comparisons"] = rows
+        with self.assertRaises(MixArtifactError):
+            validate_result_value(value)
+
+    def test_the_recorded_outcome_follows_the_recorded_measurements(self):
+        """matrixを本当に悪化させると、再導出でregressionが立つ。"""
+        cells = matrix_cells({"A": 0.40, "B": 0.50, "C": 0.50})
+        value = result_value(cells=cells)
+        validate_result_value(value)
+        self.assertEqual(value["outcome"], QUALITY_TRADEOFF)
+        self.assertIsNone(value["selected_recipe"])
+        for row in value["paired_comparisons"]:
+            self.assertEqual(row["classification"], CLEAR_REGRESSION)
 
     def test_an_incomplete_matrix_is_rejected(self):
-        value = result_value(cells=matrix_cells()[:-1])
+        value = result_value()
+        value["cross_population_matrix"] = value["cross_population_matrix"][:-1]
         with self.assertRaises(MixArtifactError):
             validate_result_value(value)
 
     def test_a_duplicated_matrix_pair_is_rejected(self):
-        cells = matrix_cells()
+        value = result_value()
+        cells = json.loads(json.dumps(value["cross_population_matrix"]))
         cells[1] = cells[0]
+        value["cross_population_matrix"] = cells
         with self.assertRaises(MixArtifactError):
-            validate_result_value(result_value(cells=cells))
+            validate_result_value(value)
 
     def test_missing_paired_comparisons_are_rejected(self):
+        value = result_value()
+        value["paired_comparisons"] = value["paired_comparisons"][:-1]
         with self.assertRaises(MixArtifactError):
-            validate_result_value(result_value(comparisons=comparison_rows()[:-1]))
+            validate_result_value(value)
 
     def test_a_classification_that_contradicts_the_interval_is_rejected(self):
-        rows = comparison_rows()
+        value = result_value()
+        rows = json.loads(json.dumps(value["paired_comparisons"]))
         rows[0]["classification"] = CLEAR_REGRESSION
+        value["paired_comparisons"] = rows
         with self.assertRaises(MixArtifactError):
-            validate_result_value(result_value(comparisons=rows))
+            validate_result_value(value)
 
     def test_an_unknown_outcome_is_rejected(self):
+        value = result_value()
+        value["outcome"] = "LOOKS FINE"
         with self.assertRaises(MixArtifactError):
-            validate_result_value(result_value(outcome="LOOKS FINE"))
+            validate_result_value(value)
 
     def test_accumulating_with_historical_evidence_is_rejected(self):
         value = result_value()

@@ -47,7 +47,11 @@ from lisjong_arena.stage3_mix_pilot.protocol import (
     SELECTION_RULE,
     VALIDATION_SEEDS,
 )
-from lisjong_arena.stage3_mix_pilot.result import classify
+from lisjong_arena.stage3_mix_pilot.result import (
+    arm_manifest_view,
+    classify,
+    selected_recipe,
+)
 
 TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
@@ -245,7 +249,12 @@ class MixMatrixTest(unittest.TestCase):
             )
 
     def test_a_complete_result_value_validates_against_the_artifact_contract(self):
-        from _stage3_mix_pilot_fixtures import arm_manifests
+        """実測matrixから組んだresultが、再導出contractまで含めて通ることを固定する。
+
+        arm entryはoutcomeを再導出できるだけのevidenceを持ち、outcome / gates /
+        selected_recipe / paired comparison はすべてそのevidenceから導出する。
+        """
+        from _stage3_mix_pilot_fixtures import arm_entry_value
 
         by_pair = {
             (cell["training_population_id"], cell["validation_population_id"]): cell
@@ -262,8 +271,15 @@ class MixMatrixTest(unittest.TestCase):
             if candidate_id != CONTROL_ARM_ID
             for validation_id in ARM_IDS
         ]
-        manifests = arm_manifests()
-        outcome, reasons, gates = classify(manifests, self.cells, comparisons)
+        arms = {}
+        for arm_id in ARM_IDS:
+            entry = arm_entry_value(arm_id)
+            entry["population_identity"] = self.data[arm_id].population_identity
+            entry["raw_corpus_identity"] = self.data[arm_id].raw_corpus_identity
+            entry["dataset_identity"] = self.data[arm_id].dataset_identity
+            arms[arm_id] = entry
+        views = {arm_id: arm_manifest_view(arm_id, arms[arm_id]) for arm_id in ARM_IDS}
+        outcome, reasons, gates = classify(views, self.cells, comparisons)
         value = {
             "result_schema_version": RESULT_SCHEMA_VERSION,
             "pilot_role": PILOT_ROLE,
@@ -272,20 +288,13 @@ class MixMatrixTest(unittest.TestCase):
             "retry_rule": "test",
             "selection_rule": SELECTION_RULE,
             "evaluation_runtime": execution_runtime_value(),
-            "arms": {
-                arm_id: {
-                    "population_identity": self.data[arm_id].population_identity,
-                    "raw_corpus_identity": self.data[arm_id].raw_corpus_identity,
-                    "dataset_identity": self.data[arm_id].dataset_identity,
-                }
-                for arm_id in ARM_IDS
-            },
+            "arms": arms,
             "cross_population_matrix": self.cells,
             "paired_comparisons": comparisons,
             "gates": gates,
             "outcome": outcome,
             "outcome_reasons": list(reasons),
-            "selected_recipe": None,
+            "selected_recipe": selected_recipe(outcome, views),
             "test_partition_evaluated": False,
             "accumulated_with_historical_evidence": False,
         }
