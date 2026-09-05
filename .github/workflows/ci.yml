@@ -73,3 +73,4 @@ jobs:
           python -m unittest discover -s tests -p "test_phase9_confirmatory_ml.py" -v
           python -m unittest discover -s tests -p "test_stage3_entry_gate_ml.py" -v
           python -m unittest discover -s tests -p "test_stage3_mix_pilot_ml.py" -v
+          python -m unittest discover -s tests -p "test_stage3_scale_learning_curve_ml.py" -v
