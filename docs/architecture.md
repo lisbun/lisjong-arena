@@ -1066,6 +1066,152 @@ Gitへcommitしない。pilotのprotocol・結果・decisionは
 [`docs/stage3-kan-coverage-qualification.md`](stage3-kan-coverage-qualification.md)を
 参照する。
 
+### Stage 3 population-mix pilot (Issue #148)
+
+Arena #146は`KAN COVERAGE SOURCE QUALIFIED FOR MIX DESIGN`で完了し、
+`KanCoverageYakuhaiCallPolicy x4`が約`3.708 confirmed kan / hanchan`を生む
+saturated coverage sourceであることを示した。この飽和したsourceをそのまま
+final training populationへ採用しない。Issue #148は
+
+```text
+yakuhai-call primary
++ bounded KanCoverageYakuhaiCallPolicy augmentation
+```
+
+というpopulation constructionをdevelopment-only pilotで比較し、Phase 10へ渡す
+first-party training population **recipe** をlockできるかを判断するsuccessorで
+ある。
+
+```text
+population-mix selection
+!= Policy strength comparison
+!= KanCoverage Policy adoption
+!= new HandBelief architecture search
+!= Phase 10 large-scale generation
+```
+
+#### Arms and seat-slot augmentation
+
+3 armは同じordered seedsを **意図的に** 共有し、population constructionだけを
+変える。armごとに独立したpopulation identity / raw corpus / datasetを持つ。
+population差でtrajectoryが分岐するため、同一seedをpaired hidden-state sampleと
+しては扱わない。
+
+```text
+arm   augmentation slots   augmented hanchan   coverage seat / canonical Seat
+A      0 / 96 =  0.0%       0 / 24              0
+B     12 / 96 = 12.5%      12 / 24              3
+C     24 / 96 = 25.0%      24 / 24              6
+```
+
+coverage sourceだけのhanchanを一定割合混ぜる方式は、ordinary gamesと極端に
+kan-saturatedなgamesというclustered distributionになりやすい。本pilotは
+yakuhai-callを各hanchanのprimary populationとして保ち、少数seatだけcoverage
+sourceへ置換することで、augmentationをgame単位ではなくactor / trajectory単位へ
+分散させる。このassumption自体もpilot結果で検証対象とし、成功を事前仮定しない。
+
+seat assignmentはseed index `i = seed - 330`からdeterministicに導出し、PRNGを
+使わない。
+
+```text
+B   coverage present iff i % 2 == 0     coverage seat index = (i // 2) % 4
+C   coverage present for every i        coverage seat index = i % 4
+```
+
+どちらもcoverage actor seatがE/S/W/Nへexact balancedになり、balanceと
+「1 hanchanあたりcoverage seatは高々1」はplan構築時にfail closedで検証する。
+`MixArmPlan.population_identity`はseat assignmentまで含むため、同じarm / 同じ
+seeds / 同じslot数でも座る席が違えばidentityが変わる。
+
+#### Historical isolation
+
+#131 (`180..191`) と#146 (`306..329`) のprotocol / seeds / population identity /
+artifact validators / result documentは変更しない。successor pilotは
+`lisjong_arena.stage3_mix_pilot`という独立packageと、
+`FirstPartySplitPolicy.MIX_PILOT_DEVELOPMENT` (`330..353` / TRAIN `330..347` /
+VALIDATION `348..353` / TEST無し) だけを追加する。`330..353`はStage 1/2 formal
+split (`100..159`)、Phase 9 confirmatory holdout (`160..179`)、#131 development
+population (`180..191`)、Stage 4a / Offline Qのlocked range (`220..305`)、#146
+coverage-source population (`306..329`) のいずれとも重ならず、plan構築時に
+fail closedで検証する。
+
+#### Source attribution
+
+#146のpilotはcoverage source x4だったため、observerが見たdecisionはすべて
+coverage sourceのものだった。B / C armは1 hanchanにprimary source 3 seatと
+coverage source 1 seatを混在させるので、diagnosticをseat単位でattributeし直す。
+
+`account_selected_kans()`は、observerが見たdecision数がraw corpusのcheckpoint数と
+**exactに一致すること** をbinding invariantにしている。したがってPhase 4へは
+全seatのobserving factoryを渡し、attributionはplanのlocked coverage slotだけを
+取り出して後段で行う。`KanDecisionRecord`は既にdecisionの`game_seed` /
+`viewer_seat`を持つため、attributionはlocked seat assignmentとの照合だけで閉じ、
+#146のdiagnostic / accounting moduleは変更しない。
+
+`yakuhai-call`にはkan selection contractが無い。したがってprimary source側の
+selection contract violationをhard gateにせず、field名としても出さない。kanを
+declineすることはprimary sourceにとって正常な挙動である。hard gateは
+coverage source側にだけ適用する。
+
+#### Paired per-hanchan comparison
+
+3 x 3 cross-population evaluationは#131と同じcross-population boundaryを守る。
+評価は必ず評価先armのsequencesとcanonical validationだけで閉じ、predictionと
+referenceをarm間で突き合わせない。
+
+model間比較は同じevaluation population上でのみ行い、pairingの単位はwhole
+hanchanである。
+
+```text
+Delta = MAE(Model A) - MAE(candidate model)      per VALIDATION hanchan
+positive = candidateの方が良い
+```
+
+95% intervalはwhole-hanchan clusterのpercentile bootstrapであり、locked seedで
+deterministicである。Phase 9 confirmatoryの`paired_hanchan_bootstrap()`はformal
+holdout `160..179` / exactly 20 clustersへhard lockされたvalidatorを持つため
+再利用せず、同じpercentile semanticsを本pilotのlocked constantsで独立に固定する。
+per-hanchan MAEはPhase 5 metricsのcell-weighted平均であり、1 sampleあたりの
+expected-count cell数はconstantなので、pooled MAEはanchor数を重みにした加重
+平均として厳密に再構成できる。
+
+upper boundが0未満のとき`CLEAR MODEL-QUALITY REGRESSION`を記録する。本pilotは
+formal TESTではないため、`no significant difference == equivalent`とは解釈せず、
+`NO CLEAR MODEL-QUALITY REGRESSION`を同等性のclaimとして扱わない。この判定を
+見てseedを増やすこともしない。
+
+#### Selection rule
+
+outcomeは実行前にlockしたdeterministic ruleで1つだけ決める。
+
+```text
+1. hard validity fails                   -> STOP / INVALID
+2. neither B nor C satisfies coverage    -> MIX REFORMULATE — COVERAGE INSUFFICIENT
+3. coverage holds, B and C both regress  -> MIX REFORMULATE — QUALITY / DISTRIBUTION
+                                            TRADEOFF
+4. B satisfies candidate eligibility     -> MIX LOCKED — 12.5% AUGMENTATION
+5. B does not and C does                 -> MIX LOCKED — 25% AUGMENTATION
+6. otherwise                             -> MIX REFORMULATE — INCONCLUSIVE
+```
+
+B / Cが両方eligibleなら低い方のaugmentation fractionであるBを選ぶ。coverage
+holeを解消できる範囲でtraining distributionへの介入を最小化することを、result
+exposure前のselection priorityとして固定してある。`SEED PLAN REFORMULATE`は
+result exposure前のfreshness preflightでしか選べず、measurementからは導出しない。
+
+`MIX LOCKED`でlockするのは **population recipe** であり、このpilotのrealized
+gamesではない。development seeds `330..353`はfinal population identityへlockせず、
+Phase 10ではfresh seedsを使う。
+
+Stage 3 model / result artifactは#131 / #146とは別schema・別identityを持ち、
+load時にschema versionとcanonical bytesだけでなく、完全な3 x 3 matrix、全candidate
+armのpaired comparison、intervalとclassificationの整合、exhaustive outcomeまで
+fail closedで検証する。
+
+生成されるraw corpus / dataset / model / resultはrepository外のimmutable artifact
+であり、Gitへcommitしない。pilotのprotocol・結果・decisionは
+[`docs/stage3-mix-pilot.md`](stage3-mix-pilot.md)を参照する。
+
 ### ABBB strength evaluation artifact (Issue #110)
 
 Issue #110で、ABBB / `4p-red-single` strength evaluation結果を再実行せず再集計できる

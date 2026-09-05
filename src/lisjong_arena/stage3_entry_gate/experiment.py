@@ -38,6 +38,7 @@ population validator、artifact validatorは変更も再利用もしない。
 boundaryを型で持つ。
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from lisjong_arena.phase4_raw_corpus.persistence import PersistedRawCorpus
@@ -156,9 +157,17 @@ def build_population_data(
     population_identity: str,
     persisted_raw: PersistedRawCorpus,
     dataset: BeliefDataset,
+    validate: Callable[[BeliefDataset], None] = validate_stage3_dataset,
 ) -> Stage3PopulationData:
-    """datasetからPhase 8 canonical sequencesとreference armを構成する。"""
-    validate_stage3_dataset(dataset)
+    """datasetからPhase 8 canonical sequencesとreference armを構成する。
+
+    `validate`はdatasetのpopulation membershipをfail closedで確認するcallable
+    である。defaultは#131 Stage 3 Entry Gateのlocked development population
+    validatorであり、そのsemanticsは変更しない。successor pilotは自分の
+    locked seed populationのvalidatorを渡す。ここで検証をskipできる値
+    （`None`等）は受け付けない。
+    """
+    validate(dataset)
     samples = resolve_training_samples(dataset, persisted_raw)
     examples = materialize_development_examples(dataset.examples, samples)
     sequences = build_sequences(examples)
