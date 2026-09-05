@@ -1003,129 +1003,532 @@ _RESULT_FIELDS = {
     "limitations",
     "classification",
 }
+_IDENTITY_FIELDS = tuple(LOCKED_SOURCE_IDENTITIES.to_document())
+_INPUT_IDENTITY_FIELDS = {*_IDENTITY_FIELDS, "real_artifact_execution"}
+_ROW_COUNT_FIELDS = {
+    "total_row_count",
+    "choice_row_count",
+    "ordinary_discard_row_count",
+    "support_complete_row_count",
+    "eligible_row_count",
+    "excluded_row_count",
+}
+_DISAGREEMENT_PAIRS = ("q_vs_bc", "q_vs_behavior", "bc_vs_behavior")
+_MEASUREMENT_A_FIELDS = {
+    "eligible_row_count",
+    *(
+        f"{pair}_disagreement_{suffix}"
+        for pair in _DISAGREEMENT_PAIRS
+        for suffix in ("count", "rate")
+    ),
+    "stratifications",
+}
+_STRATIFICATION_NAMES = {
+    "legal_action_count",
+    "transition_terminality",
+    "round_ordinal",
+    "decision_depth",
+}
+_STRATUM_FIELDS = {
+    "stratum",
+    "row_count",
+    *(
+        f"{pair}_disagreement_{suffix}"
+        for pair in _DISAGREEMENT_PAIRS
+        for suffix in ("count", "rate")
+    ),
+}
+_SUMMARY_FIELDS = {"count", "mean", "quantiles"}
+_QUANTILE_KEYS = frozenset(format(value, "g") for value in FIXED_QUANTILES)
+_MEASUREMENT_B_SCOPES = ("all_eligible_rows", "q_bc_agree_rows", "q_bc_disagree_rows")
+_MEASUREMENT_B_METRICS = {
+    "q_top1_value",
+    "q_top2_value",
+    "q_margin",
+    "q_value_of_bc_action",
+    "q_value_of_behavior_action",
+    "q_selected_vs_bc_selected_gap",
+    "q_selected_vs_behavior_gap",
+}
+_MEASUREMENT_C_FIELDS = {
+    "eligible_row_count",
+    "terminal_row_count",
+    "nonterminal_row_count",
+    "bootstrap_eligible_row_count",
+    "unsupported_bootstrap_row_count",
+    "gamma",
+    "td_target_model",
+    "immediate_reward",
+    "td_target",
+    "predicted_selected_q",
+    "absolute_bellman_residual",
+}
+_REWARD_SCOPES = {
+    "all_eligible_rows",
+    "terminal_rows",
+    "nonterminal_rows",
+    "q_bc_agree_rows",
+    "q_bc_disagree_rows",
+}
+_BOOTSTRAP_BLOCKS = ("td_target", "predicted_selected_q", "absolute_bellman_residual")
+_BOOTSTRAP_SCOPES = {
+    "all_bootstrap_eligible_rows",
+    "q_bc_agree_rows",
+    "q_bc_disagree_rows",
+    "terminal_rows",
+    "nonterminal_rows",
+}
+_MEASUREMENT_D_FIELDS = {
+    "status",
+    "unavailable_reason",
+    "post_discard_shanten",
+    "ukeire",
+}
+_UKEIRE_FIELDS = {"status", "unavailable_reason"}
+_HAND_PROGRESSION_ARMS = ("q", "bc", "behavior")
+_HAND_PROGRESSION_PAIRS = ("q_vs_bc", "q_vs_behavior")
+_HAND_PROGRESSION_FIELDS = {*_HAND_PROGRESSION_ARMS, *_HAND_PROGRESSION_PAIRS}
+_HAND_PROGRESSION_ARM_FIELDS = {
+    "row_count",
+    "post_discard_shanten",
+    "keep_shanten_count",
+    "keep_shanten_rate",
+    "worsen_shanten_count",
+    "worsen_shanten_rate",
+}
+_HAND_PROGRESSION_PAIR_FIELDS = {
+    "row_count",
+    "lower_post_discard_shanten_count",
+    "equal_post_discard_shanten_count",
+    "higher_post_discard_shanten_count",
+    "higher_post_discard_shanten_rate",
+    "worsen_shanten_rate_difference",
+}
+_AVAILABILITY_VALUES = frozenset(status.value for status in MeasurementAvailability)
 _OUTCOME_VALUES = frozenset(outcome.value for outcome in DiagnosisOutcome)
 
 
-def _validate_disagreement_block(block: dict, expected_row_count: int) -> None:
-    if block["eligible_row_count"] != expected_row_count:
+def _require_fields(value: object, fields: set[str], context: str) -> dict:
+    if type(value) is not dict:
+        raise _error(f"{context} must be an object")
+    if set(value) != fields:
+        missing = sorted(fields - set(value))
+        extra = sorted(set(value) - fields)
+        raise _error(f"{context} has missing {missing!r} or extra {extra!r} fields")
+    return value
+
+
+def _require_count(value: object, context: str) -> int:
+    if type(value) is not int or value < 0:
+        raise _error(f"{context} must be a non-negative int")
+    return value
+
+
+def _validate_summary(value: object, context: str) -> int:
+    """fixed summaryの形を検証し、その母数を返す。
+
+    空母数のsummaryは`mean` / `quantiles`をNoneにしなければならない。値を
+    持つsummaryはlocked quantile setを完全に持たなければならない。
+    """
+    summary = _require_fields(value, _SUMMARY_FIELDS, context)
+    count = _require_count(summary["count"], f"{context}.count")
+    if count == 0:
+        if summary["mean"] is not None or summary["quantiles"] is not None:
+            raise _error(f"{context} has no rows but carries fabricated values")
+        return 0
+    if type(summary["mean"]) not in (int, float):
+        raise _error(f"{context}.mean must be a number")
+    quantiles = summary["quantiles"]
+    if type(quantiles) is not dict or set(quantiles) != _QUANTILE_KEYS:
+        raise _error(f"{context}.quantiles is not the locked quantile set")
+    for key, item in quantiles.items():
+        if type(item) not in (int, float):
+            raise _error(f"{context}.quantiles[{key!r}] must be a number")
+    return count
+
+
+def _validate_input_identities(document: dict) -> None:
+    """observed identityをlocked constantと突き合わせ、bool自己申告を無効化する。
+
+    `real_artifact_execution`はdocument内のboolean fieldだが、authorityでは
+    ない。ここで5 identityを`LOCKED_SOURCE_IDENTITIES`とexact比較し、その
+    比較結果とflagが一致しない documentはfail closedする。したがって
+    「flagだけTrueに書き換えた document」も「locked artifactで実行したのに
+    flagがFalseの document」も通らない。
+    """
+    identities = _require_fields(
+        document["input_artifact_identities"],
+        _INPUT_IDENTITY_FIELDS,
+        "input_artifact_identities",
+    )
+    declared = identities["real_artifact_execution"]
+    if type(declared) is not bool:
+        raise _error("real_artifact_execution must be an exact bool")
+    observed = {name: identities[name] for name in _IDENTITY_FIELDS}
+    for name, value in observed.items():
+        if type(value) is not str or len(value) != 64:
+            raise _error(f"input_artifact_identities.{name} is not a sha256 digest")
+    matches_locked = observed == LOCKED_SOURCE_IDENTITIES.to_document()
+    if declared is not matches_locked:
+        raise _error(
+            "real_artifact_execution does not follow from the recorded input "
+            "artifact identities; it is derived from an exact comparison against "
+            "the locked Issue #152 identities, never self-declared"
+        )
+    if document["locked_source_identities"] != LOCKED_SOURCE_IDENTITIES.to_document():
+        raise _error(
+            "locked_source_identities does not match the locked Issue #152 values"
+        )
+
+
+def _validate_disagreement_block(block: object, expected_row_count: int) -> None:
+    measurement = _require_fields(block, _MEASUREMENT_A_FIELDS, "measurement A")
+    if measurement["eligible_row_count"] != expected_row_count:
         raise _error("measurement A row count differs from the eligible row count")
-    for name in ("q_vs_bc", "q_vs_behavior", "bc_vs_behavior"):
-        count = block[f"{name}_disagreement_count"]
-        if not 0 <= count <= expected_row_count:
+    for name in _DISAGREEMENT_PAIRS:
+        count = _require_count(
+            measurement[f"{name}_disagreement_count"], f"measurement A {name} count"
+        )
+        if count > expected_row_count:
             raise _error(f"measurement A {name} count is out of range")
-        if block[f"{name}_disagreement_rate"] != _rate(count, expected_row_count):
+        if measurement[f"{name}_disagreement_rate"] != _rate(count, expected_row_count):
             raise _error(f"measurement A {name} rate is not derivable from its counts")
-    for name, strata in block["stratifications"].items():
-        total = sum(entry["row_count"] for entry in strata)
+
+    stratifications = _require_fields(
+        measurement["stratifications"], _STRATIFICATION_NAMES, "measurement A strata"
+    )
+    for name, strata in stratifications.items():
+        if type(strata) is not list:
+            raise _error(f"measurement A {name} stratification must be a list")
+        labels = set()
+        total = 0
+        for entry in strata:
+            stratum = _require_fields(
+                entry, _STRATUM_FIELDS, f"measurement A {name} stratum"
+            )
+            if type(stratum["stratum"]) is not str or not stratum["stratum"]:
+                raise _error(f"measurement A {name} stratum label must be a string")
+            if stratum["stratum"] in labels:
+                raise _error(f"measurement A {name} repeats a stratum label")
+            labels.add(stratum["stratum"])
+            row_count = _require_count(
+                stratum["row_count"], f"measurement A {name} stratum row count"
+            )
+            total += row_count
+            for pair in _DISAGREEMENT_PAIRS:
+                pair_count = _require_count(
+                    stratum[f"{pair}_disagreement_count"],
+                    f"measurement A {name} stratum {pair} count",
+                )
+                if pair_count > row_count:
+                    raise _error(
+                        f"measurement A {name} stratum {pair} count exceeds its rows"
+                    )
+                if stratum[f"{pair}_disagreement_rate"] != _rate(pair_count, row_count):
+                    raise _error(
+                        f"measurement A {name} stratum rate is not derivable from "
+                        "its counts"
+                    )
         if total != expected_row_count:
             raise _error(
                 f"measurement A {name} stratification does not partition the "
                 "eligible rows"
             )
-        for entry in strata:
-            for pair in ("q_vs_bc", "q_vs_behavior", "bc_vs_behavior"):
-                if entry[f"{pair}_disagreement_rate"] != _rate(
-                    entry[f"{pair}_disagreement_count"], entry["row_count"]
-                ):
-                    raise _error(
-                        f"measurement A {name} stratum rate is not derivable from "
-                        "its counts"
-                    )
+
+
+def _validate_ranking_block(block: object, expected_row_count: int) -> None:
+    measurement = _require_fields(block, set(_MEASUREMENT_B_SCOPES), "measurement B")
+    for scope in _MEASUREMENT_B_SCOPES:
+        _require_fields(
+            measurement[scope], _MEASUREMENT_B_METRICS, f"measurement B {scope}"
+        )
+    for metric in sorted(_MEASUREMENT_B_METRICS):
+        counts = {
+            scope: _validate_summary(
+                measurement[scope][metric], f"measurement B {scope}.{metric}"
+            )
+            for scope in _MEASUREMENT_B_SCOPES
+        }
+        if counts["all_eligible_rows"] != expected_row_count:
+            raise _error(
+                f"measurement B {metric} was not measured on every eligible row"
+            )
+        if (
+            counts["q_bc_agree_rows"] + counts["q_bc_disagree_rows"]
+            != expected_row_count
+        ):
+            raise _error(
+                f"measurement B {metric} agree / disagree rows do not partition the "
+                "eligible rows"
+            )
+
+
+def _validate_bootstrap_block(block: object, expected: int, context: str) -> None:
+    measurement = _require_fields(block, _BOOTSTRAP_SCOPES, context)
+    counts = {
+        scope: _validate_summary(measurement[scope], f"{context}.{scope}")
+        for scope in _BOOTSTRAP_SCOPES
+    }
+    if counts["all_bootstrap_eligible_rows"] != expected:
+        raise _error(f"{context} was not measured on every bootstrap-eligible row")
+    if counts["q_bc_agree_rows"] + counts["q_bc_disagree_rows"] != expected:
+        raise _error(f"{context} agree / disagree rows do not partition its rows")
+    if counts["terminal_rows"] + counts["nonterminal_rows"] != expected:
+        raise _error(f"{context} terminality rows do not partition its rows")
+
+
+def _validate_bootstrap_structure(block: object, expected_row_count: int) -> None:
+    measurement = _require_fields(block, _MEASUREMENT_C_FIELDS, "measurement C")
+    if measurement["eligible_row_count"] != expected_row_count:
+        raise _error("measurement C row count differs from the eligible row count")
+    if measurement["gamma"] != GAMMA:
+        raise _error("measurement C gamma is not the locked objective value")
+    if measurement["td_target_model"] != TD_TARGET_MODEL:
+        raise _error("measurement C does not declare the locked TD target model")
+    terminal = _require_count(
+        measurement["terminal_row_count"], "measurement C terminal row count"
+    )
+    nonterminal = _require_count(
+        measurement["nonterminal_row_count"], "measurement C nonterminal row count"
+    )
+    if terminal + nonterminal != expected_row_count:
+        raise _error("measurement C terminality counts do not partition the rows")
+    bootstrap = _require_count(
+        measurement["bootstrap_eligible_row_count"], "measurement C bootstrap count"
+    )
+    unsupported = _require_count(
+        measurement["unsupported_bootstrap_row_count"],
+        "measurement C unsupported bootstrap count",
+    )
+    if bootstrap + unsupported != expected_row_count:
+        raise _error("measurement C bootstrap counts do not partition the rows")
+
+    reward = _require_fields(
+        measurement["immediate_reward"], _REWARD_SCOPES, "measurement C reward"
+    )
+    reward_counts = {
+        scope: _validate_summary(reward[scope], f"measurement C reward.{scope}")
+        for scope in _REWARD_SCOPES
+    }
+    if reward_counts["all_eligible_rows"] != expected_row_count:
+        raise _error("measurement C reward was not measured on every eligible row")
+    if (
+        reward_counts["terminal_rows"] + reward_counts["nonterminal_rows"]
+        != expected_row_count
+    ):
+        raise _error("measurement C reward terminality rows do not partition the rows")
+    if (
+        reward_counts["q_bc_agree_rows"] + reward_counts["q_bc_disagree_rows"]
+        != expected_row_count
+    ):
+        raise _error("measurement C reward agree / disagree rows do not partition")
+    for name in _BOOTSTRAP_BLOCKS:
+        _validate_bootstrap_block(measurement[name], bootstrap, f"measurement C {name}")
+
+
+def _validate_hand_progression(block: object) -> str:
+    measurement = _require_fields(block, _MEASUREMENT_D_FIELDS, "measurement D")
+    status = measurement["status"]
+    if status not in _AVAILABILITY_VALUES:
+        raise _error(f"unknown measurement D status: {status!r}")
+
+    ukeire = _require_fields(
+        measurement["ukeire"], _UKEIRE_FIELDS, "measurement D ukeire"
+    )
+    if ukeire["status"] != MeasurementAvailability.UNAVAILABLE.value:
+        raise _error(
+            "ukeire has no reusable first-party contract and must stay UNAVAILABLE"
+        )
+    if not ukeire["unavailable_reason"]:
+        raise _error("an unavailable ukeire must record its reason")
+
+    if status == MeasurementAvailability.UNAVAILABLE.value:
+        if not measurement["unavailable_reason"]:
+            raise _error("an unavailable measurement D must record its reason")
+        if measurement["post_discard_shanten"] is not None:
+            raise _error("an unavailable measurement D must not carry summaries")
+        return status
+
+    if measurement["unavailable_reason"] is not None:
+        raise _error("an available measurement D must not record an unavailable reason")
+    summaries = _require_fields(
+        measurement["post_discard_shanten"],
+        _HAND_PROGRESSION_FIELDS,
+        "measurement D summaries",
+    )
+    arm_rows = set()
+    for arm in _HAND_PROGRESSION_ARMS:
+        entry = _require_fields(
+            summaries[arm], _HAND_PROGRESSION_ARM_FIELDS, f"measurement D {arm}"
+        )
+        row_count = _require_count(entry["row_count"], f"measurement D {arm} row count")
+        arm_rows.add(row_count)
+        if (
+            _validate_summary(
+                entry["post_discard_shanten"], f"measurement D {arm} shanten"
+            )
+            != row_count
+        ):
+            raise _error(f"measurement D {arm} shanten summary count differs")
+        for name in ("keep_shanten", "worsen_shanten"):
+            count = _require_count(
+                entry[f"{name}_count"], f"measurement D {arm} {name} count"
+            )
+            if count > row_count:
+                raise _error(f"measurement D {arm} {name} count exceeds its rows")
+            if entry[f"{name}_rate"] != _rate(count, row_count):
+                raise _error(
+                    f"measurement D {arm} {name} rate is not derivable from its counts"
+                )
+    if len(arm_rows) != 1:
+        raise _error("measurement D arms were not measured on the same rows")
+
+    for pair in _HAND_PROGRESSION_PAIRS:
+        entry = _require_fields(
+            summaries[pair], _HAND_PROGRESSION_PAIR_FIELDS, f"measurement D {pair}"
+        )
+        row_count = _require_count(
+            entry["row_count"], f"measurement D {pair} row count"
+        )
+        if {row_count} != arm_rows:
+            raise _error(f"measurement D {pair} was not measured on the same rows")
+        ordered = [
+            _require_count(
+                entry[f"{name}_post_discard_shanten_count"],
+                f"measurement D {pair} {name} count",
+            )
+            for name in ("lower", "equal", "higher")
+        ]
+        if sum(ordered) != row_count:
+            raise _error(
+                f"measurement D {pair} comparison counts do not partition its rows"
+            )
+        if entry["higher_post_discard_shanten_rate"] != _rate(ordered[2], row_count):
+            raise _error(
+                f"measurement D {pair} higher rate is not derivable from its counts"
+            )
+        left, right = pair.split("_vs_")
+        expected_difference = (
+            None
+            if row_count == 0
+            else summaries[left]["worsen_shanten_rate"]
+            - summaries[right]["worsen_shanten_rate"]
+        )
+        if entry["worsen_shanten_rate_difference"] != expected_difference:
+            raise _error(
+                f"measurement D {pair} worsening rate difference is not derivable "
+                "from the per-arm rates"
+            )
+    return status
+
+
+def _validate_role(role: object) -> str:
+    entry = _require_fields(role, _ROLE_FIELDS, "diagnosis role")
+    try:
+        name = DiagnosisRole(entry["role"])
+    except ValueError:
+        raise _error(f"unknown diagnosis role: {entry['role']!r}") from None
+    if entry["source_artifact"] != _ROLE_SOURCE_ARTIFACT[name]:
+        raise _error(f"{name.value} does not declare its locked source artifact")
+    if entry["split"] != _ROLE_SPLIT[name].value:
+        raise _error(f"{name.value} does not declare its locked split")
+    if entry["is_generalization_evidence"] is not _ROLE_GENERALIZATION_EVIDENCE[name]:
+        raise _error(
+            f"{name.value} does not declare its locked generalization semantics"
+        )
+
+    counts = _require_fields(entry["row_counts"], _ROW_COUNT_FIELDS, "row_counts")
+    total = _require_count(counts["total_row_count"], "total_row_count")
+    eligible = _require_count(counts["eligible_row_count"], "eligible_row_count")
+    if eligible > total:
+        raise _error("eligible row count is out of range")
+    for name_ in (
+        "choice_row_count",
+        "ordinary_discard_row_count",
+        "support_complete_row_count",
+    ):
+        if _require_count(counts[name_], name_) > total:
+            raise _error(f"{name_} exceeds the total row count")
+    if counts["excluded_row_count"] != total - eligible:
+        raise _error("excluded row count is not derivable from the row counts")
+
+    _validate_disagreement_block(entry["measurement_a"], eligible)
+    _validate_ranking_block(entry["measurement_b"], eligible)
+    _validate_bootstrap_structure(entry["measurement_c"], eligible)
+    return _validate_hand_progression(entry["measurement_d"])
 
 
 def validate_diagnosis_result(document: object) -> dict:
-    """result documentを、aggregateをcountsから再導出しながら検証する。"""
-    if type(document) is not dict:
-        raise _error("a diagnosis result must be an object")
-    if set(document) != _RESULT_FIELDS:
-        raise _error("diagnosis result has missing or extra fields")
-    if document["diagnosis_schema_version"] != DIAGNOSIS_SCHEMA_VERSION:
+    """result documentを、aggregateをcountsから再導出しながら検証する。
+
+    schema、locked constant、role集合、Measurement A-Dのfield、母数の分割、
+    countsからのrate再導出、そしてladder invariantまでをfail closedで確認
+    する。documentが自己申告するflagやlabelをauthorityにしない。
+    """
+    validated = _require_fields(document, _RESULT_FIELDS, "diagnosis result")
+    if validated["diagnosis_schema_version"] != DIAGNOSIS_SCHEMA_VERSION:
         raise _error("unsupported diagnosis schema version")
-    if document["diagnosis_id"] != DIAGNOSIS_ID:
+    if validated["diagnosis_id"] != DIAGNOSIS_ID:
         raise _error("diagnosis result is not the Issue #152 diagnosis")
-    if document["protocol_id"] != PROTOCOL_ID:
+    if validated["source_issue"] != SOURCE_ISSUE:
+        raise _error("diagnosis result source_issue is not the locked one")
+    if validated["predecessor_issue"] != PREDECESSOR_ISSUE:
+        raise _error("diagnosis result predecessor_issue is not the locked one")
+    if validated["protocol_id"] != PROTOCOL_ID:
         raise _error("diagnosis result protocol_id is not the locked one")
-    if document["feature"] != feature_block():
+    if validated["retention"] != {
+        "backend": RETENTION_BACKEND,
+        "key": RETENTION_KEY,
+    }:
+        raise _error("diagnosis result retention target is not the locked one")
+    if validated["feature"] != feature_block():
         raise _error("diagnosis result feature identity is not the locked one")
-    if document["vocabulary"] != vocabulary_block():
+    if validated["vocabulary"] != vocabulary_block():
         raise _error("diagnosis result vocabulary identity is not the locked one")
-    if document["fixed_quantiles"] != [format(value, "g") for value in FIXED_QUANTILES]:
+    if validated["fixed_quantiles"] != [
+        format(value, "g") for value in FIXED_QUANTILES
+    ]:
         raise _error("diagnosis result quantile set is not the locked one")
-    if not document["limitations"]:
-        raise _error("a diagnosis result must record its limitations")
-    if document["retained_strength_context"]["recomputed"] is not False:
-        raise _error("the retained strength context must not be recomputed")
-    if (
-        document["retained_strength_context"]["candidate_only_mahjong_metrics"][
-            "is_baseline_difference"
-        ]
-        is not False
-    ):
+    if validated["limitations"] != list(DIAGNOSIS_LIMITATIONS):
+        raise _error("diagnosis result limitations are not the locked ones")
+    if validated["retained_strength_context"] != RETAINED_STRENGTH_CONTEXT:
         raise _error(
-            "candidate-only Mahjong metrics must not be labelled as a baseline "
-            "difference"
+            "the retained strength context must be the #140 result verbatim; it is "
+            "never recomputed and candidate-only metrics are never relabelled as a "
+            "baseline difference"
+        )
+    _validate_input_identities(validated)
+
+    roles = validated["roles"]
+    if type(roles) is not list:
+        raise _error("diagnosis roles must be a list")
+    statuses: dict[str, str] = {}
+    for role in roles:
+        entry = _validate_role(role)
+        name = role["role"]
+        if name in statuses:
+            raise _error("a diagnosis role appears more than once")
+        statuses[name] = entry
+    if set(statuses) != {item.value for item in DiagnosisRole}:
+        raise _error(
+            "a diagnosis result must measure every locked role: TRAIN, VALIDATION, "
+            "dataset TEST and the replacement TEST"
         )
 
-    roles = document["roles"]
-    if type(roles) is not list or not roles:
-        raise _error("a diagnosis result must contain at least one role")
-    seen = set()
-    for role in roles:
-        if type(role) is not dict or set(role) != _ROLE_FIELDS:
-            raise _error("a diagnosis role has missing or extra fields")
-        if role["role"] not in {item.value for item in DiagnosisRole}:
-            raise _error(f"unknown diagnosis role: {role['role']!r}")
-        if role["role"] in seen:
-            raise _error("a diagnosis role appears more than once")
-        seen.add(role["role"])
-
-        counts = role["row_counts"]
-        eligible = counts["eligible_row_count"]
-        if not 0 <= eligible <= counts["total_row_count"]:
-            raise _error("eligible row count is out of range")
-        if counts["excluded_row_count"] != counts["total_row_count"] - eligible:
-            raise _error("excluded row count is not derivable from the row counts")
-        _validate_disagreement_block(role["measurement_a"], eligible)
-
-        measurement_c_block = role["measurement_c"]
-        if measurement_c_block["eligible_row_count"] != eligible:
-            raise _error("measurement C row count differs from the eligible row count")
+    classification = validated["classification"]
+    if classification is not None:
+        if classification not in _OUTCOME_VALUES:
+            raise _error(f"unknown diagnosis outcome: {classification!r}")
         if (
-            measurement_c_block["terminal_row_count"]
-            + measurement_c_block["nonterminal_row_count"]
-            != eligible
-        ):
-            raise _error("measurement C terminality counts do not partition the rows")
-        if (
-            measurement_c_block["bootstrap_eligible_row_count"]
-            + measurement_c_block["unsupported_bootstrap_row_count"]
-            != eligible
-        ):
-            raise _error("measurement C bootstrap counts do not partition the rows")
-
-        measurement_d_block = role["measurement_d"]
-        status = measurement_d_block["status"]
-        if status not in {item.value for item in MeasurementAvailability}:
-            raise _error(f"unknown measurement D status: {status!r}")
-        if status == MeasurementAvailability.UNAVAILABLE.value:
-            if not measurement_d_block["unavailable_reason"]:
-                raise _error("an unavailable measurement D must record its reason")
-            if measurement_d_block["post_discard_shanten"] is not None:
-                raise _error("an unavailable measurement D must not carry summaries")
-        elif measurement_d_block["post_discard_shanten"] is None:
-            raise _error("an available measurement D must carry its summaries")
-        if (
-            measurement_d_block["ukeire"]["status"]
-            != MeasurementAvailability.UNAVAILABLE.value
+            classification
+            == DiagnosisOutcome.HAND_PROGRESSION_DEGRADATION_IDENTIFIED.value
+            and MeasurementAvailability.AVAILABLE.value not in statuses.values()
         ):
             raise _error(
-                "ukeire has no reusable first-party contract and must stay UNAVAILABLE"
+                "HAND-PROGRESSION DEGRADATION IDENTIFIED requires a role whose "
+                "measurement D is AVAILABLE"
             )
-
-    classification = document["classification"]
-    if classification is not None and classification not in _OUTCOME_VALUES:
-        raise _error(f"unknown diagnosis outcome: {classification!r}")
-    return document
+    return validated
 
 
 def record_classification(document: dict, outcome: DiagnosisOutcome) -> dict:
@@ -1137,8 +1540,14 @@ def record_classification(document: dict, outcome: DiagnosisOutcome) -> dict:
     - outcomeが`DiagnosisOutcome`のexhaustive集合に属すること
     - 実artifactをstrict readbackした実行結果にだけ付与できること
     - 一度記録したoutcomeを上書きできないこと
+    - deterministicに判定できるladder invariantを満たすこと
+      （`HAND-PROGRESSION DEGRADATION IDENTIFIED`はMeasurement Dが
+      `AVAILABLE`なroleを要求する）
 
-    の3点だけである。artifactへアクセスできないことは
+    である。`real_artifact_execution`はdocumentが自己申告するflagではなく、
+    `validate_diagnosis_result()`が記録済みidentityを
+    `LOCKED_SOURCE_IDENTITIES`とexact比較して導出したものと一致することを
+    先に確認している。artifactへアクセスできないことは
     `DIAGNOSTIC EVIDENCE INSUFFICIENT`ではなく、単にoutcome未記録である。
     """
     validated = validate_diagnosis_result(document)

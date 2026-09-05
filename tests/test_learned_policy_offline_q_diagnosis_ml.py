@@ -509,10 +509,16 @@ class DiagnosisMeasurementTest(unittest.TestCase):
                         str(result_path),
                     ]
                 )
-            self.assertEqual(exit_code, 0)
-            document = json.loads(result_path.read_text(encoding="utf-8"))
-            validate_diagnosis_result(document)
+                self.assertEqual(exit_code, 0)
+                # validationはpatchの内側で行う。`real_artifact_execution`は
+                # documentの自己申告ではなく、その時点のlocked identityとの
+                # exact比較から導出される値だからである。
+                document = json.loads(result_path.read_text(encoding="utf-8"))
+                validate_diagnosis_result(document)
             self.assertIsNone(document["classification"])
+            self.assertTrue(
+                document["input_artifact_identities"]["real_artifact_execution"]
+            )
             self.assertEqual(
                 [role["role"] for role in document["roles"]],
                 [
@@ -522,6 +528,10 @@ class DiagnosisMeasurementTest(unittest.TestCase):
                     "replacement-test",
                 ],
             )
+            # 実artifactのidentityではないので、locked constantに対しては
+            # そのままではvalidにならない。
+            with self.assertRaises(OfflineQDiagnosisError):
+                validate_diagnosis_result(document)
         finally:
             shutil.rmtree(result_path.parent, ignore_errors=True)
 

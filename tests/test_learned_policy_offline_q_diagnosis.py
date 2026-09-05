@@ -12,9 +12,11 @@ import unittest
 from collections import Counter
 
 from _learned_policy_offline_q_diagnosis_fixtures import (
+    available_measurement_d,
     discard_index,
     feature_row_with_hand,
     hand_tiles,
+    summary,
     valid_result_document,
 )
 from lisjong.policy_contract import Seat
@@ -24,6 +26,7 @@ from lisjong_arena.learned_policy_offline_q.diagnosis import (
     DIAGNOSIS_LIMITATIONS,
     FIXED_QUANTILES,
     LOCKED_SOURCE_IDENTITIES,
+    RETENTION_KEY,
     DiagnosisOutcome,
     DiagnosisRole,
     ExpectedArtifactIdentities,
@@ -149,6 +152,44 @@ class OutcomeLadderTest(unittest.TestCase):
         with self.assertRaises(OfflineQDiagnosisError):
             validate_diagnosis_result(document)
 
+    def test_hand_progression_outcome_requires_an_available_measurement_d(self):
+        """Measurement Dが全roleでUNAVAILABLEなら手牌進行のdiagnosisは名乗れない。"""
+        document = valid_result_document()
+        with self.assertRaises(OfflineQDiagnosisError):
+            record_classification(
+                document, DiagnosisOutcome.HAND_PROGRESSION_DEGRADATION_IDENTIFIED
+            )
+        available = valid_result_document(hand_progression_available=True)
+        classified = record_classification(
+            available, DiagnosisOutcome.HAND_PROGRESSION_DEGRADATION_IDENTIFIED
+        )
+        self.assertEqual(
+            classified["classification"], "HAND-PROGRESSION DEGRADATION IDENTIFIED"
+        )
+
+    def test_a_forged_real_execution_flag_is_rejected(self):
+        """locked identityと一致しないのにflagだけTrueのdocumentは通さない。"""
+        document = valid_result_document(real_artifact_execution=False)
+        document["input_artifact_identities"]["real_artifact_execution"] = True
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+        with self.assertRaises(OfflineQDiagnosisError):
+            record_classification(
+                document, DiagnosisOutcome.FAILURE_MECHANISM_INCONCLUSIVE
+            )
+
+    def test_a_tampered_input_identity_is_rejected(self):
+        document = valid_result_document()
+        document["input_artifact_identities"]["q_checkpoint_identity"] = "0" * 64
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_a_tampered_locked_identity_block_is_rejected(self):
+        document = valid_result_document()
+        document["locked_source_identities"]["dataset_identity"] = "1" * 64
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
 
 class ResultArtifactValidationTest(unittest.TestCase):
     def test_a_well_formed_result_validates(self):
@@ -247,6 +288,147 @@ class ResultArtifactValidationTest(unittest.TestCase):
         document["roles"].append(dict(document["roles"][0]))
         with self.assertRaises(OfflineQDiagnosisError):
             validate_diagnosis_result(document)
+
+    def test_a_missing_role_is_rejected(self):
+        """4 role全部が揃っていないresultはvalidにしない。"""
+        for index in range(4):
+            document = valid_result_document()
+            removed = document["roles"].pop(index)["role"]
+            with self.assertRaises(OfflineQDiagnosisError, msg=removed):
+                validate_diagnosis_result(document)
+
+    def test_a_role_must_declare_its_locked_source_and_split(self):
+        document = valid_result_document()
+        document["roles"][0]["source_artifact"] = "replacement-test"
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+        document = valid_result_document()
+        document["roles"][0]["split"] = "TEST"
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+        document = valid_result_document()
+        document["roles"][0]["is_generalization_evidence"] = True
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_an_empty_measurement_b_is_rejected(self):
+        document = valid_result_document()
+        document["roles"][0]["measurement_b"] = {}
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_a_measurement_b_metric_must_cover_every_eligible_row(self):
+        document = valid_result_document()
+        block = document["roles"][0]["measurement_b"]
+        block["all_eligible_rows"]["q_margin"] = summary(1)
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_measurement_b_agree_and_disagree_rows_must_partition(self):
+        document = valid_result_document()
+        block = document["roles"][0]["measurement_b"]
+        block["q_bc_disagree_rows"]["q_top1_value"] = summary(2)
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_a_missing_measurement_b_field_is_rejected(self):
+        document = valid_result_document()
+        del document["roles"][0]["measurement_b"]["all_eligible_rows"]["q_margin"]
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_a_missing_measurement_c_distribution_is_rejected(self):
+        for name in (
+            "immediate_reward",
+            "td_target",
+            "predicted_selected_q",
+            "absolute_bellman_residual",
+        ):
+            document = valid_result_document()
+            del document["roles"][0]["measurement_c"][name]
+            with self.assertRaises(OfflineQDiagnosisError, msg=name):
+                validate_diagnosis_result(document)
+
+    def test_a_measurement_c_distribution_must_cover_its_rows(self):
+        document = valid_result_document()
+        document["roles"][0]["measurement_c"]["td_target"][
+            "all_bootstrap_eligible_rows"
+        ] = summary(1)
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_measurement_c_must_declare_the_locked_objective_and_target(self):
+        document = valid_result_document()
+        document["roles"][0]["measurement_c"]["gamma"] = 0.99
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+        document = valid_result_document()
+        document["roles"][0]["measurement_c"]["td_target_model"] = "trained_target"
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_an_empty_summary_must_not_carry_fabricated_values(self):
+        document = valid_result_document()
+        block = document["roles"][0]["measurement_b"]["q_bc_disagree_rows"]
+        block["q_margin"] = {"count": 0, "mean": 0.5, "quantiles": None}
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_a_summary_must_carry_the_locked_quantile_set(self):
+        document = valid_result_document()
+        block = document["roles"][0]["measurement_b"]["all_eligible_rows"]
+        block["q_margin"]["quantiles"].pop("0.95")
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_available_measurement_d_comparison_counts_must_partition(self):
+        document = valid_result_document(hand_progression_available=True)
+        pair = document["roles"][0]["measurement_d"]["post_discard_shanten"]["q_vs_bc"]
+        pair["equal_post_discard_shanten_count"] += 1
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_available_measurement_d_must_not_record_an_unavailable_reason(self):
+        document = valid_result_document(hand_progression_available=True)
+        document["roles"][0]["measurement_d"]["unavailable_reason"] = "partial"
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_available_measurement_d_worsening_difference_must_be_derivable(self):
+        document = valid_result_document(hand_progression_available=True)
+        pair = document["roles"][0]["measurement_d"]["post_discard_shanten"]["q_vs_bc"]
+        pair["worsen_shanten_rate_difference"] = 0.0
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_a_tampered_retention_target_is_rejected(self):
+        document = valid_result_document()
+        document["retention"] = {"backend": "anywhere", "key": RETENTION_KEY}
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_tampered_limitations_are_rejected(self):
+        document = valid_result_document()
+        document["limitations"] = ["it is fine"]
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_a_missing_measurement_a_stratification_is_rejected(self):
+        document = valid_result_document()
+        del document["roles"][0]["measurement_a"]["stratifications"]["decision_depth"]
+        with self.assertRaises(OfflineQDiagnosisError):
+            validate_diagnosis_result(document)
+
+    def test_an_available_measurement_d_fixture_validates(self):
+        document = valid_result_document(hand_progression_available=True)
+        self.assertEqual(
+            document["roles"][0]["measurement_d"],
+            available_measurement_d(),
+        )
+        self.assertIs(validate_diagnosis_result(document)["classification"], None)
 
 
 class FixedSummaryTest(unittest.TestCase):

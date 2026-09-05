@@ -218,10 +218,39 @@ limitations
 classification   （常にnullで作られる）
 ```
 
-`validate_diagnosis_result()`はfield集合、role重複、
-`rate = count / row_count`の再導出、stratificationがeligible rowsを分割すること、
-terminal / bootstrap countsの分割、Measurement Dのstatus整合、
-candidate-only labelを検証する。
+`validate_diagnosis_result()`は、documentが自己申告するflagやlabelを一切
+authorityにせず、次をfail closedで検証する。
+
+```text
+schema version / diagnosis id / source issue / protocol id
+retention backend・key、feature・vocabulary identity、fixed quantile set
+limitations と retained_strength_context が locked constant と verbatim 一致
+
+input_artifact_identities の5 identity を LOCKED_SOURCE_IDENTITIES と exact 比較し、
+    real_artifact_execution がその比較結果と一致すること
+locked_source_identities が constant と一致すること
+
+role集合が dataset-train / dataset-validation / dataset-test / replacement-test の
+    4件ちょうどであること、各 role の source artifact / split /
+    generalization semantics が locked 値であること
+
+row_counts / Measurement A / B / C / D の field 集合
+Measurement A: rate = count / row_count の再導出、stratification が eligible rows を分割
+Measurement B: 3 scope × 7 metric が揃い、all = agree + disagree = eligible row 数
+Measurement C: gamma と TD target model が locked 値、
+    reward / TD target / predicted-Q / residual の各 scope が母数を分割
+Measurement D: status 整合、ukeire が UNAVAILABLE のまま、
+    AVAILABLE 時は arm / pair の counts が分割し rate が再導出できること
+fixed summary: 母数0なら mean / quantiles は null、値があれば locked quantile set 完備
+
+classification: ladder 内の値であること、および
+    HAND-PROGRESSION DEGRADATION IDENTIFIED は Measurement D が AVAILABLE な role を要求
+```
+
+**`real_artifact_execution`はdocument内のboolean fieldだが、authorityではない。**
+記録済みの5 identityとlocked constantのexact比較から導出される値であり、
+flagだけを書き換えたdocumentも、locked artifactで実行したのにflagが
+落ちているdocumentも通らない。
 
 Generated dataset / weights / result artifactはGitへcommitしない。
 
@@ -245,7 +274,12 @@ STOP / INVALID
 
 1. outcomeがexhaustive集合に属すること
 2. 実artifactをstrict readbackした実行結果にだけ付与できること
+   （`real_artifact_execution`はlocked identityとのexact比較から導出される）
 3. 一度記録したoutcomeを上書きできないこと
+4. deterministicに判定できるladder invariantを満たすこと。
+   `HAND-PROGRESSION DEGRADATION IDENTIFIED`はMeasurement Dが`AVAILABLE`な
+   roleを要求する（Measurement Dが全roleで`UNAVAILABLE`のまま
+   hand-progression degradationを名乗ることはできない）
 
 ## Limitations
 
