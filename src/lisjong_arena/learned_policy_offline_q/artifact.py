@@ -134,7 +134,7 @@ _ARTIFACT_FILENAMES = {
     NEXT_FEATURES_FILENAME,
     NEXT_LEGAL_MASK_FILENAME,
 }
-_PROVENANCE_FIELDS = {
+PROVENANCE_FIELDS = {
     "execution_environment",
     "lisjong_arena_version",
     "lisjong_arena_revision",
@@ -248,7 +248,7 @@ class GameManifestEntry:
         }
 
 
-def _provenance_document() -> dict[str, object]:
+def provenance_document() -> dict[str, object]:
     provenance = collect_execution_provenance()
     return {
         "execution_environment": provenance.execution_environment,
@@ -263,7 +263,7 @@ def _provenance_document() -> dict[str, object]:
     }
 
 
-def _require_locked_teacher_revision(provenance: dict) -> None:
+def require_locked_teacher_revision(provenance: dict) -> None:
     actual = provenance["lisjong_revision"]
     if actual != TEACHER_SOURCE_REVISION:
         raise _error(
@@ -315,6 +315,91 @@ def _row_document(row: MacroTransitionRow) -> dict[str, object]:
     }
 
 
+class MacroTransitionFileWriters:
+    """5つのrow payload fileへstreaming書き込みし、byte count / sha256を確定する。
+
+    macro-transition dataset (`arena-learned-policy-offlineq-dataset-v1`) と
+    replacement TEST artifact (`arena-learned-policy-offlineq-replacement-test-v1`)
+    はmanifest schemaもidentityも別物だが、row payloadのbinary layout
+    （rows.jsonl / features.f32 / legal_mask.u8 / next_features.f32 /
+    next_legal_mask.u8）は同一contractである。そのwrite pathだけをここへ
+    集約し、artifact種別ごとにimplementationを複製しない。
+
+    manifestの構築は各artifact種別が自分で所有する。したがってこの抽出は
+    既存datasetのmanifest bytesと`dataset_identity`へ影響しない。
+    """
+
+    __slots__ = (
+        "_rows",
+        "_features",
+        "_masks",
+        "_next_features",
+        "_next_masks",
+        "_row_count",
+        "_terminal_row_count",
+    )
+
+    def __init__(self, staging: Path) -> None:
+        self._rows = _HashingWriter(staging / ROWS_FILENAME)
+        self._features = _HashingWriter(staging / FEATURES_FILENAME)
+        self._masks = _HashingWriter(staging / LEGAL_MASK_FILENAME)
+        self._next_features = _HashingWriter(staging / NEXT_FEATURES_FILENAME)
+        self._next_masks = _HashingWriter(staging / NEXT_LEGAL_MASK_FILENAME)
+        self._row_count = 0
+        self._terminal_row_count = 0
+
+    @property
+    def row_count(self) -> int:
+        return self._row_count
+
+    @property
+    def terminal_row_count(self) -> int:
+        return self._terminal_row_count
+
+    def write_row(self, row: MacroTransitionRow) -> None:
+        """1 macro-transitionを5 fileすべてへ生成順のまま追記する。"""
+        if not isinstance(row, MacroTransitionRow):
+            raise TypeError("rows must contain only MacroTransitionRow values")
+        self._rows.write(
+            (
+                json.dumps(
+                    _row_document(row),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+        )
+        features = array("f", row.feature_values)
+        if array("f").itemsize * len(features) != _FEATURE_ROW_BYTES:
+            raise OfflineQArtifactError("feature row byte width drifted")
+        self._features.write(features.tobytes())
+        self._masks.write(bytes(row.legal_mask))
+        if row.terminal:
+            self._next_features.write(_ZERO_FEATURE_ROW)
+            self._next_masks.write(_ZERO_MASK_ROW)
+            self._terminal_row_count += 1
+        else:
+            next_features = array("f", row.next_feature_values)
+            if array("f").itemsize * len(next_features) != _FEATURE_ROW_BYTES:
+                raise OfflineQArtifactError("next feature row byte width drifted")
+            self._next_features.write(next_features.tobytes())
+            self._next_masks.write(bytes(row.next_legal_mask))
+        self._row_count += 1
+
+    def close(self) -> dict[str, object]:
+        """全fileを閉じ、manifestの`files`blockをそのまま返す。"""
+        return {
+            "rows": self._rows.close(),
+            "features": self._features.close(),
+            "legal_mask": self._masks.close(),
+            "next_features": self._next_features.close(),
+            "next_legal_mask": self._next_masks.close(),
+        }
+
+
 class OfflineQDatasetWriter:
     """streaming writer。全rowを同時にmemoryへ載せない。
 
@@ -325,14 +410,8 @@ class OfflineQDatasetWriter:
         "_destination",
         "_provenance",
         "_staging",
-        "_rows",
-        "_features",
-        "_masks",
-        "_next_features",
-        "_next_masks",
+        "_files",
         "_games",
-        "_row_count",
-        "_terminal_row_count",
         "_finalized",
     )
 
@@ -349,26 +428,20 @@ class OfflineQDatasetWriter:
         destination.parent.mkdir(parents=True, exist_ok=True)
         self._destination = destination
         self._provenance = (
-            _provenance_document() if provenance is None else dict(provenance)
+            provenance_document() if provenance is None else dict(provenance)
         )
-        if set(self._provenance) != _PROVENANCE_FIELDS:
+        if set(self._provenance) != PROVENANCE_FIELDS:
             raise OfflineQArtifactError("provenance fields are invalid")
         if any(
             type(value) is not str or not value for value in self._provenance.values()
         ):
             raise OfflineQArtifactError("provenance values must be non-empty strings")
-        _require_locked_teacher_revision(self._provenance)
+        require_locked_teacher_revision(self._provenance)
         self._staging = Path(
             mkdtemp(prefix=f".{destination.name}-staging-", dir=destination.parent)
         )
-        self._rows = _HashingWriter(self._staging / ROWS_FILENAME)
-        self._features = _HashingWriter(self._staging / FEATURES_FILENAME)
-        self._masks = _HashingWriter(self._staging / LEGAL_MASK_FILENAME)
-        self._next_features = _HashingWriter(self._staging / NEXT_FEATURES_FILENAME)
-        self._next_masks = _HashingWriter(self._staging / NEXT_LEGAL_MASK_FILENAME)
+        self._files = MacroTransitionFileWriters(self._staging)
         self._games: list[GameManifestEntry] = []
-        self._row_count = 0
-        self._terminal_row_count = 0
         self._finalized = False
 
     def discard(self) -> None:
@@ -376,14 +449,7 @@ class OfflineQDatasetWriter:
         if self._finalized:
             return
         self._finalized = True
-        for writer in (
-            self._rows,
-            self._features,
-            self._masks,
-            self._next_features,
-            self._next_masks,
-        ):
-            writer.close()
+        self._files.close()
         rmtree(self._staging, ignore_errors=True)
 
     def add_game(
@@ -410,41 +476,14 @@ class OfflineQDatasetWriter:
                 "games must be written in ascending seed order without duplicates"
             )
 
-        written = 0
+        before = self._files.row_count
         for row in rows:
             if not isinstance(row, MacroTransitionRow):
                 raise TypeError("rows must contain only MacroTransitionRow values")
             if row.seed != seed or row.split is not split:
                 raise OfflineQArtifactError("row identity does not match its game")
-            self._rows.write(
-                (
-                    json.dumps(
-                        _row_document(row),
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    )
-                    + "\n"
-                ).encode("utf-8")
-            )
-            features = array("f", row.feature_values)
-            if array("f").itemsize * len(features) != _FEATURE_ROW_BYTES:
-                raise OfflineQArtifactError("feature row byte width drifted")
-            self._features.write(features.tobytes())
-            self._masks.write(bytes(row.legal_mask))
-            if row.terminal:
-                self._next_features.write(_ZERO_FEATURE_ROW)
-                self._next_masks.write(_ZERO_MASK_ROW)
-                self._terminal_row_count += 1
-            else:
-                next_features = array("f", row.next_feature_values)
-                if array("f").itemsize * len(next_features) != _FEATURE_ROW_BYTES:
-                    raise OfflineQArtifactError("next feature row byte width drifted")
-                self._next_features.write(next_features.tobytes())
-                self._next_masks.write(bytes(row.next_legal_mask))
-            written += 1
-            self._row_count += 1
+            self._files.write_row(row)
+        written = self._files.row_count - before
 
         if written == 0:
             raise OfflineQArtifactError(f"seed {seed} produced no macro-transitions")
@@ -460,13 +499,7 @@ class OfflineQDatasetWriter:
             raise OfflineQArtifactError("writer has already been finalized")
         published = False
         try:
-            files = {
-                "rows": self._rows.close(),
-                "features": self._features.close(),
-                "legal_mask": self._masks.close(),
-                "next_features": self._next_features.close(),
-                "next_legal_mask": self._next_masks.close(),
-            }
+            files = self._files.close()
             if tuple(entry.seed for entry in self._games) != DATASET_ORDERED_SEEDS:
                 raise OfflineQArtifactError(
                     "dataset must contain exactly the locked seed population"
@@ -481,8 +514,8 @@ class OfflineQDatasetWriter:
                 "games": [entry.to_document() for entry in games],
                 "totals": {
                     "game_count": len(games),
-                    "row_count": self._row_count,
-                    "terminal_row_count": self._terminal_row_count,
+                    "row_count": self._files.row_count,
+                    "terminal_row_count": self._files.terminal_row_count,
                 },
                 "files": files,
             }
@@ -495,14 +528,7 @@ class OfflineQDatasetWriter:
         finally:
             self._finalized = True
             if not published:
-                for writer in (
-                    self._rows,
-                    self._features,
-                    self._masks,
-                    self._next_features,
-                    self._next_masks,
-                ):
-                    writer.close()
+                self._files.close()
                 rmtree(self._staging, ignore_errors=True)
         return load_dataset(self._destination)
 
@@ -620,6 +646,138 @@ def _iter_row_documents(payload: bytes) -> Iterator[dict]:
         yield _expect_object(document, _ROW_FIELDS, "row")
 
 
+def verify_row_payloads(
+    payloads: dict[str, bytes], files_block: dict, row_count: int
+) -> None:
+    """5 payload fileのbyte count / sha256 / row幅をmanifestと突き合わせる。
+
+    dataset artifactとreplacement TEST artifactで同一のbinary contractなので、
+    artifact種別ごとにこの検証を複製しない。
+    """
+    for name, payload in payloads.items():
+        expected = files_block[name]
+        if len(payload) != expected["bytes"]:
+            raise _error(f"{name} byte count differs from the manifest")
+        if hashlib.sha256(payload).hexdigest() != expected["sha256"]:
+            raise _error(f"{name} sha256 differs from the manifest")
+    if len(payloads["features"]) != row_count * _FEATURE_ROW_BYTES:
+        raise _error("features file size does not match row count x 8204 float32")
+    if len(payloads["legal_mask"]) != row_count * _MASK_ROW_BYTES:
+        raise _error("legal mask file size does not match row count x 802 uint8")
+    if len(payloads["next_features"]) != row_count * _FEATURE_ROW_BYTES:
+        raise _error("next_features file size does not match row count x 8204 float32")
+    if len(payloads["next_legal_mask"]) != row_count * _MASK_ROW_BYTES:
+        raise _error("next_legal_mask file size does not match row count x 802 uint8")
+
+
+def read_validated_rows(
+    payloads: dict[str, bytes], *, split_resolver
+) -> tuple[OfflineQRowRecord, ...]:
+    """rows.jsonlをmask payloadと突き合わせて検証し、row recordへ読み出す。
+
+    `split_resolver`はseed -> `Split`のcallableである。datasetはlocked
+    TRAIN/VALIDATION/TEST partitionを解決し、replacement TEST artifactは
+    自分のTEST-only populationを解決する。row levelのtransition invariant
+    （behavior actionのlegality、legal action count、terminal / nonterminalの
+    next decision identity、strictly later ordinal、next maskの最小choice数）は
+    どちらのartifactでも同一であり、ここだけが正本である。
+    """
+    records: list[OfflineQRowRecord] = []
+    previous_seed: int | None = None
+    for index, row in enumerate(_iter_row_documents(payloads["rows"])):
+        seed = _expect(row["seed"], int, "row.seed")
+        split = split_resolver(seed)
+        if row["split"] != split.value:
+            raise _error(f"row {index} split does not match the locked protocol")
+        if previous_seed is not None and seed < previous_seed:
+            raise _error("rows must be grouped by ascending seed")
+        previous_seed = seed
+
+        for name in (
+            "round_ordinal",
+            "hand_number",
+            "honba",
+            "actor_seat",
+            "step_ordinal",
+            "decision_ordinal",
+            "legal_action_count",
+            "behavior_action_index",
+        ):
+            _expect(row[name], int, f"row.{name}")
+        _expect(row["round_wind"], str, "row.round_wind")
+        _expect(row["behavior_action_family"], str, "row.behavior_action_family")
+        _expect(row["terminal"], bool, "row.terminal")
+        reward = row["reward"]
+        if type(reward) not in (int, float) or not isfinite(float(reward)):
+            raise _error(f"row {index} reward must be a finite number")
+
+        behavior_index = row["behavior_action_index"]
+        if not 0 <= behavior_index < VOCABULARY_SIZE:
+            raise _error(f"row {index} behavior action index is outside the vocabulary")
+        if row["behavior_action_family"] != action_family(behavior_index):
+            raise _error(f"row {index} behavior action family is inconsistent")
+
+        mask_start = index * _MASK_ROW_BYTES
+        mask = payloads["legal_mask"][mask_start : mask_start + _MASK_ROW_BYTES]
+        if any(value not in (0, 1) for value in mask):
+            raise _error(f"row {index} legal mask is not a 0/1 mask")
+        legal_count = mask.count(1)
+        if legal_count < 2:
+            raise _error(f"row {index} legal mask must have at least two actions")
+        if legal_count != row["legal_action_count"]:
+            raise _error(f"row {index} legal_action_count differs from its mask")
+        if mask[behavior_index] != 1:
+            raise _error(f"row {index} behavior action is not legal in its own mask")
+
+        terminal = row["terminal"]
+        next_step = row["next_step_ordinal"]
+        next_decision = row["next_decision_ordinal"]
+        if terminal:
+            if next_step is not None or next_decision is not None:
+                raise _error(
+                    f"row {index} is terminal but carries a next decision identity"
+                )
+        else:
+            if type(next_step) is not int or type(next_decision) is not int:
+                raise _error(
+                    f"row {index} is nonterminal but is missing its next decision "
+                    "identity"
+                )
+            if next_decision <= row["decision_ordinal"]:
+                raise _error(f"row {index} next_decision_ordinal is not strictly later")
+            next_mask = payloads["next_legal_mask"][
+                mask_start : mask_start + _MASK_ROW_BYTES
+            ]
+            if any(value not in (0, 1) for value in next_mask):
+                raise _error(f"row {index} next legal mask is not a 0/1 mask")
+            if next_mask.count(1) < 2:
+                raise _error(
+                    f"row {index} next legal mask must have at least two actions"
+                )
+
+        records.append(
+            OfflineQRowRecord(
+                seed=seed,
+                split=split,
+                round_ordinal=row["round_ordinal"],
+                round_wind=row["round_wind"],
+                hand_number=row["hand_number"],
+                honba=row["honba"],
+                actor_seat=row["actor_seat"],
+                step_ordinal=row["step_ordinal"],
+                decision_ordinal=row["decision_ordinal"],
+                legal_action_count=legal_count,
+                behavior_action_index=behavior_index,
+                behavior_action_family=row["behavior_action_family"],
+                reward=float(reward),
+                terminal=terminal,
+                next_step_ordinal=next_step,
+                next_decision_ordinal=next_decision,
+            )
+        )
+    return tuple(records)
+
+
 def _validate_manifest(manifest: object) -> dict:
     document = _expect_object(manifest, _MANIFEST_FIELDS, "manifest")
     if document["dataset_schema_version"] != DATASET_SCHEMA_VERSION:
@@ -641,13 +799,11 @@ def _validate_manifest(manifest: object) -> dict:
     if vocabulary != vocabulary_block():
         raise _error("dataset action vocabulary identity is not supported")
 
-    provenance = _expect_object(
-        document["provenance"], _PROVENANCE_FIELDS, "provenance"
-    )
+    provenance = _expect_object(document["provenance"], PROVENANCE_FIELDS, "provenance")
     for name, value in provenance.items():
         if type(value) is not str or not value:
             raise _error(f"provenance.{name} must be a non-empty string")
-    _require_locked_teacher_revision(provenance)
+    require_locked_teacher_revision(provenance)
 
     games = document["games"]
     if type(games) is not list or len(games) != DATASET_HANCHAN_COUNT:
@@ -723,120 +879,16 @@ def load_dataset(path: str | Path) -> LoadedOfflineQDataset:
         "next_features": (path / NEXT_FEATURES_FILENAME).read_bytes(),
         "next_legal_mask": (path / NEXT_LEGAL_MASK_FILENAME).read_bytes(),
     }
-    for name, payload in payloads.items():
-        expected = document["files"][name]
-        if len(payload) != expected["bytes"]:
-            raise _error(f"{name} byte count differs from the manifest")
-        if hashlib.sha256(payload).hexdigest() != expected["sha256"]:
-            raise _error(f"{name} sha256 differs from the manifest")
-
     row_count = document["totals"]["row_count"]
-    if len(payloads["features"]) != row_count * _FEATURE_ROW_BYTES:
-        raise _error("features file size does not match row count x 8204 float32")
-    if len(payloads["legal_mask"]) != row_count * _MASK_ROW_BYTES:
-        raise _error("legal mask file size does not match row count x 802 uint8")
-    if len(payloads["next_features"]) != row_count * _FEATURE_ROW_BYTES:
-        raise _error("next_features file size does not match row count x 8204 float32")
-    if len(payloads["next_legal_mask"]) != row_count * _MASK_ROW_BYTES:
-        raise _error("next_legal_mask file size does not match row count x 802 uint8")
+    verify_row_payloads(payloads, document["files"], row_count)
 
     expected_rows = {entry["seed"]: entry["row_count"] for entry in document["games"]}
-    records: list[OfflineQRowRecord] = []
+    records = read_validated_rows(payloads, split_resolver=split_for_seed)
+
     per_game_counts: dict[int, int] = {seed: 0 for seed in expected_rows}
-    previous_seed: int | None = None
-    terminal_row_count = 0
-    for index, row in enumerate(_iter_row_documents(payloads["rows"])):
-        seed = _expect(row["seed"], int, "row.seed")
-        split = split_for_seed(seed)
-        if row["split"] != split.value:
-            raise _error(f"row {index} split does not match the locked protocol")
-        if previous_seed is not None and seed < previous_seed:
-            raise _error("rows must be grouped by ascending seed")
-        previous_seed = seed
-        per_game_counts[seed] += 1
-
-        for name in (
-            "round_ordinal",
-            "hand_number",
-            "honba",
-            "actor_seat",
-            "step_ordinal",
-            "decision_ordinal",
-            "legal_action_count",
-            "behavior_action_index",
-        ):
-            _expect(row[name], int, f"row.{name}")
-        _expect(row["round_wind"], str, "row.round_wind")
-        _expect(row["behavior_action_family"], str, "row.behavior_action_family")
-        _expect(row["terminal"], bool, "row.terminal")
-        reward = row["reward"]
-        if type(reward) not in (int, float) or not isfinite(float(reward)):
-            raise _error(f"row {index} reward must be a finite number")
-
-        behavior_index = row["behavior_action_index"]
-        if not 0 <= behavior_index < VOCABULARY_SIZE:
-            raise _error(f"row {index} behavior action index is outside the vocabulary")
-        if row["behavior_action_family"] != action_family(behavior_index):
-            raise _error(f"row {index} behavior action family is inconsistent")
-
-        mask_start = index * _MASK_ROW_BYTES
-        mask = payloads["legal_mask"][mask_start : mask_start + _MASK_ROW_BYTES]
-        if any(value not in (0, 1) for value in mask):
-            raise _error(f"row {index} legal mask is not a 0/1 mask")
-        legal_count = mask.count(1)
-        if legal_count < 2:
-            raise _error(f"row {index} legal mask must have at least two actions")
-        if legal_count != row["legal_action_count"]:
-            raise _error(f"row {index} legal_action_count differs from its mask")
-        if mask[behavior_index] != 1:
-            raise _error(f"row {index} behavior action is not legal in its own mask")
-
-        terminal = row["terminal"]
-        next_step = row["next_step_ordinal"]
-        next_decision = row["next_decision_ordinal"]
-        if terminal:
-            if next_step is not None or next_decision is not None:
-                raise _error(
-                    f"row {index} is terminal but carries a next decision identity"
-                )
-            terminal_row_count += 1
-        else:
-            if type(next_step) is not int or type(next_decision) is not int:
-                raise _error(
-                    f"row {index} is nonterminal but is missing its next decision identity"
-                )
-            if next_decision <= row["decision_ordinal"]:
-                raise _error(f"row {index} next_decision_ordinal is not strictly later")
-            next_mask = payloads["next_legal_mask"][
-                mask_start : mask_start + _MASK_ROW_BYTES
-            ]
-            if any(value not in (0, 1) for value in next_mask):
-                raise _error(f"row {index} next legal mask is not a 0/1 mask")
-            if next_mask.count(1) < 2:
-                raise _error(
-                    f"row {index} next legal mask must have at least two actions"
-                )
-
-        records.append(
-            OfflineQRowRecord(
-                seed=seed,
-                split=split,
-                round_ordinal=row["round_ordinal"],
-                round_wind=row["round_wind"],
-                hand_number=row["hand_number"],
-                honba=row["honba"],
-                actor_seat=row["actor_seat"],
-                step_ordinal=row["step_ordinal"],
-                decision_ordinal=row["decision_ordinal"],
-                legal_action_count=legal_count,
-                behavior_action_index=behavior_index,
-                behavior_action_family=row["behavior_action_family"],
-                reward=float(reward),
-                terminal=terminal,
-                next_step_ordinal=next_step,
-                next_decision_ordinal=next_decision,
-            )
-        )
+    for record in records:
+        per_game_counts[record.seed] += 1
+    terminal_row_count = sum(1 for record in records if record.terminal)
 
     if len(records) != row_count:
         raise _error("rows.jsonl row count differs from the manifest")
@@ -845,7 +897,7 @@ def load_dataset(path: str | Path) -> LoadedOfflineQDataset:
     if terminal_row_count != document["totals"]["terminal_row_count"]:
         raise _error("totals.terminal_row_count differs from the actual rows")
 
-    return LoadedOfflineQDataset(path=path, manifest=document, rows=tuple(records))
+    return LoadedOfflineQDataset(path=path, manifest=document, rows=records)
 
 
 __all__ = [
@@ -858,10 +910,16 @@ __all__ = [
     "ROWS_FILENAME",
     "GameManifestEntry",
     "LoadedOfflineQDataset",
+    "MacroTransitionFileWriters",
     "OfflineQDatasetWriter",
     "OfflineQRowRecord",
     "dataset_identity",
     "feature_block",
     "load_dataset",
+    "PROVENANCE_FIELDS",
+    "provenance_document",
+    "read_validated_rows",
+    "require_locked_teacher_revision",
+    "verify_row_payloads",
     "vocabulary_block",
 ]

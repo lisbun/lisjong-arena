@@ -57,7 +57,20 @@ Issue #140 dataset    245..276  (32 hanchan、whole-hanchan split)
     TEST                   271..276  (6 hanchan)
 Issue #140 serving smoke 277..280
 Issue #140 screening      281..305
+
+Arena #146 kan coverage   306..329  (既存、development-only、変更しない)
+Arena #148 mix pilot      330..353  (既存、development-only、変更しない)
+
+Issue #140 replacement TEST 354..359  (6 hanchan、TEST-only)
 ```
+
+`354..359`はrebuilt candidate pairのfresh offline diagnostic populationである
+（`replacement_test.py`）。当初は`306..311`がlockされていたが、そのlock記録後に
+mergeされたArena #147が`306..329`を、#149が`330..353`をdevelopment populationと
+して取得したため、`REPLACEMENT TEST SEED PLAN REFORMULATE`として`330..353`直後の
+fresh contiguous rangeへre-lockしている。`protocol.py`のimport-time collision
+assertionに加えて、sibling experimentのlocked populationとのcross-checkを
+testで固定している。
 
 ## Macro-transition dataset contract
 
@@ -126,8 +139,20 @@ Arm B (support-restricted Offline Q)       arena-learned-policy-offlineq-q-check
                      that are also TRAIN-supported)
     target sync   epoch-level hard sync (target = online weights at each epoch start)
     loss       Huber(Q(s, a_behavior), y), delta = 1.0
-    selection  lowest VALIDATION selected-action Huber loss
+    selection  fixed MAXIMUM_EPOCHS outer fitted-Q iterations、
+               final iterationを無条件に採用する
+               VALIDATION Huber lossはdiagnosticのみ
 ```
+
+Arm Bのcheckpoint selectionは**cross-iteration VALIDATION loss比較を使わない**。
+fitted-Qではouter iterationごとにbootstrap targetそのものが変わるため、
+iteration間でVALIDATION Huber lossを比較して最小値を選ぶのはmethodologically
+invalidである（PR #141 review round 1で確定）。したがって`train_q_model()`は常に
+`MAXIMUM_EPOCHS`回のouter iterationを完走し、最終iterationのmodelを無条件に
+採用する。`TrainingRun.selected_epoch`は常に`MAXIMUM_EPOCHS`と一致する。
+
+Arm A (BC)側は分類objectiveであり、VALIDATION choice-row masked CEによる
+checkpoint selectionは有効なまま維持する。
 
 CQL等のconservative offline-RL regularizationはこのfirst childへ導入しない
 （Issue #140 self-review）。
@@ -143,6 +168,71 @@ Q    selected-action Huber residual, finite Q rate,
 ```
 
 TEST結果を見てobjective / model / seed / support ruleを変更しない。
+
+## Replacement TEST — checkpoint-bound one-shot diagnostic
+
+`replacement_test.py`は、TEST-onlyのpurpose-specific artifact
+（`arena-learned-policy-offlineq-replacement-test-v1`）と、そのcheckpoint-bound
+評価pathを所有する。original training datasetへappendせず、独立した
+`artifact_identity`を持つ。
+
+```text
+locked replacement TEST seeds 354..359  (yakuhai-call x4 / 4p-red-half)
+        |
+        v
+ReplacementTestWriter   ->  immutable / versioned artifact
+        |                   purpose / protocol id / seeds / teacher identity /
+        |                   source revisions / feature / vocabulary /
+        |                   transition schema / row / terminal / nonterminal /
+        |                   non-finite counts / artifact identity
+        v
+strict-loaded Q checkpoint
+    +-- model
+    +-- checkpoint identity-bound supported_indices
+        |
+        v
+BC / Q one-shot diagnostics
+```
+
+**support setの正本はcheckpointである。** replacement TESTのsupport setを
+TEST rowから計算し直さず、TRAIN `245..264`をregenして再計算することもしない。
+`support_mask_from_checkpoint()`がQ checkpointへidentity-boundされた
+`supported_indices` / `supported_indices_digest`からmaskを作る。これにより
+replacement TESTは、実際にservingされるQ hybridと同一のsupport boundaryを
+評価する。
+
+`exposure_evaluation.evaluate_q_test()`はoriginal TRAIN tensorsから
+support maskを再構成するoriginal TEST path専用であり、replacement TESTでは
+使用しない。共通の計算部分は`evaluate_q_with_support_mask()`が持ち、
+評価時にTRAIN rowsを要求しない。
+
+CLI:
+
+```text
+generate-replacement-test    --artifact DIR --report FILE
+evaluate-replacement-test    --artifact DIR --bc-checkpoint DIR
+                             --q-checkpoint DIR --result FILE
+```
+
+`REPLACEMENT_TEST_SEEDS`だけをfail closedで受け付ける。generic arbitrary-seed
+evaluation frameworkへ拡張しない。
+
+### Hard validity gates
+
+```text
+checkpoint strict readback       PASS
+feature identity                 PASS
+vocabulary identity              PASS
+transition validation            PASS
+non-finite feature count         0
+finite Q rate                    100%
+unsupported bootstrap            0
+```
+
+いずれかがFAILなら`REPLACEMENT TEST INVALID`として停止し、strength screenへ
+進まない。diagnostic数値（Huber loss、predicted Q / target distribution）には
+performance thresholdを後付けせず、値を理由にretraining / epoch追加 /
+reward変更 / CQL追加 / architecture変更 / seed追加を行わない。
 
 ## Serving hybrids
 

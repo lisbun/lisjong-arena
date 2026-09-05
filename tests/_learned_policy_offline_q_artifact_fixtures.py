@@ -10,10 +10,15 @@ from lisjong_arena.learned_policy_offline_q.model import MacroTransitionRow
 from lisjong_arena.learned_policy_offline_q.protocol import (
     DATASET_ORDERED_SEEDS,
     FEATURE_DIMENSION,
+    REPLACEMENT_TEST_SEEDS,
     TEACHER_SOURCE_REVISION,
     VOCABULARY_SIZE,
+    Split,
     action_family,
     split_for_seed,
+)
+from lisjong_arena.learned_policy_offline_q.replacement_test import (
+    ReplacementTestWriter,
 )
 
 FIXTURE_PROVENANCE = {
@@ -82,6 +87,73 @@ def transition_row(
             next_legal_mask=legal_mask(),
         )
     return MacroTransitionRow(**kwargs)
+
+
+def replacement_transition_row(
+    seed: int, ordinal: int, *, rows_per_game: int, legal_indices=_LEGAL_INDICES
+) -> MacroTransitionRow:
+    """replacement TEST population向けの合成row（splitは常に`Split.TEST`）。"""
+    behavior_index = tuple(legal_indices)[ordinal % len(tuple(legal_indices))]
+    terminal = ordinal == rows_per_game - 1
+    kwargs = dict(
+        seed=seed,
+        split=Split.TEST,
+        round_ordinal=ordinal // 4,
+        round_wind="east",
+        hand_number=1 + (ordinal // 4) % 4,
+        honba=0,
+        actor_seat=0,
+        step_ordinal=ordinal,
+        decision_ordinal=ordinal,
+        feature_values=feature_values(seed, ordinal),
+        legal_mask=legal_mask(legal_indices),
+        behavior_action_index=behavior_index,
+        behavior_action_family=action_family(behavior_index),
+        reward=float(ordinal - (rows_per_game // 2)) / 10000.0,
+        terminal=terminal,
+    )
+    if terminal:
+        kwargs.update(
+            next_step_ordinal=None,
+            next_decision_ordinal=None,
+            next_feature_values=None,
+            next_legal_mask=None,
+        )
+    else:
+        kwargs.update(
+            next_step_ordinal=ordinal + 1,
+            next_decision_ordinal=ordinal + 1,
+            next_feature_values=feature_values(seed, ordinal + 1),
+            next_legal_mask=legal_mask(legal_indices),
+        )
+    return MacroTransitionRow(**kwargs)
+
+
+def write_synthetic_replacement_test(
+    destination, *, rows_per_game: int = 6, legal_indices=_LEGAL_INDICES
+):
+    """locked replacement TEST populationを満たす合成artifactを書き出す。"""
+    writer = ReplacementTestWriter(destination, provenance=FIXTURE_PROVENANCE)
+    try:
+        for seed in REPLACEMENT_TEST_SEEDS:
+            writer.add_game(
+                seed=seed,
+                scores=(25000, 25000, 25000, 25000),
+                ranks=(1, 2, 3, 4),
+                rows=(
+                    replacement_transition_row(
+                        seed,
+                        ordinal,
+                        rows_per_game=rows_per_game,
+                        legal_indices=legal_indices,
+                    )
+                    for ordinal in range(rows_per_game)
+                ),
+            )
+        return writer.finalize()
+    except BaseException:
+        writer.discard()
+        raise
 
 
 def write_synthetic_dataset(destination, *, rows_per_game: int = 6):
