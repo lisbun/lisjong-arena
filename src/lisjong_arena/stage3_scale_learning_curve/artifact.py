@@ -325,13 +325,25 @@ def load_model_artifact(
 def load_model(
     destination: str | Path, population: dict[str, object], lock: dict[str, object]
 ):
-    """artifactからlocked S2 modelをrestoreする。任意codeは復元しない。"""
+    """artifactからlocked S2 modelをrestoreする。任意codeは復元しない。
+
+    weightsのbyte数とSHA-256が整合していても、それはfileが記録どおりである
+    ことしか示さない。checkpointがlocked S2 familyのものであることは、
+    `strict=True`のstate dict loadだけが証明できる。したがってmanifestを
+    採用する前に必ずここを通し、strict loadの失敗はPhase 10 contract violation
+    として`ScaleError`へ変換する。
+    """
     from lisjong_arena.phase8_sequential.model import create_model, parameter_count
     from lisjong_arena.phase8_sequential.protocol import Candidate
 
     loaded = load_model_artifact(destination, population, lock)
     model = create_model(Candidate.S2)
-    model.load_state_dict(loaded.state_dict, strict=True)
+    try:
+        model.load_state_dict(loaded.state_dict, strict=True)
+    except (RuntimeError, TypeError, AttributeError) as exc:
+        raise ScaleError(
+            f"checkpoint does not strict load into the locked S2 model: {exc}"
+        ) from exc
     exact(
         parameter_count(model),
         loaded.manifest["training_lock"]["parameter_count"],

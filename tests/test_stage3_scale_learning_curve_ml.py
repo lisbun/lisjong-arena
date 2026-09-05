@@ -239,6 +239,11 @@ class ScaleArtifactTest(unittest.TestCase):
                 cls.population,
                 cls.lock,
             )
+        # `curve` pathをそのまま走らせるため、population dirをloadableにする。
+        (cls.root / "pop" / "population.json").write_bytes(
+            canonical_json_bytes(cls.population)
+        )
+        (cls.root / "lock.json").write_bytes(canonical_json_bytes(cls.lock))
 
     @classmethod
     def tearDownClass(cls):
@@ -347,6 +352,99 @@ class ScaleArtifactTest(unittest.TestCase):
         )
         with self.assertRaises(ScaleError):
             load_model_artifact(destination, self.population, self.lock)
+
+    def _bogus_checkpoint_artifact(self, name: str, state_dict) -> Path:
+        """weightsを差し替え、byte数とSHA-256も整合的に書き換えたartifact。
+
+        manifestのdigestとsizeは正しいので、byte-level checkだけを見る
+        validatorは通してしまう。locked S2へのstrict loadだけがこれを拒否できる。
+        """
+        import hashlib
+
+        import torch
+
+        destination = self.root / name
+        destination.mkdir()
+        source = self.root / "S16"
+        weights_path = destination / WEIGHTS_FILENAME
+        torch.save(state_dict, weights_path)
+        weights = weights_path.read_bytes()
+        manifest = json.loads((source / MANIFEST_FILENAME).read_bytes())
+        manifest["weights_bytes"] = len(weights)
+        manifest["weights_sha256"] = hashlib.sha256(weights).hexdigest()
+        (destination / MANIFEST_FILENAME).write_bytes(canonical_json_bytes(manifest))
+        return destination
+
+    def test_a_self_consistent_bogus_checkpoint_is_rejected_by_strict_load(self):
+        """digestとsizeが整合していても、S2でないcheckpointは通さない。"""
+        import torch
+
+        reference = self.results["S16"].model.state_dict()
+        wrong_shape = {
+            name: torch.zeros(1, dtype=tensor.dtype)
+            for name, tensor in reference.items()
+        }
+        bogus_keys = {"not_an_s2_parameter": torch.zeros(3, dtype=torch.float64)}
+        for label, state_dict in (
+            ("wrong-shape", wrong_shape),
+            ("bogus-keys", bogus_keys),
+            ("empty", {}),
+        ):
+            destination = self._bogus_checkpoint_artifact(label, state_dict)
+            with self.subTest(checkpoint=label):
+                # byte-levelのcontractは整合しているのでmanifest readbackは通る。
+                load_model_artifact(destination, self.population, self.lock)
+                with self.assertRaises(ScaleError):
+                    load_model(destination, self.population, self.lock)
+
+    def _curve_arguments(self, s16_path, result_name: str):
+        from lisjong_arena.stage3_scale_learning_curve import __main__ as cli
+
+        return cli._parser().parse_args(
+            [
+                "curve",
+                "--lock",
+                str(self.root / "lock.json"),
+                "--population-dir",
+                str(self.root / "pop"),
+                "--model",
+                f"S16={s16_path}",
+                "--model",
+                f"S32={self.root / 'S32'}",
+                "--model",
+                f"S64={self.root / 'S64'}",
+                "--result",
+                str(self.root / result_name),
+            ]
+        )
+
+    def test_the_curve_command_strict_loads_every_checkpoint(self):
+        """`curve` pathがmanifestだけでなくcheckpointをstrict loadすること。
+
+        live runtime lockはfixture lockでは通らないので、ここではpatchして
+        checkpoint strict loadの手前までを実際のCLI pathで走らせる。
+        """
+        from unittest import mock
+
+        import torch
+
+        from lisjong_arena.stage3_scale_learning_curve import __main__ as cli
+
+        reference = self.results["S16"].model.state_dict()
+        bogus = self._bogus_checkpoint_artifact(
+            "curve-bogus",
+            {name: torch.zeros(1, dtype=t.dtype) for name, t in reference.items()},
+        )
+        with mock.patch.object(cli, "require_current_lock", return_value=None):
+            with self.assertRaises(ScaleError):
+                cli._curve_command(self._curve_arguments(bogus, "bogus-result.json"))
+            self.assertFalse((self.root / "bogus-result.json").exists())
+            # 同じpathが、正しいcheckpointではresultまで到達することも確認する。
+            output = cli._curve_command(
+                self._curve_arguments(self.root / "S16", "good-result.json")
+            )
+        self.assertIn(output["outcome"], OUTCOMES)
+        self.assertTrue((self.root / "good-result.json").exists())
 
     def test_the_end_to_end_curve_produces_an_exhaustive_outcome(self):
         models = {scale: self.loaded[scale].manifest for scale in SCALES}

@@ -376,6 +376,18 @@ runtime                 == execution lockのruntime
 TRAIN subsetへVALIDATION anchorが混ざることも拒否する。S16 ⊂ S32 ⊂ S64の
 strict nested membershipと、S64 == full TRAINも別途固定する。
 
+### Strict checkpoint load
+
+weightsのbyte数とSHA-256が整合していても、それはfileが記録どおりであることしか
+示さない。checkpointがlocked S2 familyのものであることは、`strict=True`の
+state dict loadだけが証明できる。
+
+したがって`curve`は各scaleのartifactを`load_model()`経由で読み、locked S2への
+strict loadを通してからmanifestをresult assemblyへ渡す。`weights.pt`を別shapeや
+bogus keyのstate dictへ差し替え、`weights_bytes` / `weights_sha256`も整合的に
+書き換えたself-consistentなartifactは、ここでfail closedする。strict loadの失敗は
+Phase 10 contract violationとして`ScaleError`へ変換する。
+
 ### Tampered-but-self-consistent rejection
 
 次はいずれもtestで拒否を固定してある。
@@ -388,6 +400,7 @@ coverage seatを1つずらしてplanとidentityを揃えたresult
 carry-forward recipeへdevelopment seedを混ぜたresult
 別scaleのsubset / anchorを名乗ったmodel
 selected epochとevaluationが噛み合わないmodel
+weightsを差し替えてbyte数とSHA-256も整合させたcheckpoint
 ```
 
 ## Cost accounting

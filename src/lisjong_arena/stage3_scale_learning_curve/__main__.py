@@ -184,7 +184,7 @@ def _train_command(arguments) -> dict[str, object]:
 
 
 def _curve_command(arguments) -> dict[str, object]:
-    from .artifact import load_model_artifact
+    from .artifact import load_model
 
     lock = _read_lock(arguments.lock)
     result_path = Path(arguments.result)
@@ -200,7 +200,10 @@ def _curve_command(arguments) -> dict[str, object]:
         raise SystemExit("--model must be given exactly once for S16, S32 and S64")
     models = {}
     for scale in SCALES:
-        manifest = load_model_artifact(model_paths[scale], population, lock).manifest
+        # manifestだけを読まず、checkpointをlocked S2へstrict loadする。
+        # weightsをshapeもkeyも違うstate dictへ差し替え、byte数とSHA-256を
+        # 整合的に書き換えたartifactは、strict loadを通らないとここで落ちる。
+        _model, manifest = load_model(model_paths[scale], population, lock)
         if manifest["scale"] != scale:
             raise SystemExit(f"{model_paths[scale]} is not the {scale} artifact")
         models[scale] = manifest
