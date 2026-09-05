@@ -25,8 +25,18 @@ class OfflineQArtifactError(OfflineQError):
     """An Offline Q artifact is missing, malformed, or internally inconsistent."""
 
 
+class OfflineQDiagnosisError(OfflineQError):
+    """A failure-diagnosis input binding, measurement, or result artifact is invalid."""
+
+
+class OfflineQAmbiguousStateError(OfflineQDiagnosisError):
+    """A retained row cannot be reconstructed unambiguously into a player-safe state."""
+
+
 __all__ = [
+    "OfflineQAmbiguousStateError",
     "OfflineQArtifactError",
+    "OfflineQDiagnosisError",
     "OfflineQError",
     "OfflineQProtocolError",
     "OfflineQRecordingError",

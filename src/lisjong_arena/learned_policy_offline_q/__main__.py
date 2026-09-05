@@ -18,12 +18,22 @@ python -m lisjong_arena.learned_policy_offline_q freeze    \
     --retention-backend NAME --retention-root DIR --retention-key KEY
 python -m lisjong_arena.learned_policy_offline_q screen    \
     --bundle DIR --artifact FILE --result FILE
+python -m lisjong_arena.learned_policy_offline_q diagnose  \
+    --bundle DIR --dataset DIR --replacement-test DIR --result FILE
+python -m lisjong_arena.learned_policy_offline_q record-classification \
+    --result FILE --outcome NAME --classified-result FILE
 ```
 
 `generate`/`train-bc`/`train-q`はTEST partitionのmetricを一切計算しない。
 `test`だけがfrozen checkpointに対してTESTを1回評価し、その実行でのみTEST
 exposureを行う。`smoke`はserving semantics検証のみでmodel tuningへ使わない。
 `screen`はvalid smoke後にのみ実行する。
+
+`diagnose`と`record-classification`はIssue #152のartifact-only failure
+diagnosisであり、新しいgame / seed / training / strength evidenceを作らない。
+`diagnose`はretained artifactのstrict readbackだけで動き、outcome
+classificationを記録しない。`record-classification`はreview後の
+exhaustive outcomeを1件だけ付与する。
 """
 
 import argparse
@@ -461,6 +471,106 @@ def _screen(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _diagnosis_outcome_names():
+    """CLI choicesのためだけにexhaustive outcome列挙を読む（torchを要求しない）。"""
+    from .diagnosis import DiagnosisOutcome
+
+    return tuple(DiagnosisOutcome)
+
+
+def _diagnose(arguments: argparse.Namespace) -> int:
+    """retained artifactだけでMeasurement A-Dを実行する（Issue #152）。
+
+    新しいgame / seed / trainingを一切作らず、`--bundle`のcandidate pairと
+    `--dataset` / `--replacement-test` artifactをstrict readbackした結果に
+    対してのみ動く。outcome classificationはここでは記録しない。
+    """
+    from .artifact import load_dataset
+    from .diagnosis import (
+        LOCKED_SOURCE_IDENTITIES,
+        DiagnosisRole,
+        RolePopulation,
+        bind_diagnosis_inputs,
+        build_diagnosis_result,
+        dataset_role_populations,
+        diagnose_role,
+        validate_diagnosis_result,
+    )
+    from .replacement_test import (
+        load_replacement_test,
+        load_replacement_test_tensors,
+        support_mask_from_checkpoint,
+    )
+    from .retention import strict_readback
+    from .split_tensors import load_split_tensors
+
+    retained = strict_readback(arguments.bundle)
+    dataset = load_dataset(arguments.dataset)
+    replacement = load_replacement_test(arguments.replacement_test)
+    binding = bind_diagnosis_inputs(
+        dataset=dataset,
+        bc_checkpoint=retained.bc_checkpoint,
+        q_checkpoint=retained.q_checkpoint,
+        replacement_test=replacement,
+        expected=LOCKED_SOURCE_IDENTITIES,
+    )
+    support_mask = support_mask_from_checkpoint(retained.q_checkpoint.supported_indices)
+
+    populations = list(dataset_role_populations(dataset, load_split_tensors(dataset)))
+    populations.append(
+        RolePopulation(
+            role=DiagnosisRole.REPLACEMENT_TEST,
+            tensors=load_replacement_test_tensors(replacement),
+            rows=replacement.rows,
+        )
+    )
+    roles = [
+        diagnose_role(
+            population,
+            bc_model=retained.bc_checkpoint.model,
+            q_model=retained.q_checkpoint.model,
+            support_mask=support_mask,
+        )
+        for population in populations
+    ]
+    document = validate_diagnosis_result(
+        build_diagnosis_result(binding=binding, roles=roles)
+    )
+    _write_json(Path(arguments.result), document)
+
+    for role in document["roles"]:
+        counts = role["row_counts"]
+        measurement_a = role["measurement_a"]
+        print(
+            f"{role['role']}: eligible={counts['eligible_row_count']}"
+            f"/{counts['total_row_count']} "
+            f"q_vs_bc={measurement_a['q_vs_bc_disagreement_count']} "
+            f"q_vs_behavior={measurement_a['q_vs_behavior_disagreement_count']} "
+            f"bc_vs_behavior={measurement_a['bc_vs_behavior_disagreement_count']} "
+            f"measurement_d={role['measurement_d']['status']}"
+        )
+    print("classification=None")
+    print(
+        "review the result artifact, then record exactly one exhaustive outcome "
+        "with the record-classification command"
+    )
+    return 0
+
+
+def _record_classification(arguments: argparse.Namespace) -> int:
+    """review後のexhaustive outcomeを1件だけresultへ記録する（Issue #152）。"""
+    import json
+
+    from .diagnosis import DiagnosisOutcome, record_classification
+
+    source = Path(arguments.result)
+    document = json.loads(source.read_text(encoding="utf-8"))
+    classified = record_classification(document, DiagnosisOutcome[arguments.outcome])
+    _write_json(Path(arguments.classified_result), classified)
+    print(f"classification={classified['classification']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m lisjong_arena.learned_policy_offline_q",
@@ -529,6 +639,29 @@ def main(argv: list[str] | None = None) -> int:
     screen.add_argument("--artifact", required=True)
     screen.add_argument("--result", required=True)
     screen.set_defaults(handler=_screen)
+
+    diagnose = commands.add_parser(
+        "diagnose",
+        help="artifact-only Q-vs-BC failure diagnosis (Measurement A-D)",
+    )
+    diagnose.add_argument("--bundle", required=True)
+    diagnose.add_argument("--dataset", required=True)
+    diagnose.add_argument("--replacement-test", required=True)
+    diagnose.add_argument("--result", required=True)
+    diagnose.set_defaults(handler=_diagnose)
+
+    record = commands.add_parser(
+        "record-classification",
+        help="record one exhaustive diagnosis outcome onto a diagnosis result",
+    )
+    record.add_argument("--result", required=True)
+    record.add_argument("--classified-result", required=True)
+    record.add_argument(
+        "--outcome",
+        required=True,
+        choices=[outcome.name for outcome in _diagnosis_outcome_names()],
+    )
+    record.set_defaults(handler=_record_classification)
 
     arguments = parser.parse_args(argv)
     return arguments.handler(arguments)
