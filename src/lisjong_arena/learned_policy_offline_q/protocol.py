@@ -52,6 +52,9 @@ verify_contract_identity = stage2.verify_contract_identity
 # Issue #140 dataset    245..276  (this module)
 # Issue #140 smoke      277..280  (this module)
 # Issue #140 screening  281..305  (this module)
+# Arena #146 kan cov.   306..329  (phase5_belief_dataset.split, development-only)
+# Arena #148 mix pilot  330..353  (phase5_belief_dataset.split, development-only)
+# Issue #140 repl TEST  354..359  (this module)
 
 DATASET_ORDERED_SEEDS = tuple(range(245, 277))
 DATASET_TRAIN_SEEDS = tuple(range(245, 265))
@@ -66,11 +69,34 @@ STRENGTH_SEED_BLOCK_COUNT = 25
 STRENGTH_ROTATIONS_PER_SEED = 4
 STRENGTH_GAMES_PER_COMPARATOR = STRENGTH_SEED_BLOCK_COUNT * STRENGTH_ROTATIONS_PER_SEED
 
+REPLACEMENT_TEST_SEEDS = tuple(range(354, 360))
+REPLACEMENT_TEST_HANCHAN_COUNT = 6
+REPLACEMENT_TEST_PURPOSE = "offlineq-rebuilt-candidate-pair-offline-diagnostic-test"
+"""rebuilt BC / Q candidate pairに対するfresh one-shot offline diagnostic population。
+
+当初のamendment（本Issue 2026-09-04T11:11Z）は`306..311`をlockしていたが、
+そのamendment記録後にmergeされたArena #147が`306..329`を、#149が`330..353`を
+development populationとして取得したため、`306..311`はfreshでなくなった。
+amendment自身のruleどおりsilentに差し替えず、`REPLACEMENT TEST SEED PLAN
+REFORMULATE`として`330..353`直後のfresh contiguous range `354..359`へ
+re-lockしている。
+
+historical dataset / BC / Q checkpointがすべてephemeral環境と共に失われた
+ため、candidate pairはrebuildされる。rebuildされたBC checkpointはhistorical
+`271..276` TEST結果のsubjectではないので、この populationはBC / Q両armの
+one-shot diagnosticとして使う。`271..276`はhistorically exposure済みであり、
+rebuild candidateに対する新たなTEST claimとしては使用しない。
+
+このpopulationはtraining / validationへ追加せず、exposure後にfuture
+training / validation / TEST rescue / strength evidenceへ再利用しない。
+"""
+
 _ALL_LOCKED_RANGES = (
     stage2.ORDERED_SEEDS,
     DATASET_ORDERED_SEEDS,
     SERVING_SMOKE_SEEDS,
     STRENGTH_SCREEN_SEEDS,
+    REPLACEMENT_TEST_SEEDS,
 )
 
 DATASET_SPLIT_SEEDS = {
@@ -122,6 +148,18 @@ def require_screening_seed(seed: int) -> int:
     if seed not in STRENGTH_SCREEN_SEEDS:
         raise OfflineQProtocolError(
             f"seed {seed} is not part of the locked Offline Q screening population"
+        )
+    return seed
+
+
+def require_replacement_test_seed(seed: int) -> int:
+    """replacement TESTで許されたfresh seedだけをfail closedで通す。"""
+    if type(seed) is not int:
+        raise TypeError("seed must be an int")
+    if seed not in REPLACEMENT_TEST_SEEDS:
+        raise OfflineQProtocolError(
+            f"seed {seed} is not part of the locked Offline Q replacement TEST "
+            "population"
         )
     return seed
 
@@ -220,6 +258,9 @@ __all__ = [
     "MAXIMUM_EPOCHS",
     "MINIMUM_CHOICE_LEGAL_ACTION_COUNT",
     "PROTOCOL_ID",
+    "REPLACEMENT_TEST_HANCHAN_COUNT",
+    "REPLACEMENT_TEST_PURPOSE",
+    "REPLACEMENT_TEST_SEEDS",
     "Q_MODEL_ID",
     "REWARD_SCORE_DIVISOR",
     "SERVING_SMOKE_SEEDS",
@@ -239,6 +280,7 @@ __all__ = [
     "OfflineQOutcome",
     "Split",
     "action_family",
+    "require_replacement_test_seed",
     "require_screening_seed",
     "require_smoke_seed",
     "split_for_seed",

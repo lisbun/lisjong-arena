@@ -7,6 +7,10 @@ python -m lisjong_arena.learned_policy_offline_q train-bc  --dataset DIR --check
 python -m lisjong_arena.learned_policy_offline_q train-q   --dataset DIR --checkpoint DIR
 python -m lisjong_arena.learned_policy_offline_q test      --dataset DIR \
     --bc-checkpoint DIR --q-checkpoint DIR --result FILE
+python -m lisjong_arena.learned_policy_offline_q generate-replacement-test \
+    --artifact DIR --report FILE
+python -m lisjong_arena.learned_policy_offline_q evaluate-replacement-test \
+    --artifact DIR --bc-checkpoint DIR --q-checkpoint DIR --result FILE
 python -m lisjong_arena.learned_policy_offline_q smoke     \
     --bc-checkpoint DIR --q-checkpoint DIR --report FILE
 python -m lisjong_arena.learned_policy_offline_q freeze    \
@@ -44,7 +48,7 @@ from .protocol import (
     Split,
     verify_contract_identity,
 )
-from .recording import record_teacher_game
+from .recording import record_replacement_test_game, record_teacher_game
 from .support import build_support_gate_report
 from .transitions import build_macro_transitions
 
@@ -195,6 +199,152 @@ def _test(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _generate_replacement_test(arguments: argparse.Namespace) -> int:
+    """locked replacement TEST population 354..359をTEST-only artifactとして生成する。
+
+    original training datasetへappendせず、独立したartifact identityを持つ。
+    """
+    from .protocol import REPLACEMENT_TEST_SEEDS
+    from .replacement_test import ReplacementTestWriter
+
+    verify_contract_identity()
+    writer = ReplacementTestWriter(Path(arguments.artifact))
+    measurements = []
+    try:
+        for seed in REPLACEMENT_TEST_SEEDS:
+            recording = record_replacement_test_game(seed)
+            entry = writer.add_game(
+                seed=seed,
+                scores=recording.result.scores,
+                ranks=recording.result.ranks,
+                rows=build_macro_transitions(recording),
+            )
+            measurements.append(
+                {
+                    "seed": seed,
+                    "macro_transition_rows": entry.row_count,
+                    "wall_clock_seconds": recording.wall_clock_seconds,
+                    "cpu_seconds": recording.cpu_seconds,
+                }
+            )
+            print(
+                f"seed={seed} rows={entry.row_count} "
+                f"wall={recording.wall_clock_seconds:.2f}s",
+                flush=True,
+            )
+        artifact = writer.finalize()
+    except BaseException:
+        writer.discard()
+        raise
+
+    non_finite = artifact.count_non_finite_features()
+    document = {
+        "artifact_identity": artifact.identity,
+        "purpose": artifact.manifest["purpose"],
+        "replacement_test_seeds": list(REPLACEMENT_TEST_SEEDS),
+        "non_finite_feature_count": non_finite,
+        "games": measurements,
+        "totals": dict(artifact.manifest["totals"]),
+        "provenance": dict(artifact.manifest["provenance"]),
+    }
+    _write_json(Path(arguments.report), document)
+    print(f"artifact_identity={artifact.identity}")
+    print(
+        f"hanchan={artifact.hanchan_count} rows={artifact.row_count} "
+        f"terminal={artifact.terminal_row_count} "
+        f"nonterminal={artifact.nonterminal_row_count}"
+    )
+    print(f"non_finite_feature_count={non_finite}")
+    return 0
+
+
+def _evaluate_replacement_test(arguments: argparse.Namespace) -> int:
+    """rebuilt BC / Q candidate pairをreplacement TEST populationへ1回だけexposeする。
+
+    support setはQ checkpointへidentity-boundされた`supported_indices`を正本と
+    し、TEST rowからもTRAIN rowからも再計算しない。
+    """
+    from . import bc_training, q_training
+    from .exposure_evaluation import evaluate_bc_test, evaluate_q_with_support_mask
+    from .replacement_test import (
+        count_unsupported_bootstrap,
+        load_replacement_test,
+        load_replacement_test_tensors,
+        support_complete_flags,
+        support_mask_from_checkpoint,
+    )
+
+    bc_checkpoint = bc_training.load_checkpoint(arguments.bc_checkpoint)
+    q_checkpoint = q_training.load_checkpoint(arguments.q_checkpoint)
+    if (
+        bc_checkpoint.manifest["dataset_identity"]
+        != q_checkpoint.manifest["dataset_identity"]
+    ):
+        raise SystemExit("BC and Q checkpoints were not trained on the same dataset")
+
+    artifact = load_replacement_test(arguments.artifact)
+    tensors = load_replacement_test_tensors(artifact)
+    support_mask = support_mask_from_checkpoint(q_checkpoint.supported_indices)
+
+    non_finite = artifact.count_non_finite_features()
+    unsupported_bootstrap = count_unsupported_bootstrap(tensors, support_mask)
+    complete = support_complete_flags(tensors, support_mask)
+    support_complete_count = int(complete.sum())
+
+    bc_diagnostics = evaluate_bc_test(bc_checkpoint.model, tensors)
+    q_diagnostics = evaluate_q_with_support_mask(
+        q_checkpoint.model, tensors, support_mask
+    )
+
+    gates = {
+        "checkpoint_strict_readback": True,
+        "feature_identity": (
+            artifact.manifest["feature"] == bc_checkpoint.manifest["feature"]
+            and artifact.manifest["feature"] == q_checkpoint.manifest["feature"]
+        ),
+        "vocabulary_identity": (
+            artifact.manifest["vocabulary"] == bc_checkpoint.manifest["vocabulary"]
+            and artifact.manifest["vocabulary"] == q_checkpoint.manifest["vocabulary"]
+        ),
+        "transition_validation": True,
+        "non_finite_feature_count_is_zero": non_finite == 0,
+        "finite_q_rate_is_one": q_diagnostics.finite_q_rate == 1.0,
+        "unsupported_bootstrap_is_zero": unsupported_bootstrap == 0,
+    }
+    document = {
+        "replacement_test_artifact_identity": artifact.identity,
+        "bc_checkpoint_identity": bc_checkpoint.identity,
+        "q_checkpoint_identity": q_checkpoint.identity,
+        "dataset_identity": q_checkpoint.manifest["dataset_identity"],
+        "supported_indices_digest": q_checkpoint.manifest["supported_indices_digest"],
+        "hard_validity_gates": gates,
+        "artifact_totals": {
+            "hanchan_count": artifact.hanchan_count,
+            "row_count": artifact.row_count,
+            "terminal_row_count": artifact.terminal_row_count,
+            "nonterminal_row_count": artifact.nonterminal_row_count,
+            "non_finite_feature_count": non_finite,
+            "support_complete_count": support_complete_count,
+            "support_complete_rate": support_complete_count / artifact.row_count,
+            "unsupported_bootstrap_count": unsupported_bootstrap,
+        },
+        "bc": bc_diagnostics.to_document(),
+        "q": q_diagnostics.to_document(),
+    }
+    _write_json(Path(arguments.result), document)
+
+    for name, passed in gates.items():
+        print(f"gate {name}: {'PASS' if passed else 'FAIL'}")
+    print(f"BC choice masked CE       {bc_diagnostics.choice_masked_cross_entropy:.6f}")
+    print(f"BC choice exact agreement {bc_diagnostics.choice_exact_agreement:.6f}")
+    print(f"Q selected-action Huber   {q_diagnostics.selected_action_huber_loss:.6f}")
+    print(f"Q finite Q rate           {q_diagnostics.finite_q_rate:.6f}")
+    if not all(gates.values()):
+        print("REPLACEMENT TEST INVALID")
+        return 1
+    return 0
+
+
 def _smoke(arguments: argparse.Namespace) -> int:
     from . import q_training as _q_training
     from .serving import create_bc_hybrid_runtime, create_q_hybrid_runtime
@@ -290,6 +440,24 @@ def main(argv: list[str] | None = None) -> int:
     test.add_argument("--q-checkpoint", required=True)
     test.add_argument("--result", required=True)
     test.set_defaults(handler=_test)
+
+    generate_replacement = commands.add_parser(
+        "generate-replacement-test",
+        help="generate the locked replacement TEST artifact (354..359)",
+    )
+    generate_replacement.add_argument("--artifact", required=True)
+    generate_replacement.add_argument("--report", required=True)
+    generate_replacement.set_defaults(handler=_generate_replacement_test)
+
+    evaluate_replacement = commands.add_parser(
+        "evaluate-replacement-test",
+        help="one-shot BC/Q exposure against the replacement TEST artifact",
+    )
+    evaluate_replacement.add_argument("--artifact", required=True)
+    evaluate_replacement.add_argument("--bc-checkpoint", required=True)
+    evaluate_replacement.add_argument("--q-checkpoint", required=True)
+    evaluate_replacement.add_argument("--result", required=True)
+    evaluate_replacement.set_defaults(handler=_evaluate_replacement_test)
 
     smoke = commands.add_parser("smoke", help="serving smoke for both hybrids")
     smoke.add_argument("--bc-checkpoint", required=True)

@@ -21,14 +21,17 @@ from lisjong_arena.riichienv.local_game_runner import (
     LocalGameRunner,
 )
 
-from .protocol import GAME_MODE, split_for_seed, verify_contract_identity
+from .protocol import (
+    GAME_MODE,
+    Split,
+    require_replacement_test_seed,
+    split_for_seed,
+    verify_contract_identity,
+)
 
 
-def record_teacher_game(seed: int) -> GameRecording:
-    """locked Offline Qデータセット母集団の1 seedを、teacher x4の
-    fixed-seed hanchanとして実行する。"""
-    verify_contract_identity()
-    split = split_for_seed(seed)
+def _run_teacher_game(seed: int, split: Split) -> GameRecording:
+    """teacher x4のfixed-seed hanchanを1本実行し、inspectionごと記録する。"""
     recorder = LocalGameInspectionRecorder()
     runner = LocalGameRunner(
         build_teacher_population(),
@@ -51,4 +54,22 @@ def record_teacher_game(seed: int) -> GameRecording:
     )
 
 
-__all__ = ["record_teacher_game"]
+def record_teacher_game(seed: int) -> GameRecording:
+    """locked Offline Qデータセット母集団の1 seedを、teacher x4の
+    fixed-seed hanchanとして実行する。"""
+    verify_contract_identity()
+    return _run_teacher_game(seed, split_for_seed(seed))
+
+
+def record_replacement_test_game(seed: int) -> GameRecording:
+    """locked replacement TEST母集団（354..359）の1 seedを実行する。
+
+    teacher population / game mode / execution boundaryはdataset生成と完全に
+    同一であり、違うのはseed populationとその意味づけだけである。この
+    populationはTEST-onlyなので、row levelのsplitは常に`Split.TEST`になる。
+    """
+    verify_contract_identity()
+    return _run_teacher_game(require_replacement_test_seed(seed), Split.TEST)
+
+
+__all__ = ["record_replacement_test_game", "record_teacher_game"]
