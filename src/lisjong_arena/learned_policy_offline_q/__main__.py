@@ -397,6 +397,55 @@ def _freeze(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _strength_summary_document(summary) -> dict[str, object]:
+    """canonical summaryをJSONへ写す。新しい統計semanticsを導入しない。
+
+    `SingleRoundStrengthSummary`は`lisjong_arena.single_round_evaluation`の
+    canonical aggregation結果だけを持つdataclassであり、自前の
+    `to_document()`を持たない。Stage 4a (`learned_policy_stage4a.result`)と
+    同じく、値の写経だけをここで行い、metricを別の式で再計算しない。
+
+    candidate-only Mahjong metricsは`candidate_only_mahjong_metrics`として
+    明示し、baselineとの差として読めないようにする。
+    """
+    metrics = summary.candidate_metrics
+    mahjong = metrics.mahjong_metrics
+    blocks = summary.seed_block_statistics
+    return {
+        "game_count": metrics.game_count,
+        "strength": {
+            "candidate_mean_score": metrics.mean_candidate_score,
+            "baseline_mean_score": summary.mean_baseline_score,
+            "mean_candidate_game_delta": summary.mean_candidate_game_delta,
+            "candidate_seat_mean_scores": list(metrics.seat_mean_scores),
+            "seed_block_count": blocks.seed_block_count,
+            "mean_seed_block_delta": blocks.mean_seed_block_delta,
+            "sample_standard_deviation": blocks.sample_standard_deviation,
+            "standard_error": blocks.standard_error,
+            "normal_approx_95_interval_lower": blocks.normal_approx_95_interval_lower,
+            "normal_approx_95_interval_upper": blocks.normal_approx_95_interval_upper,
+            "positive_seed_block_count": blocks.positive_seed_block_count,
+            "zero_seed_block_count": blocks.zero_seed_block_count,
+            "negative_seed_block_count": blocks.negative_seed_block_count,
+        },
+        "candidate_only_mahjong_metrics": {
+            "round_count": mahjong.round_count,
+            "mean_round_score_delta": mahjong.mean_round_score_delta,
+            "win_count": mahjong.win_count,
+            "win_rate": mahjong.win_rate,
+            "mean_win_points": mahjong.mean_win_points,
+            "deal_in_count": mahjong.deal_in_count,
+            "deal_in_rate": mahjong.deal_in_rate,
+            "mean_deal_in_loss": mahjong.mean_deal_in_loss,
+            "exhaustive_draw_count": mahjong.exhaustive_draw_count,
+            "exhaustive_draw_tenpai_count": mahjong.exhaustive_draw_tenpai_count,
+            "exhaustive_draw_tenpai_rate": mahjong.exhaustive_draw_tenpai_rate,
+            "tenpai_reached_count": mahjong.tenpai_reached_count,
+            "mean_first_tenpai_turn": mahjong.mean_first_tenpai_turn,
+        },
+    }
+
+
 def _screen(arguments: argparse.Namespace) -> int:
     from .retention import strict_readback
     from .strength import run_strength_screen
@@ -405,7 +454,7 @@ def _screen(arguments: argparse.Namespace) -> int:
     measurement = run_strength_screen(retained, arguments.artifact)
     document = {
         **measurement.to_document(),
-        "summary": measurement.summary.to_document(),
+        "summary": _strength_summary_document(measurement.summary),
     }
     _write_json(Path(arguments.result), document)
     print(f"outcome={measurement.outcome.value}")
