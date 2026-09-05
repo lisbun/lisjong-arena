@@ -34,6 +34,7 @@ from lisjong_arena.stage3_mix_pilot.comparison import (
     compare_against_control,
 )
 from lisjong_arena.stage3_mix_pilot.experiment import CANDIDATE, REFERENCE_ARM_ID
+from lisjong_arena.stage3_mix_pilot.population import mix_arm_plan
 from lisjong_arena.stage3_mix_pilot.protocol import (
     ARM_IDS,
     CLEAR_REGRESSION,
@@ -511,6 +512,43 @@ def _validate_comparisons(value: dict) -> list:
     return expected_rows
 
 
+def _validate_arm_plan_binding(arm_id: str, entry: dict) -> None:
+    """arm entryを、実際に実行したlocked population planへbindする。
+
+    identityがSHA-256の形をしていることと、matrix cellのidentityがarm entryの
+    identityと一致することだけでは、**そのidentityがlocked planのものである**
+    ことを証明できない。plan・identity・matrix identity・recipeを互いに整合する
+    ように書き換えれば、locked B populationとは別物のpopulation（別のsource
+    reference、別のseat assignment）がself-consistentなresultとして通ってしまう。
+
+    最終outputはPhase 10へ渡すpopulation recipeのlockそのものなので、result
+    artifact自身が「このrecipeは実際に実行したlocked planから来た」ことを証明
+    できる必要がある。したがって
+
+    ```text
+    population_identity == sha256(population_plan)
+    population_plan     == mix_arm_plan(arm_id).plan_value()
+    ```
+
+    の両方を要求する。前者はidentityとplanの内部整合、後者はplanがlocked plan
+    そのものであることを固定する。
+    """
+    plan = entry.get("population_plan")
+    if type(plan) is not dict:
+        raise MixArtifactError(f"arm {arm_id} entry lacks its population plan")
+    expected_identity = hashlib.sha256(canonical_json_bytes(plan)).hexdigest()
+    if entry["population_identity"] != expected_identity:
+        raise MixArtifactError(
+            f"arm {arm_id} population identity is not the hash of its recorded "
+            "population plan"
+        )
+    locked = mix_arm_plan(arm_id).plan_value()
+    if plan != locked:
+        raise MixArtifactError(
+            f"arm {arm_id} population plan differs from the locked mix pilot plan"
+        )
+
+
 def _validate_classification(value: dict, comparisons: list) -> None:
     """outcome / gates / selected_recipeを、recorded evidenceから再導出して照合する。
 
@@ -598,6 +636,7 @@ def validate_result_value(value: object) -> dict[str, object]:
             raise MixArtifactError(f"arm {arm_id} entry is invalid")
         for name in ("population_identity", "raw_corpus_identity", "dataset_identity"):
             _digest(entry.get(name), f"{arm_id}.{name}")
+        _validate_arm_plan_binding(arm_id, entry)
         identities[arm_id] = entry
     dataset_identities = {entry["dataset_identity"] for entry in identities.values()}
     if len(dataset_identities) != len(ARM_IDS):

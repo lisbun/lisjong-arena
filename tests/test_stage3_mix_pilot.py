@@ -5,6 +5,7 @@ split discipline、source attribution、accounting、dataset retention、paired
 comparison、exhaustive classificationの境界だけを固定する。
 """
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -24,6 +25,7 @@ from _stage3_mix_pilot_fixtures import (
     mix_corpus,
     opportunity_diagnostic_value,
     result_value,
+    self_consistent_swapped_arm_result,
 )
 
 from lisjong_arena.phase2_training_anchor.extraction import FIRST_PARTY_SOURCE_CLASS
@@ -1097,6 +1099,47 @@ class ResultArtifactTest(unittest.TestCase):
         gates = json.loads(json.dumps(value["gates"]))
         gates["coverage_source_accounting"]["B"]["confirmed_kan"] = 999
         value["gates"] = gates
+        with self.assertRaises(MixArtifactError):
+            validate_result_value(value)
+
+    def test_a_self_consistent_swap_of_the_locked_population_is_rejected(self):
+        """内部整合していても、locked planと違うpopulationのresultは通さない。
+
+        plan / population_identity / matrix identity / gates / selected_recipe を
+        すべてtampered planへ揃えているので、内部整合だけを見るvalidatorは通す。
+        最終outputはPhase 10へ渡すrecipeのlockそのものなので、artifactが
+        「実際に実行したlocked planから来た」ことを証明できなければならない。
+        """
+        for tamper in ("source", "seats"):
+            value = self_consistent_swapped_arm_result("B", tamper)
+            with self.subTest(tamper=tamper):
+                # tamperしたresultは内部整合している。
+                entry = value["arms"]["B"]
+                self.assertEqual(
+                    entry["population_identity"],
+                    hashlib.sha256(
+                        canonical_json_bytes(entry["population_plan"])
+                    ).hexdigest(),
+                )
+                self.assertEqual(
+                    entry["population_plan"]["augmentation_seat_slots"], 12
+                )
+                self.assertIs(entry["population_plan"]["coverage_seat_balanced"], True)
+                for cell in value["cross_population_matrix"]:
+                    if cell["validation_population_id"] == "B":
+                        self.assertEqual(
+                            cell["validation_population_identity"],
+                            entry["population_identity"],
+                        )
+                # それでもlocked planへbindできないので拒否される。
+                with self.assertRaises(MixArtifactError):
+                    validate_result_value(value)
+
+    def test_a_population_identity_that_is_not_its_plan_hash_is_rejected(self):
+        value = result_value()
+        plan = json.loads(json.dumps(value["arms"]["C"]["population_plan"]))
+        plan["augmented_hanchan"] = 23
+        value["arms"]["C"]["population_plan"] = plan
         with self.assertRaises(MixArtifactError):
             validate_result_value(value)
 

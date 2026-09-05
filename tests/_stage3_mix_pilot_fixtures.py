@@ -5,6 +5,8 @@ attribution / paired comparison / classificationの境界だけを固定する�
 実populationの実行はここでは検証しない。
 """
 
+import hashlib
+import json
 from dataclasses import replace
 
 from _phase3_bootstrap_fixtures import resolved_provenance
@@ -14,6 +16,7 @@ from _phase3_bootstrap_fixtures import resolved_provenance
 # 再利用する。#146のfixture semanticsは変更しない。
 from _stage3_kan_coverage_fixtures import _base_raw_game
 
+from lisjong_arena.phase4_raw_corpus.codec import canonical_json_bytes
 from lisjong_arena.phase4_raw_corpus.model import RawCorpus
 from lisjong_arena.phase4_raw_corpus.persistence import save_raw_corpus
 from lisjong_arena.phase5_belief_dataset.pipeline import run_phase5_pipeline
@@ -22,12 +25,14 @@ from lisjong_arena.stage3_mix_pilot.experiment import CANDIDATE, REFERENCE_ARM_I
 from lisjong_arena.stage3_mix_pilot.population import mix_arm_plan
 from lisjong_arena.stage3_mix_pilot.protocol import (
     ARM_IDS,
+    AUGMENTATION_IDENTITY,
     AUGMENTATION_SLOTS_BY_ARM,
     CONTROL_ARM_ID,
     MANIFEST_SCHEMA_VERSION,
     ORDERED_SEEDS,
     PILOT_HANCHAN_PER_ARM,
     PILOT_ROLE,
+    PRIMARY_IDENTITY,
     RESULT_SCHEMA_VERSION,
     RETRY_RULE,
     SEAT_SLOTS_PER_ARM,
@@ -449,3 +454,53 @@ def result_value(
         "test_partition_evaluated": False,
         "accumulated_with_historical_evidence": False,
     }
+
+
+def self_consistent_swapped_arm_result(arm_id: str, tamper: str) -> dict:
+    """locked planとは別のpopulationを、内部整合したresultとして組み立てる。
+
+    plan、`population_identity`、matrix cellのidentity、`gates`、
+    `selected_recipe`をすべてtampered planへ合わせるので、内部整合だけを見る
+    validatorは通してしまう。locked planへのbindingだけがこれを拒否できる。
+
+    ```text
+    tamper = "source"    primary sourceのreferenceを別Policyへ差し替える
+    tamper = "seats"     coverage seatを1つずらす（slot数とbalance flagは保つ）
+    ```
+    """
+    plan = json.loads(json.dumps(mix_arm_plan(arm_id).plan_value()))
+    if tamper == "source":
+        plan["primary_source"]["reference"] = "two-step"
+        for policy in plan["policies"]:
+            if policy["identity"] == PRIMARY_IDENTITY:
+                policy["reference"] = "two-step"
+    elif tamper == "seats":
+        # coverage seatを1つ右へずらす。slot数もbalance flagも変えない。
+        for assignment in plan["seat_assignments"]:
+            identities = assignment["seat_identities"]
+            if AUGMENTATION_IDENTITY in identities:
+                index = identities.index(AUGMENTATION_IDENTITY)
+                identities[index] = PRIMARY_IDENTITY
+                identities[(index + 1) % len(identities)] = AUGMENTATION_IDENTITY
+    else:
+        raise ValueError(f"unknown tamper mode {tamper!r}")
+    identity = hashlib.sha256(canonical_json_bytes(plan)).hexdigest()
+
+    value = result_value()
+    entry = value["arms"][arm_id]
+    entry["population_plan"] = plan
+    entry["population_identity"] = identity
+    for cell in value["cross_population_matrix"]:
+        if cell["training_population_id"] == arm_id:
+            cell["training_population_identity"] = identity
+        if cell["validation_population_id"] == arm_id:
+            cell["validation_population_identity"] = identity
+    views = {name: arm_manifest_view(name, value["arms"][name]) for name in ARM_IDS}
+    outcome, reasons, gates = classify(
+        views, value["cross_population_matrix"], value["paired_comparisons"]
+    )
+    value["outcome"] = outcome
+    value["outcome_reasons"] = list(reasons)
+    value["gates"] = gates
+    value["selected_recipe"] = selected_recipe(outcome, views)
+    return value
