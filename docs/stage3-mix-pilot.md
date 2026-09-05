@@ -378,11 +378,45 @@ timeであり contention の影響は小さいが、wall-clockは共有された
 | C | `014d9e480bb12c1d…` | 39 |
 
 ```text
-result_identity   1aab7e3513c7517c5dd8555e12871d0b47fcefaa30decb9679b79ac48cbb0312
+result_identity   a11912c45652bf4237dbac1cd9e4dfd9ad8b977f38a51dd9eac52224650de33f
 schema            stage3-mix-pilot-{population-manifest,sequential-model,result}-v1
 ```
 
 artifactはrepository外に生成し、Gitへcommitしていない。
+
+### Result re-assembly
+
+PR #149のreviewで、resultとは独立したcode contract上のblocking findingが2件指摘され、
+修正した。
+
+1. `selected_recipe()`がseed-bound `split_policy_id`
+   (`first-party-seeds-330-353-...`) を持っており、「`330..353`をrecipeへ
+   含めない」という宣言に反してrecipeの文字列identityにpilot seedsが残っていた。
+2. result artifact validatorがoutcomeをrecorded evidenceから再導出しておらず、
+   `MIX LOCKED`を名乗りながら`gates`が空で`selected_recipe`が`null`のartifactを
+   well-formedとして受理できた。paired comparisonもmatrixのper-hanchan
+   measurementと突き合わせていなかった。
+
+2はまさに本pilotのfinal outcomeの根拠そのものであるため、**同じpopulation /
+model artifactからresultを再assemble** した。
+
+```text
+これはseed変更でもprotocol変更でもなく、result救済でもない。
+seeds 330..353、population identity、12.5 / 25%、training config、
+selection ruleはいずれも変更していない。
+72 hanchanのgenerationとS2 x 3 trainingも再実行していない。
+```
+
+再assemble後、3 x 3 matrixの9 cellと6 paired comparisonは修正前のresultと
+**bit-identicalに一致** した。evaluationがdeterministicであること、およびoutcomeが
+再決定ではなく再導出であることの確認である。`result_identity`は、arm entryが
+classification再導出のためのevidenceを持つようになったことと、recipeから
+seed-bound identityを外したことで変化している。修正前のartifactは削除せず
+superseded recordとして保持している (`1aab7e3513c7517c…`)。
+
+evaluation runtimeの`lisjong-arena` revisionは修正後の
+`51b5bea1dbdce75a2d4d93d00e1bac014c2f87e7`である。generation provenanceと
+recipe baselineは`659a6960f0128e2a…`のままで、こちらは変わらない。
 
 ## Generation status
 
@@ -683,6 +717,8 @@ lisjong-engine revision 8735e89e1aea000ab59368d0368d476787827741 (同上)
 anchor / cutoff / label turn-pre-action-frozen-anchor-v1 /
                         anchor-time-round-evidence-prefix-v1 /
                         exact-concealed-count-red-structural-wait-v1
+split semantics         whole hanchan単位 / TRAIN + VALIDATION / TESTなし
+                        （seed-bound split policy idはrecipeへ入れない）
 raw corpus schema       Phase 4 既存contract
 dataset schema          Phase 5 既存contract
 sequential family       phase8 S2 previous-belief GRU-cell family
@@ -692,6 +728,11 @@ provenance              fully resolved source revisions を要求する
 **lockしたのはrecipeであり、このpilotのrealized gamesではない。**
 development seeds `330..353` はfinal population identityへlockしていない。
 Phase 10ではfresh seedsを使用する。
+
+recipeへは **seedを含むidentityを一切入れない**。split policyの*value*は
+`first-party-seeds-330-353-18-6-development-only-v1`であり名前がpilot seed range
+へbindされているため、recipeはseed-independentな`split_semantics`
+（whole hanchan単位 / TRAIN + VALIDATION / TESTなし）だけを持つ。
 
 ### この結果の意味と、意味しないこと
 
