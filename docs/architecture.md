@@ -1212,6 +1212,91 @@ fail closedで検証する。
 であり、Gitへcommitしない。pilotのprotocol・結果・decisionは
 [`docs/stage3-mix-pilot.md`](stage3-mix-pilot.md)を参照する。
 
+### Phase 10 bounded scale learning curve (Issue #150)
+
+Arena #148は`MIX LOCKED — 12.5% AUGMENTATION`で完了し、first-party training
+populationの **recipe** をlockした。Issue #150はそのsuccessorとして、locked
+recipeとselected sequential S2 familyを維持したまま
+
+```text
+TRAIN hanchan   16 -> 32 -> 64
+```
+
+だけをexperimental axisとして変え、fresh fixed VALIDATION population上の
+learning curveをbounded scaleで測るdevelopment-only childである。
+
+```text
+bounded scale learning curve
+!= population recipe re-selection
+!= Policy strength comparison
+!= HandBelief architecture search / HPO
+!= Phase 11 head addition
+!= formal confirmatory TEST
+!= large-scale (128+) generation
+```
+
+#### Ownership and placement
+
+`lisjong_arena.stage3_scale_learning_curve`という独立packageと、
+`FirstPartySplitPolicy.SCALE_LEARNING_CURVE` (`360..439` / TRAIN `360..423` /
+VALIDATION `424..439` / TEST無し) だけを追加する。#131 (`180..191`)、#146
+(`306..329`)、#148 (`330..353`)、#140 replacement offline TEST (`354..359`) の
+protocol / seeds / population identity / artifact validator / result documentは
+変更しない。
+
+successor-specificなownershipは次のとおり。
+
+```text
+Arena #148 (stage3_mix_pilot)     population recipe semantics
+                                  paired whole-hanchan bootstrap primitive
+Arena #131 (stage3_entry_gate)    population data構成 / S2 training / self-rollout
+Arena #146 (stage3_kan_coverage)  kan event inventory / dataset retention
+Phase 4 / 5 / 8                   corpus / dataset / sequence / physical projection
+Issue #150 (successor package)    Phase 10 seed plan / nested subset / execution lock
+                                  learning curve classification / exhaustive outcome
+                                  Phase 10 schema / validator / CLI
+```
+
+generic experiment framework、generic population DSL、model registry、backend
+abstractionは導入しない。
+
+#### Seed plan reformulation
+
+Issue #150起票時のpreferred range `354..433`は、PR #151 / Issue #140の
+replacement offline TESTが`354..359`をlockしたため使えない。result exposure前の
+`SEED PLAN REFORMULATE`をfreshness ruleに従って適用し、freshな`360..439`へ移した。
+`check_freshness()`はrepositoryが宣言済みのseed constantsを実moduleから集めて
+collisionを判定するので、この判断は後から再実行できる。
+
+#### Generate once / nested TRAIN
+
+80 hanchanをscaleごとに再生成しない。1つのlocked raw corpusと1つのdatasetを
+共有し、S16 / S32 / S64はそのnested TRAIN prefixである。subset membershipは
+seedだけから決まり、label / metric / resultによるselectionを持たない。BPTT
+policyはfull 80-hanchan inventoryから一度だけ決めて3 scaleで共有するので、
+training semanticsがscaleごとにadaptiveに変わらない。
+
+#### Source / runtime lock
+
+execution lockはgeneration / training / result assemblyのすべてのloaderへ
+明示的に渡すreceiptであり、artifactはlock identityだけを持つ。actual execution
+時にinstalled provenanceが`pyproject.toml`のexact pinsと違えばfail closedする。
+開発機の`.venv`が別revisionのlisjongを持っていても、そのまま実行できない。
+
+#### Artifact contract
+
+result artifactはplan -> population identity、measurement -> paired comparison、
+comparison -> classification、evidence -> gates / outcomeの4段をすべて再導出
+できなければならない。model artifactはexact TRAIN subset / dataset / source
+provenanceへbindし、carry-forward recipeへdevelopment seedやseed-bound split
+policy idを漏らさない。
+
+生成されるraw corpus / dataset / model weights / resultはrepository外の
+immutable artifactであり、Gitへcommitしない。childのprotocol・実行手順・
+結果・decisionは
+[`docs/phase10-scale-learning-curve.md`](phase10-scale-learning-curve.md)を
+参照する。
+
 ### ABBB strength evaluation artifact (Issue #110)
 
 Issue #110で、ABBB / `4p-red-single` strength evaluation結果を再実行せず再集計できる
