@@ -332,3 +332,12 @@ STOP / INVALID
 outcome-aware Q objectiveを次段へ進める根拠が得られた」という意味だけであり、
 `yakuhai-call`超え、production adoption、Mortal-style architecture adoptionを
 意味しない。個別runのexhaustive outcomeとnumeric resultはIssue #140を正本とする。
+
+## Successor — artifact-only failure diagnosis
+
+`#140`が`VALUE/Q OBJECTIVE NEGATIVE`で終了した後のfailure-mechanism診断は、
+`lisbun/lisjong-arena #152`が別Issueとして扱う。新しい学習・game生成・strength
+evidenceを作らず、`#140`がretainしたartifactだけを使うbounded diagnosticであり、
+contractは[`docs/learned-policy-offline-q-diagnosis.md`](learned-policy-offline-q-diagnosis.md)
+を正本とする。`#140`のprotocol、seed population、objective semanticsは
+そちらでも変更しない。
