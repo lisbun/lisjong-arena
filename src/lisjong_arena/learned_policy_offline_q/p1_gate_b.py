@@ -84,6 +84,7 @@ from .p1_candidate import (
     SERVING_CHECKPOINT_SCHEMA_VERSION,
     LoadedP1ServingCheckpoint,
     candidate_binding_document,
+    load_p1_serving_checkpoint,
     require_candidate_identity,
     verify_locked_candidate_contract,
 )
@@ -808,23 +809,74 @@ def derive_classification(document: dict) -> P1GateBOutcome:
     )
 
 
-def record_classification(document: dict, outcome: P1GateBOutcome) -> dict:
-    """validated resultへexhaustive outcomeを1件だけ記録する。"""
+def bind_recorded_candidate(
+    validated: dict, checkpoint: LoadedP1ServingCheckpoint
+) -> LoadedP1ServingCheckpoint:
+    """classification時に、result documentをactual serving checkpointへbindする。
+
+    identity digestの自己整合性は「exact #158 checkpointを実際にservingした」
+    ことを証明しない。既知のlocked digest文字列をdocumentへ書き並べ、matching
+    bindingとidentityを再生成し、`result_identity`を再計算するだけで整合した
+    documentは作れてしまう。
+
+    そこでこのfunctionは、渡された`LoadedP1ServingCheckpoint`のbundleを
+    **改めてdiskからstrict readbackする**。`load_p1_serving_checkpoint()`は
+    locked expectations（callerが差し替えられない`LOCKED_P1_CANDIDATE`）の下で
+    weights bytesを読み、そのbytesからcanonical model weights digestを再導出
+    する。したがってこの境界を通れるのは、実際にexact #158 weightsを持つ
+    bundleだけである。in-processで組み立てた`LoadedP1ServingCheckpoint`
+    dataclassも、weightsを持たないsnapshotも通らない。
+
+    そのうえで、再readbackしたcheckpointから導出したcandidate blockが、
+    result documentのcandidate blockとexact一致することを要求する。
+    """
+    if not isinstance(checkpoint, LoadedP1ServingCheckpoint):
+        raise TypeError("checkpoint must be a LoadedP1ServingCheckpoint")
+    reloaded = load_p1_serving_checkpoint(checkpoint.path)
+    if reloaded.real_candidate_materialization is not True:
+        raise _error(
+            "the strict readback did not resolve to the exact retained #158 candidate"
+        )
+    if candidate_block(reloaded) != validated["candidate"]:
+        raise _error(
+            "the recorded candidate does not match the serving checkpoint that "
+            "was strict readback for this classification; a Gate B outcome binds "
+            "to an actually loaded exact #158 checkpoint, never to identity "
+            "strings alone"
+        )
+    return reloaded
+
+
+def record_classification(
+    document: dict,
+    outcome: P1GateBOutcome,
+    *,
+    checkpoint: LoadedP1ServingCheckpoint,
+) -> dict:
+    """validated resultへexhaustive outcomeを1件だけ記録する。
+
+    `checkpoint`は必須である。Gate B evidenceは「exact #158 serving
+    checkpointをstrict readbackして実際に使ったrun」へbindされる必要があり、
+    documentが並べたidentity digestだけではその事実を証明できない
+    （`bind_recorded_candidate()`を参照）。
+    """
     validated = validate_gate_b_result(document)
     if not isinstance(outcome, P1GateBOutcome):
         raise TypeError("outcome must be a P1GateBOutcome")
+    if not isinstance(checkpoint, LoadedP1ServingCheckpoint):
+        raise TypeError("checkpoint must be a LoadedP1ServingCheckpoint")
     if validated["classification"] is not None:
         raise _error("this Gate B result already records an outcome")
+    if outcome not in _RECORDABLE_OUTCOMES:
+        raise _error(
+            f"{outcome.value!r} is a pre-result state, not an outcome derived "
+            "from a valid Gate B execution"
+        )
     if validated["candidate"]["real_candidate_materialization"] is not True:
         raise _error(
             "a Gate B outcome may only be recorded for the exact retained #158 "
             "candidate; a fixture or substitute candidate is never real Gate B "
             "evidence"
-        )
-    if outcome not in _RECORDABLE_OUTCOMES:
-        raise _error(
-            f"{outcome.value!r} is a pre-result state, not an outcome derived "
-            "from a valid Gate B execution"
         )
     derived = derive_classification(validated)
     if outcome is not derived:
@@ -832,6 +884,7 @@ def record_classification(document: dict, outcome: P1GateBOutcome) -> dict:
             f"the locked Issue #162 rule derives {derived.value!r} from this "
             f"canonical interval, not {outcome.value!r}"
         )
+    bind_recorded_candidate(validated, checkpoint)
     return validate_gate_b_result({**validated, "classification": outcome.value})
 
 
@@ -929,6 +982,7 @@ __all__ = [
     "P1GateBError",
     "P1GateBOutcome",
     "artifact_block",
+    "bind_recorded_candidate",
     "build_gate_b_plan",
     "build_gate_b_result",
     "candidate_block",

@@ -194,6 +194,35 @@ fail closedになる。
 Gate B resultはこのflagが`true`のcandidateでしかexhaustive outcomeを記録
 できない（`record_classification()`）。
 
+### identity claimとactual checkpointのbinding
+
+digest文字列の自己整合性は「exact #158 checkpointを実際にservingした」ことを
+証明しない。既知のlocked digestをdocumentへ書き並べ、matching bindingと
+identityを再生成し、`result_identity`を再計算するだけで整合したdocumentは
+作れてしまう。
+
+そこで`record_classification()`はstrict-loadedな
+`LoadedP1ServingCheckpoint`を**必須引数**にし、`bind_recorded_candidate()`が
+
+```text
+checkpoint.path のbundleを locked expectations の下で読み直す
+    -> weights bytes を読む
+    -> actual bytes から canonical model weights digest を再導出
+    -> re-readback した checkpoint の candidate block が
+       result document の candidate block と exact 一致することを要求
+```
+
+を行う。`load_p1_serving_checkpoint()`のexpectationsはこの経路では
+callerが差し替えられない`LOCKED_P1_CANDIDATE`である。したがってこの境界を
+通れるのは、実際にexact #158 weightsを持つbundleだけであり、
+
+- weights bytesを持たないsnapshot
+- in-processで組み立てた`LoadedP1ServingCheckpoint` dataclass
+- locked identity文字列だけを並べたsynthetic result
+- bundleが存在しないresult
+
+はいずれもclassificationできない。
+
 ## Candidate serving semantics
 
 `src/lisjong_arena/learned_policy_offline_q/p1_serving.py`が所有する。
@@ -460,8 +489,13 @@ result artifactをreviewしたうえで、exhaustive outcomeを1件だけ記録�
 python -m lisjong_arena.learned_policy_offline_q p1-gate-b-record-classification `
     --result            "$Artifacts\offlineq-162-p1-gate-b\gate-b.json" `
     --classified-result "$Artifacts\offlineq-162-p1-gate-b\gate-b-classified.json" `
+    --checkpoint        "$Artifacts\offlineq-162-p1-gate-b\candidate" `
     --outcome           <POSITIVE_SIGNAL|NEGATIVE_SIGNAL|INCONCLUSIVE>
 ```
+
+`--checkpoint`は必須である。classificationはresult documentが並べたidentity
+digestではなく、そこでstrict readbackしたexact #158 serving checkpointへ
+bindされる。
 
 generated weights、strength artifact、result documentはいずれもGitへcommitしない。
 

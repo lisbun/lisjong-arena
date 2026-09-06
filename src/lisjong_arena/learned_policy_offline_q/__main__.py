@@ -33,7 +33,7 @@ python -m lisjong_arena.learned_policy_offline_q p1-materialize \
 python -m lisjong_arena.learned_policy_offline_q p1-gate-b \
     --checkpoint DIR --artifact FILE --result FILE
 python -m lisjong_arena.learned_policy_offline_q p1-gate-b-record-classification \
-    --result FILE --outcome NAME --classified-result FILE
+    --result FILE --outcome NAME --classified-result FILE --checkpoint DIR
 ```
 
 `generate`/`train-bc`/`train-q`はTEST partitionのmetricを一切計算しない。
@@ -64,6 +64,9 @@ passive tsumogiri x3へ対して既存single-round評価で1回だけ走らせ�
 artifactとcanonical summaryを正本とするresult documentを書く。outcomeは
 canonical seed-block intervalから機械的に導出し、
 `p1-gate-b-record-classification`がその導出結果と一致する1件だけを記録できる。
+このcommandは`--checkpoint`を必須にし、locked expectationsの下でserving
+checkpointをstrict readbackしてからclassificationする。identity digestを
+並べただけのresult documentはclassificationできない。
 """
 
 import argparse
@@ -877,15 +880,25 @@ def _p1_gate_b(arguments: argparse.Namespace) -> int:
 
 
 def _p1_gate_b_record_classification(arguments: argparse.Namespace) -> int:
-    """review後のexhaustive Gate B outcomeを1件だけresultへ記録する。"""
+    """review後のexhaustive Gate B outcomeを1件だけresultへ記録する。
+
+    `--checkpoint`は必須である。classificationはidentity digestの自己整合性
+    ではなく、locked expectationsの下でstrict readbackしたexact #158 serving
+    checkpointへbindする。
+    """
     import json
 
+    from .p1_candidate import load_p1_serving_checkpoint
     from .p1_gate_b import P1GateBOutcome, record_classification
 
+    checkpoint = load_p1_serving_checkpoint(arguments.checkpoint)
     source = Path(arguments.result)
     document = json.loads(source.read_text(encoding="utf-8"))
-    classified = record_classification(document, P1GateBOutcome[arguments.outcome])
+    classified = record_classification(
+        document, P1GateBOutcome[arguments.outcome], checkpoint=checkpoint
+    )
     _write_json(Path(arguments.classified_result), classified)
+    print(f"candidate_identity={checkpoint.candidate_identity}")
     print(f"classification={classified['classification']}")
     return 0
 
@@ -1032,6 +1045,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p1_gate_b_record.add_argument("--result", required=True)
     p1_gate_b_record.add_argument("--classified-result", required=True)
+    p1_gate_b_record.add_argument("--checkpoint", required=True)
     p1_gate_b_record.add_argument(
         "--outcome",
         required=True,

@@ -23,6 +23,8 @@ from _learned_policy_offline_q_fixtures import (
 from _learned_policy_offline_q_p1_gate_b_fixtures import (
     FIXTURE_DATASET_IDENTITY,
     decision,
+    gate_b_result_document,
+    locked_checkpoint,
     tedashi_discards,
     tsumogiri_discard,
 )
@@ -40,6 +42,7 @@ from lisjong_arena.learned_policy_offline_q.p1_candidate import (
     MATERIALIZATION_RETAINED_WEIGHTS,
     WEIGHTS_FILENAME,
     ExpectedCandidateIdentities,
+    LoadedP1ServingCheckpoint,
     MaterializedP1Candidate,
     P1CandidateError,
     Stage4aRetentionError,
@@ -55,9 +58,11 @@ from lisjong_arena.learned_policy_offline_q.p1_features import (
 from lisjong_arena.learned_policy_offline_q.p1_gate_b import (
     GATE_B_GAME_COUNT,
     GATE_B_ORDERED_SEEDS,
+    P1GateBError,
     P1GateBOutcome,
     build_gate_b_plan,
     derive_classification,
+    record_classification,
     require_gate_b_artifact,
     run_gate_b,
     validate_gate_b_result,
@@ -728,6 +733,104 @@ class GateBExecutionTest(unittest.TestCase):
         self._run()
         with self.assertRaises(FileExistsError):
             self._run()
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
+class GateBClassificationBindingTest(unittest.TestCase):
+    """classificationはdiskのserving checkpointをstrict readbackしてbindする。
+
+    real Gate B evidenceを作るにはexact #158 weights bytesを持つbundleが要る
+    ため、このclassにpositive testは無い。ここで固定するのは、identity
+    digestの自己整合性だけでは分類を通せないことである。
+    """
+
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+        self.model = _p1_model()
+        self.indices = sorted(_support_for(_eligible_context()))
+        self.expected = ExpectedCandidateIdentities(
+            canonical_model_weights_digest=model_weights_digest(self.model),
+            source_dataset_identity=FIXTURE_DATASET_IDENTITY,
+            support_set_digest=support_set_identity(self.indices),
+        )
+        candidate = MaterializedP1Candidate(
+            model=self.model,
+            canonical_model_weights_digest=(
+                self.expected.canonical_model_weights_digest
+            ),
+            selected_epoch=LOCKED_SELECTED_EPOCH,
+            materialization_source=MATERIALIZATION_RETAINED_WEIGHTS,
+            epoch_history=(),
+        )
+        with mock.patch.object(
+            p1_candidate, "collect_execution_provenance", return_value=provenance()
+        ):
+            self.bundle = save_p1_serving_checkpoint(
+                self._tmp / "bundle",
+                candidate,
+                supported_indices=self.indices,
+                expected=self.expected,
+            )
+
+    def _document(self, name, checkpoint):
+        return gate_b_result_document(self._tmp / f"{name}.json", checkpoint=checkpoint)
+
+    def test_a_real_fixture_bundle_is_not_real_gate_b_evidence(self):
+        document = self._document("fixture-bundle", self.bundle)
+        self.assertIs(document["candidate"]["real_candidate_materialization"], False)
+        with self.assertRaises(P1GateBError):
+            record_classification(
+                document,
+                P1GateBOutcome.POSITIVE_SIGNAL,
+                checkpoint=self.bundle,
+            )
+
+    def test_locked_identity_strings_with_a_substitute_bundle_are_rejected(self):
+        """全identity文字列がlockedでも、diskのbundleが#158でなければ通らない。"""
+        document = self._document("locked-strings", locked_checkpoint())
+        self.assertIs(document["candidate"]["real_candidate_materialization"], True)
+        with self.assertRaises(P1CandidateError):
+            record_classification(
+                document,
+                P1GateBOutcome.POSITIVE_SIGNAL,
+                checkpoint=self.bundle,
+            )
+
+    def test_an_in_process_forged_checkpoint_object_is_rejected(self):
+        """manifestだけlockedへ差し替えたcheckpoint objectも通らない。
+
+        `bind_recorded_candidate()`は渡されたobjectのmanifestを信用せず、
+        `checkpoint.path`のbundleをlocked expectationsの下で読み直す。
+        """
+        document = self._document("forged-object", locked_checkpoint())
+        forged = LoadedP1ServingCheckpoint(
+            path=self.bundle.path,
+            manifest=dict(locked_checkpoint().manifest),
+            model=None,
+            supported_indices=self.bundle.supported_indices,
+        )
+        with self.assertRaises(P1CandidateError):
+            record_classification(
+                document,
+                P1GateBOutcome.POSITIVE_SIGNAL,
+                checkpoint=forged,
+            )
+
+    def test_a_missing_bundle_is_rejected(self):
+        document = self._document("missing", locked_checkpoint())
+        missing = LoadedP1ServingCheckpoint(
+            path=self._tmp / "absent",
+            manifest=dict(locked_checkpoint().manifest),
+            model=None,
+            supported_indices=frozenset({0, 1}),
+        )
+        with self.assertRaises(P1CandidateError):
+            record_classification(
+                document,
+                P1GateBOutcome.POSITIVE_SIGNAL,
+                checkpoint=missing,
+            )
 
 
 if __name__ == "__main__":

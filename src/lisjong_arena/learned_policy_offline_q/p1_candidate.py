@@ -554,9 +554,12 @@ def load_p1_serving_checkpoint(
     documentから、weights digestは実際にloadしたweightsから、
     `real_candidate_materialization`はlocked constantとの比較から、それぞれ
     再導出して照合する。
-    """
-    import torch
 
+    torchを必要とするのはweights bytesのstate_dict loadだけであり、bundle
+    layoutとmanifestのstructural checkはその前に済ませる。したがってserving
+    bundleが存在しない場合は、ML extraの有無に関わらず
+    `P1CandidateError`でfail closedする。
+    """
     verify_contract_identity()
     verify_locked_q_protocol_delta()
     verify_p1_serving_contract()
@@ -652,6 +655,8 @@ def load_p1_serving_checkpoint(
         raise P1CandidateError("serving checkpoint weights byte count differs")
     if _sha256(weights) != manifest.get("weights_sha256"):
         raise P1CandidateError("serving checkpoint weights sha256 differs")
+
+    import torch
 
     state_dict = torch.load(
         path / WEIGHTS_FILENAME, weights_only=True, map_location="cpu"
