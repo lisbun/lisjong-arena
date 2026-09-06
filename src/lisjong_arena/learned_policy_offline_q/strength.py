@@ -45,7 +45,7 @@ class OfflineQStrengthError(OfflineQError):
     """Q-vs-BC ABBB screening境界の違反。"""
 
 
-class _PolicyInstanceRegistry:
+class PolicyInstanceRegistry:
     """factoryをwrapし、ABBB runnerが生成した全HybridPolicy instanceを回収する。
 
     既存``run_single_round_evaluation()``はgame / seatごとにfresh Policy
@@ -101,7 +101,7 @@ class ActivationDiagnostics:
         }
 
 
-def _collect_activation_diagnostics(
+def collect_activation_diagnostics(
     instances: list[HybridPolicy],
 ) -> ActivationDiagnostics:
     total_decisions = sum(len(policy.samples) for policy in instances)
@@ -122,7 +122,7 @@ def _collect_activation_diagnostics(
 
 def build_specs(
     retained: RetainedCandidates,
-) -> tuple[PolicySpec, PolicySpec, _PolicyInstanceRegistry, _PolicyInstanceRegistry]:
+) -> tuple[PolicySpec, PolicySpec, PolicyInstanceRegistry, PolicyInstanceRegistry]:
     """retained candidateから、同一support setを持つQ / BC hybrid specを作る。
 
     support setのcanonical digestを両方のPolicySpec identityへ明示的に
@@ -138,8 +138,8 @@ def build_specs(
     bc_runtime = create_bc_hybrid_runtime(
         retained.bc_checkpoint.path, supported_indices=supported
     )
-    q_registry = _PolicyInstanceRegistry(q_runtime.create_policy)
-    bc_registry = _PolicyInstanceRegistry(bc_runtime.create_policy)
+    q_registry = PolicyInstanceRegistry(q_runtime.create_policy)
+    bc_registry = PolicyInstanceRegistry(bc_runtime.create_policy)
     candidate = PolicySpec(
         identity=(
             f"{CANDIDATE_IDENTITY_PREFIX}{retained.q_checkpoint.identity}"
@@ -159,7 +159,7 @@ def build_specs(
 
 def build_screening_plan(
     retained: RetainedCandidates,
-) -> tuple[SingleRoundEvaluationPlan, _PolicyInstanceRegistry, _PolicyInstanceRegistry]:
+) -> tuple[SingleRoundEvaluationPlan, PolicyInstanceRegistry, PolicyInstanceRegistry]:
     """locked ordered seeds (281..305) でQ-vs-BC ABBB planを組み立てる。"""
     candidate, baseline, q_registry, bc_registry = build_specs(retained)
     for seed in STRENGTH_SCREEN_SEEDS:
@@ -247,8 +247,8 @@ def run_strength_screen(
         artifact=artifact,
         summary=summary,
         outcome=outcome,
-        candidate_diagnostics=_collect_activation_diagnostics(q_registry.instances),
-        baseline_diagnostics=_collect_activation_diagnostics(bc_registry.instances),
+        candidate_diagnostics=collect_activation_diagnostics(q_registry.instances),
+        baseline_diagnostics=collect_activation_diagnostics(bc_registry.instances),
         wall_clock_seconds=wall_clock_seconds,
         cpu_seconds=cpu_seconds,
     )
@@ -259,9 +259,11 @@ __all__ = [
     "CANDIDATE_IDENTITY_PREFIX",
     "ActivationDiagnostics",
     "OfflineQStrengthError",
+    "PolicyInstanceRegistry",
     "StrengthMeasurement",
     "build_screening_plan",
     "build_specs",
     "classify_value_q_signal",
+    "collect_activation_diagnostics",
     "run_strength_screen",
 ]

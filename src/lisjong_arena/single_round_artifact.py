@@ -507,7 +507,7 @@ def _seed_block_statistics_to_dict(
     }
 
 
-def _summary_to_dict(summary: SingleRoundStrengthSummary) -> dict[str, Any]:
+def summary_to_dict(summary: SingleRoundStrengthSummary) -> dict[str, Any]:
     return {
         "candidate_metrics": _candidate_metrics_to_dict(summary.candidate_metrics),
         "mean_baseline_score": summary.mean_baseline_score,
@@ -557,7 +557,7 @@ def _artifact_to_dict(artifact: SingleRoundStrengthArtifact) -> dict[str, Any]:
         },
         "provenance": execution_provenance_to_dict(artifact.provenance),
         "schema_version": artifact.schema_version,
-        "summary": _summary_to_dict(artifact.summary),
+        "summary": summary_to_dict(artifact.summary),
     }
 
 
@@ -1051,4 +1051,5 @@ __all__ = [
     "merge_single_round_artifacts",
     "parse_execution_provenance",
     "save_single_round_artifact",
+    "summary_to_dict",
 ]

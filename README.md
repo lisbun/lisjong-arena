@@ -213,6 +213,8 @@ Arenaには現在、experiment-local ML / analysisの具体例があります。
 - [Learned Policy Stage 4A](docs/learned-policy-stage4a.md)
 - [Offline Q experiment](docs/learned-policy-offline-q.md)
 - [Offline Q failure diagnosis](docs/learned-policy-offline-q-diagnosis.md)
+- [P1 Gate A](docs/learned-policy-p1-gate-a.md)
+- [P1 Gate B](docs/learned-policy-p1-gate-b.md)
 
 これらは、PolicyInputをplayer-safe inputとして利用しつつ、dataset / tensor / model /
 training / checkpoint / analysisをpurpose-specificなexperiment contractとして扱います。
@@ -385,6 +387,8 @@ runbook、schema、result interpretationは各purpose-specific documentを正本
 - [Learned Policy Stage 4A](docs/learned-policy-stage4a.md)
 - [Offline Q experiment](docs/learned-policy-offline-q.md)
 - [Offline Q failure diagnosis](docs/learned-policy-offline-q-diagnosis.md)
+- [P1 Gate A](docs/learned-policy-p1-gate-a.md)
+- [P1 Gate B](docs/learned-policy-p1-gate-b.md)
 - [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
 
 ## 現時点で持たないもの
