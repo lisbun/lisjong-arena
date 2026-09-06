@@ -78,6 +78,7 @@ from lisjong_arena.stage3_scale_learning_curve.protocol import (
 
 from .errors import OfflineQError
 from .p1_candidate import (
+    LOCKED_P1_CANDIDATE,
     LOCKED_SELECTED_EPOCH,
     MATERIALIZATION_SOURCES,
     SERVING_CHECKPOINT_SCHEMA_VERSION,
@@ -359,6 +360,7 @@ def candidate_block(checkpoint: LoadedP1ServingCheckpoint) -> dict[str, object]:
         "selected_epoch": manifest["selected_epoch"],
         "source_dataset_identity": manifest["source_dataset_identity"],
         "supported_indices_digest": manifest["supported_indices_digest"],
+        "expected_identities": manifest["expected_identities"],
         "real_candidate_materialization": (manifest["real_candidate_materialization"]),
         "retention": {"backend": RETENTION_BACKEND, "key": CANDIDATE_RETENTION_KEY},
     }
@@ -463,9 +465,11 @@ _CANDIDATE_FIELDS = {
     "selected_epoch",
     "source_dataset_identity",
     "supported_indices_digest",
+    "expected_identities",
     "real_candidate_materialization",
     "retention",
 }
+_EXPECTED_IDENTITY_FIELDS = set(LOCKED_P1_CANDIDATE.to_document())
 _ARTIFACT_FIELDS = {
     "schema_version",
     "evaluation_protocol",
@@ -529,6 +533,56 @@ def _require_number(value: object, context: str) -> float:
     return float(value)
 
 
+def _validate_real_candidate_materialization(candidate: dict) -> None:
+    """`real_candidate_materialization`をidentityから再導出して照合する。
+
+    checkpoint manifest（`p1_candidate.load_p1_serving_checkpoint()`）と同じ
+    再導出規則をresult validation boundaryでも適用する。documentが宣言した
+    flagをauthorityにしないため、checkpoint loaderを経由せず組み立てた
+    result documentでも、fixture / substitute candidateを
+    `real_candidate_materialization = true`として通すことはできない。
+
+    ```text
+    expected_identities == LOCKED_P1_CANDIDATE  ->  true
+    otherwise                                   ->  false
+    ```
+
+    加えて、candidateが実際に記録しているdigestが`expected_identities`と
+    exact一致することを要求する。したがって`true`は必ず「exact #158
+    candidate identitiesである」ことを含意する。
+    """
+    expected = _require_fields(
+        candidate["expected_identities"],
+        _EXPECTED_IDENTITY_FIELDS,
+        "candidate.expected_identities",
+    )
+    for name, value in expected.items():
+        if type(value) is not str or len(value) != 64:
+            raise _error(f"candidate.expected_identities.{name} is not a sha256 digest")
+    for recorded, declared in (
+        ("canonical_model_weights_digest", "canonical_model_weights_digest"),
+        ("source_dataset_identity", "source_dataset_identity"),
+        ("supported_indices_digest", "support_set_digest"),
+    ):
+        if candidate[recorded] != expected[declared]:
+            raise _error(
+                f"candidate.{recorded} does not match the expected identity it "
+                "declares; the served candidate and the identity it claims must "
+                "be the same candidate"
+            )
+    declared_real = _require_bool(
+        candidate["real_candidate_materialization"],
+        "candidate.real_candidate_materialization",
+    )
+    if declared_real is not (expected == LOCKED_P1_CANDIDATE.to_document()):
+        raise _error(
+            "real_candidate_materialization does not follow from the recorded "
+            "candidate identities; it is derived from an exact comparison "
+            "against the locked Issue #158 candidate, never self-declared -- a "
+            "fixture or substitute candidate is never real Gate B evidence"
+        )
+
+
 def _validate_candidate(block: object) -> None:
     candidate = _require_fields(block, _CANDIDATE_FIELDS, "candidate")
     if candidate["checkpoint_schema_version"] != SERVING_CHECKPOINT_SCHEMA_VERSION:
@@ -559,10 +613,7 @@ def _validate_candidate(block: object) -> None:
             "semantics and fallback Policy derive"
         )
     require_candidate_identity(candidate["identity"], binding)
-    _require_bool(
-        candidate["real_candidate_materialization"],
-        "candidate.real_candidate_materialization",
-    )
+    _validate_real_candidate_materialization(candidate)
     if candidate["retention"] != {
         "backend": RETENTION_BACKEND,
         "key": CANDIDATE_RETENTION_KEY,

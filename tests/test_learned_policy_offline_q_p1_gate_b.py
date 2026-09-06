@@ -23,12 +23,12 @@ from _learned_policy_offline_q_p1_gate_b_fixtures import (
     decision,
     fixture_binding,
     fixture_candidate_identity,
-    fixture_checkpoint,
     fixture_diagnostics,
     gate_b_game_results,
     gate_b_result_document,
     inconclusive_delta,
     kyuushu_action,
+    locked_checkpoint,
     negative_delta,
     pass_action,
     pon_action,
@@ -604,24 +604,19 @@ class GateBClassificationRecordingTest(unittest.TestCase):
         return gate_b_result_document(self._tmp / f"{name}.json", **kwargs)
 
     def test_a_real_candidate_records_the_derived_outcome(self):
-        document = self._document(
-            "real", real=True, checkpoint=fixture_checkpoint(real=True)
-        )
+        document = self._document("real", checkpoint=locked_checkpoint())
+        self.assertIs(document["candidate"]["real_candidate_materialization"], True)
         classified = record_classification(document, P1GateBOutcome.POSITIVE_SIGNAL)
         self.assertEqual(classified["classification"], "P1 GATE B POSITIVE SIGNAL")
         self.assertEqual(classified["result_identity"], document["result_identity"])
 
     def test_an_outcome_the_rule_does_not_derive_is_rejected(self):
-        document = self._document(
-            "mismatch", real=True, checkpoint=fixture_checkpoint(real=True)
-        )
+        document = self._document("mismatch", checkpoint=locked_checkpoint())
         with self.assertRaises(P1GateBError):
             record_classification(document, P1GateBOutcome.NEGATIVE_SIGNAL)
 
     def test_a_pre_result_state_is_never_recorded(self):
-        document = self._document(
-            "blocked", real=True, checkpoint=fixture_checkpoint(real=True)
-        )
+        document = self._document("blocked", checkpoint=locked_checkpoint())
         for outcome in (
             P1GateBOutcome.EVIDENCE_BLOCKED,
             P1GateBOutcome.STOP_INVALID,
@@ -635,33 +630,93 @@ class GateBClassificationRecordingTest(unittest.TestCase):
         with self.assertRaises(P1GateBError):
             record_classification(document, P1GateBOutcome.POSITIVE_SIGNAL)
 
+    def test_a_forged_real_flag_on_a_fixture_candidate_is_rejected(self):
+        """checkpoint loaderを経由しない偽装result documentもfail closedする。"""
+        document = self._document("forged")
+        candidate = {
+            **document["candidate"],
+            "real_candidate_materialization": True,
+        }
+        forged = {**document, "candidate": candidate}
+        forged["result_identity"] = result_identity(forged)
+        with self.assertRaises(P1GateBError):
+            validate_gate_b_result(forged)
+        with self.assertRaises(P1GateBError):
+            record_classification(forged, P1GateBOutcome.POSITIVE_SIGNAL)
+
+    def test_forged_expected_identities_without_the_digests_are_rejected(self):
+        """expected_identitiesだけをlockedへ差し替えても通らない。"""
+        document = self._document("forged-expected")
+        candidate = {
+            **document["candidate"],
+            "expected_identities": LOCKED_P1_CANDIDATE.to_document(),
+            "real_candidate_materialization": True,
+        }
+        forged = {**document, "candidate": candidate}
+        forged["result_identity"] = result_identity(forged)
+        with self.assertRaises(P1GateBError):
+            validate_gate_b_result(forged)
+
+    def test_a_dropped_real_flag_on_the_locked_candidate_is_rejected(self):
+        """flagはderivedなので、locked candidateでfalseを名乗ることもできない。"""
+        document = self._document("dropped", checkpoint=locked_checkpoint())
+        candidate = {
+            **document["candidate"],
+            "real_candidate_materialization": False,
+        }
+        forged = {**document, "candidate": candidate}
+        forged["result_identity"] = result_identity(forged)
+        with self.assertRaises(P1GateBError):
+            validate_gate_b_result(forged)
+
+    def test_a_candidate_digest_that_contradicts_its_expected_identity(self):
+        document = self._document("contradicting-digest")
+        candidate = {
+            **document["candidate"],
+            "expected_identities": {
+                **document["candidate"]["expected_identities"],
+                "source_dataset_identity": "b" * 64,
+            },
+        }
+        forged = {**document, "candidate": candidate}
+        forged["result_identity"] = result_identity(forged)
+        with self.assertRaises(P1GateBError):
+            validate_gate_b_result(forged)
+
+    def test_malformed_expected_identities_are_rejected(self):
+        document = self._document("malformed-expected")
+        for value in (
+            {"canonical_model_weights_digest": "1" * 64},
+            {
+                **document["candidate"]["expected_identities"],
+                "support_set_digest": "short",
+            },
+        ):
+            candidate = {**document["candidate"], "expected_identities": value}
+            forged = {**document, "candidate": candidate}
+            forged["result_identity"] = result_identity(forged)
+            with self.assertRaises(P1GateBError):
+                validate_gate_b_result(forged)
+
     def test_an_outcome_cannot_be_recorded_twice(self):
-        document = self._document(
-            "twice", real=True, checkpoint=fixture_checkpoint(real=True)
-        )
+        document = self._document("twice", checkpoint=locked_checkpoint())
         classified = record_classification(document, P1GateBOutcome.POSITIVE_SIGNAL)
         with self.assertRaises(P1GateBError):
             record_classification(classified, P1GateBOutcome.POSITIVE_SIGNAL)
 
     def test_a_non_outcome_value_is_rejected(self):
-        document = self._document(
-            "type", real=True, checkpoint=fixture_checkpoint(real=True)
-        )
+        document = self._document("type", checkpoint=locked_checkpoint())
         with self.assertRaises(TypeError):
             record_classification(document, "P1 GATE B POSITIVE SIGNAL")
 
     def test_a_recorded_outcome_that_contradicts_the_interval_is_rejected(self):
-        document = self._document(
-            "contradiction", real=True, checkpoint=fixture_checkpoint(real=True)
-        )
+        document = self._document("contradiction", checkpoint=locked_checkpoint())
         tampered = {**document, "classification": "P1 GATE B NEGATIVE SIGNAL"}
         with self.assertRaises(P1GateBError):
             validate_gate_b_result(tampered)
 
     def test_an_unknown_outcome_string_is_rejected(self):
-        document = self._document(
-            "unknown", real=True, checkpoint=fixture_checkpoint(real=True)
-        )
+        document = self._document("unknown", checkpoint=locked_checkpoint())
         with self.assertRaises(P1GateBError):
             validate_gate_b_result({**document, "classification": "GREAT"})
 

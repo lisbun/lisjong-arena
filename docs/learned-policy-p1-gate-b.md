@@ -164,10 +164,35 @@ fail closedであり、**generated weightsはrepositoryへ入らない**。
 ### fixture candidateはreal Gate B evidenceにならない
 
 `ExpectedCandidateIdentities`をcallerが差し替えられるのは、synthetic fixtureで
-contract自体をtestできるようにするためだけである。manifestの
-`real_candidate_materialization`はlocked constantとのexact比較から導出され、
-Gate B resultはこのflagが`true`のcandidateでしかexhaustive outcomeを記録できない
-（`record_classification()`）。
+contract自体をtestできるようにするためだけである。
+
+`real_candidate_materialization`は**どの境界でも自己申告値にしない**。
+checkpoint manifest（`load_p1_serving_checkpoint()`）とGate B result document
+（`validate_gate_b_result()`）の両方が、記録された`expected_identities`から
+同じ規則で再導出して照合する。
+
+```text
+expected_identities == LOCKED_P1_CANDIDATE  ->  true
+otherwise                                   ->  false
+```
+
+result documentのcandidate blockは`expected_identities`を保持し、validatorは
+さらに
+
+```text
+candidate.canonical_model_weights_digest == expected_identities.canonical_model_weights_digest
+candidate.source_dataset_identity        == expected_identities.source_dataset_identity
+candidate.supported_indices_digest       == expected_identities.support_set_digest
+```
+
+を要求する。したがって`true`は必ず「exact #158 candidate identitiesである」
+ことを含意し、checkpoint loaderを経由せず組み立てたresult documentでも、
+fixture / substitute candidateのbindingを自己整合的に作って
+`real_candidate_materialization = true`と`result_identity`を再計算する経路は
+fail closedになる。
+
+Gate B resultはこのflagが`true`のcandidateでしかexhaustive outcomeを記録
+できない（`record_classification()`）。
 
 ## Candidate serving semantics
 
@@ -294,7 +319,7 @@ arena-learned-policy-offlineq-p1-gate-b-v1
 schema version / gate id / source / predecessor / parent Issue / protocol id
 candidate（logical identity / binding document / canonical weights digest /
            checkpoint schema / materialization source / selected epoch /
-           source dataset identity / support digest /
+           source dataset identity / support digest / expected identities /
            real_candidate_materialization / retention target）
 comparator（identity / semantics / catalog registration = false）
 plan（ordered seeds / seed blocks / rotations / games / game mode / workers）
@@ -310,7 +335,10 @@ classification（初期値 None）
 
 `result_identity`は`classification`と自身を除いたcanonical bytesのsha256であり、
 outcomeを記録しても変わらない。validatorはこれを再導出して、記録済み
-measurementの後編集を検出する。
+measurementの後編集を検出する。ただしdocument全体を作り直せば
+`result_identity`も再計算できるため、これは改竄検出であってidentity保証では
+ない。scientific identityの保証は上記の`real_candidate_materialization`
+再導出とcandidate binding再導出が担う。
 
 ## Primary classification
 

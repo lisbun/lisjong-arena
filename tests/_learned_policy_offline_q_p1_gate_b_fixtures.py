@@ -37,6 +37,7 @@ from lisjong.policy_contract.action import (
 from lisjong.policy_contract.tile import TileCategory, TileType
 
 from lisjong_arena.learned_policy_offline_q.p1_candidate import (
+    LOCKED_P1_CANDIDATE,
     SERVING_CHECKPOINT_SCHEMA_VERSION,
     ExpectedCandidateIdentities,
     LoadedP1ServingCheckpoint,
@@ -273,37 +274,57 @@ def save_gate_b_artifact(
 # --- Gate B result document ----------------------------------------------
 
 
-def fixture_checkpoint(
+def checkpoint_snapshot(
+    expected: ExpectedCandidateIdentities,
     *,
-    real: bool = False,
-    weights_digest: str = FIXTURE_WEIGHTS_DIGEST,
-    support_digest: str = FIXTURE_SUPPORT_DIGEST,
     selected_epoch: int = 20,
 ) -> LoadedP1ServingCheckpoint:
     """`candidate_block()`が読むmanifest fieldだけを持つcheckpoint snapshot。
 
+    `real_candidate_materialization`は`p1_candidate`のcheckpoint manifestと
+    同じ規則（`expected == LOCKED_P1_CANDIDATE`）から導出する。fixtureが
+    自分でtrueを立てられないため、result documentの検証がその再導出規則を
+    実際に強制していることをtestできる。
+
     weightsのstrict loadは`p1_candidate`側のtestが担当するため、ここでは
     modelを持たないsnapshotで足りる。
     """
-    binding = fixture_binding(
-        weights_digest=weights_digest, support_digest=support_digest
+    binding = candidate_binding_document(
+        canonical_model_weights_digest=expected.canonical_model_weights_digest,
+        support_set_digest=expected.support_set_digest,
     )
     return LoadedP1ServingCheckpoint(
         path=Path("fixture-checkpoint"),
         manifest={
             "candidate_identity": candidate_logical_identity(binding),
             "candidate_binding": binding,
-            "canonical_model_weights_digest": weights_digest,
+            "canonical_model_weights_digest": (expected.canonical_model_weights_digest),
             "checkpoint_schema_version": SERVING_CHECKPOINT_SCHEMA_VERSION,
             "materialization_source": "exact-retained-158-weights",
             "selected_epoch": selected_epoch,
-            "source_dataset_identity": FIXTURE_DATASET_IDENTITY,
-            "supported_indices_digest": support_digest,
-            "real_candidate_materialization": real,
+            "source_dataset_identity": expected.source_dataset_identity,
+            "supported_indices_digest": expected.support_set_digest,
+            "expected_identities": expected.to_document(),
+            "real_candidate_materialization": expected == LOCKED_P1_CANDIDATE,
         },
         model=None,
         supported_indices=frozenset({0, 1}),
     )
+
+
+def fixture_checkpoint(**kwargs) -> LoadedP1ServingCheckpoint:
+    """fixture identitiesのcheckpoint snapshot（常にnon-real）。"""
+    return checkpoint_snapshot(FIXTURE_EXPECTED, **kwargs)
+
+
+def locked_checkpoint(**kwargs) -> LoadedP1ServingCheckpoint:
+    """locked Issue #158 identitiesそのものを使うresult-level snapshot。
+
+    real candidate classification pathのpositive testはこれで通す。weights
+    bytesは持たないため、これがreal weightsの代用になることはない
+    （weightsのstrict loadとdigest verifyは`p1_candidate`側で別にtestする）。
+    """
+    return checkpoint_snapshot(LOCKED_P1_CANDIDATE, **kwargs)
 
 
 def fixture_diagnostics(
@@ -326,7 +347,6 @@ def gate_b_result_document(
     path: Path,
     *,
     scaled_delta_for_seed=positive_delta,
-    real: bool = False,
     checkpoint: LoadedP1ServingCheckpoint | None = None,
     diagnostics: ActivationDiagnostics | None = None,
 ) -> dict:
@@ -334,7 +354,7 @@ def gate_b_result_document(
 
     `path`はartifact fileのpathである（実在するfileのbytesからdigestを取る）。
     """
-    checkpoint = fixture_checkpoint(real=real) if checkpoint is None else checkpoint
+    checkpoint = fixture_checkpoint() if checkpoint is None else checkpoint
     results = gate_b_game_results(scaled_delta_for_seed=scaled_delta_for_seed)
     artifact = save_gate_b_artifact(
         path, results, candidate_identity=checkpoint.candidate_identity
