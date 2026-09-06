@@ -1,6 +1,6 @@
 # lisjong-arena
 
-Reproducible execution, observation, and policy evaluation arena for the lisjong ecosystem.
+Reproducible execution, observation, research experimentation, and policy evaluation arena for the lisjong ecosystem.
 
 > [!IMPORTANT]
 > lisjong-arena is part of an independent personal Japanese mahjong AI project
@@ -9,23 +9,40 @@ Reproducible execution, observation, and policy evaluation arena for the lisjong
 
 ## 概要
 
-`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、controlled / reproducibleな条件でPolicy間のperformance differenceやgame performanceを比較・検証するrepositoryです。
+`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、
+controlled / reproducibleな条件で研究用candidateを生成・診断し、Policy間の
+performance differenceやgame performanceを比較・検証するrepositoryです。
 
-repository内部では、**execution / observation** と **evaluation** を別責務として扱います。
+Arena内部では、少なくとも次の3責務を分離します。
 
 ```text
-lisjong Policy contract
-        ^
+Execution / Observation
+    what happened
         |
-execution / observation
-        ^
+        v
+objective execution data
         |
-    evaluation
+        +------------------------------+
+        |                              |
+        v                              v
+Experiment-local Research          Evaluation
+bounded dataset / training        matchup / seeds / rotation
+analysis / model artifact         metrics / artifact / provenance
+        |                              ^
+        v                              |
+research candidate -------------------+
 ```
 
-lisjong ecosystem全体のrepository責務、repository間依存方向、長期ロードマップは[`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
+重要なのは、**Arenaがexperiment-local MLを実装できることと、stableなAI semanticsを
+Arenaが所有することは別**だという点です。
 
-Arena固有の詳細な責務・ownership decisionは[Architecture](docs/architecture.md)、長期的な発展方針は[Roadmap](docs/roadmap.md)、Policy strength comparisonの恒久的な評価規律は[Policy strength evaluation policy](docs/policy-strength-evaluation.md)を参照してください。
+lisjong ecosystem全体のrepository責務、repository間依存方向、長期ロードマップは
+[`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
+
+Arena固有の詳細な責務・ownership decisionは
+[Architecture](docs/architecture.md)、長期的な発展方針は
+[Roadmap](docs/roadmap.md)、Policy strength comparisonの恒久的な評価規律は
+[Policy strength evaluation policy](docs/policy-strength-evaluation.md)を参照してください。
 
 ## 責務
 
@@ -44,6 +61,61 @@ Arenaがtarget responsibilityとして所有するもの:
 - external representationからlisjong-owned Policy contractへのprojection
 - `InternalAction`からexternal legal Actionへのmapping / revalidation
 
+Execution / observationは研究仮説やcomparison semanticsを知りません。
+
+### Experiment-local research / ML
+
+Arenaは、**bounded research questionを検証するために必要なexperiment-localな
+ML / analysis implementation**を所有できます。
+
+例:
+
+- purpose-specific player-safe feature / tensor representation
+- experiment-local dataset schema / split / manifest
+- data generation / materialization harness
+- bounded training harness
+- fixed experiment model architecture / loss / optimizer configuration
+- checkpoint / result / diagnostic artifact
+- offline analysis / failure diagnosis
+- experiment-local learned Policy adapter
+- current experimentだけで使うclassification / decision rule
+
+このownershipは、次の条件を満たす場合に限定します。
+
+```text
+bounded research question
+    + explicit provenance / reproducibility
+    + purpose-specific schema
+    + clear promotion boundary
+    + no silent production adoption
+```
+
+Arena内にmodel classやtraining codeが存在しても、それだけで次を意味しません。
+
+```text
+experiment-local model
+!= canonical lisjong model architecture
+
+experiment-local feature schema
+!= canonical PolicyInput / production feature contract
+
+experiment-local checkpoint
+!= production Policy
+
+experiment result
+!= stable public API
+```
+
+研究結果がstableなAI-side semanticsやproduction contractへ昇格する場合は、
+その時点でowner repositoryを明示的に再評価します。`lisjong`が所有すべきstable
+Policy / inference semanticsを、experiment codeがArenaにあるという理由だけで
+Arena canonical contractへ固定しません。
+
+逆に、research harnessをすべて`lisjong`へ置くことも要求しません。dataset生成、
+training、artifact、diagnostic、evaluationがArenaのcontrolled execution / evidence
+pipelineと強く結び付くbounded experimentでは、Arena-local implementationの方が
+責務を明確に保てます。
+
 ### Evaluation
 
 Arenaが所有するもの:
@@ -51,594 +123,172 @@ Arenaが所有するもの:
 - Policy / agentのmatchup定義
 - fixed seed set
 - deterministicなseat rotation
-- 複数gameの実行計画
+- multiple-game / round execution plan
 - Policy / agent assignmentの記録
 - raw evaluation / comparison result
-- 平均順位・平均得点・順位回数等の基本metrics
-- 再現可能なPolicy comparison protocol
-- 1 comparison / 1 ABBB runをそれぞれ1 fileとして保存するversion付きJSON artifact契約
-- 保存済みartifactの再集計とcompatibleな複数artifactのcumulative aggregation
+- strength / diagnostic metrics
+- 再現可能なcomparison protocol
+- versioned immutable evaluation artifact
+- compatible artifactのstrict readback / reaggregation
 - external benchmark / external competitor orchestration
 
-### lisjongに残すもの
+Evaluationはcandidateの生成方法を所有しません。research harnessが生成したcandidateを
+consumerとして評価できますが、評価結果を見てtraining conditionを暗黙に変更しません。
 
-Arenaが所有しないもの:
+### `lisjong` に残すもの
 
-- Policy / AI戦略
-- `DecisionContext` / `InternalAction` のAI-side semantic contract
-- 向聴数・受け入れ・HandBelief・risk / value / utility等のAIロジック
-- candidate evaluation / selection reason等のPolicy-internal analysis semantics
-- AI-side `InternalAction` semantic validation
+Arenaがcanonical ownerにならないもの:
+
+- Policy / AI strategy
+- `DecisionContext` / `PolicyInput` / `InternalAction` 等のstable AI-side semantic contract
+- AI-side Action identity / legality semantics
+- shanten / ukeire / HandBelief / risk / value / utility等のstable domain semantics
+- candidate evaluation / selection reason等のstable Policy-internal analysis semantics
+- production / public Learned Policy semantics
+- canonical production model / feature contract
+- AI-side public APIのpromotion decision
 - 麻雀ルール / game state transition
-- 学習model実装
 - generic external-player runtime / generic process host
 
-境界の要約は次です。
+境界を短く言うと、次のようになります。
 
 ```text
-Arena    = 「何が起きたか」を所有する
-lisjong  = 「なぜそのActionを選んだか」を所有する
+Arena Execution / Observation
+    = what happened
+
+Arena Experiment-local Research
+    = how a bounded experiment materializes / trains / diagnoses evidence
+
+Arena Evaluation
+    = how candidates are compared reproducibly
+
+lisjong
+    = what stable AI decisions / features / beliefs / values mean
 ```
 
-lisjongが生成したPolicy-internal analysisをArenaが将来transport / persistenceすることは許容しますが、ArenaがHandBelief等を再計算・再定義することはありません。
+## Experiment-local MLのpromotion boundary
 
-## Current implementation と target architecture
-
-### Current implementation: Policy-vs-Policy evaluation
-
-現在のAABB / ABBBは、Arena-localの`lisjong_arena.riichienv.local_game_runner.LocalGameRunner`を使ってPolicy比較を成立させます(Issue #31)。RiichiEnv Adapterは Issue #39でArena-localの`lisjong_arena.riichienv.adapter`へcanonical physical migrationしました。GameTraceもIssue #43でArena-localの`lisjong_arena.game_trace`へcanonical physical migrationし、lisjong側legacy `lisjong.game_trace`は`lisbun/lisjong#102` / PR #103で削除、Arena Issue #45でcleanup merge SHAへのexact pin syncまで完了しました。`lisjong_arena.game_trace`がcanonicalかつsole physical implementationです。
+研究用implementationは、最初からproduction-quality generic frameworkへ昇格させません。
 
 ```text
-lisjong-arena evaluation
+bounded experiment
+    |
+    v
+experiment-local implementation
+    |
+    v
+result / evidence
+    |
+    +--> negative / inconclusive
+    |       keep as historical experiment record
+    |
+    `--> repeatedly useful / promoted principle
+            |
+            v
+       owner repository review
+            |
+            +--> remain Arena experiment infrastructure
+            `--> move / formalize as lisjong stable AI contract
+```
+
+promotion時には少なくとも次を確認します。
+
+- semanticsが特定experimentを超えてstableか
+- production / multiple consumerで必要か
+- Arena evaluation concernとAI decision concernのどちらがownerとして自然か
+- current artifact / feature identityをそのままstable contractへ流用してよいか
+- breaking-change policy / versioning / compatibilityを新たに定義すべきか
+
+「研究で使えた」だけではpromotion理由にしません。
+
+## Current research examples
+
+Arenaには現在、experiment-local ML / analysisの具体例があります。
+
+### Learned Policy input / training
+
+- [Learned Policy input schema](docs/learned-policy-input-schema.md)
+- [Learned Policy Stage 2](docs/learned-policy-stage2.md)
+- [Learned Policy Stage 3](docs/learned-policy-stage3.md)
+- [Learned Policy Stage 4A](docs/learned-policy-stage4a.md)
+- [Offline Q experiment](docs/learned-policy-offline-q.md)
+- [Offline Q failure diagnosis](docs/learned-policy-offline-q-diagnosis.md)
+
+これらは、PolicyInputをplayer-safe inputとして利用しつつ、dataset / tensor / model /
+training / checkpoint / analysisをpurpose-specificなexperiment contractとして扱います。
+
+### HandBelief research
+
+HandBelief関連では、Arenaがtraining corpus、bounded learner、artifact、holdout protocol、
+scale study等のexperiment harnessを所有できます。一方、HandBeliefというAI-side概念の
+stable semanticsや将来production consumer semanticsは`lisjong`側の責務です。
+
+代表的なexperiment record:
+
+- [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
+
+component prediction qualityとPolicy decision value / game strengthは別claimとして扱います。
+
+## Current execution paths
+
+Arenaは複数のconcrete execution pathを持ちますが、早期にgeneric backend abstractionへ
+統合しません。
+
+### RiichiEnv
+
+Policy-vs-Policy development evaluationでは、Arena-localの
+`lisjong_arena.riichienv.local_game_runner.LocalGameRunner`とArena-local RiichiEnv Adapter /
+GameTraceを利用します。
+
+```text
+Arena evaluation / experiment
         |
         v
-lisjong_arena.riichienv.LocalGameRunner
+LocalGameRunner
         |
         v
-RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
+RiichiEnv
+        |
+        v
+lisjong Policy contract
 ```
 
-単一gameの実行はArena-localの `lisjong_arena.riichienv.local_game_runner.LocalGameRunner` が担当し、内部でArena-localの `lisjong_arena.riichienv.adapter` とArena-localの `lisjong_arena.game_trace` を利用します。`Seat` もArenaで再定義せず `lisjong.policy_contract.Seat` を使用し、`lisjong-arena` は`riichienv`へdirect dependencyを持ちます。
+### RiichiLab
 
-standard RiichiEnv executionで、正常終了後にobjective `GameTrace`とstepごとの
-`PolicyInput` / `DecisionTrace`を同一process内でinspectする場合は、opt-inの
-`LocalGameInspectionRecorder`を渡します。recorderは1回の`env.step()`を0-basedの
-stepとして、各seat decisionとそのstepで追加されたGameTrace eventのhalf-open
-intervalを保持します。通常callerは引き続き`execute_policy()` pathを使い、
-inspectionを有効化したcallerだけが`execute_policy_with_trace()` pathを使います。
+ranked / validation / continuous participationのclient、session、transport、protocol bridge、
+profile / credential compositionはArena execution / observationが所有します。
 
-```python
-from lisjong_arena.riichienv.local_game_runner import (
-    LocalGameInspectionRecorder,
-    LocalGameRunner,
-)
-
-recorder = LocalGameInspectionRecorder()
-result = LocalGameRunner(
-    policies,
-    seed=12345,
-    inspection_recorder=recorder,
-).run()
-inspection = recorder.snapshot()
-
-assert inspection.result is result
-assert inspection.game_trace.seed == result.seed
-```
-
-`snapshot()`はgame、final event processing、RoundStats、result construction、
-GameTrace completion、composition consistency validationのすべてが成功した後だけ
-利用できます。これはstandard `LocalGameRunner`専用のin-memory compositionであり、
-JSON / DB persistence、cross-process history、canonical GameRecordではありません。
-Mortal mixed、RiichiLab、first-party engine、AABB / ABBB artifactのcontractも変更しません。
-
-`LocalGameRunner` / `LocalGameResult`はcontract owner・canonical implementation・sole physical implementationのすべてがArenaです。lisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除され、Arena Issue #37でexact lisjong dependency pinをPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期しました。これによりLocalGameRunner / LocalGameResultのphysical duplicateは完全解消済みです。RiichiEnv Adapterも同様に、Issue #39でArena takeover、`lisbun/lisjong#100` / PR #101でlisjong legacy physical copy削除、Issue #41でArenaのexact lisjong dependency pinをPR #101のactual cleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期という順序で完了しました。これによりRiichiEnv Adapterのphysical duplicateも完全解消済みです。GameTraceはIssue #43でcanonical physical implementationを`lisjong_arena.game_trace`へmigrationし、Arena active consumer(production / tests)もこのArena-local実装へ切り替えました。lisjong側legacy `lisjong.game_trace`は`lisbun/lisjong#102` / PR #103で削除され、Arena Issue #45でexact lisjong pinをactual cleanup merge commit `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期しました。これによりGameTraceのphysical duplicateも完全解消し、GameTrace pillarはCOMPLETEです。
-
-### Target architecture
-
-```text
-                       lisjong
-              +-----------------------+
-              | AI decision core      |
-              | Policy                |
-              | DecisionContext       |
-              | InternalAction        |
-              | belief / risk / value |
-              +-----------^-----------+
-                          |
-                  Policy contract
-                          |
-                  lisjong-arena
-       +----------------------------------+
-       | Execution / Observation          |
-       | environment integration          |
-       | runner / client                  |
-       | session / resilience             |
-       | objective trace / game record    |
-       +----------------+-----------------+
-                        |
-                 raw execution data
-                        |
-                        v
-       +----------------------------------+
-       | Evaluation                       |
-       | matchup / seed / seat rotation   |
-       | metrics / artifact / provenance  |
-       +----------------------------------+
-```
-
-`GameTrace`はtarget ownershipをArena execution / observationへ置き、Issue #43のArena takeover、lisjong #102 / PR #103のlegacy cleanup、Arena #45のexact pin syncまで完了したため、GameTrace pillarのphysical migrationは完了しています。`LocalGameRunner` / `LocalGameResult`はIssue #31でcanonical + physical migrationを行い、lisjong #98 / PR #99のlegacy cleanupとArena #37のexact pin syncまで完了したため、LocalGameRunner pillarのphysical migrationは完了しています。RiichiEnv AdapterもIssue #39でcanonical + physical migrationを行い、lisjong #100 / PR #101のlegacy cleanupとArena #41のexact pin syncまで完了したため、RiichiEnv Adapter pillarのphysical migrationも完了しています。RiichiLab lower-level runtime(errors / Session / Transport / protocol trace)はIssue #23で、RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation)はIssue #27で、それぞれcanonical + physical migrationが完了しました。lisjong側protocol-facing bridge legacy physical copyはlisjong Issue #94 / PR #95で削除済みであり、Issue #29でArenaのdependency pinもそのactual cleanup merge SHAへ同期済みです。`DecisionContext` / `InternalAction` / `execute_policy()`等のcontract semanticsはlisjongに残ります。ADR 0002全体およびexternal execution / observation migration全体の完了は、別途fresh project-wide inventoryを行うまで宣言しません。
-
-## RiichiLab ranked / validation one-game execution
-
-`lisjong-arena`は、RiichiLab ranked 1半荘 / validation 1 gameを起動するfirst-party entry pointに加えて、`RankedGameResult` / `run_ranked_game()`（Issue #17）と`ValidationResult` / `run_validation()`（Issue #19）のcanonical one-game orchestration implementationをArena側に持ちます。Session / Transport / protocol trace / client errors等のlower-level runtimeはIssue #23で、RiichiLab protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action / MJAI response / possible-action validation)はIssue #27で、それぞれArena-local canonical implementationへ移行済みです。詳細な契約は[`docs/riichilab-client.md`](docs/riichilab-client.md)と[`docs/riichilab-protocol-bridge.md`](docs/riichilab-protocol-bridge.md)を正本とします。
+主なentry point:
 
 ```powershell
 python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
 python -m lisjong_arena.riichilab.validation --profile lisjong-dev
-```
-
-現在の実行経路は次です。
-
-```text
-user
-  -> lisjong-arena first-party ranked / validation CLI
-  -> Arena-local profile / credential / CLI composition
-       (lisjong_arena.riichilab.profile / lisjong_arena.riichilab.cli)
-  -> Arena-local RankedGameResult / run_ranked_game()
-     または ValidationResult / run_validation()
-  -> Arena-local lower-level RiichiLab runtime
-       RankedSession / ValidationSession
-       Transport
-       protocol trace
-       client errors
-       (lisjong_arena.riichilab.session / transport / trace / errors)
-  -> Arena-local RiichiLabSeatAdapter
-       request_action parse / MJAI response / possible_actions validation
-       (lisjong_arena.riichilab.adapter / request_action / mjai_response /
-        possible_action_validation)
-  -> lisjong Policy contract (Policy / DecisionContext / InternalAction /
-     execute_policy() / RiichiEnv Adapter, consumerとして利用)
-  -> RiichiLab
-```
-
-ranked / validation one-game orchestration、execution profile・credential resolution・common CLI / trace-path composition、Session / Transport / protocol trace / client errors等のlower-level runtime、そしてRiichiLab protocol-facing decision bridge(request_action parse / MJAI response / possible-action validation / `RiichiLabSeatAdapter`)のcanonical + physical implementationは、いずれもArenaです。`lisjong`側のlegacy ranked orchestrationは`lisbun/lisjong#86`、validation / profile / CLI copyは`lisbun/lisjong#89` / PR #90、lower-level runtime copyは[`lisbun/lisjong#91`](https://github.com/lisbun/lisjong/issues/91) / PR #92、protocol-facing decision bridge legacy copy(`src/lisjong/riichilab_adapter/`)は[`lisbun/lisjong#94`](https://github.com/lisbun/lisjong/issues/94) / PR #95でそれぞれ削除済みです。Issue #25でArenaのlisjong dependency pinをPR #92のactual merge commitへ、Issue #29でさらにPR #95のactual merge commit `ae9058b2603275f35a01f6859b3cb8250c5bd7bb`へ同期し、RiichiLab protocol-facing decision bridgeを含むphysical duplicateは完全解消済みです。
-
-Arena-local `run_ranked_game()` / `run_validation()` はArena-local `RankedSession` / `ValidationSession`、`JsonlProtocolTraceWriter`、`DEFAULT_RANKED_URL` / `DEFAULT_VALIDATION_URL`、`connect_ranked_transport()` / `connect_validation_transport()`、`drive_ranked_session()` / `drive_validation_session()`をconsumerとして利用します。Arena-local Sessionは、Policy呼び出し・Observation変換・`possible_actions` semantic validationを担当するArena-local `RiichiLabSeatAdapter`をconsumerとして利用し、Adapterが送出する例外はwrapせずそのまま伝播させます。`RiichiLabSeatAdapter`自体は、`Policy` / `DecisionContext` / `InternalAction` / `execute_policy()` / RiichiEnv Adapter等のAI-side semantic contractをlisjongからconsumerとして利用します(riichienv==0.4.8がArena direct dependencyになりました)。
-
-profile定義、credential解決、trace path優先順位はArena-local composition（`lisjong_arena.riichilab.profile` / `lisjong_arena.riichilab.cli`）が所有し、ranked / validationで定義を共有・重複させません。利用できるprofileは既存の3種類（`lisjong-dev` / `lisjong-baseline` / `lisjong`）で、profile未指定・unknown profile・対応credential未設定はいずれもfail closedします。他profileのcredentialへのfallbackは行いません。protocol traceは既定OFFで、`--trace-path` > `RIICHILAB_TRACE_PATH`環境変数 > `--trace`（profile既定path）> 無効、の優先順位を維持します。
-
-ranked実行は必ず「1 connection → 1 ranked hanchan → `end_game` → return / disconnect」で、validation実行は「1 connection → 1 validation game → `validation_result` → return / disconnect」で終了します。`run_ranked_game()` / `run_validation()` 自体はこのone-game contractを維持し、multiple-game化やretry/reconnect semanticsを持ちません。
-
-## RiichiLab ranked resilient / continuous participation
-
-`run_ranked_game()`をone-game primitiveのまま維持しつつ、その上位layerとしてresilient / continuous ranked runner(`lisjong_arena.riichilab.continuous_ranked`、Issue #47)をArenaへ追加しています。
-
-```powershell
 python -m lisjong_arena.riichilab.continuous_ranked --profile lisjong-dev
 ```
 
-profile / credential / trace pathはprocess開始時に一度だけresolveし、各gameは`profile.policy_factory()`から生成したfresh Policy instanceで新しい`run_ranked_game()` invocation(= 新しいWebSocket connection)として実行します。同一game内でのresume・同一Policy instanceのcross-game再利用は行いません。
+詳細は[RiichiLab client runtime contract](docs/riichilab-client.md)と
+[RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)を参照してください。
 
-retry対象は`TransportError`階層(`UnexpectedDisconnectError`を含む)だけで、`ProtocolError` / `ProtocolTraceError` / profile・credential failure / Policy・Adapter例外等はcatch-allせずそのまま伝播してfail closedします。backoffは`5s -> 10s -> 20s -> 40s -> 60s cap`のbounded backoffで、連続5 failureに到達すると追加requeueを停止します(成功でconsecutive failure countは0へreset)。Ctrl-C等による停止要求後は新しいgameへrequeueしません。`run_continuous_ranked()`自体は`asyncio.CancelledError`をcatchせず標準のasyncio cancellation semanticsのままpropagateさせ、Ctrl-Cを正常終了として扱うUXは`asyncio.run()`が`KeyboardInterrupt`を再送出する`_run_cli()`のboundaryだけが担います。現在の`websockets==17.0.1`のdefault keepalive/ping-pongをそのまま利用し、concreteなliveness gapが確認されない限り独自heartbeatは追加しません。protocol traceは既存`JsonlProtocolTraceWriter`のappend semanticsをそのまま利用し、trace schema自体は変更しません。
+### First-party `lisjong-engine`
 
-## First-party lisjong-engine execution
-
-Issue #53で、first-party `lisjong-engine`上でlisjong Policyを実行するArena-owned bridge(`lisjong_arena.lisjong_engine`)を追加しました。RiichiEnv execution pathと並ぶ2本目のconcrete execution pathであり、両者を共通のbackend abstractionへは統合していません。
-
-```text
-                  lisjong-arena
-                 /             \
-                v               v
-            lisjong        lisjong-engine
-         Policy contract      execution
-```
-
-1 decisionは次の経路で解決します。
+Arena-owned bridgeを介してfirst-party `lisjong-engine`上でもlisjong Policyを実行できます。
+engineのgame progressionやrule semanticsをArenaへ複製しません。
 
 ```text
-lisjong-engine
-    |
-    | SeatObservation
-    | ActionDescriptor[]
-    v
-Arena first-party bridge
-    |
-    v
-lisjong DecisionContext
-    |
-    v
-Policy / execute_policy()
-    |
-    v
-InternalAction
-    |
-    v
-Arena decision-local mapping
-    |
-    v
-original ActionDescriptor
-    |
-    v
-lisjong-engine
+lisjong-arena
+   |---> lisjong Policy
+   `---> lisjong-engine execution
 ```
 
-4席へPolicyを割り当てて、fixed seedの半荘を1回実行します。
+## Policy evaluation
 
-```python
-from lisjong.policies.minimal import MinimalPolicy
-from lisjong_engine.seat import Seat
+### AABB / ABBB
 
-from lisjong_arena.lisjong_engine import run_policy_hanchan
+Arenaは、controlled / reproducibleなPolicy comparisonのためにAABBとABBBのprotocolを
+提供します。seed、seat rotation、Policy lifecycle、artifact / provenanceをexplicitに扱い、
+partial successをsuccessful evaluationとして返しません。
 
-completed = run_policy_hanchan(
-    {seat: MinimalPolicy() for seat in Seat},
-    seed=20260824,
-)
-
-for player in completed.final_score.players:
-    print(player.rank, player.seat, player.score, player.final_points)
-```
-
-`run_policy_hanchan()` は `MatchState(seed, rules)` を作り、Policy selectorを構成して `lisjong_engine.driver.run_hanchan()` を呼ぶだけの薄いcompositionです。engineのgame progressionをArenaへ複製せず、`CompletedMatch` を別のArena resultへコピーもしません。seat rotation、seed suite、metrics等のevaluation semanticsはここに含みません。
-
-Policyだけをengine selectorとして使う場合は `build_seat_selectors()` を利用します。
-
-```python
-from lisjong_engine.driver import run_hanchan
-from lisjong_engine.match_state import MatchState
-
-from lisjong_arena.lisjong_engine import build_seat_selectors
-
-selectors = build_seat_selectors({seat: MinimalPolicy() for seat in Seat})
-completed = run_hanchan(MatchState(seed=20260824), selectors)
-```
-
-### first-party engineではhistory materializerを使わない
-
-`lisjong-engine` の `SeatObservation` は、`drawn_tile`、round-global discard order、`PublicMeld.called_tile`、riichi `NONE` / `PENDING` / `ESTABLISHED` を含むplayer-safe snapshotです(lisjong-engine Issue #38)。そのため、RiichiEnv Adapterの `SeatMaterializedState` に相当するconsumer-side materialized historyをこのpathへ導入せず、`SeatObservation` から直接 `PolicyInput` を構築します。
-
-`Observation.new_events()` materialization、synthetic decision identity、physical action aggregation、last discardからのreaction target再構築、chankan drawn_tile補正といったRiichiEnv固有のworkaroundも持ち込みません。そのdecisionの `SeatObservation` と `ActionDescriptor[]` をsource of truthとします。
-
-### 明示的なdomain conversion
-
-engine enum valueとlisjong値の偶然の一致には依存せず、対応表で固定します。
-
-```text
-Engine EAST / SOUTH / WEST / NORTH
-    -> lisjong SEAT_0 / SEAT_1 / SEAT_2 / SEAT_3
-
-Engine riichi NONE / PENDING / ESTABLISHED
-    -> lisjong NONE / DECLARED / ACCEPTED
-```
-
-`PENDING -> DECLARED` は名称一致ではなくsemantic conversionです。
-
-立直はengine側で「立直の選択」と「宣言牌の打牌」の2つの独立decisionに分かれているため(lisjong-engine Issue #36)、Arenaが宣言牌を選び直すことはありません。
-
-### Kakan provenance
-
-`KakanActionDescriptor` はadded tileだけを公開しますが、`lisjong.KakanAction` は `from_seat` / `called_tile` を要求します。この差は、自席の現在のmeld snapshotから**tile type**で元Ponを解決して埋めます。added tileが赤5で元Ponのcalled tileが通常5であっても同じPonの加槓であり得るため、赤牌identityでは照合しません。`KakanAction.called_tile` へは元Pon自身のactual called tileを渡し、red/non-red semanticを維持します。source meld ID、physical tile ID、Python object identityは使用しません。
-
-### Fail closed
-
-first-party engine bridgeは、次の場合に推測・fallbackをせず実行を停止します(`lisjong_arena.lisjong_engine.errors`)。
-
-- 未知のengine enum / descriptor variant (`UnsupportedEngineValueError`)
-- `SeatObservation` をprojectionできない (`ObservationProjectionError`)
-- Kakanの元Ponが0件または2件以上 (`KakanProvenanceError`)
-- 複数descriptorが同じ `InternalAction` へcollapse (`AmbiguousActionMappingError`)
-- canonical `InternalAction` を元descriptorへ戻せない (`UnmappedActionError`)
-- observation viewer seat / mapping actor / legal action actorの不整合 (`SeatIdentityError`)
-
-Policy呼び出しはlisjong-owned `execute_policy()` だけを使い、Arena側でのfallback、automatic action substitution、retryは行いません。Policy例外と `PolicyActionValidationError` はそのまま伝播します。
-
-descriptorと `InternalAction` の対応は1 seat・1 decisionに閉じます。selectorは呼び出しごとにmappingを構築して破棄し、process-global / match-global / Policy-globalなmappingを持ちません。
-
-actorはcaller引数として受け取らず、常に `observation.viewer_seat` から導出します。`EngineActionMapping` を直接構築した場合も、全candidateのactorが `self_seat` と一致することを生成時に検証します。
-
-## Learned Policy experiment-local input schema
-
-最初のfeed-forward Learned Policy実験向けに、current `PolicyInput`だけを入力とする
-Arena-ownedのversioned feature / tensor schemaを提供します。
-
-```python
-from lisjong_arena.learned_policy_input import (
-    build_policy_input_feature,
-    tensor_values,
-)
-
-feature = build_policy_input_feature(policy_input)
-values = tensor_values(feature)
-assert len(values) == 8204
-```
-
-`arena-policy-input-feature-v1`はseatをself-relativeへrotateし、赤牌を保持する37-tile axis、
-ordered discard / dora / meld slots、explicit presence / paddingを使います。純Python pathはtorchを
-importせず、ML extraがある場合だけlazyな`to_tensor()`で`torch.float32`へ変換できます。
-
-この表現はexperiment-localであり、lisjongの`PolicyInput` contractやcanonical production schemaへ
-昇格したものではありません。legal actions / action vocabulary mask、model、training、teacher data、
-artifact、action selectionも含みません。exact 8204-index layout、normalization、bounds、fingerprint、
-fail-closed条件は[Learned Policy input schema](docs/learned-policy-input-schema.md)を参照してください。
-
-### Learned Policy Stage 2 vertical slice
-
-`lisjong_arena.learned_policy_stage2`は、この feature schema と `lisjong` の 802-action
-vocabulary を初めて接続する bounded な behavior-cloning experiment です。first-party teacher
-(`yakuhai-call` x4 / `4p-red-half` / seeds `200..215`) の実 decision から versioned dataset を
-生成し、固定した 1x128 MLP を masked cross-entropy で学習し、frozen checkpoint を TEST で
-1 回だけ評価します。
-
-```bash
-python -m lisjong_arena.learned_policy_stage2 generate --dataset DIR --report FILE
-python -m lisjong_arena.learned_policy_stage2 train    --dataset DIR --checkpoint DIR
-python -m lisjong_arena.learned_policy_stage2 test     --dataset DIR --checkpoint DIR --result FILE
-```
-
-生成した dataset / weights / result artifact は Git へ commit しません。locked protocol、
-dataset contract と hard invariants、metrics、safety checks、decision rule は
-[Learned Policy Stage 2](docs/learned-policy-stage2.md)を参照してください。これは
-experiment-local harness であり、production Learned Policy や serving Policy adapter では
-ありません。
-
-## 最小comparison protocol
-
-### Matchup と PolicySpec
-
-比較対象はPolicy instanceではなく、明示的なidentityとfactoryの組（`PolicySpec`）として指定します。
-
-identityはclass名から暗黙導出しません。将来 `ukeire-v1` / `ukeire-v2` / `model-a` のように、同じclassでも設定違い・model違いを別の比較対象として区別できる余地を残すためです。A/Bのidentityが同じ場合は集計先を区別できなくなるため拒否します。
-
-### Policy lifecycle
-
-Policy instanceは**各game・各seatごとにfactoryから新規生成**し、seat間・game間で共有しません。1 gameのassignmentが `[A, A, B, B]` なら、`A` のfactoryも `B` のfactoryもその1 gameのためにそれぞれ2回呼ばれます。
-
-Policy contractは意思決定へ影響するhidden mutable stateを禁止する一方、cacheやmetricsのような状態保持自体は許容するため、lifecycleをArena側で明示的に分離します。
-
-### Fixed seed と seat rotation
-
-seedは明示的なordered collectionとして与えます。入力順序もcomparison protocolの一部として決定的に扱います。
-
-各seedについて、base assignment `[A, A, B, B]` を4回巡回させます。
-
-```text
-rotation 0: [A, A, B, B]
-rotation 1: [B, A, A, B]
-rotation 2: [B, B, A, A]
-rotation 3: [A, B, B, A]
-```
-
-実行順序は `seed入力順 -> rotation 0..3 -> Seat 0..3` で決定的です。seed数をNとすると次のようになります。
-
-```text
-total games                = 4N
-各Policyの参加game数        = 4N
-各Policyのseat-result数     = 8N
-各Policyの各seat担当回数    = 2N
-```
-
-同じseedを使うのは再現性と条件管理のためであり、異なるPolicy assignment間で同一のgame trajectoryになることまでは仮定しません。
-
-### Raw result
-
-raw comparison resultはseat単位のflatな不変record（`SeatResult`）の列です。
-
-```text
-seed / rotation / game_mode / seat / policy_identity / score / rank
-```
-
-この列の順序自体も `seed -> rotation -> seat` で安定する決定的な契約です。`LocalGameResult.steps` / `decisions` は最小comparisonに不要なのでschemaへ含めていません。必要になった時点で拡張します。
-
-### Basic metrics
-
-Policy identityごとに `PolicyMetrics` を集計します。
-
-| field | 意味 | 母数 |
-| --- | --- | --- |
-| `game_count` | そのPolicyが参加したgame数（1 gameで2 seat担当しても1） | game |
-| `seat_result_count` | そのPolicyが担当したseat結果数 | seat result |
-| `average_rank` | 平均順位 | seat result |
-| `average_score` | 平均得点 | seat result |
-| `first_count` 〜 `fourth_count` | 1位〜4位の回数 | seat result |
-
-### Fail closed
-
-comparison中に1 gameでも失敗した場合、成功したgameだけの `ComparisonResult` は返しません。Policy factory failure、Policy execution failure、Adapter failure、single-game execution failure、結果の不整合はいずれも `ComparisonExecutionError` としてcomparison全体を失敗させます。例外は失敗した `seed` と `rotation` を保持し、元例外を `raise ... from` で連結します。失敗gameをskipするfallbackは導入しません。
-
-## AABB comparison protocolの使い方
-
-```python
-from lisjong.policies import MinimalPolicy, ShantenPolicy
-
-from lisjong_arena import ComparisonPlan, PolicySpec, run_comparison
-
-plan = ComparisonPlan(
-    policy_a=PolicySpec(identity="minimal", factory=MinimalPolicy),
-    policy_b=PolicySpec(identity="shanten", factory=ShantenPolicy),
-    seeds=(12345, 23456, 34567),
-)
-
-result = run_comparison(plan)
-
-for metrics in (result.metrics_a, result.metrics_b):
-    print(
-        metrics.policy_identity,
-        metrics.game_count,
-        metrics.seat_result_count,
-        metrics.average_rank,
-        metrics.average_score,
-        (
-            metrics.first_count,
-            metrics.second_count,
-            metrics.third_count,
-            metrics.fourth_count,
-        ),
-    )
-
-for seat_result in result.seat_results:
-    print(
-        seat_result.seed,
-        seat_result.rotation,
-        seat_result.seat,
-        seat_result.policy_identity,
-        seat_result.score,
-        seat_result.rank,
-    )
-```
-
-`game_mode` は既定で `"4p-red-half"`、`max_steps` は既定で `10_000` です。
-
-`lisjong` の `UkeirePolicy` も同じ形で比較対象にできます。
-
-```python
-from lisjong.policies import ShantenPolicy, UkeirePolicy
-
-plan = ComparisonPlan(
-    policy_a=PolicySpec(identity="shanten", factory=ShantenPolicy),
-    policy_b=PolicySpec(identity="ukeire", factory=UkeirePolicy),
-    seeds=(12345,),
-)
-```
-
-`UkeirePolicy` はdiscard候補ごとに多数の向聴数計算を行うため1局あたりの実行時間が大きく、CIのintegration testには含めていません。
-
-## ABBB single-round evaluation protocol
-
-`lisjong-arena` はA/B対等comparisonだけでなく、candidate Policy 1体を固定baseline Policy 3体へ投入し、fixed seedの最初の1局だけを評価する **ABBB single-round evaluation** protocolも持ちます。既存AABB comparisonの`ComparisonPlan` / `ComparisonResult` はA/B対等比較を意味する契約なので、ABBBはそこへoption追加せず、独立した `SingleRoundEvaluationPlan` / `SingleRoundEvaluationResult` として実装しています。
-
-### ABBB rotation
-
-各fixed seedについて、candidate `A` と固定baseline `B` を次の4通りへrotationします。
-
-```text
-rotation 0: [A, B, B, B]
-rotation 1: [B, A, B, B]
-rotation 2: [B, B, A, B]
-rotation 3: [B, B, B, A]
-```
-
-- 実行順序は `seed入力順 -> rotation 0..3` で決定的です
-- seed数をNとすると、total gamesは `4N` です
-- candidateは各seatをちょうどN回ずつ担当します
-- Policy instanceは既存AABBと同様、各game・各seatごとにfactoryからfreshに生成し、baseline 3seat間でもinstanceを共有しません
-
-### `4p-red-single` invariant
-
-ABBB single-round evaluationのgame modeは常に `4p-red-single` です。これは既存AABB `ComparisonPlan.game_mode` のようなcaller-configurableなoptionやdefault値ではなく、このprotocol自身のinvariantとして固定されています。`SingleRoundEvaluationPlan` は `game_mode` fieldを持たず、呼び出し側が別のgame modeへ切り替えることはできません。
-
-### ABBB raw result
-
-raw resultはgame単位の不変record（`SingleRoundGameResult`）の列です。
-
-```text
-seed / rotation / game_mode / candidate_seat / scores（4 seat分のfinal score）
-```
-
-candidate scoreだけへ縮約せず、4 seat分の `scores` を正本として保持します。candidate scoreは `scores[candidate_seat]` から導出します（`SingleRoundGameResult.candidate_score`）。rankはこのprotocolのprimary contractではないため保持しません。
-
-### ABBB metrics
-
-`SingleRoundCandidateMetrics` として次を集計します。
-
-- `mean_candidate_score`: 全 seed × 4 rotationのcandidate final score平均
-- `seat_mean_scores`: candidateがSeat 0〜3それぞれを担当した時のfinal score平均
-
-開始score `25000` をArena側でhard-codeしたpoint deltaは使いません。和了率・放銃率・聴牌率・順位率・composite reward等はこのprotocolのscope外です。
-
-### ABBB fail closed
-
-既存comparisonと同様、1 gameでも失敗した場合は成功したgameだけの `SingleRoundEvaluationResult` を返さず、`SingleRoundEvaluationError` として評価全体を失敗させます。例外は失敗した `seed` と `rotation` を保持します。
-
-`SingleRoundEvaluationResult` はconstruction時点でも、`game_results` の件数が `4N` であること、`seed入力順 -> rotation 0..3` の順序、各recordの `candidate_seat` がrotationと一致すること、`game_mode` が `4p-red-single` であること、`candidate_metrics.candidate_identity` / `game_count` が `plan` と一致することをfail closedで検証します。
-
-### 使用例
-
-```python
-from lisjong.policies import MinimalPolicy, ShantenPolicy
-
-from lisjong_arena import (
-    PolicySpec,
-    SingleRoundEvaluationPlan,
-    run_single_round_evaluation,
-)
-
-plan = SingleRoundEvaluationPlan(
-    candidate=PolicySpec(identity="minimal", factory=MinimalPolicy),
-    baseline=PolicySpec(identity="shanten", factory=ShantenPolicy),
-    seeds=(12345,),
-)
-
-result = run_single_round_evaluation(plan)
-
-print(
-    result.candidate_metrics.candidate_identity,
-    result.candidate_metrics.game_count,
-    result.candidate_metrics.mean_candidate_score,
-    result.candidate_metrics.seat_mean_scores,
-)
-
-for game_result in result.game_results:
-    print(
-        game_result.seed,
-        game_result.rotation,
-        game_result.candidate_seat,
-        game_result.scores,
-        game_result.candidate_score,
-    )
-```
-
-`max_steps` は既定で `10_000` です。
-
-## Local process parallel evaluation
-
-既存の `run_comparison()` / `run_single_round_evaluation()` は引き続きserial APIです。これらの実行順序、戻り値、failure semantics、および一般のcallableを許容する `PolicySpec.factory` contractは変更していません。local CPU coreを使う場合は、同じ `ComparisonResult` / `SingleRoundEvaluationResult` を返す別entry pointを明示的に選択します。
-
-```text
-run_comparison_parallel(plan, max_workers=...)
-run_single_round_evaluation_parallel(plan, max_workers=...)
-```
-
-parallelization unitは `(seed, rotation)` の1 gameです。Python標準libraryのprocess poolを明示的な `spawn` contextで起動し、各workerが既存のArena-local `LocalGameRunner`を実行します。`max_workers` はcallerが指定するpositive integerで、worker数はresultやevaluation protocolの意味には含まれません。CPU数に応じた自動調整は行いません。
-
-parent processはPolicy instanceを生成しません。各workerが各game・各seatについて `PolicySpec.factory()` を呼び、fresh instanceを生成します。このためparallel APIで使うfactoryはspawn workerから利用できるimport可能なtop-level callableである必要があります。lambdaやlocal closure等のprocess間でserializeできないfactoryは、parallel実行前に `PolicyFactoryNotSerializableError` でfail closedし、serial実行へfallbackしません。この追加制約はparallel APIだけのものであり、serial APIは従来どおり一般のcallableを受け付けます。
-
-workerの完了順はraw result orderに使いません。AABBは `seed入力順 -> rotation 0..3 -> seat 0..3`、ABBBは `seed入力順 -> rotation 0..3` へ再構築してから既存validation / aggregationを再利用します。したがって同一条件ではserial / parallelおよび異なるworker数でraw resultとmetricsが一致します。1 jobでもPolicy factory、game execution、result validation、serialization、spawn、またはworker process failureが発生すれば評価全体を失敗させ、成功分だけのpartial resultは返しません。
-
-Windowsを含むspawn環境では、parallel APIを呼ぶscriptにmain guardを置いてください。
-
-```python
-from lisjong.policies import MinimalPolicy, ShantenPolicy
-
-from lisjong_arena import (
-    ComparisonPlan,
-    PolicySpec,
-    run_comparison_parallel,
-)
-
-
-def main() -> None:
-    plan = ComparisonPlan(
-        policy_a=PolicySpec(identity="minimal", factory=MinimalPolicy),
-        policy_b=PolicySpec(identity="shanten", factory=ShantenPolicy),
-        seeds=(12345, 23456, 34567),
-    )
-    result = run_comparison_parallel(plan, max_workers=4)
-    print(result.metrics_a, result.metrics_b)
-
-
-if __name__ == "__main__":
-    main()
-```
-
-ABBBでは、既存の `SingleRoundEvaluationPlan` を `run_single_round_evaluation_parallel(plan, max_workers=4)` へ渡します。benchmark結果はmachine、CPU、Policy workload、seed set等に依存するため、特定のspeedup倍率をCIのpass/fail条件にはしません。
-
-## `single_round_compare` CLI
-
-curated aliasまたは明示的なimport referenceでPolicyを選び、既存ABBB single-round評価(`SingleRoundEvaluationPlan` / `run_single_round_evaluation()` / `run_single_round_evaluation_parallel()`)を1コマンドで実行できる薄いdeveloper-facing CLIです(Issues #56 / #120)。新しいevaluation engineではなく、既存evaluation semanticsをそのまま呼び出すだけの層です。
-
-### Stable catalog alias
-
-通常のreproducible evaluationでは、Arenaがstable / curatedな名前として管理するcatalog aliasを使います。
+開発用single-round比較:
 
 ```powershell
 python -m lisjong_arena.single_round_compare `
@@ -649,640 +299,48 @@ python -m lisjong_arena.single_round_compare `
   --progress
 ```
 
-利用可能なPolicy名は次の6つです(`lisjong_arena.policy_catalog.POLICY_CATALOG`)。
-
-```text
-two-step          -> TwoStepUkeirePolicy
-finite-horizon    -> FiniteHorizonCompletionPolicy
-combined          -> GenbutsuDefenseFiniteHorizonValueAwarePolicy
-hand-value-aware  -> HandValueAwareTwoStepUkeirePolicy
-extended-combined -> GenbutsuDefenseFiniteHorizonHandValueAwarePolicy
-yakuhai-call      -> YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy
-```
-
-current CombinedとExtended Combinedを比較する場合は、freshな100-seed rangeを指定して次の形でGate 1を実行します。seed選定とGate 2の詳細は[`docs/extended-combined-evaluation.md`](docs/extended-combined-evaluation.md)を参照してください。
-
-```powershell
-python -m lisjong_arena.single_round_compare `
-  --candidate extended-combined `
-  --baseline combined `
-  --seeds START:END `
-  --workers 4 `
-  --progress
-```
-
-### Explicit import reference
-
-research / development中のfirst-party `lisjong` Policyまたは引数なしtop-level factoryは、installed environmentからimport可能であれば、Arena sourceや`POLICY_CATALOG`を変更せずに`package.module:attribute`形式で指定できます。explicit referenceではsemantic identityをclass名やmodule名から暗黙生成しないため、対応する`--candidate-id` / `--baseline-id`が必須です。
+first-party research Policyは、installed environmentからimport可能なら
+`package.module:attribute`形式のexplicit import referenceでも指定できます。
 
 ```powershell
 python -m lisjong_arena.single_round_compare `
   --candidate lisjong.policies.some_new_policy:SomeNewPolicy `
   --candidate-id some-new-policy-experiment `
-  --baseline combined `
-  --seeds 0:99 `
-  --workers 4 `
-  --progress
-```
-
-baseline側も同じresolverを使います。
-
-```powershell
-python -m lisjong_arena.single_round_compare `
-  --candidate combined `
-  --baseline lisjong.policies.some_baseline:make_policy `
-  --baseline-id experimental-baseline `
+  --baseline yakuhai-call `
   --seeds 0:99
 ```
 
-explicit referenceで利用できることは、Arenaのcurated catalogへ正式登録されていることを意味しません。stable aliasは引き続き上記6件だけを`POLICY_CATALOG`で管理します。また、explicit identityに既存catalog aliasや`mortal`は使えず、candidate / baselineのidentityも同一にはできません。
+explicit importできることはcurated catalogへのpromotionを意味しません。
 
-Arenaの正式な`lisjong` dependencyはexact commitへpinされています。pin更新前のlocal checkoutを試す場合は、Arenaと同じenvironmentへそのcheckoutをeditable installし、reference先をimport可能にしてください。これはArena sourceへのcatalog登録とは独立したdevelopment操作です。
+Policy strength comparisonの恒久的な規律は
+[Policy strength evaluation policy](docs/policy-strength-evaluation.md)を正本とします。
 
-```powershell
-python -m pip install -e C:\Dev\lisjong
-```
+### External competitor
 
-support対象はspawn workerから再importできるmodule-level class / factoryです。lambda、local closure、interactive-only callable、constructor kwargs / model configのserializationは対象外です。explicit referenceはfilesystem discovery、entry point plugin、YAML/TOML experiment configを導入せず、指定されたfirst-party `lisjong` attributeだけをfail closedで解決します。
+Mortal等のexternal competitorはArena evaluationがorchestrateできます。
+external model / image / protocol semanticsをlisjong Policy contractへ取り込みません。
 
-- `--candidate` / `--baseline`: catalog aliasまたはexplicit `package.module:attribute` referenceを受け付けます。唯一のPolicy外candidateとして`--candidate mortal`が後述の専用mixed経路を選びます。Mortalをbaselineには指定できません。unknown alias、invalid syntax、module / attribute不在、non-callable attributeは別Policyへfallbackせずfail closedします
-- `--candidate-id` / `--baseline-id`: 対応するreferenceがexplicitな場合に必須のsemantic identityです。catalog aliasではcatalog自身のidentityを使うため指定できません
-- `--seeds N`: 単一seed(例: `--seeds 42` -> `(42,)`)
-- `--seeds START:END`: **inclusive** range(例: `--seeds 0:99` -> `0..99`の100 seeds)。comma listや複数rangeは未対応です
-- `--workers N`: positive int、既定値`1`。`workers=1`は既存`run_single_round_evaluation()`(serial)、`workers>1`は既存`run_single_round_evaluation_parallel()`(local process parallel)へそのまま委譲します
-- `--artifact-out PATH`: opt-inのartifact保存先。成功したevaluationを後から再集計できるversion付きJSON artifactとして保存します(後述の[ABBB strength evaluation artifact](#abbb-strength-evaluation-artifact))。既定では保存しません
+## Artifact discipline
 
-evaluation protocol(ABBB rotation、`4p-red-single`固定、Policy lifecycle、raw result canonicalization、candidate metrics aggregation、fail-closed semantics)はこのCLIから変更できません。`--protocol` / `--game-mode` / `--rotation-count`のようなoptionはありません。
+Arenaのexperiment / evaluation artifactは、目的ごとにversioned / immutable / fail-closedな
+contractを持たせます。
 
-### Mortal candidate
+原則:
 
-Issue #67で追加したMortal専用mixed single-round経路は、Mortalをcandidate、`POLICY_CATALOG`から選択した同一baseline Policy 3体として実行します。Mortalはlisjong `Policy`でも`PolicySpec`でもないため、`POLICY_CATALOG`には登録しません。`--candidate mortal`だけがこの専用経路を選び、Mortalをbaselineには指定できません。Mortal evaluationは引き続き`--workers 1`だけを受け付けます。
+- raw measurement / corpusをsource of truthにする
+- derived summaryは再計算可能にする
+- unknown schema / protocolを推測して受理しない
+- exact provenanceを確認できない場合は捏造しない
+- resultを見てseed / threshold / rescue runを暗黙追加しない
+- test fixture以外のlarge artifactをrepositoryへ常設commitしない
+- secret / credential / machine-local identityをartifactへ入れない
 
-Mortal upstreamのDocker imageはmodelを含みません。評価前に、使用するMortal revisionからimageをbuildし、model file `mortal.pth`を別途用意してください。Arenaはimageやmodelを自動downloadせず、Dockerにも`--pull=never`を渡します。
-
-```powershell
-python -m lisjong_arena.single_round_compare `
-  --candidate mortal `
-  --baseline yakuhai-call `
-  --seeds 0:99 `
-  --workers 1 `
-  --mortal-image mortal@sha256:<image-digest> `
-  --mortal-revision <Mortal-commit-or-version> `
-  --mortal-model C:\models\mortal.pth
-```
-
-`--mortal-model`はupstream Docker imageが`/mnt/mortal.pth`として読む単一fileを指定します。Arenaはその親directoryをread-only mountし、model SHA256を実行前に計算します。summaryにはDocker executable、image identity、Mortal implementation revision/version、解決済みmodel path、model SHA256、action response timeoutを表示します。
-
-各gameではMortal Docker processをfresh起動し、RiichiEnv `Observation.new_events()`の全batchをstdinへ送ってflushした後、そのdecisionに必要な1 action responseだけを有限時間待ちます。responseは`Observation.select_action_from_mjai()`でRiichiEnv actionへ解決し、malformed / illegal response、launch failure、unexpected termination、timeout、RiichiEnv failureのいずれでもbaseline Policyへfallbackしません。成功・失敗を問わずprocess/containerをcleanupし、1 gameでも失敗した場合は4 rotationのpartial resultを返しません。
-
-### Mortal same-state decision diagnostic
-
-Issue #118の専用CLIは、Mortal mixed executionをdriverとして維持したまま、Mortalが
-実際に判断したseat-relative `Observation`へselected lisjong Policyをshadow実行する
-**strong referenceとのsame-state diagnostic**です。strength benchmarkとは別measurementであり、
-Mortalはground truthではありません。disagreementもerrorやlisjong Policyの不正解を意味しません。
-
-```powershell
-python -m lisjong_arena.mortal_decision_compare `
-  --policy combined `
-  --seeds 0:3 `
-  --mortal-image mortal@sha256:<image-digest> `
-  --mortal-revision <Mortal-commit-or-version> `
-  --mortal-model C:\models\mortal.pth
-```
-
-`--policy`はcatalog aliasまたはexplicit `lisjong.package:attribute` referenceを受け付け、
-explicit referenceでは`--policy-id`も必須です。各gameで同じfactoryからactual opponent
-3席とMortal席専用shadowを別々に生成し、Policy instance、`SeatMaterializedState`、
-`RiichiEnvActionMappingSession`を共有しません。
-
-Mortal seatでは`Observation.new_events()`を1回だけ取得し、その同じevent batchと同じ
-`Observation` objectをMortal runtimeと`build_decision()`へ渡します。Mortal responseから
-解決したActionだけを`env.step()`へ渡し、shadow actionはgame progressionへ一切流しません。
-双方のActionは同じObservation上のlegal RiichiEnv Actionとして再検証し、physical tile copyや
-consume順等のrepresentation差を除いたpurpose-specific semantic valueで比較します。
-malformed / illegal Mortal responseやshadow mapping failureはdisagreementへ丸めずfail closedします。
-
-成功resultはtyped `PolicyInput` / `DecisionTrace`を含むimmutable paired recordsをin-memoryで
-保持し、total / agreements / disagreements / agreement rate、Mortal kind / shadow kind pair、
-all / first N / kind-filtered disagreementを取得できます。目的はdisagreement分布を観測し、
-次のrule-based / ML強化テーマを実証的に選ぶことです。
-
-後続のoffline analysisのため、`--artifact-dir`を明示指定した場合だけpaired decisionsを
-local artifactへexportできます(後述の[Mortal decision analysis artifact](#mortal-decision-analysis-artifact))。
-未指定時の挙動は従来どおりで、summaryをstdoutへ出すだけでfileを一切生成しません。
-canonical GameRecord、generic persistence、database、dashboardは持ちません。
-
-成功時は次の形式でsummaryをstdoutへ表示します。
-
-```text
-Policy comparison completed
-
-protocol:   ABBB / 4p-red-single
-candidate:  finite-horizon
-baseline:   two-step
-seeds:      0..99 (100)
-games:      400
-workers:    4
-
-candidate mean score: 25123.5
-baseline mean score:  24958.8
-mean delta:            +164.7
-
-candidate seat means:
-  seat 0: 25110.0
-  seat 1: 24890.0
-  seat 2: 25412.0
-  seat 3: 25082.0
-
-seed-block statistics:
-
-  seed blocks:                         100
-  mean delta:                       +164.7
-  standard deviation:               1800.0
-  standard error:                    180.0
-  normal-approx 95% interval:     [-188.1, +517.5]
-
-  positive seed blocks:                 53
-  zero seed blocks:                      2
-  negative seed blocks:                 45
-```
-
-`baseline mean score`は各gameのcandidate以外3 seatのfinal scoreすべての平均です。`mean delta`は各gameの`candidate score - そのgameのbaseline 3 seat平均`をgame平均したdescriptive metricで、整数スケールの共通evaluation helperから導出します。
-
-`seed-block statistics`は同一seedの4 rotationsを1 sampling blockとして集約します。sample standard deviationはseed-block deltaに対する`n - 1` denominator、standard errorは`SD / sqrt(seed blocks)`、`normal-approx 95% interval`は`mean ± 1.96 * SE`です。1 seedだけの場合、meanとpositive / zero / negative countは表示し、SD・SE・intervalは`N/A`になります。これはdescriptive uncertainty summaryであり、statistical significanceやPolicyの自動勝敗判定は行いません。既存`SingleRoundEvaluationResult` schemaは変更せず、Policy candidateとMortal candidateのどちらも同じraw `game_results`から共通semanticで導出します。
-
-1 gameでも失敗した場合は既存evaluationのfail-closed挙動(partial summaryを返さずcomparison全体を失敗させる)がそのまま伝わり、CLIはsuccess summaryを出さずnon-zero exitで終了します。
-
-結果のpersistenceは`--artifact-out`を明示指定した場合だけ行います。指定がなければ従来どおりstdout表示だけで、fileは一切生成しません。`--artifact-out`を指定してもevaluation semantics(選択されるaction、raw game result、summary)は変わらず、保存はevaluation成功後の後段処理として実行します。
-
-## `policy_performance_profile` CLI(opt-in performance profiling)
-
-`FiniteHorizon` / `Combined`系Policyの次の高速化対象をprofile-drivenに判断するための、first-party lisjong Policy用のopt-in development diagnosticです(Issue #87)。既存ABBB single-round evaluation substrate(`SingleRoundEvaluationPlan` / `run_single_round_evaluation()`)をそのまま再利用し、新しいevaluation protocolや比較semanticsは追加しません。**performance profile自体はcanonical evaluation result / trace ではなく、opt-inのdevelopment diagnosticです。**
-
-対象は`POLICY_CATALOG`に登録されたfirst-party lisjong Policyだけです。Mortal等のexternal process Policyは初期scope外であり、`--candidate` / `--baseline`のchoicesにも含まれません。
-
-```bash
-python -m lisjong_arena.policy_performance_profile \
-  --candidate finite-horizon \
-  --baseline two-step \
-  --seeds 0:24 \
-  --mode timing
-
-python -m lisjong_arena.policy_performance_profile \
-  --candidate combined \
-  --baseline two-step \
-  --seeds 0:24 \
-  --mode profile
-```
-
-### timing modeとprofile modeの分離
-
-`--mode timing`と`--mode profile`は排他であり、1回の実行はどちらか一方だけを計測します。
-
-- **timing mode**: unprofiled wall-clock performance measurementの正本です。candidateの`choose_action()`呼び出し境界だけを`time.perf_counter_ns()`相当のmonotonic clockで計測し、decision count / total time / mean / p50 / p95 / max / decisions-per-secondと、evaluation全体のelapsed time / games-per-secondを表示します。percentileは`ceil(percentile / 100 * n)`を1-based rankとするnearest-rank法で決定的に定義しています。
-- **profile mode**: instrumented hotspot discovery専用です。標準library `cProfile` / `pstats`でcandidateの`choose_action()`呼び出し内のfunction call count / self time / cumulative timeを観測し、self time降順のtop N(既定25、`--top`で変更可)を表示します。ここで得たelapsed timeは、instrumentation overheadを含むため**absolute latencyやbefore/after speedupのperformance claimには使用しません**(そのためのtiming modeが別途あります)。`module`はfirst-party package(`lisjong` / `lisjong_arena` / `lisjong_engine` / `riichienv`)配下のfunctionを見つけやすくするためのbest-effort hintであり、特定のfunction名をstable public schemaとして固定するものではありません。
-
-どちらのmodeも、ABBB rotation中のcandidate Policy invocationだけを計測対象とします。candidateの`PolicySpec.factory`だけを計測用にwrapし(identityは変更しません)、baseline側のPolicyや既存のPolicy instance lifecycle(seat間・game間で共有しない、各game・各seatごとにfactoryから新規生成する)は変更しません。計測のためにPolicy decisionを追加実行することはなく、実際に発生する1回の`choose_action()`呼び出しをその場で計測するだけです。Policy例外はこのinstrumentation layerが握り潰さず、既存の`SingleRoundEvaluationError`へそのまま伝播します。
-
-### serial-onlyの初期scope
-
-初期scopeでは`workers=1`のserial executionだけをperformance diagnosisの正本とします。このCLIに`--workers`optionはなく、常に既存`run_single_round_evaluation()`(serial)だけを呼びます。`run_single_round_evaluation_parallel()`は一切使わないため、worker別profile aggregationやmultiprocessing scaling profileはこのCLIのscope外です。
-
-### canonical schemaへの影響
-
-`PolicyInput` / `PolicyDecision` / `DecisionTrace` / `AnalysisTrace` / `GameTrace` / `SingleRoundEvaluationResult`等の既存canonical evaluation schemaへperformance fieldは一切追加していません。timing / profile mode計測結果(`DecisionTimingMetrics` / `ProfileFunctionStat`等)は`lisjong_arena.policy_performance`が持つ独立したArena-owned opt-in development diagnosticです。Arena側でshanten / ukeire / completion mass / Genbutsu activation semantic / ValueAware fallback semantic / DP visited-state semantic等のlisjong-owned semanticを再計算・再定義することもありません。
-
-## Comparison artifact
-
-この節のversion付きJSON artifact契約は、AABB comparison protocol（`ComparisonPlan` / `ComparisonResult`）専用です。ABBB single-round evaluation result（`SingleRoundEvaluationResult`）は意味の異なるprotocolなので、この既存schemaへoption fieldを足して統合せず、独立した契約として[ABBB strength evaluation artifact](#abbb-strength-evaluation-artifact)に実装しています（Issue #110）。両者はJSON serializationやfile書き込み等の低レベルplumbingだけを共有し、serialized schemaもloaderも別です。
-
-成功した `ComparisonResult` は、呼び出し側が明示したpathへversion付きJSON artifactとして保存できます。comparison実行自体が暗黙にfileを生成することはありません。
-
-```python
-from pathlib import Path
-
-from lisjong_arena import load_comparison_artifact, save_comparison_artifact
-
-path = Path("comparison.json")
-save_comparison_artifact(result, path)
-artifact = load_comparison_artifact(path)
-
-print(artifact.plan.policy_a_identity, artifact.plan.policy_b_identity)
-print(artifact.plan.seeds)
-print(artifact.provenance.lisjong_revision)
-print(artifact.metrics_a.average_rank)
-```
-
-`save_comparison_artifact()` は `1 comparison = 1 immutable artifact` の方針で既存fileを上書きせず、pathが存在する場合は `FileExistsError` で失敗します。JSONはUTF-8、key順序固定、2-space indent、末尾newlineで保存し、非有限floatを許可しません。
-
-### Schemaと保持情報
-
-初期schemaは `schema_version = 1`、comparison methodは独立したidentity `fixed-seed-seat-rotation-v1` として記録します。readerは未知のschema versionやcomparison protocolを現在仕様として推測せずfail closedします。
-
-artifactは次をlosslessに保持します。
-
-- Policy A/B identity、ordered seeds、`game_mode`、`max_steps`
-- `seed -> rotation -> seat` 順のraw `SeatResult`
-- Policy A/Bの `PolicyMetrics`
-- execution environment identity（現在は `riichienv`）
-- `lisjong-arena` / `lisjong` / RiichiEnv / Pythonのversion
-- VCS install metadataから確認した `lisjong` full commit ID
-
-load時はfield型だけでなく、seed・rotation・seat順、A/B assignment、各gameの順位が1〜4の順列であること、raw resultの件数、game mode、raw resultから再集計したmetricsとの一致まで検証します。truncated JSONや内部的に矛盾したrecordをdefault値で補完して受理しません。top-level / nested objectのduplicate keyもlast-winsで解釈せず拒否します。
-
-### Reproducibilityの意味と限界
-
-artifactは「どの比較条件・Policy identity・execution provenanceで何が得られたか」を監査し、対応するsourceとPolicy実装が利用可能なら同条件を再構成するためのrecordです。過去のsourceやdependency自体を埋め込むものではなく、artifactだけからPolicyを自動実行するものでもありません。
-
-実行用 `ComparisonResult` と読込用 `ComparisonArtifact` は分離されています。artifactへ `PolicySpec.factory`、Python callable、import path、dynamic codeを保存・復元しません。secret、credential、environment variable、username、hostname、home directory、absolute local path等の再現性に不要なmachine-local情報も保存しません。
-
-現在のPolicy-vs-Policy execution pathは `lisjong-arena evaluation -> lisjong_arena.riichienv.LocalGameRunner -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)` です(Issue #31、Issue #39、Issue #43)。provenance取得にはpackage metadataを使い、artifact schema / provenance contract自体はIssue #31で変更していません。Arenaはすでに`riichienv==0.4.8`をdirect dependencyとして持ち、Arena-local `LocalGameRunner`はこれをdirect importします。RiichiEnv AdapterはIssue #39で、GameTraceはIssue #43で、それぞれArena-localへcanonical physical migration済みです。GameTraceのlisjong側legacy実装は`lisbun/lisjong#102` / PR #103で削除され、Arena Issue #45でexact pin syncも完了したため、`lisjong_arena.game_trace`がsole physical implementationです。
-
-artifactを保存できることとrepositoryで管理することは別です。test fixture以外の実測artifactをrepositoryへ大量commitする運用、既定保存先、retention policy、artifact repositoryは本機能の対象外です。
-
-## ABBB strength evaluation artifact
-
-ABBB / `4p-red-single` strength evaluation(`SingleRoundEvaluationResult`)は、後から再実行せずに再集計できるversion付きimmutable JSON artifactとして保存できます(Issue #110)。目的は、Policy強化のGate判断で使う実測値の正本をGitHub Issueコメントから切り離すことです。
-
-```text
-Arena evaluation
-    -> immutable versioned artifact   <- measurement source of truth
-    -> derived aggregate / summary    <- artifactから再生成
-    -> GitHub Issue decision log      <- artifact参照 + 要約 + 解釈 + 判断
-```
-
-- **Arena evaluation artifact = measurement source of truth**
-- **GitHub Issue = artifact reference + summary + interpretation + decision**
-
-GitHub Issueはraw measurement storageではありません。raw JSONをIssueコメントへ貼り付ける運用も要求しません。
-
-### 保存と再集計
-
-```bash
-python -m lisjong_arena.single_round_compare \
-  --candidate yakuhai-call \
-  --baseline combined \
-  --seeds 20200:20449 \
-  --workers 8 \
-  --artifact-out artifacts/gate2-a.json
-
-python -m lisjong_arena.single_round_compare \
-  --candidate yakuhai-call \
-  --baseline combined \
-  --seeds 20450:20824 \
-  --workers 8 \
-  --artifact-out artifacts/gate2-b.json
-
-python -m lisjong_arena.summarize_single_round_artifacts \
-  artifacts/gate2-a.json artifacts/gate2-b.json
-```
-
-`summarize_single_round_artifacts`は、1 artifactならそのrunのsummary、compatibleな複数artifactならcumulative summaryをstdoutへ表示します。strength metricsの書式は`single_round_compare`と共有のformatting seam(`lisjong_arena.single_round_summary_format`)を使うため、同じmetricが別の式・別の書式になりません。実行時固有の表示(`workers`やprogress)はartifactに存在しないため表示しません。
-
-Python APIからも同じcontractを使えます。
-
-```python
-from pathlib import Path
-
-from lisjong_arena import (
-    load_single_round_artifact,
-    merge_single_round_artifacts,
-    save_single_round_artifact,
-)
-
-save_single_round_artifact(result, Path("artifacts/gate2-a.json"))
-
-first = load_single_round_artifact(Path("artifacts/gate2-a.json"))
-second = load_single_round_artifact(Path("artifacts/gate2-b.json"))
-cumulative = merge_single_round_artifacts([first, second])
-
-print(cumulative.plan.seeds)
-print(cumulative.summary.mean_candidate_game_delta)
-print(cumulative.summary.seed_block_statistics.standard_error)
-```
-
-### 1 run = 1 immutable artifact
-
-`save_single_round_artifact()`は既存fileを上書きせず、pathが存在する場合は`FileExistsError`で失敗します(CLIは実行前にpath存在を確認し、non-zero exitします)。serializationとvalidationはfile作成前に完了し、書き込み途中で失敗した場合もpartial fileを残しません。JSONはUTF-8、key順序固定、2-space indent、末尾newline、非有限float禁止です。同一resultからは常に同一bytesへserializeされます(timestamp等のnon-deterministic fieldを持ちません)。
-
-### 保持情報
-
-初期schemaは`schema_version = 1`、evaluation protocol identityは`abbb-single-round-v1`です。readerは未知のschema versionやprotocol identityを現在仕様として推測せずfail closedします。
-
-正本はraw game-level resultです。
-
-- raw `SingleRoundGameResult`列: `seed` / `rotation` / `game_mode` / `candidate_seat` / 4 seat分の`scores` / 4 seat分の`SeatRoundStats`
-- plan snapshot: candidate identity、baseline identity、ordered seeds、`game_mode = 4p-red-single`、`rotation_count = 4`、`max_steps`
-- derived summary: candidate metrics(`mean_candidate_score` / `seat_mean_scores` / 局単位Mahjong metrics)、baseline mean score、mean candidate game delta、seed-block statistics
-- execution provenance
-
-candidate Mahjong metricsは`SeatRoundStats`から集計されるため、scoresだけでなくbaseline 3 seat分を含む`SeatRoundStats`も保持します。一方、`GameTrace`全文、`DecisionTrace`全文、Policy internal analysis(shanten / ukeire / HandBelief / danger / value estimate等)はstrength artifactへ入れません。現在の`SingleRoundGameResult`はrankを所有しないため、artifact層で新しいrank semanticsを作ることもしません。
-
-derived summaryは正本ではなくcacheです。load時にraw game resultsから既存canonical aggregation(`lisjong_arena.single_round_evaluation`)で再計算し、保存値と一致しなければartifactをrejectします。artifact moduleが同じ統計式を別実装することはありません。
-
-artifactは実行用modelとは分離したimmutable snapshotです。`PolicySpec.factory`、callable、import path、dynamic codeを保存・復元せず、artifactから実行可能な`SingleRoundEvaluationPlan`を再構成することもしません。secret / credential / environment variable / username / hostname / absolute local path等のmachine-local情報も保存しません。
-
-### Provenance policy
-
-再現性とhistorical comparisonのため、実際に確認できた値だけを記録します。
-
-- execution environment identity(現在は`riichienv`)
-- `lisjong-arena` distribution version + source treeのexact HEAD commit ID
-- `lisjong` version + VCS install metadataのfull commit ID
-- `lisjong-engine` version + VCS install metadataのfull commit ID
-- RiichiEnv version
-- Python version
-- artifact schema version
-
-取得できない値を推測・捏造しません。`lisjong` / `lisjong-engine`のfull commit IDを確認できない環境ではartifactを生成せずfail closedします。
-
-`lisjong-arena`自身はeditable installで実行されVCS install metadata(`direct_url.json`)にrevisionを持たないため、実行中のpackage source treeのGit HEADを読みます。記録するのは次を確認できた場合だけです。
-
-- source treeがGit work tree内でtrackされている
-- package source directoryにuncommitted変更がない(dirty working treeはHEADだけで実行コードを特定できないため、clean revisionとして記録しない)
-
-いずれも確認できない場合(wheel install、Gitを利用できない環境、無関係なrepository内のsite-packagesからの実行等)はrevisionを推測せずartifact生成をfail closedします。artifactへ保存するのはcommit IDだけで、local path・username・hostnameは保存しません。
-
-### Multiple artifact composition
-
-段階的evaluation(例: 250 seeds -> +375 seeds -> cumulative 625 seeds)のため、複数artifactを1つのcumulative summaryへ合成できます。合成はfail closedで、次のいずれかが一致しない場合は合成しません。
-
-- candidate identity / baseline identity
-- game mode / rotation semantics / `max_steps`等のevaluation parameter
-- execution provenance(異なる`lisjong-arena` / `lisjong` / `lisjong-engine` revision等はdefaultでreject)
-
-seedが重複する場合もrejectします。silentなdeduplicateや同一seedの二重計上はしません。schema versionとevaluation protocol identityは、artifact contract自身がconstruction時とload時にsupported値以外をfail closedするため、合成へ到達する時点で一致しています。
-
-合成結果の順序は入力artifact順、その中では各artifactのordered seed順を保持します。勝手にsortしてprotocol orderingを変えません。cumulative metricsは、個々のartifactのaggregate値を加重平均するのではなく、連結したraw game resultsへcanonical aggregationを再適用して求めます。したがって、同じseed集合をone-shotで実行したときのaggregationと一致します。
-
-### Storage policy
-
-artifact formatと保存APIは提供しますが、生成したrun artifactをrepositoryへcommitする運用は要求しません。保存先はローカルのartifact directory等を利用してください。repository-managed long-term archive、GitHub Release assets、外部object storage、database、dashboardは本機能のscope外です。
-
-## Mortal decision analysis artifact
-
-Issue #126で追加した、Mortal same-state decision diagnostic専用のopt-in offline analysis
-artifactです。`mortal_decision_compare`へ`--artifact-dir`を明示指定した場合だけ生成します。
-
-```powershell
-python -m lisjong_arena.mortal_decision_compare `
-  --policy combined `
-  --seeds 0:24 `
-  --mortal-image mortal@sha256:<image-digest> `
-  --mortal-revision <Mortal-commit-or-version> `
-  --mortal-model C:\models\mortal.pth `
-  --artifact-dir .\artifacts\mortal-decision-pilot
-```
-
-### 位置付け
-
-このartifactは**Mortal same-state disagreementのexploratory offline analysis用の
-purpose-specific local artifact**です。次を明示します。
-
-- **Mortalはground truthではありません。** 強いreference policyの一例です
-- **disagreementはerrorではありません。** lisjong Policyの不正解も意味しません
-- **training datasetではありません。** supervised label corpusでもimitation learning用でもありません
-- **canonical GameRecordではありません。** project-wide decision corpus / replay schemaでもありません
-- **schemaはこのMortal diagnostic専用です。** schema identityは
-  `lisjong-arena-mortal-decision-analysis-v1`であり、project-wide schema versionへ昇格させません
-- **agreementを含む全paired decisionsを保存します。** これは後続analysisで
-  「このcategoryでは何件中何件disagreeしたか」というdenominatorを維持するためです
-- **hidden / oracle informationを含めません。** 各rowはそのdecision時点でlisjong Policyが
-  実際に観測していた情報のprojectionだけです
-- **生成したartifactをGitへcommitしません。** repository外のlocal artifact directoryへ保存してください
-- 約10,000 paired decisionsのexploratory analysisはfollow-up work itemです
-
-### Artifact構成
-
-```text
-<artifact-dir>/
-    manifest.json
-    decisions.jsonl
-```
-
-`manifest.json`はrun全体のprovenanceとaggregateを保持します。
-
-- artifact schema identity / diagnostic identity / game mode
-- shadow Policy identity、seed membership、game count
-- paired decision count、agreements、disagreements、agreement rate、action-kind pair counts
-- Mortal image identity/digest、Mortal implementation revision、model SHA-256、response timeout
-- `lisjong-arena` / `lisjong` / `lisjong-engine` / `riichienv` / Pythonのexecution provenance
-  (ABBB strength artifactと同じArena provenance seamを再利用します)
-
-manifestのaggregateはin-memory `MortalDecisionComparisonSummary`からのprojectionです。
-artifact側で別semanticのaggregateを再実装せず、正本を二重化しません。stdout summaryの
-既存挙動も変わりません。
-
-`decisions.jsonl`は1行=1 paired decisionで、canonical order
-(`seed入力順 -> rotation 0..3 -> decision ordinal`)を維持します。各rowは次を保持します。
-
-- seed、rotation、Mortal seat、decision ordinal、shadow Policy identity、agreement
-- normalized Mortal-driver action / normalized lisjong-shadow action
-  (kind、actor、tile、consume tiles、discard tsumogiriをlosslessに保持)
-- `PolicyInput`のplayer-safe projection(self seat、round context、scores、dealer / winds、
-  dora indicators、public riichi state、public discards、public melds、own hand)
-- `DecisionTrace`のlegal actions / selected action(lisjong `InternalAction`のvariant固有
-  semantic fieldをexplicitにprojection)
-
-### 含めないもの
-
-opponentのconcealed hand、wall / 王牌、未来のevent、oracle / observer-only state、
-credential、Docker configuration、Windows absolute model path等のmachine-local情報は
-保存しません。shanten、ukeire、danger、hand value、push/fold label等をArena側で
-新規計算することもしません。
-
-`DecisionTrace.analysis`のgeneric serializationは初期scope外です。lisjong-owned
-`AnalysisTrace`のexplicit / safe / versioned serializerがcurrent codebaseに存在しないため、
-このartifactのためだけにarbitrary dataclass serializer、`repr()` / `__dict__` serializer、
-pickle、generic registryを新設しません。analysis payloadはrowへ書かず、欠落を
-`analysis = 0`のようなsemanticへも変換しません。lisjong側Policy contractへ`to_json()` /
-`serialize()` / `schema_version`等のgeneric persistence APIも追加しません。
-
-### Completion / overwrite policy
-
-completeなartifactはsuccessful diagnostic runに対してだけ公開します。全gameの完了、
-全paired recordの構築、summary構築、全decision rowのserialization、manifest整合の検証を
-終えてから、staging directoryをfinal pathへrenameします。run途中やserialization途中の
-failureでは、一部だけ入った`decisions.jsonl`もcompleteに見える`manifest.json`も残しません。
-
-既存pathはdefaultで破壊的に上書きしません。指定pathが既に存在する場合、CLIは長時間の
-Mortal runを始める前にfail closedします。retention / artifact management systemは持ちません。
-
-### Readback
-
-`lisjong_arena.mortal_decision_analysis_artifact.load_mortal_decision_analysis()`で
-artifactを検証しながら読み戻せます。unknown schema identity、malformed row、manifestと
-decision rowsのinconsistency(件数、agreement / disagreement、action-kind pair、
-shadow Policy identity、canonical order)はいずれもfail closedでrejectします。
-
-読み戻したartifactからは、全decisions、disagreementsのみ、first N、driver / shadowの
-action kind filter程度のinspectionができます。SQL、DataFrame framework、database
-abstraction、generic query engineは追加しません。
-
-## 現時点で持たないもの
-
-- 信頼区間、統計検定、bootstrap statistics
-- Elo / rating system
-- graph / visualization / dashboard
-- database / artifact repository / retention policy
-- distributed / multi-machine execution / job scheduler
-- RiichiLab rankedを使ったstrength comparison protocol
-- AABB / ABBBからのfirst-party `lisjong-engine` execution path利用
-  (bridge自体はIssue #53で追加済みですが、evaluation protocolへは未接続です)
-- first-party `lisjong-engine` execution pathのGameTrace
-- generic external-player runtime / process host
-- generic canonical GameTrace
-- Policy-internal analysis schema / DecisionTrace
-
-高度な統計処理を持たないのは意図的です。同一game内の複数seat resultは相関しているため、それらを独立標本とみなす信頼区間や検定は誤った精度を主張します。まず実測データを得てから別Issueで比較方法を設計します。
-
-### backend abstractionをまだ持たない理由
-
-`GameBackend` / `EvaluationBackend` / backend registry / 汎用runner protocolのような抽象化は導入していません。current implementationではAABB / ABBBが同じArena-local `lisjong_arena.riichienv.local_game_runner.LocalGameRunner`経路を使っていますが、target architectureへのmigration後にRiichiLab / RiichiEnv等のconcrete execution pathの差異を実測してから共通化を判断します。
-
-existing execution pathが同じという類似だけを理由に、generic backend abstractionを先行導入しません。
+artifactを保存できることと、repository-managed artifact platformを持つことは別です。
 
 ## 開発環境
 
-### Phase 9 confirmatory holdout runbook
-
-`lisjong_arena.phase9_confirmatory`はIssue #121 / `lisjong-project#39`専用のbounded workflowです。
-Phase 6 snapshotとPhase 8 S2のstrict verification、exact historical checkout、fresh TEST-only dataset、
-paired 20-hanchan bootstrap、physical gate、immutable resultを次の独立boundaryで扱います。
-
-```text
-python -m lisjong_arena.phase9_confirmatory preflight ...
-python -m lisjong_arena.phase9_confirmatory generate ...
-python -m lisjong_arena.phase9_confirmatory lock-holdout ...
-python -m lisjong_arena.phase9_confirmatory evaluate ...
-```
-
-`preflight`にはlocked SHAへdetached checkoutしたlisjong / lisjong-engine / lisjong-arenaのpathと、
-repository外のfrozen snapshot / S2 artifactを渡します。Arena checkoutは
-`archive/handbelief-phase5-e667890`から取得し、commitとtreeの一致を確認してください。historical
-Python 3.14 venvはArena `e667890f0124670a6858fba13bc41767cdc80350`をVCS installし、そのhistorical
-`pyproject.toml`がpinするlisjong / engineとRiichiEnv 0.4.8を使用します。editable/local-path installは
-exact VCS provenanceを持たないためformal generationには使えません。
-
-checkoutとhistorical generation venvは、例えば次のようにGit外の作業directoryへ用意します。
-
-```powershell
-git clone --no-checkout https://github.com/lisbun/lisjong.git <lisjong-checkout>
-git -C <lisjong-checkout> checkout --detach 6db1ddc0c6fae312801104008bf18660975f687d
-git clone --no-checkout https://github.com/lisbun/lisjong-engine.git <engine-checkout>
-git -C <engine-checkout> checkout --detach 8735e89e1aea000ab59368d0368d476787827741
-git clone --branch archive/handbelief-phase5-e667890 https://github.com/lisbun/lisjong-arena.git <arena-checkout>
-git -C <arena-checkout> checkout --detach e667890f0124670a6858fba13bc41767cdc80350
-py -3.14 -m venv <historical-venv>
-& <historical-python> -m pip install "lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@e667890f0124670a6858fba13bc41767cdc80350"
-```
-
-formal workflow自体は、merge後のmainを新規cloneしたclean evaluation checkoutと専用venvから実行します。
-既存の開発venvや過去のeditable `lisjong` / `lisjong-engine` installは使用しません。
-
-```powershell
-git clone https://github.com/lisbun/lisjong-arena.git <evaluation-checkout>
-git -C <evaluation-checkout> checkout --detach <merged-main-sha>
-py -3.14 -m venv <evaluation-venv>
-& <evaluation-python> -m pip install --upgrade pip
-& <evaluation-python> -m pip install --editable "<evaluation-checkout>[ml]"
-Set-Location <evaluation-checkout>
-```
-
-evaluation runtimeは推論前に、lisjong
-`84e905d252d65eb37b722f195f2774fd5661d5af`、lisjong-engine
-`8735e89e1aea000ab59368d0368d476787827741`のnon-editable VCS provenance、RiichiEnv 0.4.8、
-PyTorch `2.13.0+cpu`をfail closedで検証します。`direct_url.json`にVCS commitがないlocal/editable
-dependencyは拒否します。
-
-このclean checkoutからartifact、historical checkout、treeを検証し、immutable receiptを作成します。
-
-```powershell
-& <evaluation-python> -m lisjong_arena.phase9_confirmatory preflight `
-  --snapshot-artifact <phase6-model> --s2-artifact <phase8-s2> `
-  --lisjong-checkout <lisjong-checkout> --engine-checkout <engine-checkout> `
-  --arena-checkout <arena-checkout> --creation-revision <current-main-sha> `
-  --output <preflight-json>
-```
-
-`preflight`に加え、`generate`、`lock-holdout`、`evaluate`の各段階がreceiptのcreation revisionと
-current checkout `HEAD`を再照合し、tracked worktreeまたはindexに未commit変更があれば停止します。
-
-`generate`以降はreview/merge後の別作業でのみ、次のexplicit guardを設定して実行します。
-
-```powershell
-$env:LISJONG_ARENA_PHASE9_FORMAL_EXECUTION = "approved-after-reviewed-merge"
-```
-
-その後も順序を変えず、preflight receiptと前段artifactを毎回明示します。
-
-```powershell
-& <evaluation-python> -m lisjong_arena.phase9_confirmatory generate `
-  --preflight <preflight-json> --snapshot-artifact <phase6-model> `
-  --s2-artifact <phase8-s2> --historical-python <historical-python> `
-  --raw-output <fresh-raw> --report-output <generation-report>
-& <evaluation-python> -m lisjong_arena.phase9_confirmatory lock-holdout `
-  --preflight <preflight-json> --generation-report <generation-report> `
-  --raw <fresh-raw> --dataset-output <fresh-dataset>
-& <evaluation-python> -m lisjong_arena.phase9_confirmatory evaluate `
-  --preflight <preflight-json> --generation-report <generation-report> `
-  --raw <fresh-raw> --dataset <fresh-dataset> `
-  --snapshot-artifact <phase6-model> --s2-artifact <phase8-s2> `
-  --result-output <phase9-result> --creation-revision <current-main-sha>
-```
-
-CLIはseed、epsilon、bootstrap設定、model configをoverrideできません。出力先はすべてGit外の新規pathを
-指定し、preflight receipt、raw corpus、generation report、dataset、resultの順に作成します。途中の
-identity/provenance/artifact byte mismatchでは停止し、既存destinationを上書きしません。
-
-この第一段階のPRではformal seeds `160..179`を生成・materialize・推論しておらず、family classificationも
-作成していません。merge後のformal executionは別依頼で一回だけ行います。
-
-### Stage 3 Entry Gate population pilot runbook
-
-`lisjong_arena.stage3_entry_gate`はIssue #131 / `lisjong-project#36`専用のbounded workflowです。
-first-party 3 populationのdevelopment-only pilotで、Phase 10へ渡すtraining populationを選定します。
-
-```text
-python -m lisjong_arena.stage3_entry_gate plan
-python -m lisjong_arena.stage3_entry_gate generate --population {A,B,C} --output <dir>
-python -m lisjong_arena.stage3_entry_gate train --population-dir <dir> --artifact <dir>
-python -m lisjong_arena.stage3_entry_gate matrix \
-    --population A=<dir> --population B=<dir> --population C=<dir> \
-    --model A=<dir> --model B=<dir> --model C=<dir> \
-    --result <file>
-```
-
-CLIはseeds、split、model family、training budget、reference armをoverrideできません。TEST partitionを
-選ぶoptionも持ちません。`generate`はfully resolvedなVCS provenanceを要求するため、lisjong /
-lisjong-engine / lisjong-arenaの3つすべてをnon-editable git installにした環境で実行します。出力先は
-すべてGit外の新規pathを指定し、既存destinationは上書きしません。
-
-protocol、実測結果、population decisionは
-[`docs/stage3-entry-gate-pilot.md`](docs/stage3-entry-gate-pilot.md)を正本とします。
-
-### Stage 3 kan coverage-source qualification runbook
-
-`lisjong_arena.stage3_kan_coverage`はIssue #146専用のbounded workflowです。Issue #131が残した
-kan / rinshan coverage holeに対して、`lisjong #151` / PR #152の`KanCoverageYakuhaiCallPolicy`を
-HandBelief training coverage sourceとしてqualificationします。これはstrength evaluationでも
-final training populationの選定でもありません。
-
-```text
-python -m lisjong_arena.stage3_kan_coverage plan
-python -m lisjong_arena.stage3_kan_coverage qualify --output <dir>
-python -m lisjong_arena.stage3_kan_coverage classify --population-dir <dir> --result-dir <dir>
-```
-
-CLIはseeds、split、population、roleをoverrideできません。結果を見てからseedを追加・置換する
-optionも持ちません。`qualify`はfully resolvedなVCS provenanceを要求するため、Stage 3 Entry Gateと
-同じくnon-editable git installの環境で実行します。
-
-protocol、実測結果、classificationは
-[`docs/stage3-kan-coverage-qualification.md`](docs/stage3-kan-coverage-qualification.md)を正本とします。
-
-初期基準は通常版CPython 3.14です。free-threaded build（3.14t）は、依存libraryを含む互換性を個別に検証するまで対象外とします。
+初期基準は通常版CPython 3.14です。free-threaded build（3.14t）は、依存libraryを含む
+互換性を個別に検証するまで対象外とします。
 
 ```bash
 python -m venv .venv
@@ -1290,23 +348,17 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
-Windows (PowerShell) では、activateコマンドを次のように読み替えます。
+Windows (PowerShell):
 
 ```powershell
 .venv\Scripts\Activate.ps1
 ```
 
-### lisjong / lisjong-engine dependency
-
-`lisjong` にはまだrelease tagがないため、再現可能性を優先して `main` 追従ではなくfull commit SHAへpinしています（`pyproject.toml`）。現在のpinは、`lisjong` Issue #143 / PR #144で`GenbutsuDefenseFiniteHorizonHandValueAwarePolicy`を追加したactual squash merge commit `140d0d6c88b4f1c0c78ca2413b2e93128645cd4c` です。Arena Issue #100でこのrevisionへexact pin syncしました。
-
-`lisjong-engine` にもrelease tagがないため、同じ理由でfull commit SHAへpinしています。現在のpinは、lisjong-engine Issue #46 / PR #47 merge後の `2c5ba3969dc70705303ad8bdd79caefdd674ed5e` です。Phase 4 raw corpusは、このrevisionの`RoundEvidenceCompletion`と`run_hanchan(..., on_round_evidence_complete=...)`を利用します。`lisjong-engine` は `lisjong` にも `lisjong-arena` にも依存せず、Arenaが両者を独立したdependencyとしてconsumeします。
-
-AABB / ABBB evaluation execution pathとRiichiLab protocol-facing decision bridge(`lisjong_arena.riichilab.request_action` / `mjai_response`)はいずれも、Arena direct dependencyの`riichienv==0.4.8`を使用します。RiichiEnv AdapterはIssue #39でArena-local canonical implementationへ移行し、lisjong側legacy physical copyは`lisbun/lisjong#100` / PR #101で削除、Arenaのexact pin syncもIssue #41で完了しました。RiichiEnv Adapter pillarのphysical migrationは完了です。
+ML experimentを実行する場合は、そのexperiment documentationが指定するextra / exact
+provenance requirementを優先してください。formal / locked experimentではeditable local
+installを拒否する場合があります。
 
 ### 品質確認
-
-ローカルとCIで同じコマンドを使用します。
 
 ```text
 python -m ruff format --check .
@@ -1314,9 +366,39 @@ python -m ruff check .
 python -m unittest discover -s tests -v
 ```
 
-文書のみの変更では最低限 `git diff --check` を実行します。
+文書のみの変更では最低限 `git diff --check` を確認します。
 
-unit testでは実RiichiEnvを毎回起動せず、単一game実行境界を差し替えてrotation、実行順序、Policy lifecycle、raw result、metrics、fail closedを検証します。実RiichiEnvを使うintegration testは、AABB comparison / ABBB single-round evaluationのそれぞれで `MinimalPolicy` と `ShantenPolicy` の固定seedを2回実行し、raw resultとmetrics（ABBBではgame_resultsとcandidate_metrics）が再現することを確認します。
+## Detailed documentation
+
+READMEはcurrent ownershipと主要entry pointのoverviewに留めます。詳細なhistorical protocol、
+runbook、schema、result interpretationは各purpose-specific documentを正本とします。
+
+- [Architecture](docs/architecture.md)
+- [Roadmap](docs/roadmap.md)
+- [Policy strength evaluation policy](docs/policy-strength-evaluation.md)
+- [RiichiEnv compatibility](docs/riichienv-compatibility.md)
+- [RiichiLab client](docs/riichilab-client.md)
+- [RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)
+- [Learned Policy input schema](docs/learned-policy-input-schema.md)
+- [Learned Policy Stage 2](docs/learned-policy-stage2.md)
+- [Learned Policy Stage 3](docs/learned-policy-stage3.md)
+- [Learned Policy Stage 4A](docs/learned-policy-stage4a.md)
+- [Offline Q experiment](docs/learned-policy-offline-q.md)
+- [Offline Q failure diagnosis](docs/learned-policy-offline-q-diagnosis.md)
+- [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
+
+## 現時点で持たないもの
+
+- generic ML platform / model registry / HPO service
+- canonical production Learned Policy architecture owned by Arena
+- project-wide canonical GameRecord / DecisionTrace schema
+- database / dashboard / artifact repository
+- distributed multi-machine job scheduler
+- automatic production promotion
+- generic external-player runtime / process host
+- speculative generic backend abstraction
+
+必要性はconcrete consumerとmeasured bottleneckから判断します。
 
 ## License
 
