@@ -228,6 +228,7 @@ stable semanticsや将来production consumer semanticsは`lisjong`側の責務�
 代表的なexperiment record:
 
 - [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
+- [Epoch-budget adequacy study](docs/epoch-budget-adequacy.md)
 
 component prediction qualityとPolicy decision value / game strengthは別claimとして扱います。
 
@@ -390,6 +391,7 @@ runbook、schema、result interpretationは各purpose-specific documentを正本
 - [P1 Gate A](docs/learned-policy-p1-gate-a.md)
 - [P1 Gate B](docs/learned-policy-p1-gate-b.md)
 - [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
+- [Epoch-budget adequacy study](docs/epoch-budget-adequacy.md)
 
 ## 現時点で持たないもの
 
