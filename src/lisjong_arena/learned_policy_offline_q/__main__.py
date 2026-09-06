@@ -1119,6 +1119,7 @@ def _fh_curriculum_record_classification(arguments: argparse.Namespace) -> int:
         CurriculumOutcome[arguments.outcome],
         curriculum=curriculum,
         control=control,
+        artifact_path=Path(arguments.artifact),
     )
     _write_json(Path(arguments.classified_result), classified)
     print(f"classification={classified['classification']}")
@@ -1353,6 +1354,7 @@ def main(argv: list[str] | None = None) -> int:
         "--classified-result",
         "--candidate-control",
         "--candidate-curriculum",
+        "--artifact",
     ):
         fh_record.add_argument(name, required=True)
     fh_record.add_argument(

@@ -820,14 +820,96 @@ def bind_recorded_candidates(
     return reloaded[0], reloaded[1]
 
 
+def bind_recorded_artifact(
+    validated: dict,
+    artifact_path: str | Path,
+    *,
+    curriculum: LoadedArmCandidate,
+    control: LoadedArmCandidate,
+) -> SingleRoundStrengthArtifact:
+    """classification時に、result documentをactual strength artifactへbindする。
+
+    `result_identity`はdocumentのself-consistencyでしかなく、external source
+    of truthであるstrength artifactへのbindingにはならない。documentの
+    `canonical_summary`を書き換えてから`result_identity`を計算し直せば、raw
+    100 gamesと一致しないsummaryでも自己整合的なdocumentは作れてしまう。
+
+    そこでこのfunctionは、candidate checkpointに対して
+    `bind_recorded_candidates()`が行っているのと同じことをstrength artifactへ
+    対称的に適用する。**artifact fileを改めてdiskからstrict readbackし**、
+    そのbytesのsha256、protocol条件、そしてraw gamesから再導出したcanonical
+    summaryをresult documentと突き合わせる。したがってこの境界を通れるのは、
+    実際にそのraw 100 gamesを持つartifactだけである。
+    """
+    artifact_path = Path(artifact_path)
+    recorded = validated["strength_artifact"]
+    if not artifact_path.is_file():
+        raise _error(
+            "the strength artifact this classification binds to does not exist at "
+            "the given path; a curriculum outcome binds to an actually readback "
+            "artifact, never to a recorded digest alone"
+        )
+    if artifact_path.name != recorded["filename"]:
+        raise _error(
+            "the strength artifact file name is not the one the result records"
+        )
+    if _sha256_file(artifact_path) != recorded["sha256"]:
+        raise _error(
+            "the strength artifact bytes do not match the digest the result "
+            "records; the recorded measurement and the retained artifact are not "
+            "the same run"
+        )
+    artifact = load_single_round_artifact(artifact_path)
+    if artifact.schema_version != recorded["schema_version"]:
+        raise _error("the strength artifact schema version is not the recorded one")
+    if artifact.evaluation_protocol != recorded["evaluation_protocol"]:
+        raise _error(
+            "the strength artifact evaluation protocol is not the recorded one"
+        )
+    if len(artifact.game_results) != recorded["game_count"]:
+        raise _error("the strength artifact game count is not the recorded one")
+    require_rollout_artifact(
+        artifact,
+        candidate_identity=curriculum.candidate_identity,
+        baseline_identity=control.candidate_identity,
+    )
+    summary = summarize_single_round_strength(
+        aggregate_candidate_metrics(
+            artifact.plan.candidate_identity, artifact.game_results
+        ),
+        artifact.game_results,
+    )
+    if summary != artifact.summary:
+        raise _error(
+            "the canonical summary regenerated from the retained raw games differs "
+            "from the summary stored in the artifact"
+        )
+    if summary_to_dict(summary) != validated["canonical_summary"]:
+        raise _error(
+            "the recorded canonical summary is not the one the retained raw games "
+            "regenerate; a curriculum outcome is classified from the artifact's "
+            "own 100 games, never from a summary written into the result document"
+        )
+    return artifact
+
+
 def record_classification(
     document: dict,
     outcome: CurriculumOutcome,
     *,
     curriculum: LoadedArmCandidate,
     control: LoadedArmCandidate,
+    artifact_path: str | Path,
 ) -> dict:
-    """validated resultへexhaustive outcomeを1件だけ記録する。"""
+    """validated resultへexhaustive outcomeを1件だけ記録する。
+
+    `curriculum` / `control` / `artifact_path`はいずれも必須である。
+    classificationはidentity stringやdocument内のself-consistencyではなく、
+    diskからstrict readbackしたcheckpoint bytesとstrength artifact bytesの
+    両方へbindされる（`bind_recorded_candidates()` /
+    `bind_recorded_artifact()`）。outcomeはそのbindingが済んだあとで、
+    artifactのraw gamesが再生成したcanonical intervalからだけ導出する。
+    """
     validated = validate_rollout_result(document)
     if not isinstance(outcome, CurriculumOutcome):
         raise TypeError("outcome must be a CurriculumOutcome")
@@ -838,13 +920,21 @@ def record_classification(
             f"{outcome.value!r} is a pre-result state, not an outcome derived "
             "from a valid rollout execution"
         )
+    reloaded_curriculum, reloaded_control = bind_recorded_candidates(
+        validated, curriculum=curriculum, control=control
+    )
+    bind_recorded_artifact(
+        validated,
+        artifact_path,
+        curriculum=reloaded_curriculum,
+        control=reloaded_control,
+    )
     derived = derive_classification(validated)
     if outcome is not derived:
         raise _error(
             f"the locked Issue #165 rule derives {derived.value!r} from this "
             f"canonical interval, not {outcome.value!r}"
         )
-    bind_recorded_candidates(validated, curriculum=curriculum, control=control)
     return validate_rollout_result({**validated, "classification": outcome.value})
 
 
@@ -856,6 +946,7 @@ class CurriculumRolloutMeasurement:
     """1回のrollout executionのimmutable artifactと再生成したcanonical summary。"""
 
     artifact: SingleRoundStrengthArtifact
+    artifact_path: Path
     summary: object
     document: dict
     derived_outcome: CurriculumOutcome
@@ -925,6 +1016,7 @@ def run_curriculum_rollout(
     )
     return CurriculumRolloutMeasurement(
         artifact=artifact,
+        artifact_path=artifact_path,
         summary=summary,
         document=document,
         derived_outcome=derive_classification(document),
@@ -941,6 +1033,7 @@ __all__ = [
     "CurriculumRolloutMeasurement",
     "artifact_block",
     "baseline_mahjong_metrics",
+    "bind_recorded_artifact",
     "bind_recorded_candidates",
     "build_rollout_plan",
     "build_rollout_result",

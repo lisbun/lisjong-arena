@@ -278,9 +278,39 @@ candidate側の母数はgame数（100）、control側はbaseline seat数（3 x 1
 
 result documentはimmutable strength artifactを正本として参照し、canonical
 summaryをraw gamesから再生成して照合する。`result_identity`は
-classificationとidentity自身を除いたcanonical bytesのdigestであり、後からの
-編集を拒否する。classificationは`record_classification()`が1件だけ記録でき、
-その際にdiskの両checkpointをstrict readbackしてbindする。
+classificationとidentity自身を除いたcanonical bytesのdigestである。
+
+ただし`result_identity`は **documentのself-consistencyでしかない**。
+`canonical_summary`を書き換えてから`result_identity`を計算し直せば、raw 100
+gamesと一致しないsummaryを持つ自己整合的なdocumentは作れてしまう。したがって
+classificationは、documentの外にあるsource of truthへ両方向でbindする。
+
+```text
+record_classification(document, outcome,
+                      *, curriculum, control, artifact_path)
+
+bind_recorded_candidates()
+    両checkpoint bundleをdiskからstrict readback
+    -> weights bytesからcanonical weights digestを再導出
+    -> candidate blockがresult documentとexact一致
+
+bind_recorded_artifact()
+    artifact fileのsha256がresult documentの記録と一致
+    filename / schema / evaluation protocol / game countが一致
+    load_single_round_artifact()でstrict readback
+    require_rollout_artifact()でseeds / rotations / 100 games /
+        F candidate identity / Y baseline identityを再検証
+    raw gamesからcanonical summaryを再生成
+    -> stored artifact summary と一致
+    -> result documentの canonical_summary と一致
+
+その後にのみ derive_classification() と outcome記録を行う
+```
+
+`artifact_path`は必須入力である。identity string、digest文字列、document内の
+self-consistencyだけではclassificationを通せない。artifact corruption、
+canonical summary mismatch、別artifactの差し替えはいずれも
+`STOP / INVALID`としてfail closedする。
 
 ## Pre-execution lock
 
@@ -313,6 +343,7 @@ python -m lisjong_arena.learned_policy_offline_q fh-curriculum-train --arm F ...
 python -m lisjong_arena.learned_policy_offline_q fh-curriculum-diagnose ...
 python -m lisjong_arena.learned_policy_offline_q fh-curriculum-rollout ...
 python -m lisjong_arena.learned_policy_offline_q fh-curriculum-record-classification ...
+#   --artifact <実行したstrength artifact> を必須で渡す
 ```
 
 real 32-hanchan generation、real two-arm training、real 100-game rolloutはCIへ

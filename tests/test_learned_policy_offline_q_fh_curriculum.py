@@ -714,7 +714,8 @@ class RolloutResultTests(unittest.TestCase):
 
     def test_pre_result_outcomes_are_not_recordable(self):
         with TemporaryDirectory() as tmp:
-            document = rollout_result_document(Path(tmp) / "rollout.json")
+            path = Path(tmp) / "rollout.json"
+            document = rollout_result_document(path)
             for outcome in (
                 CurriculumOutcome.EVIDENCE_BLOCKED,
                 CurriculumOutcome.STOP_INVALID,
@@ -725,20 +726,126 @@ class RolloutResultTests(unittest.TestCase):
                         outcome,
                         curriculum=fixture_candidate(CurriculumArm.CURRICULUM),
                         control=fixture_candidate(CurriculumArm.CONTROL),
+                        artifact_path=path,
                     )
 
-    def test_mismatched_outcome_is_rejected_before_binding(self):
+    def test_recording_requires_actually_readback_checkpoints(self):
+        """documentとartifactだけでは分類できない（checkpoint bindingが要る）。"""
         with TemporaryDirectory() as tmp:
-            document = rollout_result_document(
-                Path(tmp) / "rollout.json", scaled_delta_for_seed=positive_delta
-            )
-            with self.assertRaises(fh_curriculum_rollout.CurriculumRolloutError):
+            path = Path(tmp) / "rollout.json"
+            document = rollout_result_document(path)
+            with self.assertRaises(fh_curriculum_candidate.CurriculumCandidateError):
                 fh_curriculum_rollout.record_classification(
                     document,
-                    CurriculumOutcome.ROLLOUT_NEGATIVE,
+                    CurriculumOutcome.ROLLOUT_SIGNAL,
                     curriculum=fixture_candidate(CurriculumArm.CURRICULUM),
                     control=fixture_candidate(CurriculumArm.CONTROL),
+                    artifact_path=path,
                 )
+
+
+class RolloutArtifactBindingTests(unittest.TestCase):
+    """classificationはactual strength artifactへも再bindされる。
+
+    `result_identity`はdocumentのself-consistencyでしかない。canonical summary
+    を書き換えてから`result_identity`を計算し直したdocumentは自己整合的に
+    なってしまうため、raw 100 gamesを持つartifact本体との突き合わせが要る。
+    """
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.path = self.root / "run" / "rollout.json"
+        self.path.parent.mkdir(parents=True)
+        self.curriculum = fixture_candidate(CurriculumArm.CURRICULUM)
+        self.control = fixture_candidate(CurriculumArm.CONTROL)
+        self.document = rollout_result_document(
+            self.path,
+            scaled_delta_for_seed=negative_delta,
+            curriculum=self.curriculum,
+            control=self.control,
+        )
+
+    def _bind(self, document, path=None):
+        return fh_curriculum_rollout.bind_recorded_artifact(
+            document,
+            self.path if path is None else path,
+            curriculum=self.curriculum,
+            control=self.control,
+        )
+
+    def _reidentified(self, document: dict) -> dict:
+        """改変後のdocumentから`result_identity`を計算し直す。"""
+        rebuilt = {**document, "result_identity": None}
+        rebuilt["result_identity"] = fh_curriculum_rollout.result_identity(rebuilt)
+        return fh_curriculum_rollout.validate_rollout_result(rebuilt)
+
+    def test_a_valid_artifact_and_result_bind(self):
+        artifact = self._bind(self.document)
+        self.assertEqual(len(artifact.game_results), 100)
+        self.assertIs(
+            fh_curriculum_rollout.derive_classification(self.document),
+            CurriculumOutcome.ROLLOUT_NEGATIVE,
+        )
+
+    def test_a_forged_canonical_summary_is_rejected(self):
+        statistics = self.document["canonical_summary"]["seed_block_statistics"]
+        forged = self._reidentified(
+            {
+                **self.document,
+                "canonical_summary": {
+                    **self.document["canonical_summary"],
+                    "seed_block_statistics": {
+                        **statistics,
+                        "normal_approx_95_interval_lower": 100.0,
+                        "normal_approx_95_interval_upper": 500.0,
+                    },
+                },
+            }
+        )
+        self.assertIs(
+            fh_curriculum_rollout.derive_classification(forged),
+            CurriculumOutcome.ROLLOUT_SIGNAL,
+        )
+        with self.assertRaises(fh_curriculum_rollout.CurriculumRolloutError):
+            self._bind(forged)
+
+    def test_a_forged_artifact_digest_is_rejected(self):
+        forged = self._reidentified(
+            {
+                **self.document,
+                "strength_artifact": {
+                    **self.document["strength_artifact"],
+                    "sha256": "0" * 64,
+                },
+            }
+        )
+        with self.assertRaises(fh_curriculum_rollout.CurriculumRolloutError):
+            self._bind(forged)
+
+    def test_a_different_valid_artifact_is_rejected(self):
+        other = self.root / "other" / "rollout.json"
+        other.parent.mkdir(parents=True)
+        save_rollout_artifact(
+            other,
+            rollout_game_results(scaled_delta_for_seed=positive_delta),
+            candidate_identity=self.curriculum.candidate_identity,
+            baseline_identity=self.control.candidate_identity,
+        )
+        self.assertEqual(other.name, self.path.name)
+        with self.assertRaises(fh_curriculum_rollout.CurriculumRolloutError):
+            self._bind(self.document, path=other)
+
+    def test_a_renamed_artifact_is_rejected(self):
+        renamed = self.path.parent / "renamed.json"
+        renamed.write_bytes(self.path.read_bytes())
+        with self.assertRaises(fh_curriculum_rollout.CurriculumRolloutError):
+            self._bind(self.document, path=renamed)
+
+    def test_a_missing_artifact_is_rejected(self):
+        with self.assertRaises(fh_curriculum_rollout.CurriculumRolloutError):
+            self._bind(self.document, path=self.root / "absent" / "rollout.json")
 
 
 class OfflineDiagnosticsTests(unittest.TestCase):

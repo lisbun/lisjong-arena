@@ -64,6 +64,7 @@ from lisjong_arena.learned_policy_offline_q.fh_curriculum_rollout import (
     build_rollout_plan,
     derive_classification,
     record_classification,
+    result_identity,
     run_curriculum_rollout,
     validate_rollout_result,
 )
@@ -531,14 +532,19 @@ class CurriculumRolloutExecutionTest(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self._run()
 
+    def _record(self, measurement, outcome, **overrides):
+        arguments = {
+            "curriculum": _CurriculumFixture.curriculum,
+            "control": _CurriculumFixture.control,
+            "artifact_path": measurement.artifact_path,
+            **overrides,
+        }
+        return record_classification(measurement.document, outcome, **arguments)
+
     def test_the_classification_binds_the_strict_readback_checkpoints(self):
         measurement, _ = self._run()
-        classified = record_classification(
-            measurement.document,
-            CurriculumOutcome.ROLLOUT_SIGNAL,
-            curriculum=_CurriculumFixture.curriculum,
-            control=_CurriculumFixture.control,
-        )
+        self.assertEqual(measurement.artifact_path, self.work / "artifact.json")
+        classified = self._record(measurement, CurriculumOutcome.ROLLOUT_SIGNAL)
         self.assertEqual(
             classified["classification"], CurriculumOutcome.ROLLOUT_SIGNAL.value
         )
@@ -551,16 +557,78 @@ class CurriculumRolloutExecutionTest(unittest.TestCase):
                 CurriculumOutcome.ROLLOUT_SIGNAL,
                 curriculum=_CurriculumFixture.curriculum,
                 control=_CurriculumFixture.control,
+                artifact_path=measurement.artifact_path,
             )
 
     def test_a_swapped_candidate_pair_cannot_be_bound(self):
         measurement, _ = self._run()
         with self.assertRaises(Exception):
-            record_classification(
-                measurement.document,
+            self._record(
+                measurement,
                 CurriculumOutcome.ROLLOUT_SIGNAL,
                 curriculum=_CurriculumFixture.control,
                 control=_CurriculumFixture.curriculum,
+            )
+
+    def test_a_mismatched_outcome_cannot_be_recorded(self):
+        measurement, _ = self._run()
+        with self.assertRaises(CurriculumRolloutError):
+            self._record(measurement, CurriculumOutcome.ROLLOUT_NEGATIVE)
+
+    def test_a_forged_canonical_summary_cannot_be_recorded(self):
+        """artifactはそのままにsummaryだけ書き換えたdocumentは分類できない。"""
+        measurement, _ = self._run(scaled_delta=-1_200)
+        document = measurement.document
+        statistics = document["canonical_summary"]["seed_block_statistics"]
+        forged = {
+            **document,
+            "canonical_summary": {
+                **document["canonical_summary"],
+                "seed_block_statistics": {
+                    **statistics,
+                    "normal_approx_95_interval_lower": 100.0,
+                    "normal_approx_95_interval_upper": 500.0,
+                },
+            },
+            "result_identity": None,
+        }
+        forged["result_identity"] = result_identity(forged)
+        self.assertEqual(validate_rollout_result(forged), forged)
+        self.assertIs(derive_classification(forged), CurriculumOutcome.ROLLOUT_SIGNAL)
+        with self.assertRaises(CurriculumRolloutError):
+            record_classification(
+                forged,
+                CurriculumOutcome.ROLLOUT_SIGNAL,
+                curriculum=_CurriculumFixture.curriculum,
+                control=_CurriculumFixture.control,
+                artifact_path=measurement.artifact_path,
+            )
+
+    def test_a_deleted_artifact_cannot_be_recorded(self):
+        measurement, _ = self._run()
+        measurement.artifact_path.unlink()
+        with self.assertRaises(CurriculumRolloutError):
+            self._record(measurement, CurriculumOutcome.ROLLOUT_SIGNAL)
+
+    def test_a_different_valid_artifact_cannot_be_recorded(self):
+        first, _ = self._run(artifact_name="artifact.json")
+        other = self.work / "other"
+        other.mkdir()
+        second, _ = self._run(
+            scaled_delta=-1_200, artifact_name=str(Path("other") / "artifact.json")
+        )
+        self.assertEqual(first.artifact_path.name, second.artifact_path.name)
+        self.assertNotEqual(
+            first.document["strength_artifact"]["sha256"],
+            second.document["strength_artifact"]["sha256"],
+        )
+        with self.assertRaises(CurriculumRolloutError):
+            record_classification(
+                first.document,
+                CurriculumOutcome.ROLLOUT_SIGNAL,
+                curriculum=_CurriculumFixture.curriculum,
+                control=_CurriculumFixture.control,
+                artifact_path=second.artifact_path,
             )
 
 
