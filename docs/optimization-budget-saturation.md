@@ -455,4 +455,92 @@ optionも、baselineを再trainingするoptionも持たない。
 
 ## Results
 
-<!-- RESULTS -->
+actual executionは2026-09-07にlocal Windows環境で完了し、outcomeは
+
+```text
+SATURATION OBSERVED WITHIN E160
+```
+
+だった。詳細はIssue #167のresult commentを正本とする。
+
+```text
+execution lock   54870c07a4d6c43a36796f4c07c3a3a94ea90c5da674fcd2861727f80efb4ac1
+result identity  bb7971fccbba2b7feb318dd0b616a6430914980fcc0077ae09d3b7b1d1a3f973
+E160 weights     1c4af0c553370fcfb4dbe53393d7681691d02ae9c23ed66dd5886669f948075a
+arena revision   56c7a8374e71fa19bf8ce0a31723f7100879daee
+```
+
+determinism gateはcanonical bytes上でexactに一致した。
+
+```text
+E160.loss_history[0:80] digest   0922ba4d85d7348f3080b07b4be0ca3d9b2c592620b8467621648046b2966120
+#157 E80.loss_history   digest   0922ba4d85d7348f3080b07b4be0ca3d9b2c592620b8467621648046b2966120
+```
+
+これによりE80の再trainingは不要であり、同時に#157 E80 trainingがdeterministicに
+再現することの実証にもなった。E160はepoch 1から走らせ、E80 checkpointからresume
+していない。
+
+```text
+                       E80                    E160
+max_epochs             80                     160
+patience               6                      6
+epochs_run             80 / 80                119 / 160   (early-stopped)
+selected epoch         80                     113
+pooled VALIDATION MAE  0.46259369600375433    0.46131425082732797
+conditional-uniform    0.4800499153791642     0.4800499153791642   (共有)
+
+depth 1                0.5024004286343602     0.5018301960057623
+depth 2..4             0.4882050983383325     0.48579115310107274
+depth 5..8             0.4631319402902581     0.4609273918650599
+depth 9+               0.4373926993934592     0.43742998158946533
+
+pooled delta MAE       +0.0012794451764263637   (相対 0.277%)
+95% CI                 [0.000526365981079302, 0.0020782400697946235]
+classification         CLEAR BUDGET IMPROVEMENT
+positive / negative    13 / 3   (16 hanchan)
+
+margin to hard cap     47 epochs
+```
+
+physical validity gate、finite output、self-rollout failure 0はE80 / E160の両方で
+成立し、retained-artifact identity gateも通った。
+
+### 読み方
+
+selected epoch 113は`80 < 113 < 160`であり、**160 epoch capはcheckpoint selectionを
+truncateしていない**。early stopping (`patience 6`) がepoch 119で先に効いており、
+#150 (40 / 40) と#157 (80 / 80) が続けていた「上限に張り付く」状態はここで解消した。
+
+一方、追加budgetの効果自体は#157より小さい。
+
+```text
+#157   E40 -> E80    +0.004772   (相対 1.021%)   16 / 16 positive
+#167   E80 -> E160   +0.001279   (相対 0.277%)    13 / 3  positive
+```
+
+epoch 80以降のVALIDATION MAEはほぼ平坦で、epoch 113の選択も noiseに近い幅の中での
+最小値である。`CLEAR BUDGET IMPROVEMENT`はこのdevelopment populationでdeltaが0を
+含まないという意味であり、fresh holdout上のgeneralization improvementやformal
+superiorityではない。
+
+selection exposureは`cumulative_uses = 3` / `formal_test = false`である。「E160が
+E80に勝った」「160 epochがproduction-optimalである」「Phase 11の新しいheadにも160が
+最適である」とは読まない。
+
+### Phase 11 implication
+
+locked handoff ruleにより、`SATURATION OBSERVED WITHIN E160`は
+
+```text
+optimization-budget checkpointを一旦解消
+Phase 11 scope-lock reviewへ進める
+```
+
+に対応する。current S64 / S2 development surfaceについて、epoch budgetがcheckpoint
+selectionを直接truncateしていないbudgetが観測されたためである。ただしこれは
+`160を production budgetとして採用する`という意味ではなく、Phase 11で新しいheadや
+prediction scopeを足す場合、そのbudgetは改めて確認する必要がある。
+
+本childは320 epochへextensionしていない。#166 throughput profilingのoptimizationも
+本executionへ混ぜていない。
