@@ -397,7 +397,7 @@ def fixed_summary(values) -> dict[str, object]:
     }
 
 
-def _rate(numerator: int, denominator: int) -> float | None:
+def rate(numerator: int, denominator: int) -> float | None:
     if denominator == 0:
         return None
     return numerator / denominator
@@ -562,13 +562,13 @@ def _stratified_disagreement(labels, q_top, bc_top, behavior) -> list[dict]:
         {
             "stratum": label,
             **counts,
-            "q_vs_bc_disagreement_rate": _rate(
+            "q_vs_bc_disagreement_rate": rate(
                 counts["q_vs_bc_disagreement_count"], counts["row_count"]
             ),
-            "q_vs_behavior_disagreement_rate": _rate(
+            "q_vs_behavior_disagreement_rate": rate(
                 counts["q_vs_behavior_disagreement_count"], counts["row_count"]
             ),
-            "bc_vs_behavior_disagreement_rate": _rate(
+            "bc_vs_behavior_disagreement_rate": rate(
                 counts["bc_vs_behavior_disagreement_count"], counts["row_count"]
             ),
         }
@@ -589,11 +589,11 @@ def measurement_a(rows, q_top, bc_top, behavior) -> dict[str, object]:
     return {
         "eligible_row_count": row_count,
         "q_vs_bc_disagreement_count": q_vs_bc,
-        "q_vs_bc_disagreement_rate": _rate(q_vs_bc, row_count),
+        "q_vs_bc_disagreement_rate": rate(q_vs_bc, row_count),
         "q_vs_behavior_disagreement_count": q_vs_behavior,
-        "q_vs_behavior_disagreement_rate": _rate(q_vs_behavior, row_count),
+        "q_vs_behavior_disagreement_rate": rate(q_vs_behavior, row_count),
         "bc_vs_behavior_disagreement_count": bc_vs_behavior,
-        "bc_vs_behavior_disagreement_rate": _rate(bc_vs_behavior, row_count),
+        "bc_vs_behavior_disagreement_rate": rate(bc_vs_behavior, row_count),
         "stratifications": {
             "legal_action_count": _stratified_disagreement(
                 [legal_action_count_bucket(row.legal_action_count) for row in rows],
@@ -760,7 +760,9 @@ def measurement_c(
     }
 
 
-def _hand_progression_arm(progressions: list[HandProgression]) -> dict[str, object]:
+def hand_progression_arm_summary(
+    progressions: list[HandProgression],
+) -> dict[str, object]:
     keep = sum(1 for item in progressions if item.keeps_shanten)
     worsen = sum(1 for item in progressions if item.worsens_shanten)
     return {
@@ -769,13 +771,13 @@ def _hand_progression_arm(progressions: list[HandProgression]) -> dict[str, obje
             [float(item.post_discard_shanten) for item in progressions]
         ),
         "keep_shanten_count": keep,
-        "keep_shanten_rate": _rate(keep, len(progressions)),
+        "keep_shanten_rate": rate(keep, len(progressions)),
         "worsen_shanten_count": worsen,
-        "worsen_shanten_rate": _rate(worsen, len(progressions)),
+        "worsen_shanten_rate": rate(worsen, len(progressions)),
     }
 
 
-def _hand_progression_pair(
+def hand_progression_pair_summary(
     left: list[HandProgression], right: list[HandProgression]
 ) -> dict[str, object]:
     lower = equal = higher = 0
@@ -792,7 +794,7 @@ def _hand_progression_pair(
         "lower_post_discard_shanten_count": lower,
         "equal_post_discard_shanten_count": equal,
         "higher_post_discard_shanten_count": higher,
-        "higher_post_discard_shanten_rate": _rate(higher, total),
+        "higher_post_discard_shanten_rate": rate(higher, total),
         "worsen_shanten_rate_difference": (
             None
             if total == 0
@@ -836,11 +838,11 @@ def measurement_d(features, q_top, bc_top, behavior) -> dict[str, object]:
         "status": MeasurementAvailability.AVAILABLE.value,
         "unavailable_reason": None,
         "post_discard_shanten": {
-            "q": _hand_progression_arm(arms["q"]),
-            "bc": _hand_progression_arm(arms["bc"]),
-            "behavior": _hand_progression_arm(arms["behavior"]),
-            "q_vs_bc": _hand_progression_pair(arms["q"], arms["bc"]),
-            "q_vs_behavior": _hand_progression_pair(arms["q"], arms["behavior"]),
+            "q": hand_progression_arm_summary(arms["q"]),
+            "bc": hand_progression_arm_summary(arms["bc"]),
+            "behavior": hand_progression_arm_summary(arms["behavior"]),
+            "q_vs_bc": hand_progression_pair_summary(arms["q"], arms["bc"]),
+            "q_vs_behavior": hand_progression_pair_summary(arms["q"], arms["behavior"]),
         },
         "ukeire": {
             "status": MeasurementAvailability.UNAVAILABLE.value,
@@ -1191,7 +1193,7 @@ def _validate_disagreement_block(block: object, expected_row_count: int) -> None
         )
         if count > expected_row_count:
             raise _error(f"measurement A {name} count is out of range")
-        if measurement[f"{name}_disagreement_rate"] != _rate(count, expected_row_count):
+        if measurement[f"{name}_disagreement_rate"] != rate(count, expected_row_count):
             raise _error(f"measurement A {name} rate is not derivable from its counts")
 
     stratifications = _require_fields(
@@ -1224,7 +1226,7 @@ def _validate_disagreement_block(block: object, expected_row_count: int) -> None
                     raise _error(
                         f"measurement A {name} stratum {pair} count exceeds its rows"
                     )
-                if stratum[f"{pair}_disagreement_rate"] != _rate(pair_count, row_count):
+                if stratum[f"{pair}_disagreement_rate"] != rate(pair_count, row_count):
                     raise _error(
                         f"measurement A {name} stratum rate is not derivable from "
                         "its counts"
@@ -1376,7 +1378,7 @@ def _validate_hand_progression(block: object) -> str:
             )
             if count > row_count:
                 raise _error(f"measurement D {arm} {name} count exceeds its rows")
-            if entry[f"{name}_rate"] != _rate(count, row_count):
+            if entry[f"{name}_rate"] != rate(count, row_count):
                 raise _error(
                     f"measurement D {arm} {name} rate is not derivable from its counts"
                 )
@@ -1403,7 +1405,7 @@ def _validate_hand_progression(block: object) -> str:
             raise _error(
                 f"measurement D {pair} comparison counts do not partition its rows"
             )
-        if entry["higher_post_discard_shanten_rate"] != _rate(ordered[2], row_count):
+        if entry["higher_post_discard_shanten_rate"] != rate(ordered[2], row_count):
             raise _error(
                 f"measurement D {pair} higher rate is not derivable from its counts"
             )
@@ -1590,11 +1592,14 @@ __all__ = [
     "decision_depth_band",
     "diagnose_role",
     "fixed_summary",
+    "hand_progression_arm_summary",
+    "hand_progression_pair_summary",
     "legal_action_count_bucket",
     "measurement_a",
     "measurement_b",
     "measurement_c",
     "measurement_d",
+    "rate",
     "record_classification",
     "require_finite",
     "select_eligible_rows",

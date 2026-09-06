@@ -33,6 +33,10 @@ opponent hand、wall、future state、teacher-internal analysisを読まない�
 所有しており、Arenaから一意に再利用できる公開契約が存在しない。Arena側で
 同等物を書き直すことは「既存semanticsと異なるukeire定義」の新規導入になるため
 行わず、`UKEIRE_UNAVAILABLE_REASON`として明示的に`UNAVAILABLE`扱いにする。
+
+Issue #158（P1 Gate A）は`keep_shanten_tile_mask()`を通じてこの同じderivation
+を再利用する。Arena側でshantenを再実装しないというこのmoduleの境界は、derived
+P1 featureにもそのまま適用される。
 """
 
 from dataclasses import dataclass
@@ -231,30 +235,68 @@ class HandProgression:
         return self.post_discard_shanten > self.pre_discard_shanten
 
 
+def post_discard_shanten(
+    concealed_tiles: tuple[Tile, ...], pre_discard_shanten: int, discard_tile: Tile
+) -> int:
+    """1枚捨てた後の向聴数を返す。打牌は向聴数を改善しないので`post >= pre`。
+
+    打牌が向聴数を下げることはないため`post >= pre`は構造上の不変条件であり、
+    それが崩れる場合はreconstructionが誤っているので値を採用せずfail closedする。
+    """
+    post = calculate_shanten(post_discard_tiles(concealed_tiles, discard_tile))
+    if post < pre_discard_shanten:
+        raise OfflineQAmbiguousStateError(
+            "a discard decreased the shanten count; the reconstructed hand is "
+            "not consistent with the locked shanten contract"
+        )
+    return post
+
+
 def hand_progression_for_row(
     feature_values, discard_action_indices
 ) -> tuple[HandProgression, ...]:
     """1 rowの複数candidate discardを、同じcurrent stateから比較する。
 
-    concealed handの復元と打牌前向聴数は1 rowにつき1回だけ行う。打牌は向聴数を
-    改善しないため`post >= pre`が構造上の不変条件であり、それが崩れる場合は
-    reconstructionが誤っているので値を採用せずfail closedする。
+    concealed handの復元と打牌前向聴数は1 rowにつき1回だけ行う。
     """
     concealed = reconstruct_concealed_tiles(feature_values)
     pre = calculate_shanten(concealed)
-    progressions: list[HandProgression] = []
-    for index in discard_action_indices:
-        remaining = post_discard_tiles(concealed, discard_tile_for_index(index))
-        post = calculate_shanten(remaining)
-        if post < pre:
-            raise OfflineQAmbiguousStateError(
-                "a discard decreased the shanten count; the reconstructed hand is "
-                "not consistent with the locked shanten contract"
-            )
-        progressions.append(
-            HandProgression(pre_discard_shanten=pre, post_discard_shanten=post)
+    return tuple(
+        HandProgression(
+            pre_discard_shanten=pre,
+            post_discard_shanten=post_discard_shanten(
+                concealed, pre, discard_tile_for_index(index)
+            ),
         )
-    return tuple(progressions)
+        for index in discard_action_indices
+    )
+
+
+def keep_shanten_tile_mask(feature_values) -> tuple[float, ...]:
+    """37-tile keep-shanten discard maskをplayer-safe own handだけから導出する。
+
+    canonical`TILE_AXIS`順に、各tile identityへ1.0か0.0を割り当てる。
+
+    ```text
+    1.0   own concealed handにそのexact tile identityが1枚以上あり、
+          exactly 1枚discardしたpost-discard shantenがpre-discard shantenと等しい
+    0.0   それ以外（handに無い場合を含む）
+    ```
+
+    入力は`own_hand.tile_counts`から復元したconcealed handだけである。legal
+    mask、opponent hand、wall truth、future state、teacher internal analysisは
+    読まない。向聴semanticsは`calculate_shanten()`が所有し、Arenaは37軸上の
+    tile identity（赤5 / 通常5を分離したまま）を渡すだけである。
+    """
+    concealed = reconstruct_concealed_tiles(feature_values)
+    pre = calculate_shanten(concealed)
+    present = set(concealed)
+    return tuple(
+        1.0
+        if tile in present and post_discard_shanten(concealed, pre, tile) == pre
+        else 0.0
+        for tile in TILE_AXIS
+    )
 
 
 def hand_progression(feature_values, discard_action_index: int) -> HandProgression:
@@ -276,6 +318,8 @@ __all__ = [
     "hand_progression",
     "hand_progression_for_row",
     "is_discard_index",
+    "keep_shanten_tile_mask",
+    "post_discard_shanten",
     "post_discard_tiles",
     "reconstruct_concealed_tiles",
 ]

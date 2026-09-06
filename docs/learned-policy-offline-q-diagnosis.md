@@ -19,6 +19,11 @@ machineryを定義する。個別runのnumeric resultとexhaustive outcomeはIss
 support rule、model capacity、serving semantics）はこの文書では変更しない。
 `docs/learned-policy-offline-q.md`が引き続き正本である。
 
+後続の`#158`は、この診断が特定したhand-progression degradationに対して
+keep-shanten discard featureを1 familyだけ足したbounded Gate A experimentであり、
+contractは`docs/learned-policy-p1-gate-a.md`が持つ。`#158`はこの文書のbinding /
+eligibility / hand-progression derivationを再利用し、変更しない。
+
 ## 目的
 
 `#140`のcandidate-only Mahjong diagnosticsは
