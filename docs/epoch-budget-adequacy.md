@@ -380,7 +380,53 @@ model family、learning rate、bootstrap定数、classification条件を選ぶop
 
 ## Results
 
-Issue #157のresult commentを正本とする。
+actual executionは2026-09-06にlocal Windows環境で完了し、outcomeは
 
-- pre-execution lock: https://github.com/lisbun/lisjong-arena/issues/157
+```text
+BUDGET BOUND
+```
+
+だった。詳細はIssue #157のresult commentを正本とする。
+
+```text
+execution lock   5331af88bb2531d2fe3d34ca41cbc0ffffd0c6aaab63b0032265c15b7cccf55c
+result identity  700d8efb087e161d09581a10fe0b87c43c51a0f4cdb1e786f6ecc5c2852600ea
+E80 weights      2773fd8d61a5f8945c7663b959a1e1f0d9689e702bdb42ecd238c25ea9b30ea0
+arena revision   ef20aa9b4b97346af23647ac9c0b4e38fce7c60e
+```
+
+determinism gateはcanonical bytes上でexactに一致した。
+
+```text
+E80.loss_history[0:40] digest   1f91961c4f3e521cd3526b5659d8d81f1801c9f020225c4ce6c3a20a6b9ee2dd
+#150 S64.loss_history  digest   1f91961c4f3e521cd3526b5659d8d81f1801c9f020225c4ce6c3a20a6b9ee2dd
+```
+
+これによりE40の再trainingは不要であり、同時に#150 S64 trainingがdeterministicに
+再現することの実証にもなった。
+
+```text
+                       E40                    E80
+selected epoch         40 / 40                80 / 80
+pooled VALIDATION MAE  0.46736522600013997    0.46259369600375433
+conditional-uniform    0.4800499153791642     0.4800499153791642   (共有)
+
+pooled delta MAE       +0.004771529996385637   (相対 1.021%)
+95% CI                 [0.0036871109025850557, 0.00581164124540029]
+classification         CLEAR BUDGET IMPROVEMENT
+positive hanchan       16 / 16
+```
+
+E80は80 / 80を選んでおり、**80 epoch capも同様にbindingである**。これは観測事実
+として記録するだけで、本childでは160 epochへ拡張しない。
+
+cost:
+
+```text
+new hanchan / seed / corpus generation   0
+E40 retraining                           0        (#150の5,157.6 CPU-sを再利用)
+E80 training                             8,726.9 CPU-s / 9,042.1 wall-s / 3.94 GB peak
+```
+
+- pre-execution lock: https://github.com/lisbun/lisjong-arena/issues/157#issuecomment-5556617375
 - generated artifacts: `C:\Dev\lisjong-artifacts\issue-157-epoch-budget\`
