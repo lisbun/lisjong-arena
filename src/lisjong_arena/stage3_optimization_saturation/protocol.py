@@ -5,7 +5,7 @@ Arena #157 (`BUDGET BOUND`) は`max_epochs 40 -> 80`だけを動かし、40 epoc
 `80 / 80`を選んでおり、
 
 ```text
-selected epoch   E40   40 / 80   <- #150の上限
+selected epoch   E40   40 / 40   <- #150の上限
                  E80   80 / 80   <- #157の上限
 ```
 
