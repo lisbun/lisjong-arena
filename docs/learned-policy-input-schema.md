@@ -314,6 +314,15 @@ self-relative tensor placementだけを行う。
 `lisjong.action_vocabulary`はmodel output sideの独立contractである。legal maskをfeatureへ重複格納せず、
 feature packageからaction vocabularyへ依存しない。後続vertical sliceが両者をmodelの前後でcomposeする。
 
+### Issue #158 P1 derived representation
+
+`arena-learned-policy-offlineq-p1-keep-shanten-feature-v1` / 8241 dimensionsは、
+Issue #158のGate A experimentがv1の上へkeep-shanten discard 37-tile maskをappendした
+**派生** representationである。base 8204 indexはv1の値をverbatimに保持し、v1の
+semantics ID、tensor schema version、dimension、fingerprintを一切変更しない。
+派生schemaは自身のfingerprintへbase v1 fingerprintを取り込むため、v1が変われば派生も
+必ず変わる。contractは`docs/learned-policy-p1-gate-a.md`が持つ。
+
 ### Phase 6 HandBelief feature
 
 `phase6-history-snapshot-v1` / 919 dimensionsは

@@ -22,6 +22,10 @@ python -m lisjong_arena.learned_policy_offline_q diagnose  \
     --bundle DIR --dataset DIR --replacement-test DIR --result FILE
 python -m lisjong_arena.learned_policy_offline_q record-classification \
     --result FILE --outcome NAME --classified-result FILE
+python -m lisjong_arena.learned_policy_offline_q p1-gate-a \
+    --bundle DIR --dataset DIR --replacement-test DIR --result FILE
+python -m lisjong_arena.learned_policy_offline_q p1-record-classification \
+    --result FILE --outcome NAME --classified-result FILE
 ```
 
 `generate`/`train-bc`/`train-q`はTEST partitionのmetricを一切計算しない。
@@ -34,6 +38,14 @@ diagnosisであり、新しいgame / seed / training / strength evidenceを作�
 `diagnose`はretained artifactのstrict readbackだけで動き、outcome
 classificationを記録しない。`record-classification`はreview後の
 exhaustive outcomeを1件だけ付与する。
+
+`p1-gate-a`と`p1-record-classification`はIssue #158のP1 Gate Aである。
+retained artifactのstrict readbackだけを入力に取り、keep-shanten discard
+featureを足したP1 derived viewの上でQ-v2を学習し、dataset TEST /
+replacement TESTをprimary roleとして1回だけ比較する。新しいgame / seed /
+hanchan / TEST exposureを作らない。outcomeはIssue #158が事前lockしたladderが
+metricsから機械的に導出し、`p1-record-classification`はその導出結果と一致する
+1件だけを記録できる。
 """
 
 import argparse
@@ -571,6 +583,166 @@ def _record_classification(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _p1_gate_a(arguments: argparse.Namespace) -> int:
+    """retained artifactだけでP1 Q-v2を学習し、Gate Aを1回評価する（Issue #158）。
+
+    新しいgame / seed / hanchan / TEST exposureを作らない。P1 featureはlocked
+    retained transition rowsからのみ導出し、row order、split membership、
+    behavior action、reward、terminal、legal maskを変更しない。
+    """
+    import torch
+
+    from .artifact import load_dataset
+    from .diagnosis import LOCKED_SOURCE_IDENTITIES
+    from .p1_features import derive_all_split_tensors, derive_replacement_test_tensors
+    from .p1_gate_a import (
+        CandidateModelRecord,
+        P1GateARole,
+        P1RolePopulation,
+        bind_gate_a_inputs,
+        build_gate_a_result,
+        derive_classification,
+        evaluate_role,
+        validate_gate_a_result,
+    )
+    from .p1_q_training import (
+        model_weights_digest,
+        require_p1_split_tensors,
+        train_p1_q_model,
+        verify_locked_q_protocol_delta,
+    )
+    from .protocol import Split
+    from .replacement_test import (
+        load_replacement_test,
+        load_replacement_test_tensors,
+        support_mask_from_checkpoint,
+    )
+    from .retention import strict_readback
+    from .split_tensors import load_split_tensors
+    from .support import support_set_identity
+
+    verify_locked_q_protocol_delta()
+    retained = strict_readback(arguments.bundle)
+    dataset = load_dataset(arguments.dataset)
+    replacement = load_replacement_test(arguments.replacement_test)
+    binding = bind_gate_a_inputs(
+        dataset=dataset,
+        bc_checkpoint=retained.bc_checkpoint,
+        q_checkpoint=retained.q_checkpoint,
+        replacement_test=replacement,
+        expected=LOCKED_SOURCE_IDENTITIES,
+    )
+    support_mask = support_mask_from_checkpoint(retained.q_checkpoint.supported_indices)
+
+    split_tensors = load_split_tensors(dataset)
+    p1_split_tensors, split_coverage = derive_all_split_tensors(split_tensors)
+    require_p1_split_tensors(p1_split_tensors)
+    replacement_tensors = load_replacement_test_tensors(replacement)
+    p1_replacement_tensors, replacement_coverage = derive_replacement_test_tensors(
+        replacement_tensors
+    )
+
+    run = train_p1_q_model(p1_split_tensors)
+    supported_indices = sorted(
+        int(index) for index in torch.nonzero(run.support_mask).flatten().tolist()
+    )
+    candidate = CandidateModelRecord(
+        weights_digest=model_weights_digest(run.model),
+        selected_epoch=run.selected_epoch,
+        final_validation_huber_loss=run.final_validation_huber_loss,
+        epoch_history=run.history,
+        supported_indices_digest=support_set_identity(supported_indices),
+    )
+
+    populations = [
+        P1RolePopulation(
+            role=role,
+            tensors=split_tensors[split],
+            p1_tensors=p1_split_tensors[split],
+            rows=tuple(
+                dataset.rows[index] for index in split_tensors[split].row_indices
+            ),
+            coverage=split_coverage[split],
+        )
+        for role, split in (
+            (P1GateARole.DATASET_TRAIN, Split.TRAIN),
+            (P1GateARole.DATASET_VALIDATION, Split.VALIDATION),
+            (P1GateARole.DATASET_TEST, Split.TEST),
+        )
+    ]
+    populations.append(
+        P1RolePopulation(
+            role=P1GateARole.REPLACEMENT_TEST,
+            tensors=replacement_tensors,
+            p1_tensors=p1_replacement_tensors,
+            rows=replacement.rows,
+            coverage=replacement_coverage,
+        )
+    )
+    roles = [
+        evaluate_role(
+            population,
+            q_v1_model=retained.q_checkpoint.model,
+            q_v2_model=run.model,
+            bc_model=retained.bc_checkpoint.model,
+            support_mask=support_mask,
+        )
+        for population in populations
+    ]
+    document = validate_gate_a_result(
+        build_gate_a_result(binding=binding, candidate=candidate, roles=roles)
+    )
+    _write_json(Path(arguments.result), document)
+
+    for role in document["roles"]:
+        counts = role["row_counts"]
+        progression = role["hand_progression"]
+        agreement = role["action_agreement"]
+        line = (
+            f"{role['role']}: eligible={counts['eligible_row_count']}"
+            f"/{counts['total_row_count']} "
+            f"q_v2_vs_q_v1={agreement['q_v2_vs_q_v1_disagreement_count']} "
+            f"hand_progression={progression['status']}"
+        )
+        if progression["outcome_conditions"] is not None:
+            conditions = progression["outcome_conditions"]
+            line += (
+                f" worsen q_v2={conditions['q_v2_worsen_shanten_rate']:.6f}"
+                f" q_v1={conditions['q_v1_worsen_shanten_rate']:.6f}"
+                f" signal={conditions['signal']}"
+                f" regression={conditions['regression']}"
+            )
+        print(line)
+    print(f"derived_classification={derive_classification(document).value}")
+    print("classification=None")
+    print(
+        "review the result artifact, then record exactly one exhaustive outcome "
+        "with the p1-record-classification command"
+    )
+    return 0
+
+
+def _p1_outcome_names():
+    """CLI choicesのためだけにexhaustive outcome列挙を読む（torchを要求しない）。"""
+    from .p1_gate_a import P1GateAOutcome
+
+    return tuple(P1GateAOutcome)
+
+
+def _p1_record_classification(arguments: argparse.Namespace) -> int:
+    """Gate A resultへexhaustive outcomeを1件だけ記録する（Issue #158）。"""
+    import json
+
+    from .p1_gate_a import P1GateAOutcome, record_classification
+
+    source = Path(arguments.result)
+    document = json.loads(source.read_text(encoding="utf-8"))
+    classified = record_classification(document, P1GateAOutcome[arguments.outcome])
+    _write_json(Path(arguments.classified_result), classified)
+    print(f"classification={classified['classification']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m lisjong_arena.learned_policy_offline_q",
@@ -662,6 +834,29 @@ def main(argv: list[str] | None = None) -> int:
         choices=[outcome.name for outcome in _diagnosis_outcome_names()],
     )
     record.set_defaults(handler=_record_classification)
+
+    p1_gate_a = commands.add_parser(
+        "p1-gate-a",
+        help="artifact-only P1 keep-shanten Gate A (train Q-v2 and compare once)",
+    )
+    p1_gate_a.add_argument("--bundle", required=True)
+    p1_gate_a.add_argument("--dataset", required=True)
+    p1_gate_a.add_argument("--replacement-test", required=True)
+    p1_gate_a.add_argument("--result", required=True)
+    p1_gate_a.set_defaults(handler=_p1_gate_a)
+
+    p1_record = commands.add_parser(
+        "p1-record-classification",
+        help="record one exhaustive P1 Gate A outcome onto a Gate A result",
+    )
+    p1_record.add_argument("--result", required=True)
+    p1_record.add_argument("--classified-result", required=True)
+    p1_record.add_argument(
+        "--outcome",
+        required=True,
+        choices=[outcome.name for outcome in _p1_outcome_names()],
+    )
+    p1_record.set_defaults(handler=_p1_record_classification)
 
     arguments = parser.parse_args(argv)
     return arguments.handler(arguments)

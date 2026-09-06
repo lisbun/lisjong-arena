@@ -191,9 +191,21 @@ def train_q_model(dataset: LoadedOfflineQDataset) -> TrainingRun:
 
 def train_from_split_tensors(
     tensors: dict[Split, OfflineQSplitTensors],
+    *,
+    model_factory=None,
 ) -> TrainingRun:
+    """locked training semanticsでTRAINを学習する。
+
+    `model_factory`は、Issue #158のP1 experimentがinput dimensionだけ異なる
+    modelを同一のtraining semanticsで学習するためのseamである。既定値は
+    Stage 2 / #140がlockした8204入力modelであり、既存armのbehaviorは変わら
+    ない。lossもoptimizerもgammaもtarget cadenceもsupport restrictionも
+    checkpoint selectionもfactoryによって変化しない。
+    """
     import torch
 
+    if model_factory is None:
+        model_factory = create_model
     runtime = configure_deterministic_runtime()
     missing = [
         split for split in (Split.TRAIN, Split.VALIDATION) if split not in tensors
@@ -206,8 +218,8 @@ def train_from_split_tensors(
     validation = tensors[Split.VALIDATION]
     support_mask = train_support_mask(train)
 
-    model = create_model()
-    target_model = create_model()
+    model = model_factory()
+    target_model = model_factory()
     target_model.load_state_dict(model.state_dict())
     target_model.eval()
     for parameter in target_model.parameters():
