@@ -16,6 +16,7 @@ from lisjong_arena.riichienv.round_stats import SeatRoundStats
 from lisjong_arena.single_round_evaluation import (
     _aggregate_candidate_mahjong_metrics,
     aggregate_candidate_metrics,
+    aggregate_seat_round_stats_metrics,
 )
 
 
@@ -213,6 +214,52 @@ class BaselineStatsAreNotDiscardedTest(unittest.TestCase):
         _aggregate_candidate_mahjong_metrics((game_result,))
         self.assertEqual(len(game_result.seat_round_stats), 4)
         self.assertIs(game_result.seat_round_stats[0], candidate_stats)
+
+
+class SeatRoundStatsAggregationTest(unittest.TestCase):
+    """canonical formulaを任意のseat統計列へ適用できることを確認する。
+
+    ``aggregate_seat_round_stats_metrics()``は
+    ``_aggregate_candidate_mahjong_metrics()``の唯一の実装であり、candidate 1
+    seat分でもbaseline複数seat分でも同じ式を使う。母数は渡した統計列の長さで
+    ある。
+    """
+
+    def _winning_stats(self) -> SeatRoundStats:
+        return SeatRoundStats(
+            start_score=25_000,
+            end_score=27_000,
+            won=True,
+            win_points=2_000,
+            dealt_in=False,
+            deal_in_loss=None,
+            exhaustive_draw=False,
+            tenpai_at_exhaustive_draw=None,
+            first_tenpai_turn=6,
+        )
+
+    def test_it_matches_the_candidate_aggregation_for_the_candidate_seat(self) -> None:
+        game_result = _game_result(rotation=0, candidate_stats=self._winning_stats())
+        self.assertEqual(
+            aggregate_seat_round_stats_metrics([game_result.candidate_round_stats]),
+            _aggregate_candidate_mahjong_metrics((game_result,)),
+        )
+
+    def test_it_aggregates_a_multi_seat_population(self) -> None:
+        neutral = neutral_seat_round_stats(start_score=25_000, end_score=25_000)
+        metrics = aggregate_seat_round_stats_metrics(
+            [self._winning_stats(), neutral, neutral]
+        )
+        self.assertEqual(metrics.round_count, 3)
+        self.assertEqual(metrics.win_count, 1)
+        self.assertEqual(metrics.win_rate, 1 / 3)
+        self.assertEqual(metrics.mean_win_points, 2_000.0)
+        self.assertEqual(metrics.tenpai_reached_count, 1)
+        self.assertEqual(metrics.mean_first_tenpai_turn, 6.0)
+
+    def test_an_empty_population_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            aggregate_seat_round_stats_metrics([])
 
 
 if __name__ == "__main__":

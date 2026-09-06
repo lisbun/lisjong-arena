@@ -19,7 +19,7 @@ genericな``game_mode``のようにcallerが指定できるoptionではない。
 であり、このmoduleは``riichienv``をimportしない。
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import sqrt
 from statistics import stdev
@@ -44,6 +44,7 @@ from lisjong_arena.model import (
     SingleRoundGameResult,
 )
 from lisjong_arena.riichienv.local_game_runner import LocalGameResult, LocalGameRunner
+from lisjong_arena.riichienv.round_stats import SeatRoundStats
 
 ROTATION_COUNT = SINGLE_ROUND_ROTATION_COUNT
 """1 seedあたりのcandidate seat rotation数。"""
@@ -293,35 +294,35 @@ def _build_game_result(
     )
 
 
-def _aggregate_candidate_mahjong_metrics(
-    game_results: tuple[SingleRoundGameResult, ...],
+def aggregate_seat_round_stats_metrics(
+    round_stats: Sequence[SeatRoundStats],
 ) -> SingleRoundCandidateMahjongMetrics:
-    """raw candidate ``SeatRoundStats``の列からIssue #61の7 metricsを集計する。
+    """``SeatRoundStats``の列からIssue #61の局単位metricsを集計する。
 
-    candidateのraw factだけを対象にし、baselineのstatsはここでは使わない。
-    母数が0の指標は``0.0``ではなく``None``にする。
+    どのseatのstatsを渡すかは呼び出し側が決める。母数はここでは
+    ``len(round_stats)``であり、candidate 1 seat分でも、baselineが担当した
+    複数seat分でも、同じcanonical formulaをそのまま適用する。母数が0の指標は
+    ``0.0``ではなく``None``にする。
     """
-    round_count = len(game_results)
-    candidate_stats = [
-        game_result.candidate_round_stats for game_result in game_results
-    ]
+    round_count = len(round_stats)
+    if round_count == 0:
+        raise ValueError("round_stats must not be empty")
+    seat_stats = list(round_stats)
 
-    score_deltas = [stats.score_delta for stats in candidate_stats]
+    score_deltas = [stats.score_delta for stats in seat_stats]
     mean_round_score_delta = sum(score_deltas) / round_count
 
-    win_points = [stats.win_points for stats in candidate_stats if stats.won]
+    win_points = [stats.win_points for stats in seat_stats if stats.won]
     win_count = len(win_points)
     mean_win_points = None if win_count == 0 else sum(win_points) / win_count
 
-    deal_in_losses = [stats.deal_in_loss for stats in candidate_stats if stats.dealt_in]
+    deal_in_losses = [stats.deal_in_loss for stats in seat_stats if stats.dealt_in]
     deal_in_count = len(deal_in_losses)
     mean_deal_in_loss = (
         None if deal_in_count == 0 else sum(deal_in_losses) / deal_in_count
     )
 
-    exhaustive_draw_stats = [
-        stats for stats in candidate_stats if stats.exhaustive_draw
-    ]
+    exhaustive_draw_stats = [stats for stats in seat_stats if stats.exhaustive_draw]
     exhaustive_draw_count = len(exhaustive_draw_stats)
     exhaustive_draw_tenpai_count = sum(
         1 for stats in exhaustive_draw_stats if stats.tenpai_at_exhaustive_draw
@@ -334,7 +335,7 @@ def _aggregate_candidate_mahjong_metrics(
 
     first_tenpai_turns = [
         stats.first_tenpai_turn
-        for stats in candidate_stats
+        for stats in seat_stats
         if stats.first_tenpai_turn is not None
     ]
     tenpai_reached_count = len(first_tenpai_turns)
@@ -358,6 +359,18 @@ def _aggregate_candidate_mahjong_metrics(
         exhaustive_draw_tenpai_rate=exhaustive_draw_tenpai_rate,
         tenpai_reached_count=tenpai_reached_count,
         mean_first_tenpai_turn=mean_first_tenpai_turn,
+    )
+
+
+def _aggregate_candidate_mahjong_metrics(
+    game_results: tuple[SingleRoundGameResult, ...],
+) -> SingleRoundCandidateMahjongMetrics:
+    """candidateのraw ``SeatRoundStats``だけを canonical formulaへ渡す。
+
+    baselineのstatsは``game_results``に残るが、ここでは使わない。
+    """
+    return aggregate_seat_round_stats_metrics(
+        [game_result.candidate_round_stats for game_result in game_results]
     )
 
 
@@ -617,6 +630,7 @@ __all__ = [
     "SingleRoundEvaluationError",
     "SingleRoundStrengthSummary",
     "aggregate_candidate_metrics",
+    "aggregate_seat_round_stats_metrics",
     "aggregate_seed_block_statistics",
     "candidate_game_delta",
     "mean_baseline_score",

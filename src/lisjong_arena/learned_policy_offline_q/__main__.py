@@ -903,6 +903,229 @@ def _p1_gate_b_record_classification(arguments: argparse.Namespace) -> int:
     return 0
 
 
+# --- Issue #165 FiniteHorizon-teacher curriculum ---------------------------
+
+
+def _fh_curriculum_arm(value: str):
+    from .fh_curriculum import CurriculumArm
+
+    for arm in CurriculumArm:
+        if arm.value == value:
+            return arm
+    raise SystemExit(f"unknown curriculum arm: {value!r}")
+
+
+def _fh_curriculum_seed_freshness(arguments: argparse.Namespace) -> int:
+    from .fh_curriculum import check_seed_freshness
+
+    report = check_seed_freshness()
+    print(canonical_json_text(report))
+    return 0 if report["fresh"] else 1
+
+
+def _fh_curriculum_lock(arguments: argparse.Namespace) -> int:
+    from .fh_curriculum_lock import (
+        CurriculumArtifactLocations,
+        build_pre_execution_lock,
+        render_pre_execution_lock,
+    )
+
+    locations = CurriculumArtifactLocations(
+        dataset_control=arguments.dataset_control,
+        dataset_curriculum=arguments.dataset_curriculum,
+        candidate_control=arguments.candidate_control,
+        candidate_curriculum=arguments.candidate_curriculum,
+        result_artifact=arguments.result_artifact,
+    )
+    lock = build_pre_execution_lock(locations=locations)
+    _write_json(Path(arguments.lock), lock)
+    comment = render_pre_execution_lock(lock)
+    comment_path = Path(arguments.comment)
+    if comment_path.exists():
+        raise FileExistsError(f"{comment_path} already exists")
+    comment_path.parent.mkdir(parents=True, exist_ok=True)
+    comment_path.write_text(comment, encoding="utf-8", newline="\n")
+    print(comment)
+    print(f"lock_identity={lock['lock_identity']}")
+    return 0
+
+
+def _fh_curriculum_generate(arguments: argparse.Namespace) -> int:
+    from .fh_curriculum_generation import generate_arm_dataset
+
+    arm = _fh_curriculum_arm(arguments.arm)
+    measurements: list[dict] = []
+
+    def progress(recording, entry) -> None:
+        measurements.append(
+            {
+                "seed": recording.seed,
+                "split": recording.split.value,
+                "macro_transition_rows": entry.row_count,
+                "teacher_decision_count": entry.decision_count,
+                "wall_clock_seconds": recording.wall_clock_seconds,
+                "cpu_seconds": recording.cpu_seconds,
+            }
+        )
+        print(
+            f"arm={arm.value} seed={recording.seed} split={recording.split.value} "
+            f"rows={entry.row_count} decisions={entry.decision_count} "
+            f"wall={recording.wall_clock_seconds:.2f}s",
+            flush=True,
+        )
+
+    dataset = generate_arm_dataset(
+        arm, Path(arguments.dataset), progress_callback=progress
+    )
+    document = {
+        "arm": arm.value,
+        "dataset_identity": dataset.identity,
+        "non_finite_feature_count": dataset.count_non_finite_features(),
+        "games": measurements,
+        "totals": dataset.manifest["totals"],
+    }
+    _write_json(Path(arguments.report), document)
+    print(f"arm={arm.value} dataset_identity={dataset.identity}")
+    print(f"rows={dataset.row_count}")
+    return 0
+
+
+def _fh_curriculum_train(arguments: argparse.Namespace) -> int:
+    from .fh_curriculum_candidate import save_arm_candidate, train_arm_candidate
+    from .fh_curriculum_dataset import load_curriculum_dataset
+
+    arm = _fh_curriculum_arm(arguments.arm)
+    dataset = load_curriculum_dataset(Path(arguments.dataset), arm=arm)
+    training = train_arm_candidate(dataset)
+    candidate = save_arm_candidate(Path(arguments.candidate), training)
+    document = {
+        "arm": arm.value,
+        "dataset_identity": dataset.identity,
+        "candidate_identity": candidate.candidate_identity,
+        "canonical_model_weights_digest": (candidate.canonical_model_weights_digest),
+        "supported_indices_digest": candidate.support_set_digest,
+        "support_size": candidate.manifest["support_size"],
+        "support_coverage": candidate.manifest["support_coverage"],
+        "selected_epoch": candidate.manifest["selected_epoch"],
+        "training_history": [entry.to_document() for entry in training.history],
+        "derived_coverage": training.derived_coverage,
+        "wall_clock_seconds": training.wall_clock_seconds,
+    }
+    _write_json(Path(arguments.report), document)
+    print(f"arm={arm.value} candidate_identity={candidate.candidate_identity}")
+    return 0
+
+
+def _fh_curriculum_diagnose(arguments: argparse.Namespace) -> int:
+    from .fh_curriculum import CurriculumArm
+    from .fh_curriculum_candidate import load_arm_candidate
+    from .fh_curriculum_dataset import load_curriculum_dataset, require_dataset_pair
+    from .fh_curriculum_diagnostics import (
+        build_arm_diagnostics,
+        compare_arm_diagnostics,
+    )
+
+    control_dataset = load_curriculum_dataset(
+        Path(arguments.dataset_control), arm=CurriculumArm.CONTROL
+    )
+    curriculum_dataset = load_curriculum_dataset(
+        Path(arguments.dataset_curriculum), arm=CurriculumArm.CURRICULUM
+    )
+    require_dataset_pair(control_dataset, curriculum_dataset)
+    control = load_arm_candidate(
+        Path(arguments.candidate_control),
+        arm=CurriculumArm.CONTROL,
+        source_dataset_identity=control_dataset.identity,
+    )
+    curriculum = load_arm_candidate(
+        Path(arguments.candidate_curriculum),
+        arm=CurriculumArm.CURRICULUM,
+        source_dataset_identity=curriculum_dataset.identity,
+    )
+    control_document = build_arm_diagnostics(control_dataset, control)
+    curriculum_document = build_arm_diagnostics(curriculum_dataset, curriculum)
+    document = {
+        "control": control_document,
+        "curriculum": curriculum_document,
+        "comparison": compare_arm_diagnostics(control_document, curriculum_document),
+    }
+    _write_json(Path(arguments.report), document)
+    print("offline diagnostics written; these never alter the classification")
+    return 0
+
+
+def _fh_curriculum_rollout(arguments: argparse.Namespace) -> int:
+    import json
+
+    from .fh_curriculum import CurriculumArm
+    from .fh_curriculum_candidate import load_arm_candidate
+    from .fh_curriculum_rollout import run_curriculum_rollout
+
+    control = load_arm_candidate(
+        Path(arguments.candidate_control), arm=CurriculumArm.CONTROL
+    )
+    curriculum = load_arm_candidate(
+        Path(arguments.candidate_curriculum), arm=CurriculumArm.CURRICULUM
+    )
+    offline = (
+        None
+        if arguments.offline_diagnostics is None
+        else json.loads(Path(arguments.offline_diagnostics).read_text(encoding="utf-8"))
+    )
+    measurement = run_curriculum_rollout(
+        curriculum,
+        control,
+        Path(arguments.artifact),
+        offline_diagnostics=offline,
+        progress_callback=lambda completed, total: print(
+            f"game {completed}/{total}", flush=True
+        ),
+    )
+    _write_json(Path(arguments.result), measurement.document)
+    statistics = measurement.summary.seed_block_statistics
+    print(f"result_identity={measurement.document['result_identity']}")
+    print(f"mean_seed_block_delta={statistics.mean_seed_block_delta}")
+    print(
+        "normal_approx_95_interval="
+        f"[{statistics.normal_approx_95_interval_lower}, "
+        f"{statistics.normal_approx_95_interval_upper}]"
+    )
+    print(f"derived_outcome={measurement.derived_outcome.value}")
+    return 0
+
+
+def _fh_curriculum_outcomes():
+    from .fh_curriculum import RECORDABLE_OUTCOMES
+
+    return RECORDABLE_OUTCOMES
+
+
+def _fh_curriculum_record_classification(arguments: argparse.Namespace) -> int:
+    import json
+
+    from .fh_curriculum import CurriculumArm, CurriculumOutcome
+    from .fh_curriculum_candidate import load_arm_candidate
+    from .fh_curriculum_rollout import record_classification
+
+    document = json.loads(Path(arguments.result).read_text(encoding="utf-8"))
+    control = load_arm_candidate(
+        Path(arguments.candidate_control), arm=CurriculumArm.CONTROL
+    )
+    curriculum = load_arm_candidate(
+        Path(arguments.candidate_curriculum), arm=CurriculumArm.CURRICULUM
+    )
+    classified = record_classification(
+        document,
+        CurriculumOutcome[arguments.outcome],
+        curriculum=curriculum,
+        control=control,
+        artifact_path=Path(arguments.artifact),
+    )
+    _write_json(Path(arguments.classified_result), classified)
+    print(f"classification={classified['classification']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m lisjong_arena.learned_policy_offline_q",
@@ -1052,6 +1275,94 @@ def main(argv: list[str] | None = None) -> int:
         choices=[outcome.name for outcome in _p1_gate_b_outcome_names()],
     )
     p1_gate_b_record.set_defaults(handler=_p1_gate_b_record_classification)
+
+    fh_freshness = commands.add_parser(
+        "fh-curriculum-seed-freshness",
+        help="preflight the Issue #165 seed plan freshness",
+    )
+    fh_freshness.set_defaults(handler=_fh_curriculum_seed_freshness)
+
+    fh_lock = commands.add_parser(
+        "fh-curriculum-lock",
+        help="build the Issue #165 pre-execution lock and its Issue comment",
+    )
+    for name in (
+        "--dataset-control",
+        "--dataset-curriculum",
+        "--candidate-control",
+        "--candidate-curriculum",
+        "--result-artifact",
+        "--lock",
+        "--comment",
+    ):
+        fh_lock.add_argument(name, required=True)
+    fh_lock.set_defaults(handler=_fh_curriculum_lock)
+
+    fh_generate = commands.add_parser(
+        "fh-curriculum-generate",
+        help="generate one arm's locked 32-hanchan curriculum dataset",
+    )
+    fh_generate.add_argument("--arm", required=True, choices=["Y", "F"])
+    fh_generate.add_argument("--dataset", required=True)
+    fh_generate.add_argument("--report", required=True)
+    fh_generate.set_defaults(handler=_fh_curriculum_generate)
+
+    fh_train = commands.add_parser(
+        "fh-curriculum-train",
+        help="train one arm's P1 candidate and retain its serving checkpoint",
+    )
+    fh_train.add_argument("--arm", required=True, choices=["Y", "F"])
+    fh_train.add_argument("--dataset", required=True)
+    fh_train.add_argument("--candidate", required=True)
+    fh_train.add_argument("--report", required=True)
+    fh_train.set_defaults(handler=_fh_curriculum_train)
+
+    fh_diagnose = commands.add_parser(
+        "fh-curriculum-diagnose",
+        help="offline mechanism diagnostics for both arms",
+    )
+    for name in (
+        "--dataset-control",
+        "--dataset-curriculum",
+        "--candidate-control",
+        "--candidate-curriculum",
+        "--report",
+    ):
+        fh_diagnose.add_argument(name, required=True)
+    fh_diagnose.set_defaults(handler=_fh_curriculum_diagnose)
+
+    fh_rollout = commands.add_parser(
+        "fh-curriculum-rollout",
+        help="run the locked fresh F-vs-Y ABBB rollout once",
+    )
+    for name in (
+        "--candidate-control",
+        "--candidate-curriculum",
+        "--artifact",
+        "--result",
+    ):
+        fh_rollout.add_argument(name, required=True)
+    fh_rollout.add_argument("--offline-diagnostics")
+    fh_rollout.set_defaults(handler=_fh_curriculum_rollout)
+
+    fh_record = commands.add_parser(
+        "fh-curriculum-record-classification",
+        help="record the single exhaustive Issue #165 rollout outcome",
+    )
+    for name in (
+        "--result",
+        "--classified-result",
+        "--candidate-control",
+        "--candidate-curriculum",
+        "--artifact",
+    ):
+        fh_record.add_argument(name, required=True)
+    fh_record.add_argument(
+        "--outcome",
+        required=True,
+        choices=[outcome.name for outcome in _fh_curriculum_outcomes()],
+    )
+    fh_record.set_defaults(handler=_fh_curriculum_record_classification)
 
     arguments = parser.parse_args(argv)
     return arguments.handler(arguments)
