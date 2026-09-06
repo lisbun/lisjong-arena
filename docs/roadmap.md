@@ -2,57 +2,70 @@
 
 ## 目的
 
-`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、そのdecision qualityやgame performanceをcontrolled / reproducibleな条件で測定する基盤である。
+`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、bounded research candidateを再現可能に生成・診断し、そのdecision qualityやgame performanceをcontrolled / reproducibleな条件で比較・評価する基盤である。
 
-長期的には、Arena内の能力を次の2 trackとして発展させる。
+長期的にはArena内の能力を次の3 trackとして発展させる。
 
 ```text
-lisjong Policy contract
-        ^
-        |
 Execution / Observation Track
-        |
-        +------------------+
-        |                  |
-        v                  v
-Evaluation Track      analysis / viewer consumer
+        what happened
+             |
+             v
+      objective evidence
+             |
+             +------------------------------+
+             |                              |
+             v                              v
+Experiment-local Research Track       Evaluation Track
+bounded candidate generation         reproducible comparison
+training / diagnostics               metrics / artifacts
+             |                              ^
+             v                              |
+      research candidate ------------------+
 ```
 
-Execution / observationは「何が起きたか」を取得する。Evaluationはそのraw execution dataを利用して比較・検証する。Policy内部の「なぜそのActionを選んだか」というanalysis semanticsはlisjongが所有する。
+この3 trackは同一repositoryに存在してよいが、責務を混ぜない。
 
-lisjong ecosystem全体のrepository責務、依存方向、OSS / external ecosystem、Visualization / Analysis等のproject-wide原則は[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。Arena固有の詳細なownership decisionは[`docs/architecture.md`](architecture.md)を正本とする。
+- Execution / Observationは「何が起きたか」を取得する
+- Experiment-local Researchは「bounded hypothesisをどうmaterialize / train / diagnoseするか」を扱う
+- Evaluationは「candidate / Policyをどう再現可能に比較するか」を扱う
+- stableなPolicy / feature / HandBelief / value等のAI semanticsは`lisjong`が所有する
 
-現在実装されているAABB / ABBBの具体的schema、seed contract、seat rotation、metric contract、artifact contract、使用方法は[`README.md`](../README.md)とimplementationを正本とする。本書はそれらを変更せず、長期的なcapability developmentを示す。
+lisjong ecosystem全体のrepository責務、依存方向、promotion boundaryは[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。Arena固有の詳細ownershipは[`docs/architecture.md`](architecture.md)を正本とする。
+
+現在のIssue / PR / experiment statusはGitHubを正本とし、本書は特定Issue番号へ依存しない長期的なcapability developmentを示す。
 
 ## Roadmap principles
 
-- execution / observationとevaluationを同一repository内でも分離する
-- evaluationからexecution / observationを利用し、逆方向へcomparison semanticsを漏らさない
-- `DecisionContext` / `InternalAction`等のAI-side contract semanticsはlisjongに残す
-- external environment固有の型・protocol・session lifecycleをPolicy contractへ漏らさない
-- objective execution observationとPolicy-internal analysisを別contractとして扱う
-- ArenaがPolicy-internal analysisをtransport / persistenceしても、そのpayload semanticsを所有しない
-- current physical placementとtarget ownershipを区別し、big-bang migrationを避ける
-- deterministic reproducibilityとstatistical strength claimを分離する
-- evaluation対象に対してminimum sufficient scopeを選ぶ
-- concrete execution pathを観測する前にgeneric backend / runtime abstractionを先行設計しない
-- secret / credential / privileged observer informationをtrace / artifact / Policy decision pathへ逆流させない
+- Execution / Observation、Experiment-local Research、Evaluationを分離する
+- stable AI semanticsとexperiment-local implementationを分離する
+- research codeがArenaにあることだけでproduction ownershipを決めない
+- one bounded experiment = one primary research questionを優先する
+- purpose-specific implementation before generic framework
+- player-safe serving inputとprivileged training / diagnostic truthを分離する
+- deterministic reproducibilityとstatistical / strength claimを分離する
+- negative / inconclusive / invalidを区別する
+- resultを見てseed / threshold / rescue runを暗黙追加しない
+- evaluation対象に対してminimum sufficient fidelityを選ぶ
+- cheap proxyはreject / triage / prioritizationに利用できるが、最終strength claimと同一視しない
+- raw evidence / immutable artifactをsource of truthとし、summaryは再導出可能にする
+- concrete consumerとmeasured bottleneckを確認する前にgeneric backend / ML platform / cloud orchestrationを先行設計しない
+- secret / privileged informationをtrace / artifact / Policy decision pathへ逆流させない
+- experiment-local successを自動的にstable / production contractへpromotionしない
 
-## Execution / Observation Track
+## Track 1 — Execution / Observation
 
 このtrackは、lisjongをconcrete environmentへ接続し、objective execution informationを取得する能力を発展させる。
-
-概念上:
 
 ```text
 external / local environment
           |
           v
-execution / observation
+Execution / Observation
           |
-          +--> DecisionContext -> lisjong Policy -> InternalAction
+          +--> lisjong-owned Policy contract
           |
-          +--> objective raw execution data
+          `--> objective raw execution data
 ```
 
 主な能力:
@@ -68,465 +81,437 @@ execution / observation
 - protocol trace
 - raw game record
 - objective execution event
-- external environmentへ実際に送信・適用したActionの記録
+- actual applied Action record
 - external representationからlisjong-owned contractへのprojection
 - external legal Action mapping / revalidation
 
-このtrackはAI判断ロジック、AABB / ABBB、evaluation seed / rotation、Policy performance metric、comparison artifact semanticsを所有しない。
+このtrackは研究仮説、training loss、AABB / ABBB、evaluation seed / rotation、strength metric、comparison artifact semanticsを所有しない。
 
-### Current implementation
+### Multiple concrete execution paths
 
-AABB / ABBBは次のcurrent pathを使う。
-
-```text
-lisjong-arena evaluation
-        |
-        v
-lisjong_arena.riichienv.LocalGameRunner
-        |
-        v
-RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
-```
-
-RiichiLabは段階migration中である。Issue #15でfirst-party ranked entry pointをArenaへ追加し、Issue #17で`RankedGameResult` / `run_ranked_game()`のcanonical one-game orchestration implementationもArenaへ移した(lisjong側legacy orchestration copyは`lisbun/lisjong#86`でcleanup済み)。Issue #19では`ValidationResult` / `run_validation()` / validation CLIと、execution profile / credential resolution / common CLI・trace-path compositionのcanonical implementationもArenaへ移し、Arena ranked CLIもこのArena-local compositionへ切り替えた。lisjong側validation / profile / CLI legacy copyは`lisbun/lisjong#89` / PR #90でcleanup済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revision(`7bf6aeef0e63aa77c846a17ca7ce9218dfcc2e18`)へ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyのcanonical implementationもArenaへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91` / PR #92でcleanup済みであり、Issue #25でArenaのdependency pinもactual cleanup merge commit `dfaf494ac819da01eef4681ff9041a057fa313bc`へ同期した。これによりlower-level runtimeのphysical duplicateは完全解消済みである。Issue #27では、protocol-facing decision bridge(`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validation)のcanonical implementationもArenaへ移し、`riichienv==0.4.8`をArena direct dependencyとして明示した。lisjong側legacy physical copy(`src/lisjong/riichilab_adapter/`)は`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのactual cleanup merge SHAへ同期済みである。Issue #31では、AABB / ABBB execution pathが使う`LocalGameRunner` / `LocalGameResult`のcanonical + physical implementation(`lisjong_arena.riichienv.local_game_runner`)もArenaへ移した。Issue #39では、RiichiEnv Adapter一式のcanonical + physical implementation(`lisjong_arena.riichienv.adapter`)もArenaへ移し、`LocalGameRunner` / `RiichiLabSeatAdapter` / MJAI response conversion / possible-actions validationのすべてのArena active consumerをArena-local implementationへ切り替えた。
-
-`GameTrace`のcanonical physical implementationはIssue #43でArena(`lisjong_arena.game_trace`)へ移り、Arena-local `LocalGameRunner`はこれをconsumeする。lisjong側legacy physical copy(`lisjong.game_trace`)は`lisbun/lisjong#102` / PR #103で削除済みであり、Issue #45でArenaのexact lisjong dependency pinもPR #103のactual cleanup merge commit `376f69088a134b5a9bcc33a69b95e3f779eb2b0e`へ同期済みである。これによりGameTrace pillarのphysical duplicateは完全解消済みである。`LocalGameRunner`のlisjong側legacy physical copyは`lisbun/lisjong#98` / PR #99で削除済みであり、Issue #37でArenaのexact lisjong dependency pinもPR #99のactual cleanup merge commit `c43588e27c2938daf4ff10cd8d89ed89d9da2e88`へ同期済みである。これによりLocalGameRunner / LocalGameResult pillarのphysical duplicateは完全解消済みである。RiichiEnv Adapterのlisjong側legacy physical copy(`lisjong.riichienv_adapter`)も`lisbun/lisjong#100` / PR #101で削除済みであり、Issue #41でArenaのexact lisjong dependency pinもこのcleanup merge commit `3505321b62e7a2be204cc555924b485a898c8f31`へ同期済みである。これによりRiichiEnv Adapter pillarのphysical duplicateも完全解消済みである。現在のexact lisjong pinは`296b76ab8249ac4153e6d001a41886ed38ae303a`である(lisjong PR #118のactual merge commit。Issue #58で`FiniteHorizonCompletionPolicy`をArenaから利用可能にするため同期)。Issue #47では、`run_ranked_game()`をone-game primitiveのまま維持し、その上位layerとしてresilient / continuous ranked runner(`lisjong_arena.riichilab.continuous_ranked`)をArena-local canonical + physical implementationとして追加した(`run_ranked_game()`のsignatureは変更していない)。
-
-### Target ownership
-
-上記integration / runner / objective trace responsibilityはArena execution / observationへ段階移管する。`LocalGameRunner`相当のlocal executionはIssue #31のArena takeover、lisjong #98 / PR #99のlegacy cleanup、Issue #37のexact pin syncまで完了した。RiichiEnv AdapterもIssue #39のArena takeover、lisjong #100 / PR #101のlegacy cleanup、Issue #41のexact pin syncまで完了した。GameTraceもIssue #43のArena takeover、lisjong #102 / PR #103のlegacy cleanup、Issue #45のexact pin syncまで完了した。
+Arenaは複数のconcrete execution pathを持てる。
 
 ```text
-Arena execution / observation
-    -> RiichiLab client / Adapter
-    -> RiichiEnv Adapter (completed: #39 / lisjong #100 / #41)
-    -> LocalGameRunner (completed: #31 / lisjong #98 / #37)
-    -> GameTrace objective observation contract (completed: #43 / lisjong #102 / #45)
+Arena Execution / Observation
+    |
+    +--> RiichiEnv
+    +--> RiichiLab
+    `--> lisjong-engine
 ```
 
-ただし`DecisionContext` / `InternalAction`のcontract semanticsやshanten / ukeire / HandBelief / risk / value等のAI logicはlisjongに残す。
+これらを早期に一つのgeneric backendへ統合しない。
 
-### RiichiLab migration lane
+共通化は、複数consumerで実際に同一boundaryが必要になり、重複・maintenance costが確認された場合にのみ検討する。
 
-最初のconcrete migrationはRiichiLab integrationを優先する。
+### Durable observation
+
+same-process inspection、durable local record、analysis consumer等はconcrete consumerから必要性を決める。
+
+raw recordはtraining datasetそのものではない。
 
 ```text
-existing lisjong RiichiLab client / Adapter
+raw execution / decision record
         |
-        v
-Arena first-party ranked entry point          [done: #15]
-        |
-        v
-Arena one-game ranked orchestration           [done: #17]
-        |
-        v
-lisjong legacy ranked orchestration cleanup   [done: lisjong #86]
-        |
-        v
-Arena validation orchestration /
-profile / credential / CLI composition        [done: #19]
-        |
-        v
-lisjong legacy cleanup                        [done: lisjong #89 / PR #90]
-        |
-        v
-Arena lisjong dependency pin sync             [done: #21]
-        |
-        v
-Arena lower-level RiichiLab runtime
-(errors / Session / Transport / trace)        [done: #23]
-        |
-        v
-lisjong legacy lower-level runtime cleanup    [done: lisjong #91 / PR #92]
-        |
-        v
-Arena lisjong dependency pin sync             [done: #25]
-        |
-        v
-Arena protocol-facing decision bridge
-(RiichiLabSeatAdapter / request_action /
-MJAI response / possible-action validation)   [done: #27]
-        |
-        v
-lisjong legacy protocol-facing bridge cleanup [done: lisjong #94 / PR #95]
-        |
-        v
-Arena lisjong dependency pin sync             [done: #29]
-        |
-        v
-resilient / continuous participation           [done: #47]
-        |
-        v
-raw online game record / protocol observation
+        +--> experiment-local dataset builder
+        +--> offline diagnostic
+        `--> viewer / replay consumer
 ```
 
-Issue #17では`run_ranked_game()`だけをArena canonical implementationへ移し、Issue #19では`run_validation()`とexecution profile / credential / common CLI compositionもArena canonical implementationへ移した。lisjong側のlegacy validation / profile / CLI copyは`lisbun/lisjong#89` / PR #90で除去済みであり、Issue #21でArenaのlisjong dependency pinもこのcleanup後revisionへ更新した。Issue #23では、WebSocket / transport、`ValidationSession` / `RankedSession`、protocol trace writer、client error hierarchyもArena canonical implementationへ移した。lisjong側legacy copy(`lisjong.riichilab_client`)は`lisbun/lisjong#91` / PR #92でcleanup済みであり、Issue #25でactual cleanup merge SHAへのArena dependency pin syncも完了した。lower-level runtimeのphysical duplicateは完全解消済みである。Issue #27では`RiichiLabSeatAdapter` / request_action parse / MJAI response / possible-action validationもArena canonical implementationへ移した(AI-side semanticsであるPolicy / DecisionContext / InternalAction / execute_policy()はArenaへ複製していない)。lisjong側legacy physical copyは`lisbun/lisjong#94` / PR #95で削除済みであり、Issue #29でArenaのdependency pinもこのPR #95のactual cleanup merge SHAへ同期済みである。これによりRiichiLab protocol-facing decision bridgeのphysical duplicateも完全解消済みである。
+project-wide canonical `GameRecord`を先に発明しない。
 
-### RiichiEnv migration lane
+## Track 2 — Experiment-local Research / ML
 
-RiichiEnv Adapter / LocalGameRunner / GameTraceは、既存AABB / ABBB consumerを壊さないようRiichiLab laneとは独立に段階移管する。`LocalGameRunner` / `LocalGameResult` pillarはIssue #31、lisjong #98 / PR #99、Issue #37まで完了し、RiichiEnv Adapter pillarもIssue #39、lisjong #100 / PR #101、Issue #41まで完了した。GameTrace pillarもIssue #43、lisjong #102 / PR #103、Issue #45まで完了した。これら3 pillarはCOMPLETEだが、ADR 0002全体およびexternal execution / observation migration全体の完了はfresh project-wide inventory前には宣言しない。
+このtrackは、bounded research questionを再現可能なcandidate / evidenceへ変換する。
 
 ```text
-before #31
-Arena evaluation
-    -> lisjong.LocalGameRunner
-    -> RiichiEnv
-
-previous state (#43完了後 / #45前)
-Arena evaluation
-    -> lisjong_arena.riichienv.LocalGameRunner
-    -> RiichiEnv (+ Arena-local RiichiEnv Adapter + Arena-local GameTrace)
-    -> lisjong Policy contract
-
-current (#45完了後)
-Arena evaluation
-    -> Arena execution / observation (LocalGameRunner / RiichiEnv Adapter / GameTrace pillars COMPLETE)
-    -> RiichiEnv
-    -> lisjong Policy contract
+research hypothesis
+      |
+      v
+one changed axis where practical
+      |
+      v
+purpose-specific feature / dataset / training
+      |
+      v
+checkpoint / diagnostic artifact
+      |
+      v
+bounded classification
 ```
 
-actual dependency version、package layout、temporary compatibility / re-exportはconcrete migration Issueで決定する。
+主な能力:
 
-## Objective data and Policy-internal analysis
+- player-safe feature materialization
+- experiment-local tensor schema / fingerprint
+- raw corpus -> dataset transform
+- TRAIN / VALIDATION / TEST discipline
+- bounded training harness
+- experiment-specific model / loss / optimizer
+- deterministic training where required
+- checkpoint / result artifact
+- retained-artifact readback
+- offline failure diagnosis
+- component measurement / calibration study
+- experiment-local serving adapter
+- exhaustive classification
 
-Arenaが所有するのはobjective execution dataである。
+### Research ownership boundary
+
+このtrackが所有するのは**experiment implementation**であって、stable AI semanticsではない。
+
+```text
+experiment-local feature
+!= production feature contract
+
+experiment-local model
+!= canonical Learned Policy architecture
+
+experiment-local checkpoint
+!= production Policy
+```
+
+shanten / ukeire / HandBelief / risk / value等のstable semanticsが必要なら`lisjong`のcanonical implementationをreuseする。
+
+### Cheap evidence first
+
+高コストevaluationへ進む前に、研究仮説に対応したcheap diagnosticを置ける場合は利用する。
+
+conceptual ladder:
+
+```text
+same-state / component diagnostic
+        |
+        v
+low-complexity interaction
+        |
+        v
+interactive round evaluation
+        |
+        v
+hanchan / game-level strength
+```
+
+ただし:
+
+```text
+cheap metric != final optimization target
+cheap metric = rejection / triage / prioritization signal
+```
+
+proxyが有用かは、将来higher-fidelity outcomeとの対応を継続的に校正する。
+
+### Curriculum / staged capability development
+
+複雑なPolicy能力を一度に要求せず、selected research hypothesisに応じて基礎能力から段階化してよい。
 
 例:
 
-- game / round event
-- actual applied Action
-- score / result
-- seat-visible external observation
-- protocol event
-- session / disconnect / retry information
-
-一方、次のようなPolicy-internal analysis semanticsはlisjongが所有する。
-
-- shanten
-- ukeire
-- HandBelief
-- danger estimate
-- value / utility estimate
-- candidate Action evaluation
-- selection reason
-- learned estimator output
-
-Arenaが将来lisjong-produced analysisを保存する場合も、opaque payloadと最小envelope metadataをtransportする側に留まる。Arena自身がHandBelief等を再計算したり、component calibration oracleになったりしない。
-
-既存`GameTrace`へPolicy-internal analysisを混在させず、RiichiEnv / RiichiLab / future environment共通のgeneric canonical traceへ先行一般化しない。
-
-## Evaluation Track
-
-Evaluation trackは、execution / observationをconsumerとしてPolicy / game performanceのcontrolled evidenceを提供する。
-
 ```text
-Arena evaluation
-    |
-    +-- Round-level development evaluation
-    |       rapid feedback / regression detection
-    |
-    +-- Game-level validation when needed
-    |
-    +-- External benchmark
-            external competitor / game performance
+hand progression
+    -> tenpai
+    -> riichi / win
+    -> calls / value
+    -> defense / risk
+    -> belief-aware decisions
+    -> placement / full hanchan strength
 ```
 
-Arenaが提供するのは特定の評価条件における比較・regression・further validationのためのevidenceであり、Arena単独の結果からAI全体のstrength improvementを直接断定しない。
+これは永久固定の学習順序ではなく、cheap / interpretableなfailure localizationを優先するためのroadmap principleである。
 
-## Evaluation lanes and scope strategy
+### Research scaling
 
-評価scopeは特定protocolを永久にprimaryと固定せず、評価対象に対してminimum sufficientなものを選ぶ。development evaluationとexternal benchmarkは厳格な直列gateではなく、目的の異なるlaneとして扱う。
+次を先に固定しない。
 
-### Lane 1: Round-level development evaluation
+- large dataset
+- larger model
+- HPO
+- self-play league
+- distributed training
+- cloud execution
 
-局内decision qualityを主対象とするPolicy強化段階では、single-round evaluationを主要な高速feedback loopとして利用できる。
+small bounded experimentで情報価値を確認し、measured bottleneckが出た場合だけscaleする。
 
-主な理由:
+## Track 3 — Evaluation
 
-- game-level evaluationより低コスト
-- 多数sampleを取得しやすい
-- fixed seed等による再現性を確保しやすい
-- seat差をcontrolled protocolで扱いやすい
-- 小さなPolicy変更を高速に比較できる
-- regressionした局を局単位で特定しやすい
-- 原因調査・再実行が容易
-
-向聴数、受け入れ、lookahead、HandBelief、offensive value、defensive risk、鳴き等の局内能力を強化する段階では、このlaneをdevelopment / self-improvement / rapid feedbackの中心として利用する。
-
-ただし`single-round = permanently primary`とは規定しない。
-
-### Game-level validation within development
-
-点棒状況、順位条件、親番価値、連荘価値、オーラス判断、トップ取り、ラス回避、game-level utility等を評価する場合は、hanchan / match-level等の高コストなvalidationへ広げる。
-
-HandBelief Stage 2のPhase 9は、通常のiterative development evaluationではなく、一回限りの
-confirmatory family-selection gateとして扱う。fresh seeds `160..179`、frozen snapshot/S2、paired
-20-hanchan uncertainty、physical validity、classification ruleは`lisjong-project#39`でpre-register済みである。
-machineryのreview/merge前にholdoutを開封せず、有効結果を見てseed追加、threshold変更、再学習を行わない。
-Stage 3はPhase 9 classificationとStage 2 completion reviewの後にのみ開始する。
-
-### Lane 2: External benchmark
-
-成熟したexternal AI等に対するlisjongのgame performanceを評価する。external benchmark全体について特定scopeを固定せず、round、east-only、hanchan、decision-specific benchmark等から評価目的に必要なscopeを選ぶ。
-
-#### Preferred / planned Mortal benchmark path
-
-Mortalを総合的なgame-performance referenceとして利用する場合は、hanchan-level comparisonとcontrolled seat rotationをprimary candidateとする。
+このtrackはcandidate / Policy performanceのcontrolled evidenceを提供する。
 
 ```text
-lisjong
-  vs
-Mortal
-
-× hanchan
-× controlled seat rotation
+research candidate / existing Policy
+        |
+        v
+locked evaluation plan
+        |
+        v
+execution
+        |
+        v
+immutable artifact
+        |
+        v
+strict readback / aggregation
+        |
+        v
+bounded interpretation
 ```
 
-ただしMortal benchmarkをgame-level strategy完成後まで禁止しない。diagnostic目的のround-level comparisonも妨げず、他external benchmarkまでhanchanへ固定しない。
+主な能力:
 
-## Protocol roles
+- matchup / trial planning
+- fixed / ordered seeds
+- deterministic seat rotation
+- Policy / agent assignment
+- round / game scope
+- raw result
+- metrics
+- paired / statistical comparison
+- immutable artifact / provenance
+- strict readback / reaggregation
+- external benchmark
+- external competitor orchestration
 
-### AABB
+Evaluationはcandidate generation conditionを所有しない。結果を見てtraining conditionを変える場合はresearch側のnew candidateとして扱う。
 
-AABBは、2 Policyを同一対局内へ配置して相対比較するhead-to-head comparison protocolとして位置付ける。
+### Multi-fidelity evaluation
 
-Policy A / B間の相対比較やregression comparisonへ利用できる。ただし同一対局配置やseat rotationが統計的公平性やstrength differenceを自動的に証明するとは扱わない。
-
-### ABBB
-
-ABBB single-round evaluationは、candidate Policyを固定baseline環境へ投入して継続評価するcandidate-vs-fixed-baseline development protocolとして位置付ける。
+評価scopeは最も高価なprotocolを常に使うのではなく、質問に対してminimum sufficientなものを選ぶ。
 
 ```text
-candidate A
-     |
-     v
-baseline B B B
-     |
-     v
-fixed / controlled conditions
-     |
-     v
-candidate performance evidence
+component / same-state
+    -> cheap diagnosis
+
+single-round
+    -> local interaction / offense / regression signal
+
+hanchan
+    -> placement / score context / overall development strength
+
+external benchmark
+    -> selected external reference under explicit protocol
 ```
 
-AABB / ABBBの具体rotation、schema、seed、game mode、metric contractはREADMEとimplementationを正本とする。本roadmapでは変更しない。
+hanchan strength等のNorth Starを維持しつつ、cheap gateで明らかなcandidateを早期rejectできる構造を目指す。
 
-## Evidence and statistical roadmap
+### Portable locked evaluation
 
-Deterministic reproducibilityとstatistical strength claimを分離する。
+将来のautomationでは、existing evaluatorを薄くcompositionし、
 
 ```text
-same conditions -> reproducible result
-                 !=
-Policy A > Policy B as a statistical claim
+spec
+  -> resolve / preflight
+  -> lock
+  -> execute
+  -> validate artifact
+  -> summarize
+  -> optional predeclared classify
 ```
 
-長期的な検討対象:
+をnon-interactiveに実行できる形を発展させる。
 
-- sample size
-- variance
-- confidence interval
-- paired comparison
-- seed selection
-- seat balance
-- effect size
-- comparison / further-validation threshold
-
-fixed seedやrotationが存在することだけを理由に各resultを独立sample / paired sampleとして扱わない。Policy差によるtrajectory divergence、同一game内resultの相関、protocolごとのstatistical unitを確認してから統計手法を設計する。
-
-少数sampleの勝敗だけでPolicy improvementを断定しない。
-
-## Metrics roadmap
-
-現在実装済みのmetric contractは変更しない。Policy強化に応じて、次のようなmetricを将来検討できる。
-
-### Result metrics
-
-- score
-- rank / placement
-
-### Round outcome metrics
-
-- win rate
-- deal-in rate
-- draw-tenpai rate
-- average win value
-- round score delta
-
-### Behavioral metrics
-
-- riichi rate
-- call rate
-- fold / push behavior
-
-### Decision / analysis metrics
-
-- effective ukeire
-- estimated value / utility
-- candidate-action comparison
-- estimator-related analysis summary
-
-Decision / analysis metricsをArenaで扱う場合も、lisjongが明示的に提供したanalysis dataをaggregation / correlationする形を基本とする。Arena自身がshanten / HandBelief / danger等を再実装しない。
-
-## Artifact / provenance and regression analysis
-
-Evaluation resultを一時的なconsole outputだけでなく、Policy evolutionを検証するreproducible evidenceとして扱う。
+ただしevaluation automationをcandidate generation / automatic research agentと混同しない。
 
 ```text
-baseline
-   |
-Policy change
-   |
-evaluation
-   |
-artifact / provenance
-   |
-comparison / regression analysis
+Automated Strength Evaluation
+!= Automated AI Research
 ```
 
-現在version付きartifact contractはAABB comparisonとPolicy-vs-Policy ABBB
-single-round evaluationにそれぞれ独立して実装されている。ABBB artifactは
-compatibleかつseedがnon-overlappingな複数runの再集計に対応するが、Mortal等の
-external competitorを含むすべてのevaluation pathへ一般化しない。Policy strength
-comparisonの共通規律は[`docs/policy-strength-evaluation.md`](policy-strength-evaluation.md)
-を参照する。
+### Remote execution
 
-長期的には各evaluationについてPolicy / configuration / protocol / seed / seat / metrics / implementation provenanceを追跡できる状態を目指す。
+remote / hosted executionはlocal-first capabilityが成立し、measured needが確認された場合にのみ追加する。
 
-Evaluation artifactへ完全な牌譜やgame event streamの内包を要求しない。必要ならobjective game dataへのreferenceを持つ設計を検討できる。
+優先順位:
 
 ```text
-evaluation artifact
-    +-- result / metrics
-    +-- provenance
-    +-- optional game-data reference
-                 |
-                 v
-             game record
+portable local run
+    -> real-use checkpoint
+    -> hosted / CI feasibility
+    -> cloud only if justified
 ```
 
-Arena自身はviewer / GUI / replay UIを所有しない。viewer formatやproject-wide canonical event schemaも具体consumer requirementなしに定義しない。
+always-on infrastructure、generic scheduler、Kubernetes等を先行要件にしない。
 
-## OSS-first strategy
+## Cross-track flow
 
-External benchmark、game execution、protocol interoperability等に必要な能力を成熟したOSSが既に提供する場合は優先的に評価・利用する。同等機能をArena内へ無目的に重複実装しない。
-
-RiichiEnvは現在のlocal execution / reproducible evaluation / MJAI / Mortal interoperabilityの有力なconcrete environmentである。ただしArenaの永久public contractではない。
-
-Mortal benchmarkのためだけにMJAI generator/parser、麻雀game progression、generic process runtimeを先行再実装しない。
-
-## Runtime extraction trigger
-
-現時点では独立した`lisjong-runtime` repositoryを作成しない。
-
-次のようなconcrete requirementが成立した場合に再検討する。
-
-- 24/7 production bot hosting
-- evaluationとは独立したdeployment
-- generic process / agent hosting
-- Arena以外の複数consumerが同じruntimeを必要とする
-- execution infrastructureがArena固有責務から独立して大きく成長する
-- Arena repository内のpackage-level分離では責務境界を維持しにくくなる
-
-## Migration ordering
-
-重要な順序は次とする。
+Arena内の典型的なresearch cycleは次のようになる。
 
 ```text
-repository-local architecture
+Execution / retained evidence
         |
-RiichiLab first-party entry point             [done: #15]
+        v
+bounded research question
         |
-Arena ranked one-game orchestration           [done: #17]
+        v
+Experiment-local Research
         |
-lisjong legacy ranked orchestration cleanup   [done: lisjong #86]
+        v
+candidate / diagnostic evidence
         |
-Arena validation orchestration /
-profile / credential / CLI composition        [done: #19]
+        v
+cheap gate where justified
         |
-lisjong legacy cleanup                        [done: lisjong #89 / PR #90]
+        v
+Evaluation at increasing fidelity
         |
-Arena lisjong dependency pin sync             [done: #21]
+        v
+validated evidence
         |
-Arena lower-level RiichiLab runtime
-(errors / Session / Transport / trace)        [done: #23]
-        |
-lisjong legacy lower-level runtime cleanup    [done: lisjong #91 / PR #92]
-        |
-Arena lisjong dependency pin sync             [done: #25]
-        |
-Arena protocol-facing decision bridge         [done: #27]
-        |
-lisjong legacy protocol-facing bridge cleanup [done: lisjong #94 / PR #95]
-        |
-Arena lisjong dependency pin sync             [done: #29]
-        |
-resilient / continuous participation          [done: #47]
-        |
-Arena LocalGameRunner canonical + physical migration [done: #31]
-        |
-lisjong legacy LocalGameRunner cleanup        [done: lisjong #98 / PR #99]
-        |
-Arena lisjong dependency pin sync             [done: #37]
-        |
-Arena RiichiEnv Adapter canonical + physical migration [done: #39]
-        |
-lisjong legacy RiichiEnv Adapter cleanup      [done: lisjong #100 / PR #101]
-        |
-Arena lisjong dependency pin sync             [done: #41]
-        |
-GameTrace Arena takeover                      [done: #43]
-        |
-lisjong legacy GameTrace cleanup                [done: lisjong #102 / PR #103]
-        |
-Arena lisjong dependency pin sync             [done: #45]
-        |
-GameTrace physical duplicate eliminated       [COMPLETE]
+        v
+next research decision outside the experiment
 ```
 
-migration途中でもexisting AABB / ABBBを壊さず、main branchをbroken stateにしない。
+研究仮説の選択そのものをArena infrastructureへ自動化しない。
 
-## Repository boundaries and source of truth
+## Promotion path
+
+repeatedly usefulなresearch implementationが生まれても、Arena内で自動promotionしない。
 
 ```text
-AI component semantics / Policy internals
+experiment-local implementation
+        |
+        v
+evidence across bounded uses
+        |
+        v
+owner / consumer review
+        |
+        +--> remain Arena research infrastructure
+        |
+        `--> stable AI contractへformalize
+               owner = lisjong where appropriate
+```
+
+promotion時に検討するもの:
+
+- semantics stability
+- multiple-consumer need
+- production runtime dependency
+- model weights distribution
+- feature / model versioning
+- artifact delivery
+- compatibility / breaking-change policy
+
+## HandBelief roadmap interaction
+
+HandBeliefでは次を分離する。
+
+```text
+stable belief semantics
     -> lisjong
 
-Rule / engine semantics
-    -> lisjong-engine
+training / prediction measurement / scale experiment
+    -> Arena Research
 
-Component correctness / calibration
-    -> component owning repository
-
-External execution / objective observation
-    -> lisjong-arena execution / observation
-
-Policy / game evaluation
-    -> lisjong-arena evaluation
+decision / game-strength effect
+    -> Arena Evaluation
 ```
 
-`lisjong-arena -> lisjong`を維持し、`lisjong -> lisjong-arena`を導入しない。
+prediction quality improvementだけでPolicy strength improvementを主張しない。
 
-Current implementationではArenaはAABB / ABBB LocalGameRunnerとRiichiLab protocol-facing bridgeのため`riichienv==0.4.8`へdirect dependencyを持つ。RiichiEnv Adapter pillarはIssue #39のArena takeover、lisjong #100 / PR #101のlegacy cleanup、Issue #41のexact pin syncまで完了しており、physical duplicateも完全解消済みである。GameTrace pillarもIssue #43のArena takeover、lisjong #102 / PR #103のlegacy cleanup、Issue #45のexact pin syncまで完了し、`lisjong_arena.game_trace`がsole physical implementationである。LocalGameRunner、RiichiEnv Adapter、GameTraceの各pillarはCOMPLETEであるが、ADR 0002全体およびexternal execution / observation migration全体の完了はfresh project-wide inventory後に別途判定する。
+将来HandBelief-aware consumerを評価する場合も、component diagnosticからdecision-level、必要な場合だけgame-levelへ進む。
 
-Historical Issue #9で採用した「live / standalone participation -> lisjong self-integration」は、`lisjong-project` Issue #10によってtarget ownershipが変更された。現在のtargetはArena execution / observationである。
+## Learned Policy roadmap interaction
 
-## 現在このroadmapで固定しないもの
+Learned PolicyではArenaが:
 
-- AABB / ABBB existing protocol contractの変更
-- concrete statistical method / sample size / confidence threshold
-- formal Policy promotion lifecycle
-- new metric schema
-- ABBB artifact schema
-- viewer / replay / GUI protocol
-- project-wide canonical game event schema
-- DecisionTrace / AnalysisEnvelope / correlation ID
-- generic canonical GameTrace
-- external competitor wrapper API / process lifecycle
-- Mortal model placement
-- RiichiEnv / Mortalの永久dependency
-- generic external-player runtime / process host
-- `GameBackend` / `EvaluationBackend`
-- first-party engine integration API
+- experiment-local feature / dataset
+- bounded trainer
+- checkpoint
+- failure diagnosis
+- candidate adapter
+- strength evaluation
 
-これらは実測、concrete consumer requirement、implementation necessityが確認された時点で個別Issueとして設計する。
+を持てる。
+
+一方、stable / public Policy semantics、production inference contract、canonical feature meaningは`lisjong`へformalizeする。
+
+representation、objective、data、model scale等を同一cycleで不用意に同時変更せず、可能な範囲でone-axis experimentを優先する。
+
+## Visualization / analysis consumers
+
+Arenaのraw record / analysis transport / evaluation artifactはviewerやanalysis consumerに利用できるが、ArenaをUI ownerにしない。
+
+```text
+Arena evidence
+   |
+   +--> offline analysis
+   `--> lisjong-play / future viewer consumer
+```
+
+viewer都合でgame rule、Policy semantics、record schemaを逆流させない。
+
+## External competitor roadmap
+
+Mortal等のexternal competitorはevaluation referenceとして利用できる。
+
+ただし:
+
+- benchmark integrationとtraining source採用を分離する
+- external code / model architectureをcanonical designにしない
+- license / provenance / usage rightsを用途ごとに確認する
+- expensive external orchestrationはcheap internal evidenceで候補を絞ってから使う
+
+## Compute / cost roadmap
+
+compute scaleは研究目標ではなく、selected experimentを成立させる手段とする。
+
+原則:
+
+- local-first
+- measured runtime / storage / throughputを先に取る
+- cheap Policy / cheap gateを使える場面では利用する
+- cloudへ行く前にbatch / parallelism / caching / retained artifact reuseを評価する
+- bounded timeout / cleanup / budget visibilityを持つ
+- scaleしない判断を正常なresearch outcomeとして許容する
+
+## Future capability — conditional
+
+measured needが出た場合の候補:
+
+- remote strength execution
+- automated Champion–Challenger orchestration
+- small candidate search
+- self-play generation
+- historical champion league
+- distributed training / inference
+- LLM-assisted high-level research loop
+
+これらは現在の必須architectureではない。
+
+特にLLM / coding agentは、高頻度small loopへ常駐させるより、低頻度で情報価値の高いresearch judgment / implementation supportへ利用する方針を優先する。
+
+## Explicit non-goals
+
+現時点でArena roadmapが自動的に要求しないもの:
+
+- canonical production Learned Policy architecture owned by Arena
+- generic ML platform
+- generic model registry
+- generic dataset platform
+- experiment database / dashboard
+- automatic HPO
+- automatic production promotion
+- project-wide canonical GameRecord
+- speculative generic execution backend
+- always-on cloud infrastructure
+- distributed scheduler
+- fully autonomous hypothesis generation / code / merge loop
+
+## Documentation source of truth
+
+```text
+lisjong-project
+    project-wide repository responsibility / long-term AI principles
+
+lisjong-arena/docs/architecture.md
+    Arena internal ownership / promotion boundary
+
+this roadmap
+    long-term capability development
+
+purpose-specific docs
+    concrete schema / protocol / experiment design
+
+GitHub Issues / PRs
+    current work / result / next action
+```
+
+本書はcurrent Issue inventoryやtemporary implementation detailを追跡する文書ではない。
