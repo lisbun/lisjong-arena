@@ -1,5 +1,6 @@
 """Offline Q CLI: `generate` -> `train-bc` / `train-q` -> `test` -> `smoke`
--> `freeze` -> `screen` (Issue #140).
+-> `freeze` -> `screen` (Issue #140), plus the artifact-only diagnosis
+(`#152`), P1 Gate A (`#158`) and P1 Gate B (`#162`) commands.
 
 ```text
 python -m lisjong_arena.learned_policy_offline_q generate  --dataset DIR --report FILE
@@ -26,6 +27,13 @@ python -m lisjong_arena.learned_policy_offline_q p1-gate-a \
     --bundle DIR --dataset DIR --replacement-test DIR --result FILE
 python -m lisjong_arena.learned_policy_offline_q p1-record-classification \
     --result FILE --outcome NAME --classified-result FILE
+python -m lisjong_arena.learned_policy_offline_q p1-materialize \
+    --bundle DIR [--weights FILE | --dataset DIR] \
+    --retention-root DIR [--retention-backend NAME] [--retention-key KEY]
+python -m lisjong_arena.learned_policy_offline_q p1-gate-b \
+    --checkpoint DIR --artifact FILE --result FILE
+python -m lisjong_arena.learned_policy_offline_q p1-gate-b-record-classification \
+    --result FILE --outcome NAME --classified-result FILE
 ```
 
 `generate`/`train-bc`/`train-q`はTEST partitionのmetricを一切計算しない。
@@ -46,6 +54,16 @@ replacement TESTをprimary roleとして1回だけ比較する。新しいgame /
 hanchan / TEST exposureを作らない。outcomeはIssue #158が事前lockしたladderが
 metricsから機械的に導出し、`p1-record-classification`はその導出結果と一致する
 1件だけを記録できる。
+
+`p1-materialize` / `p1-gate-b` / `p1-gate-b-record-classification`はIssue
+#162のP1 Gate Bである。`p1-materialize`はexact #158 candidateを
+serving checkpointへwrite-onceでmaterializeし（`--weights`がexact retained
+weights、`--dataset`がexact deterministic reconstruction）、canonical weights
+digestが一致しなければfail closedする。`p1-gate-b`はそのcandidateを
+passive tsumogiri x3へ対して既存single-round評価で1回だけ走らせ、immutable
+artifactとcanonical summaryを正本とするresult documentを書く。outcomeは
+canonical seed-block intervalから機械的に導出し、
+`p1-gate-b-record-classification`がその導出結果と一致する1件だけを記録できる。
 """
 
 import argparse
@@ -743,6 +761,135 @@ def _p1_record_classification(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _p1_gate_b_outcome_names():
+    """CLI choicesのためだけにexhaustive outcome列挙を読む（torchを要求しない）。"""
+    from .p1_gate_b import P1GateBOutcome
+
+    return tuple(P1GateBOutcome)
+
+
+def _p1_materialize(arguments: argparse.Namespace) -> int:
+    """exact #158 P1 candidateをserving checkpointへmaterializeする（Issue #162）。
+
+    materialization pathの優先順位はIssue #162どおりである。
+
+    ```text
+    A. --weights   exact retained #158 weights -> strict load -> digest verify
+    B. --dataset   exact deterministic reconstruction -> digest verify
+    ```
+
+    canonical weights digestがexact一致しない場合はfail closedし、seed変更、
+    epoch追加、alternate config retry、tolerance acceptanceへ進まない。
+    """
+    from .artifact import load_dataset
+    from .p1_candidate import (
+        Stage4aRetentionError,
+        load_retained_p1_candidate,
+        materialize_p1_serving_checkpoint,
+        reconstruct_p1_candidate,
+    )
+    from .p1_features import derive_all_split_tensors
+    from .p1_gate_b import CANDIDATE_RETENTION_KEY, RETENTION_BACKEND
+    from .retention import strict_readback
+    from .split_tensors import load_split_tensors
+
+    if bool(arguments.weights) == bool(arguments.dataset):
+        print("P1 GATE B EVIDENCE BLOCKED")
+        print(
+            "exactly one materialization source is required: --weights (exact "
+            "retained #158 weights) or --dataset (exact deterministic "
+            "reconstruction source)"
+        )
+        return 1
+
+    retained = strict_readback(arguments.bundle)
+    supported_indices = retained.q_checkpoint.supported_indices
+    if arguments.weights:
+        candidate = load_retained_p1_candidate(arguments.weights)
+    else:
+        dataset = load_dataset(arguments.dataset)
+        p1_split_tensors, _ = derive_all_split_tensors(load_split_tensors(dataset))
+        candidate = reconstruct_p1_candidate(p1_split_tensors)
+
+    try:
+        key, checkpoint = materialize_p1_serving_checkpoint(
+            candidate,
+            supported_indices=supported_indices,
+            backend=arguments.retention_backend or RETENTION_BACKEND,
+            root=arguments.retention_root,
+            key=arguments.retention_key or CANDIDATE_RETENTION_KEY,
+        )
+    except Stage4aRetentionError as error:
+        print("P1 GATE B EVIDENCE BLOCKED")
+        print(str(error))
+        return 1
+
+    print(f"materialization_source={candidate.materialization_source}")
+    print(f"canonical_model_weights_digest={checkpoint.canonical_model_weights_digest}")
+    print(f"candidate_identity={checkpoint.candidate_identity}")
+    print(f"selected_epoch={checkpoint.manifest['selected_epoch']}")
+    print(f"real_candidate_materialization={checkpoint.real_candidate_materialization}")
+    print(f"retention_key={key}")
+    return 0
+
+
+def _p1_gate_b(arguments: argparse.Namespace) -> int:
+    """exact P1 candidate vs passive tsumogiri x3のGate Bを1回実行する。
+
+    既存`SingleRoundEvaluationPlan` / `run_single_round_evaluation()` /
+    `SingleRoundStrengthArtifact` / canonical aggregationをthin reuseする。
+    outcomeはここでは記録せず、review後に
+    `p1-gate-b-record-classification`で1件だけ記録する。
+    """
+    from .p1_candidate import load_p1_serving_checkpoint
+    from .p1_gate_b import run_gate_b
+
+    checkpoint = load_p1_serving_checkpoint(arguments.checkpoint)
+    measurement = run_gate_b(checkpoint, arguments.artifact)
+    document = measurement.document
+    _write_json(Path(arguments.result), document)
+
+    summary = document["canonical_summary"]
+    blocks = summary["seed_block_statistics"]
+    diagnostics = document["serving_diagnostics"]
+    print(f"candidate_identity={document['candidate']['identity']}")
+    print(f"comparator_identity={document['comparator']['identity']}")
+    print(f"game_count={summary['candidate_metrics']['game_count']}")
+    print(f"mean_seed_block_delta={blocks['mean_seed_block_delta']:.4f}")
+    print(
+        "normal_approx_95_interval="
+        f"[{blocks['normal_approx_95_interval_lower']:.4f}, "
+        f"{blocks['normal_approx_95_interval_upper']:.4f}]"
+    )
+    print(
+        f"activation_rate={diagnostics['activation_rate']:.4f} "
+        f"scaffold_fallback_rate={diagnostics['scaffold_fallback_rate']:.4f} "
+        f"support_fallback_rate={diagnostics['support_fallback_rate']:.4f}"
+    )
+    print(f"wall_clock_seconds={measurement.wall_clock_seconds:.1f}")
+    print(f"derived_classification={measurement.derived_outcome.value}")
+    print("classification=None")
+    print(
+        "review the result artifact, then record exactly one exhaustive outcome "
+        "with the p1-gate-b-record-classification command"
+    )
+    return 0
+
+
+def _p1_gate_b_record_classification(arguments: argparse.Namespace) -> int:
+    """review後のexhaustive Gate B outcomeを1件だけresultへ記録する。"""
+    import json
+
+    from .p1_gate_b import P1GateBOutcome, record_classification
+
+    source = Path(arguments.result)
+    document = json.loads(source.read_text(encoding="utf-8"))
+    classified = record_classification(document, P1GateBOutcome[arguments.outcome])
+    _write_json(Path(arguments.classified_result), classified)
+    print(f"classification={classified['classification']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m lisjong_arena.learned_policy_offline_q",
@@ -857,6 +1004,40 @@ def main(argv: list[str] | None = None) -> int:
         choices=[outcome.name for outcome in _p1_outcome_names()],
     )
     p1_record.set_defaults(handler=_p1_record_classification)
+
+    p1_materialize = commands.add_parser(
+        "p1-materialize",
+        help="materialize the exact #158 P1 candidate as a serving checkpoint",
+    )
+    p1_materialize.add_argument("--bundle", required=True)
+    p1_materialize.add_argument("--weights")
+    p1_materialize.add_argument("--dataset")
+    p1_materialize.add_argument("--retention-backend")
+    p1_materialize.add_argument("--retention-root", required=True)
+    p1_materialize.add_argument("--retention-key")
+    p1_materialize.set_defaults(handler=_p1_materialize)
+
+    p1_gate_b = commands.add_parser(
+        "p1-gate-b",
+        help="P1 candidate vs passive tsumogiri x3 single-round Gate B",
+    )
+    p1_gate_b.add_argument("--checkpoint", required=True)
+    p1_gate_b.add_argument("--artifact", required=True)
+    p1_gate_b.add_argument("--result", required=True)
+    p1_gate_b.set_defaults(handler=_p1_gate_b)
+
+    p1_gate_b_record = commands.add_parser(
+        "p1-gate-b-record-classification",
+        help="record one exhaustive P1 Gate B outcome onto a Gate B result",
+    )
+    p1_gate_b_record.add_argument("--result", required=True)
+    p1_gate_b_record.add_argument("--classified-result", required=True)
+    p1_gate_b_record.add_argument(
+        "--outcome",
+        required=True,
+        choices=[outcome.name for outcome in _p1_gate_b_outcome_names()],
+    )
+    p1_gate_b_record.set_defaults(handler=_p1_gate_b_record_classification)
 
     arguments = parser.parse_args(argv)
     return arguments.handler(arguments)

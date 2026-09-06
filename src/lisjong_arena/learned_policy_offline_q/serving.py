@@ -24,6 +24,7 @@ game・各seatごとにfactoryから新規生成し、seat間・game間で共有
 """
 
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -52,7 +53,7 @@ class HybridServingError(OfflineQError):
     """BC hybrid / Q hybrid serving境界の違反。"""
 
 
-def _require_eval_cpu(model) -> None:
+def require_eval_cpu(model) -> None:
     if model.training:
         raise HybridServingError("serving model must be in eval mode")
     for name, parameter in model.named_parameters():
@@ -82,12 +83,34 @@ class HybridDecisionSample:
 
 @dataclass(frozen=True, slots=True)
 class HybridRuntime:
-    """1回だけloadしたserving modelと、固定したTRAIN support set。"""
+    """1回だけloadしたserving modelと、固定したTRAIN support set。
+
+    ``derive_features``は、v1 8204 encodingのあとへexperiment-localなderived
+    representationを挟むためのminimum seamである（`lisbun/lisjong-arena #162`の
+    P1 8241 serving）。``None``がdefaultであり、その場合の入力は従来どおり
+    locked v1 8204 rowそのものになる。derived representationを使う場合だけ
+    ``feature_dimension``を対応する次元へ上げる。activation判定、support gate、
+    fallback、legal mask、canonical ``resolve_legal_action()``はこのseamの
+    影響を受けない。
+    """
 
     arm: Arm
     model: object
     supported_indices: frozenset[int]
     conditions: dict
+    derive_features: Callable[[Sequence[float]], Sequence[float]] | None = None
+    feature_dimension: int = FEATURE_DIMENSION
+
+    def __post_init__(self) -> None:
+        if self.derive_features is not None and not callable(self.derive_features):
+            raise TypeError("derive_features must be callable or None")
+        if type(self.feature_dimension) is not int or self.feature_dimension <= 0:
+            raise HybridServingError("feature_dimension must be a positive int")
+        if self.derive_features is None and self.feature_dimension != FEATURE_DIMENSION:
+            raise HybridServingError(
+                "the default v1 serving path is locked to the "
+                f"{FEATURE_DIMENSION}-dimension feature row"
+            )
 
     def create_policy(self) -> "HybridPolicy":
         """1 seat・1 gameぶんのfresh Policy instanceを返す（scaffoldも新規生成）。"""
@@ -105,7 +128,7 @@ def _select_index(arm: Arm, output, legal_mask):
     raise HybridServingError(f"unknown arm: {arm!r}")
 
 
-def _configure_and_check_runtime() -> dict:
+def configure_and_check_runtime() -> dict:
     import torch
 
     conditions = bc_training.configure_deterministic_runtime()
@@ -124,9 +147,9 @@ def create_bc_hybrid_runtime(
     populationにしないため、通常はQ checkpointが記録したsupport setと同一の
     値を渡す。
     """
-    conditions = _configure_and_check_runtime()
+    conditions = configure_and_check_runtime()
     checkpoint = bc_training.load_checkpoint(checkpoint_path)
-    _require_eval_cpu(checkpoint.model)
+    require_eval_cpu(checkpoint.model)
     return HybridRuntime(
         arm="bc",
         model=checkpoint.model,
@@ -142,9 +165,9 @@ def create_q_hybrid_runtime(
     期待値と一致しない場合はfail closedする（同一datasetのTRAIN supportから
     両armへ同じ値を配ることをこのcheckが強制する）。
     """
-    conditions = _configure_and_check_runtime()
+    conditions = configure_and_check_runtime()
     checkpoint = q_training.load_checkpoint(checkpoint_path)
-    _require_eval_cpu(checkpoint.model)
+    require_eval_cpu(checkpoint.model)
     if checkpoint.supported_indices != frozenset(supported_indices):
         raise HybridServingError(
             "Q checkpoint supported_indices does not match the expected TRAIN "
@@ -199,6 +222,15 @@ class HybridPolicy:
         if len(values) != FEATURE_DIMENSION:
             raise HybridServingError(
                 f"encoded feature dimension must be {FEATURE_DIMENSION}; "
+                f"got {len(values)}"
+            )
+        derive = self._runtime.derive_features
+        if derive is not None:
+            values = derive(values)
+        expected = self._runtime.feature_dimension
+        if len(values) != expected:
+            raise HybridServingError(
+                f"derived serving feature dimension must be {expected}; "
                 f"got {len(values)}"
             )
         return torch.tensor(values, dtype=torch.float32).unsqueeze(0)
@@ -273,6 +305,8 @@ __all__ = [
     "HybridPolicy",
     "HybridRuntime",
     "HybridServingError",
+    "configure_and_check_runtime",
     "create_bc_hybrid_runtime",
     "create_q_hybrid_runtime",
+    "require_eval_cpu",
 ]
