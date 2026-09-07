@@ -183,7 +183,9 @@ class ArtifactDestinationPreflightTest(unittest.TestCase):
                     self.run_with_preflight_patches(checkpoint, lock, runner)
             runner.assert_not_called()
 
-    def test_valid_existing_parents_reach_evaluator_without_preflight_side_effects(self):
+    def test_valid_existing_parents_reach_evaluator_without_preflight_side_effects(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             checkpoint, lock, locations = build_lock(root)
