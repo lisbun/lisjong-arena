@@ -156,6 +156,7 @@ _LOCK_COMMENT_URL = re.compile(
 _FULL_COMMIT_ID = re.compile(r"[0-9a-f]{40}\Z").fullmatch
 _ARENA_SOURCE_DIRECTORY = Path(__file__).resolve().parent
 _GIT_TIMEOUT_SECONDS = 30
+_OUTPUT_LOCATION_NAMES = ("strength_artifact", "result", "classified_result")
 
 
 class HigherFidelityError(OfflineQError):
@@ -746,6 +747,26 @@ def _require_checkpoint_matches_lock(
         raise _error("loaded checkpoint path does not match the pre-execution lock")
 
 
+def _require_output_destinations_ready(locations: object) -> None:
+    """Reject deterministic write-once destination defects before game 1."""
+    if type(locations) is not dict:
+        raise _error("locked artifact locations are invalid")
+    for name in _OUTPUT_LOCATION_NAMES:
+        value = locations.get(name)
+        if type(value) is not str or not value or "\x00" in value:
+            raise _error(f"locked output {name} path is unusable")
+        path = Path(value)
+        if path.exists():
+            raise _error(f"locked output {name} already exists; outputs are write-once")
+        parent = path.parent
+        if not parent.exists():
+            raise _error(f"locked output {name} parent directory does not exist")
+        if not parent.is_dir():
+            raise _error(f"locked output {name} parent is not a directory")
+        if not os.access(parent, os.W_OK):
+            raise _error(f"locked output {name} parent directory is not writable")
+
+
 def build_evaluation_plan(
     checkpoint: LoadedP1ServingCheckpoint, lock_document: dict
 ) -> tuple[SingleRoundEvaluationPlan, PolicyInstanceRegistry, PolicyInstanceRegistry]:
@@ -1306,9 +1327,7 @@ def run_higher_fidelity_evaluation(
     if runtime_block() != lock["runtime"]:
         raise _error("live runtime differs from the posted lock")
     locations = lock["artifact_locations"]
-    for name in ("strength_artifact", "result", "classified_result"):
-        if Path(locations[name]).exists():
-            raise _error(f"locked output {name} already exists; outputs are write-once")
+    _require_output_destinations_ready(locations)
     checkpoint = load_p1_serving_checkpoint(checkpoint.path)
     _require_checkpoint_matches_lock(checkpoint, lock)
     plan, candidate_registry, baseline_registry = build_evaluation_plan(
