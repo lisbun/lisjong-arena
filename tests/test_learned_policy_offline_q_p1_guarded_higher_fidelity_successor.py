@@ -99,7 +99,9 @@ class EvaluatorReached(RuntimeError):
 class HistoricalIsolationTest(unittest.TestCase):
     def test_successor_identity_and_population_are_distinct_from_issue_175(self):
         self.assertNotEqual(successor.EXPERIMENT_ID, historical.EXPERIMENT_ID)
-        self.assertNotEqual(successor.LOCK_SCHEMA_VERSION, historical.LOCK_SCHEMA_VERSION)
+        self.assertNotEqual(
+            successor.LOCK_SCHEMA_VERSION, historical.LOCK_SCHEMA_VERSION
+        )
         self.assertNotEqual(
             successor.RESULT_SCHEMA_VERSION, historical.RESULT_SCHEMA_VERSION
         )
@@ -171,10 +173,14 @@ class PopulationTest(unittest.TestCase):
 
 
 class LockDestinationPreflightTest(unittest.TestCase):
-    def test_missing_parent_fails_during_lock_generation_before_checkpoint_readback(self):
+    def test_missing_parent_fails_during_lock_generation_before_checkpoint_readback(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            checkpoint = replace(locked_checkpoint(), path=root / "candidate-checkpoint")
+            checkpoint = replace(
+                locked_checkpoint(), path=root / "candidate-checkpoint"
+            )
             locations = successor.SuccessorArtifactLocations(
                 candidate_checkpoint=str(checkpoint.path),
                 strength_artifact=str(root / "missing" / "strength.json"),
@@ -182,9 +188,7 @@ class LockDestinationPreflightTest(unittest.TestCase):
                 classified_result=str(root / "classified.json"),
             )
             loader = mock.Mock()
-            with mock.patch.object(
-                successor, "load_p1_serving_checkpoint", loader
-            ):
+            with mock.patch.object(successor, "load_p1_serving_checkpoint", loader):
                 with self.assertRaisesRegex(
                     successor.SuccessorHigherFidelityError,
                     "parent directory does not exist",
@@ -248,9 +252,7 @@ class RunBoundaryTest(unittest.TestCase):
             output_parent.mkdir()
             checkpoint, lock, _ = build_lock(
                 root,
-                output_overrides={
-                    "strength_artifact": output_parent / "strength.json"
-                },
+                output_overrides={"strength_artifact": output_parent / "strength.json"},
             )
             output_parent.rmdir()
             runner = mock.Mock()
