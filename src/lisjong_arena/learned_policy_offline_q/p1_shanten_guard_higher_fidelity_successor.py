@@ -44,6 +44,7 @@ from lisjong_arena.single_round_evaluation import (
     summarize_single_round_strength,
 )
 
+from . import p1_shanten_guard_higher_fidelity as historical
 from .errors import OfflineQError
 from .p1_candidate import LoadedP1ServingCheckpoint, load_p1_serving_checkpoint
 from .p1_serving import create_p1_hybrid_runtime
@@ -57,7 +58,6 @@ from .strength import (
     PolicyInstanceRegistry,
     collect_activation_diagnostics,
 )
-from . import p1_shanten_guard_higher_fidelity as historical
 
 LOCK_SCHEMA_VERSION = (
     "arena-learned-policy-offlineq-p1-guarded-higher-fidelity-successor-lock-v1"
@@ -104,7 +104,9 @@ CLASSIFIED_RESULT_RETENTION_KEY = (
     "offlineq-179-guarded-higher-fidelity/classified-result"
 )
 
-PRIMARY_CHANGED_AXIS = "fresh evaluation population and successor execution identity only"
+PRIMARY_CHANGED_AXIS = (
+    "fresh evaluation population and successor execution identity only"
+)
 LOCKED_UNCHANGED_AXES = historical.LOCKED_UNCHANGED_AXES
 CLASSIFICATION_RULE = dict(historical.CLASSIFICATION_RULE)
 NO_RESCUE_BOUNDARY = (
@@ -384,7 +386,10 @@ def validate_pre_execution_lock(document: object) -> dict:
     for name, value in expected.items():
         if document[name] != value:
             raise _error(f"pre-execution lock {name} is not the locked value")
-    historical._validate_candidate_block(document["candidate"])
+    try:
+        historical._validate_candidate_block(document["candidate"])
+    except historical.HigherFidelityError as exc:
+        raise _error(str(exc)) from exc
     plan = document["plan"]
     if type(plan) is not dict or plan != plan_block(plan.get("ordered_seeds", ())):
         raise _error("pre-execution lock plan is invalid")
@@ -565,7 +570,9 @@ def require_successor_artifact(
         for seed in expected_plan["ordered_seeds"]
         for rotation in range(ROTATIONS_PER_SEED)
     }
-    observed_pairs = {(result.seed, result.rotation) for result in artifact.game_results}
+    observed_pairs = {
+        (result.seed, result.rotation) for result in artifact.game_results
+    }
     if observed_pairs != expected_pairs:
         raise _error("artifact does not contain the exact seed/rotation population")
     counts = {seat: 0 for seat in range(4)}
@@ -711,7 +718,10 @@ def validate_result(document: object) -> dict:
         raise _error("successor result artifact retention is invalid")
     if type(artifact["sha256"]) is not str or len(artifact["sha256"]) != 64:
         raise _error("successor result artifact digest is invalid")
-    if Path(lock["artifact_locations"]["strength_artifact"]).name != artifact["filename"]:
+    if (
+        Path(lock["artifact_locations"]["strength_artifact"]).name
+        != artifact["filename"]
+    ):
         raise _error("successor result artifact filename differs from the lock")
     summary = document["canonical_summary"]
     if type(summary) is not dict or set(summary) != {
@@ -766,7 +776,11 @@ def validate_result(document: object) -> dict:
         "non_finite_q_output_count",
         "resolve_failure_count",
     )
-    rate_fields = ("activation_rate", "scaffold_fallback_rate", "support_fallback_rate")
+    rate_fields = (
+        "activation_rate",
+        "scaffold_fallback_rate",
+        "support_fallback_rate",
+    )
     if type(serving) is not dict or set(serving) != set(count_fields + rate_fields):
         raise _error("candidate serving diagnostics fields are invalid")
     for name in count_fields:
@@ -783,7 +797,9 @@ def validate_result(document: object) -> dict:
     _require_rate(
         serving["scaffold_fallback_rate"], scaffold, decisions, "scaffold_fallback_rate"
     )
-    _require_rate(serving["support_fallback_rate"], support, decisions, "support_fallback_rate")
+    _require_rate(
+        serving["support_fallback_rate"], support, decisions, "support_fallback_rate"
+    )
     opportunities = serving["keep_shanten_guard_opportunities"]
     changes = serving["guard_induced_action_changes"]
     unguarded_worsen = serving["unguarded_would_worsen_count"]
@@ -811,7 +827,9 @@ def validate_result(document: object) -> dict:
             outcome = SuccessorOutcome(classification)
         except ValueError as exc:
             raise _error("successor result classification is unknown") from exc
-        if outcome not in _RESULT_OUTCOMES or outcome is not derive_classification(document):
+        if outcome not in _RESULT_OUTCOMES or outcome is not derive_classification(
+            document
+        ):
             raise _error("successor result classification contradicts the rule")
     return document
 
@@ -887,7 +905,10 @@ def bind_recorded_artifact(document: dict) -> SingleRoundStrengthArtifact:
         ),
         artifact.game_results,
     )
-    if summary != artifact.summary or summary_to_dict(summary) != validated["canonical_summary"]:
+    if (
+        summary != artifact.summary
+        or summary_to_dict(summary) != validated["canonical_summary"]
+    ):
         raise _error("the retained raw games do not regenerate the recorded summary")
     return artifact
 
@@ -952,7 +973,9 @@ def run_successor_evaluation(
     _require_output_destinations_ready(locations)
     checkpoint = load_p1_serving_checkpoint(checkpoint.path)
     _require_checkpoint_matches_lock(checkpoint, lock)
-    plan, candidate_registry, baseline_registry = build_evaluation_plan(checkpoint, lock)
+    plan, candidate_registry, baseline_registry = build_evaluation_plan(
+        checkpoint, lock
+    )
     wall_started = time.perf_counter()
     cpu_started = time.process_time()
     result = run_single_round_evaluation(plan, progress_callback=progress_callback)
@@ -960,7 +983,9 @@ def run_successor_evaluation(
     cpu_seconds = time.process_time() - cpu_started
     artifact_path = Path(locations["strength_artifact"])
     save_single_round_artifact(result, artifact_path)
-    artifact = require_successor_artifact(load_single_round_artifact(artifact_path), lock)
+    artifact = require_successor_artifact(
+        load_single_round_artifact(artifact_path), lock
+    )
     summary = summarize_single_round_strength(
         aggregate_candidate_metrics(
             artifact.plan.candidate_identity, artifact.game_results
