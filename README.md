@@ -216,6 +216,7 @@ Arenaには現在、experiment-local ML / analysisの具体例があります。
 - [P1 Gate A](docs/learned-policy-p1-gate-a.md)
 - [P1 Gate B](docs/learned-policy-p1-gate-b.md)
 - [FiniteHorizon-teacher curriculum](docs/learned-policy-finite-horizon-curriculum.md)
+- [Shanten-constrained Q serving diagnostic](docs/learned-policy-p1-shanten-guard.md)
 
 これらは、PolicyInputをplayer-safe inputとして利用しつつ、dataset / tensor / model /
 training / checkpoint / analysisをpurpose-specificなexperiment contractとして扱います。
@@ -393,6 +394,7 @@ runbook、schema、result interpretationは各purpose-specific documentを正本
 - [P1 Gate A](docs/learned-policy-p1-gate-a.md)
 - [P1 Gate B](docs/learned-policy-p1-gate-b.md)
 - [FiniteHorizon-teacher curriculum](docs/learned-policy-finite-horizon-curriculum.md)
+- [Shanten-constrained Q serving diagnostic](docs/learned-policy-p1-shanten-guard.md)
 - [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
 - [Epoch-budget adequacy study](docs/epoch-budget-adequacy.md)
 - [Optimization-budget saturation study](docs/optimization-budget-saturation.md)
