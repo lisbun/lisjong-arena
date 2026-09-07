@@ -114,20 +114,30 @@ shape. After result exposure there is no replacement or extension.
 
 The real run must use reviewed/merged current main. Before running any game:
 
-1. Strict-read the retained #162 checkpoint.
-2. Recheck current baseline status and open/closed Issue seed allocations.
-3. Build the machine-readable lock on a clean Arena revision with exact VCS
+1. Fetch the current remote refs with `git fetch --prune origin`.
+2. Check out the reviewed/merged revision of `main`.
+3. Strict-read the retained #162 checkpoint.
+4. Recheck current baseline status and open/closed Issue seed allocations.
+5. Build the machine-readable lock on a clean Arena worktree with exact VCS
    dependency metadata.
-4. Post `render_pre_execution_lock(lock)` to Issue #175.
-5. Preserve the returned Issue comment URL.
-6. Only then call `run_higher_fidelity_evaluation()` with that URL.
+6. Post `render_pre_execution_lock(lock)` to Issue #175.
+7. Preserve the returned Issue comment URL.
+8. Only then call `run_higher_fidelity_evaluation()` with that URL.
+
+Lock generation is fail-closed unless the complete Arena worktree is clean and
+`HEAD^{commit}` equals `refs/remotes/origin/main^{commit}`. A PR-branch head or
+detached unmerged revision cannot produce a lock. The public lock API always
+collects live provenance/runtime values; callers cannot inject a claimed main
+revision. The exact merged-main revision and target ref are stored in the lock.
 
 The execution entry point rejects URLs that are not Issue #175 comment URLs.
-It also re-reads live source/runtime provenance and requires exact equality with
-the posted lock before starting the existing evaluator. This does not prove the
-remote comment contents by network lookup; review still confirms that the
-rendered lock was posted unchanged. It prevents an ordinary accidental call
-without a recorded Issue #175 lock reference.
+It also requires the complete worktree to remain clean, re-reads the live Arena
+HEAD and source/runtime provenance, and requires exact equality with the posted
+lock before starting the existing evaluator. A checkout change after the lock is
+therefore rejected before any game. This does not prove the remote comment
+contents by network lookup; review still confirms that the rendered lock was
+posted unchanged. It prevents an ordinary accidental call without a recorded
+Issue #175 lock reference.
 
 Example lock generation after merge:
 
@@ -162,6 +172,7 @@ print(render_pre_execution_lock(lock))
 The lock contains:
 
 - Arena, lisjong, and lisjong-engine revisions
+- execution target `refs/remotes/origin/main` and its exact merged revision
 - Python, PyTorch, and RiichiEnv versions
 - #162 checkpoint/base identity, weights, dataset, P1 feature, support, and
   vocabulary fingerprints

@@ -32,6 +32,7 @@ from lisjong_arena.learned_policy_offline_q.p1_shanten_guard_higher_fidelity imp
     BASELINE_IMPLEMENTATION,
     BASELINE_SELECTED_LISJONG_REVISION,
     DEFAULT_ORDERED_SEEDS,
+    EXECUTION_TARGET_REF,
     EXPECTED_BASE_CANDIDATE_IDENTITY,
     EXPECTED_GUARDED_CANDIDATE_IDENTITY,
     GAME_COUNT,
@@ -51,6 +52,7 @@ from lisjong_arena.learned_policy_offline_q.p1_shanten_guard_higher_fidelity imp
     classify_interval,
     classify_pre_result_state,
     derive_classification,
+    execution_target_block,
     load_result,
     lock_identity,
     plan_block,
@@ -60,6 +62,7 @@ from lisjong_arena.learned_policy_offline_q.p1_shanten_guard_higher_fidelity imp
     require_pre_execution_comment_url,
     require_seed_plan,
     result_identity,
+    run_higher_fidelity_evaluation,
     save_result,
     seed_freshness_block,
     validate_pre_execution_lock,
@@ -161,17 +164,36 @@ class HigherFidelityFixture:
             result=str(root / "result.json"),
             classified_result=str(root / "classified.json"),
         )
-        with mock.patch(
-            "lisjong_arena.learned_policy_offline_q."
-            "p1_shanten_guard_higher_fidelity.load_p1_serving_checkpoint",
-            return_value=self.checkpoint,
+        with (
+            mock.patch(
+                "lisjong_arena.learned_policy_offline_q."
+                "p1_shanten_guard_higher_fidelity.load_p1_serving_checkpoint",
+                return_value=self.checkpoint,
+            ),
+            mock.patch(
+                "lisjong_arena.learned_policy_offline_q."
+                "p1_shanten_guard_higher_fidelity.collect_execution_provenance",
+                return_value=provenance(),
+            ),
+            mock.patch(
+                "lisjong_arena.learned_policy_offline_q."
+                "p1_shanten_guard_higher_fidelity.execution_target_block",
+                return_value={
+                    "reference": EXECUTION_TARGET_REF,
+                    "merged_main_revision": provenance().lisjong_arena_revision,
+                    "head_matches_merged_main": True,
+                },
+            ),
+            mock.patch(
+                "lisjong_arena.learned_policy_offline_q."
+                "p1_shanten_guard_higher_fidelity.runtime_block",
+                return_value=RUNTIME,
+            ),
         ):
             self.lock = build_pre_execution_lock(
                 self.checkpoint,
                 locations=self.locations,
                 external_freshness_confirmed=True,
-                provenance=provenance(),
-                runtime=RUNTIME,
             )
         self.artifact = save_fixture_artifact(
             self.locations.strength_artifact, delta_for_seed=delta_for_seed
@@ -306,8 +328,6 @@ class PlanAndLockTest(unittest.TestCase):
                         checkpoint,
                         locations=locations,
                         external_freshness_confirmed=True,
-                        provenance=provenance(),
-                        runtime=RUNTIME,
                     )
 
     def test_a_rehashed_lock_cannot_switch_to_issue_173_seeds(self):
@@ -332,19 +352,133 @@ class PlanAndLockTest(unittest.TestCase):
                 str(Path(directory) / "classified"),
             )
             wrong = replace(provenance(), lisjong_revision="b" * 40)
-            with mock.patch(
-                "lisjong_arena.learned_policy_offline_q."
-                "p1_shanten_guard_higher_fidelity.load_p1_serving_checkpoint",
-                return_value=checkpoint,
+            with (
+                mock.patch(
+                    "lisjong_arena.learned_policy_offline_q."
+                    "p1_shanten_guard_higher_fidelity.load_p1_serving_checkpoint",
+                    return_value=checkpoint,
+                ),
+                mock.patch(
+                    "lisjong_arena.learned_policy_offline_q."
+                    "p1_shanten_guard_higher_fidelity.collect_execution_provenance",
+                    return_value=wrong,
+                ),
             ):
                 with self.assertRaisesRegex(HigherFidelityError, "BASELINE PLAN"):
                     build_pre_execution_lock(
                         checkpoint,
                         locations=locations,
                         external_freshness_confirmed=True,
-                        provenance=wrong,
-                        runtime=RUNTIME,
                     )
+
+    def test_clean_merged_main_revision_is_accepted(self):
+        revision = provenance().lisjong_arena_revision
+        with (
+            mock.patch(
+                "lisjong_arena.learned_policy_offline_q."
+                "p1_shanten_guard_higher_fidelity._require_clean_arena_head",
+                return_value=revision,
+            ),
+            mock.patch(
+                "lisjong_arena.learned_policy_offline_q."
+                "p1_shanten_guard_higher_fidelity._resolve_execution_target_revision",
+                return_value=revision,
+            ),
+        ):
+            self.assertEqual(
+                execution_target_block(provenance()),
+                {
+                    "reference": EXECUTION_TARGET_REF,
+                    "merged_main_revision": revision,
+                    "head_matches_merged_main": True,
+                },
+            )
+
+    def test_lock_rejects_pr_branch_and_detached_unmerged_revisions(self):
+        merged_main = provenance().lisjong_arena_revision
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = replace(
+                locked_checkpoint(), path=Path(directory) / "candidate"
+            )
+            locations = HigherFidelityArtifactLocations(
+                str(checkpoint.path),
+                str(Path(directory) / "artifact"),
+                str(Path(directory) / "result"),
+                str(Path(directory) / "classified"),
+            )
+            for label, unmerged_head in (
+                ("pr branch", "b" * 40),
+                ("detached revision", "c" * 40),
+            ):
+                with (
+                    self.subTest(label=label),
+                    mock.patch(
+                        "lisjong_arena.learned_policy_offline_q."
+                        "p1_shanten_guard_higher_fidelity."
+                        "load_p1_serving_checkpoint",
+                        return_value=checkpoint,
+                    ),
+                    mock.patch(
+                        "lisjong_arena.learned_policy_offline_q."
+                        "p1_shanten_guard_higher_fidelity."
+                        "collect_execution_provenance",
+                        return_value=replace(
+                            provenance(), lisjong_arena_revision=unmerged_head
+                        ),
+                    ),
+                    mock.patch(
+                        "lisjong_arena.learned_policy_offline_q."
+                        "p1_shanten_guard_higher_fidelity._require_clean_arena_head",
+                        return_value=unmerged_head,
+                    ),
+                    mock.patch(
+                        "lisjong_arena.learned_policy_offline_q."
+                        "p1_shanten_guard_higher_fidelity."
+                        "_resolve_execution_target_revision",
+                        return_value=merged_main,
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        HigherFidelityError, "not the fetched merged"
+                    ):
+                        build_pre_execution_lock(
+                            checkpoint,
+                            locations=locations,
+                            external_freshness_confirmed=True,
+                        )
+
+    def test_dirty_arena_worktree_is_rejected(self):
+        with mock.patch(
+            "lisjong_arena.learned_policy_offline_q."
+            "p1_shanten_guard_higher_fidelity._git_output",
+            return_value=" M README.md\n",
+        ):
+            with self.assertRaisesRegex(HigherFidelityError, "must be clean"):
+                execution_target_block(provenance())
+
+    def test_head_change_after_lock_is_rejected_before_a_game_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = HigherFidelityFixture(Path(directory))
+            with (
+                mock.patch(
+                    "lisjong_arena.learned_policy_offline_q."
+                    "p1_shanten_guard_higher_fidelity._require_clean_arena_head",
+                    return_value="b" * 40,
+                ),
+                mock.patch(
+                    "lisjong_arena.learned_policy_offline_q."
+                    "p1_shanten_guard_higher_fidelity.run_single_round_evaluation"
+                ) as runner,
+            ):
+                with self.assertRaisesRegex(
+                    HigherFidelityError, "locked merged main revision"
+                ):
+                    run_higher_fidelity_evaluation(
+                        fixture.checkpoint,
+                        fixture.lock,
+                        pre_execution_comment_url=COMMENT_URL,
+                    )
+                runner.assert_not_called()
 
     def test_real_execution_requires_the_issue_175_lock_comment_url(self):
         self.assertEqual(require_pre_execution_comment_url(COMMENT_URL), COMMENT_URL)

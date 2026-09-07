@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -96,6 +98,7 @@ GAME_MODE = SINGLE_ROUND_GAME_MODE
 MAX_WORKERS = 1
 FORMAL_TEST = False
 ROLE = "DEVELOPMENT HIGHER-FIDELITY SCREEN"
+EXECUTION_TARGET_REF = "refs/remotes/origin/main"
 
 BASELINE_IDENTITY = "yakuhai-call"
 BASELINE_FACTORY = "lisjong_arena.policy_catalog.create_yakuhai_call"
@@ -150,6 +153,9 @@ NO_RESCUE_BOUNDARY = (
 _LOCK_COMMENT_URL = re.compile(
     r"https://github\.com/lisbun/lisjong-arena/issues/175#issuecomment-\d+\Z"
 )
+_FULL_COMMIT_ID = re.compile(r"[0-9a-f]{40}\Z").fullmatch
+_ARENA_SOURCE_DIRECTORY = Path(__file__).resolve().parent
+_GIT_TIMEOUT_SECONDS = 30
 
 
 class HigherFidelityError(OfflineQError):
@@ -442,6 +448,70 @@ def runtime_block() -> dict[str, object]:
     }
 
 
+def _git_output(*arguments: str) -> str:
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(_ARENA_SOURCE_DIRECTORY), *arguments),
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise _error(
+            f"Arena execution target cannot be verified: git {arguments[0]} "
+            "could not be executed"
+        ) from exc
+    if completed.returncode != 0:
+        raise _error(
+            f"Arena execution target cannot be verified: git {arguments[0]} failed"
+        )
+    return completed.stdout
+
+
+def _require_clean_arena_head() -> str:
+    """Return HEAD only when the complete Arena worktree is clean."""
+    if _git_output("status", "--porcelain").strip():
+        raise _error(
+            "Arena worktree must be clean before the pre-execution lock or run"
+        )
+    revision = _git_output("rev-parse", "--verify", "HEAD^{commit}").strip()
+    if _FULL_COMMIT_ID(revision) is None:
+        raise _error("Arena HEAD is not a lowercase full commit ID")
+    return revision
+
+
+def _resolve_execution_target_revision() -> str:
+    revision = _git_output(
+        "rev-parse", "--verify", f"{EXECUTION_TARGET_REF}^{{commit}}"
+    ).strip()
+    if _FULL_COMMIT_ID(revision) is None:
+        raise _error("merged main target is not a lowercase full commit ID")
+    return revision
+
+
+def execution_target_block(
+    provenance: SingleRoundExecutionProvenance,
+) -> dict[str, object]:
+    """Bind the live clean HEAD to the locally fetched merged main ref."""
+    if not isinstance(provenance, SingleRoundExecutionProvenance):
+        raise TypeError("provenance must be SingleRoundExecutionProvenance")
+    head_revision = _require_clean_arena_head()
+    merged_main_revision = _resolve_execution_target_revision()
+    if head_revision != provenance.lisjong_arena_revision:
+        raise _error("Arena HEAD differs from collected execution provenance")
+    if head_revision != merged_main_revision:
+        raise _error(
+            "PRE-EXECUTION LOCK REJECTED: Arena HEAD is not the fetched merged "
+            "origin/main revision"
+        )
+    return {
+        "reference": EXECUTION_TARGET_REF,
+        "merged_main_revision": merged_main_revision,
+        "head_matches_merged_main": True,
+    }
+
+
 def lock_identity(document: dict) -> str:
     payload = {
         name: value for name, value in document.items() if name != "lock_identity"
@@ -456,8 +526,6 @@ def build_pre_execution_lock(
     ordered_seeds=DEFAULT_ORDERED_SEEDS,
     external_freshness_confirmed: bool,
     additional_allocated_seeds=(),
-    provenance: SingleRoundExecutionProvenance | None = None,
-    runtime: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build the exact document that must be posted before real execution."""
     verify_locked_candidate_contract()
@@ -470,12 +538,9 @@ def build_pre_execution_lock(
         raise _error("strict checkpoint readback differs from the supplied candidate")
     checkpoint = reloaded
     candidate = candidate_block(checkpoint)
-    actual_provenance = (
-        collect_execution_provenance() if provenance is None else provenance
-    )
-    if not isinstance(actual_provenance, SingleRoundExecutionProvenance):
-        raise TypeError("provenance must be SingleRoundExecutionProvenance")
+    actual_provenance = collect_execution_provenance()
     require_baseline_provenance(actual_provenance)
+    execution_target = execution_target_block(actual_provenance)
     seeds = require_seed_plan(ordered_seeds)
     freshness = seed_freshness_block(
         seeds,
@@ -498,7 +563,8 @@ def build_pre_execution_lock(
         "artifact_locations": locations.to_document(),
         "seed_freshness": freshness,
         "provenance": execution_provenance_to_dict(actual_provenance),
-        "runtime": runtime_block() if runtime is None else dict(runtime),
+        "runtime": runtime_block(),
+        "execution_target": execution_target,
         "no_rescue_boundary": NO_RESCUE_BOUNDARY,
         "result_exposed": False,
         "lock_identity": None,
@@ -526,6 +592,7 @@ def validate_pre_execution_lock(document: object) -> dict:
         "seed_freshness",
         "provenance",
         "runtime",
+        "execution_target",
         "no_rescue_boundary",
         "result_exposed",
         "lock_identity",
@@ -569,6 +636,12 @@ def validate_pre_execution_lock(document: object) -> dict:
         raise _error("pre-execution lock seed plan collides with repository evidence")
     provenance = parse_execution_provenance(document["provenance"])
     require_baseline_provenance(provenance)
+    if document["execution_target"] != {
+        "reference": EXECUTION_TARGET_REF,
+        "merged_main_revision": provenance.lisjong_arena_revision,
+        "head_matches_merged_main": True,
+    }:
+        raise _error("pre-execution lock merged main target is invalid")
     runtime = document["runtime"]
     if type(runtime) is not dict or set(runtime) != {
         "python_version",
@@ -621,6 +694,8 @@ def render_pre_execution_lock(document: dict) -> str:
         f"lock identity          {lock['lock_identity']}",
         f"result exposed         {lock['result_exposed']}",
         f"arena revision         {provenance['lisjong_arena_revision']}",
+        f"execution target       {lock['execution_target']['reference']}",
+        f"merged main revision   {lock['execution_target']['merged_main_revision']}",
         f"lisjong revision       {provenance['lisjong_revision']}",
         f"engine revision        {provenance['lisjong_engine_revision']}",
         f"python                 {lock['runtime']['python_version']}",
@@ -1223,6 +1298,8 @@ def run_higher_fidelity_evaluation(
     """Execute exactly once after the reviewed lock comment has been posted."""
     lock = validate_pre_execution_lock(lock_document)
     require_pre_execution_comment_url(pre_execution_comment_url)
+    if _require_clean_arena_head() != lock["execution_target"]["merged_main_revision"]:
+        raise _error("live Arena HEAD differs from the locked merged main revision")
     live_provenance = collect_execution_provenance()
     if execution_provenance_to_dict(live_provenance) != lock["provenance"]:
         raise _error("live execution provenance differs from the posted lock")
@@ -1288,6 +1365,7 @@ __all__ = [
     "DEFAULT_ORDERED_SEEDS",
     "EXPECTED_BASE_CANDIDATE_IDENTITY",
     "EXPECTED_GUARDED_CANDIDATE_IDENTITY",
+    "EXECUTION_TARGET_REF",
     "FORMAL_TEST",
     "GAME_COUNT",
     "GAME_MODE",
@@ -1313,6 +1391,7 @@ __all__ = [
     "classify_pre_result_state",
     "declared_allocated_seeds",
     "derive_classification",
+    "execution_target_block",
     "load_result",
     "lock_identity",
     "plan_block",
