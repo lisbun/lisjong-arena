@@ -496,7 +496,7 @@ def execution_target_block(
 ) -> dict[str, object]:
     """Bind the live clean HEAD to the locally fetched merged main ref."""
     if not isinstance(provenance, SingleRoundExecutionProvenance):
-        raise TypeError("provenance must be a SingleRoundExecutionProvenance")
+        raise TypeError("provenance must be SingleRoundExecutionProvenance")
     head_revision = _require_clean_arena_head()
     merged_main_revision = _resolve_execution_target_revision()
     if head_revision != provenance.lisjong_arena_revision:
@@ -796,7 +796,7 @@ def require_higher_fidelity_artifact(
 ) -> SingleRoundStrengthArtifact:
     lock = validate_pre_execution_lock(lock_document)
     if not isinstance(artifact, SingleRoundStrengthArtifact):
-        raise TypeError("artifact must be a SingleRoundStrengthArtifact")
+        raise TypeError("artifact must be SingleRoundStrengthArtifact")
     plan = artifact.plan
     expected_plan = lock["plan"]
     if plan.candidate_identity != lock["candidate"]["identity"]:
@@ -1287,7 +1287,7 @@ def record_classification(
 ) -> dict:
     validated = validate_result(document)
     if not isinstance(outcome, HigherFidelityOutcome):
-        raise TypeError("outcome must be a HigherFidelityOutcome")
+        raise TypeError("outcome must be HigherFidelityOutcome")
     if outcome not in _RESULT_OUTCOMES:
         raise _error("blocked/invalid are pre-result states, not strength outcomes")
     if validated["classification"] is not None:
