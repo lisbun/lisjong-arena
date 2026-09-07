@@ -62,9 +62,11 @@ from lisjong_arena.learned_policy_offline_q.p1_shanten_guard import (
 )
 from lisjong_arena.learned_policy_offline_q.p1_shanten_guard_diagnostic import (
     ORDERED_SEEDS,
+    ShantenGuardDiagnosticError,
     ShantenGuardOutcome,
     build_diagnostic_plan,
     derive_classification,
+    load_diagnostic_result,
     require_diagnostic_artifact,
     run_shanten_guard_diagnostic,
     validate_diagnostic_result,
@@ -474,7 +476,7 @@ class ShantenGuardDiagnosticExecutionTest(unittest.TestCase):
             ),
         ):
             measurement = run_shanten_guard_diagnostic(
-                self.checkpoint, self._tmp / "artifact.json"
+                self.checkpoint, self._tmp / "artifact.json", self._tmp / "result.json"
             )
         return measurement, fake
 
@@ -498,6 +500,15 @@ class ShantenGuardDiagnosticExecutionTest(unittest.TestCase):
             ),
             unguarded_identity=self.checkpoint.candidate_identity,
         )
+        self.assertTrue(measurement.result_path.is_file())
+        self.assertEqual(
+            load_diagnostic_result(measurement.result_path), measurement.document
+        )
+
+    def test_a_pre_existing_result_path_stops_the_run(self):
+        (self._tmp / "result.json").write_text("{}", encoding="utf-8")
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            self._run()
 
     def test_a_negative_population_derives_the_negative_outcome(self):
         measurement, _ = self._run(delta_for_seed=negative_delta)

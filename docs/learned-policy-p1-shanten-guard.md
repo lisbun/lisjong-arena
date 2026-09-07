@@ -280,9 +280,16 @@ load_single_round_artifact()      strict readback
 summarize_single_round_strength() canonical re-derivation
 ```
 
-`run_shanten_guard_diagnostic()`はartifactを保存してから読み直し、raw game
-resultsから canonical summaryを再導出して保存済みsummaryと一致することを
-確認する。stdoutはmeasurementのsource of truthではない。
+`run_shanten_guard_diagnostic(checkpoint, artifact_path, result_path)`は、
+実行のいちばん最初に`require_fresh_seed_plan()`をmachine-enforcedに呼ぶ。
+seed freshnessはpre-execution protocol conditionであり、operatorがdocs
+runbookを手順どおり実行するというcaller disciplineに依存させず、execution
+boundary自体がfail closedにする。collisionがあれば`_run_single_game`を1回も
+呼ばずに`SEED PLAN REFORMULATE`または`STOP / INVALID`でstopする。
+
+続けてartifactを保存してから読み直し、raw game resultsからcanonical summary
+を再導出して保存済みsummaryと一致することを確認する。stdoutはmeasurementの
+source of truthではない。
 
 `require_diagnostic_artifact()`は、ordered seeds、game mode、rotation count、
 100 games、G/U両方のcandidate identity、Gが各seatをちょうど25回担当した
@@ -322,10 +329,48 @@ classification（初期値 None）
 primary changed axisが本当にselection constraintだけであることの
 machine-checkableな保証である。
 
-`record_classification()`は`p1_gate_b.record_classification()`と同じ理由で、
-渡された`LoadedP1ServingCheckpoint`を改めてdiskからstrict readbackし
+`record_classification()`は`checkpoint`と`artifact_path`をいずれも必須引数に
+する。`p1_gate_b.record_classification()`と同じ理由で、渡された
+`LoadedP1ServingCheckpoint`を改めてdiskからstrict readbackし
 （`bind_recorded_candidate()`）、fixture / substitute candidateの結果を
-real Issue #173 evidenceとして記録できないようにする。
+real Issue #173 evidenceとして記録できないようにする。さらに
+`bind_recorded_artifact()`が、渡された`artifact_path`のstrength artifactを
+改めてdiskからstrict readbackし、そのbytesのsha256、protocol条件、raw
+gamesから再導出したcanonical summaryをresult documentと突き合わせる。
+`result_identity`はdocument自身のself-consistencyでしかなく、strength
+artifactという外部source of truthへのbindingにはならないため、この
+再readbackが必要になる。
+
+### Durable result persistence
+
+`SingleRoundStrengthArtifact`はwrite-once / strict readbackだが、guard
+diagnostics（`action_change_count`等）とexhaustive classificationはこの
+result documentにしか存在しない。したがって`run_shanten_guard_diagnostic()`
+は`SingleRoundStrengthArtifact`と同じ規律で、result document自体も
+`save_diagnostic_result()`でwrite-once保存してから`load_diagnostic_result()`
+で読み直す。
+
+```text
+save_diagnostic_result(path, document)
+    既存fileを上書きしない（write-once）
+    staging file -> atomic rename
+    -> load_diagnostic_result()で読み直した結果を返す
+
+load_diagnostic_result(path)
+    bytesがcanonical JSONであることを要求する
+    validate_diagnostic_result()の全条件を要求する
+```
+
+classification後は`save_classified_result()`が`record_classification()`の
+結果を**別の**write-once pathへ保存する。unclassified resultと同じpathへ
+classified resultを上書きすることはできない。
+
+```text
+save_classified_result(classified_path, document, outcome,
+                        checkpoint=..., artifact_path=...)
+    -> record_classification()   checkpoint / artifact bytesへbind
+    -> save_diagnostic_result()  classified_pathへwrite-once保存
+```
 
 ## Secondary diagnostics
 
@@ -375,28 +420,44 @@ from lisjong_arena.learned_policy_offline_q.p1_candidate import (
     load_p1_serving_checkpoint,
 )
 from lisjong_arena.learned_policy_offline_q.p1_shanten_guard_diagnostic import (
-    record_classification,
-    require_fresh_seed_plan,
+    ShantenGuardOutcome,
     run_shanten_guard_diagnostic,
+    save_classified_result,
 )
 
-require_fresh_seed_plan()  # real execution前にseed freshnessを再確認する
+artifacts = r"C:\Dev\lisjong-artifacts\offlineq-173-shanten-guard"
 
 checkpoint = load_p1_serving_checkpoint(
     r"C:\Dev\lisjong-artifacts\offlineq-162-p1-gate-b\candidate"
 )
+# require_fresh_seed_plan() runs first, inside run_shanten_guard_diagnostic()
+# itself; a collision stops the run before any game is played.
 measurement = run_shanten_guard_diagnostic(
     checkpoint,
-    r"C:\Dev\lisjong-artifacts\offlineq-173-shanten-guard\artifact.json",
+    rf"{artifacts}\artifact.json",
+    rf"{artifacts}\result.json",
 )
-print(measurement.derived_outcome)  # review後にrecord_classification()で1件だけ記録する
+print(
+    measurement.derived_outcome
+)  # review後にsave_classified_result()で1件だけ記録する
+
+# 例: 導出済みoutcomeをそのまま記録する場合
+save_classified_result(
+    rf"{artifacts}\result-classified.json",
+    measurement.document,
+    measurement.derived_outcome,
+    checkpoint=checkpoint,
+    artifact_path=rf"{artifacts}\artifact.json",
+)
 ```
 
-`record_classification()`は`checkpoint`（strict readback済みの
-`LoadedP1ServingCheckpoint`）を必須引数にする。`materialize_p1_serving_checkpoint()`
-経由でのwrite-once retentionは`#162`と同じ`resolve_retention_target()`を使い、
-Git work tree内やtemporary directory配下をfail closedで拒否する。generated
-weights、strength artifact、result documentはいずれもGitへcommitしない。
+`save_classified_result()`は内部で`record_classification()`を呼び、
+`checkpoint`（strict readback済みの`LoadedP1ServingCheckpoint`）と
+`artifact_path`（strict readback対象のstrength artifact）をいずれも必須引数
+にする。`materialize_p1_serving_checkpoint()`経由でのwrite-once retentionは
+`#162`と同じ`resolve_retention_target()`を使い、Git work tree内やtemporary
+directory配下をfail closedで拒否する。generated weights、strength artifact、
+result documentはいずれもGitへcommitしない。
 
 ## Follow-up boundary
 

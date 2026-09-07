@@ -73,14 +73,18 @@ from lisjong_arena.learned_policy_offline_q.p1_shanten_guard_diagnostic import (
     SEED_PLAN_REFORMULATE,
     ShantenGuardDiagnosticError,
     ShantenGuardOutcome,
+    bind_recorded_artifact,
     check_seed_freshness,
     classify_interval,
     derive_classification,
+    load_diagnostic_result,
     plan_block,
     record_classification,
     require_diagnostic_seed,
     require_fresh_seed_plan,
     result_identity,
+    save_classified_result,
+    save_diagnostic_result,
     validate_diagnostic_result,
 )
 
@@ -634,8 +638,11 @@ class DiagnosticClassificationRecordingTest(unittest.TestCase):
         self._tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
 
+    def _artifact_path(self, name):
+        return self._tmp / f"{name}.json"
+
     def _document(self, name, **kwargs):
-        return diagnostic_result_document(self._tmp / f"{name}.json", **kwargs)
+        return diagnostic_result_document(self._artifact_path(name), **kwargs)
 
     def _locked_document(self, name):
         return self._document(name, checkpoint=locked_checkpoint())
@@ -653,18 +660,35 @@ class DiagnosticClassificationRecordingTest(unittest.TestCase):
                 document,
                 ShantenGuardOutcome.ROLLOUT_SIGNAL,
                 checkpoint=locked_checkpoint(),
+                artifact_path=self._artifact_path("identity-only"),
             )
 
     def test_a_checkpoint_is_required(self):
         document = self._locked_document("required")
         with self.assertRaises(TypeError):
-            record_classification(document, ShantenGuardOutcome.ROLLOUT_SIGNAL)
+            record_classification(
+                document,
+                ShantenGuardOutcome.ROLLOUT_SIGNAL,
+                artifact_path=self._artifact_path("required"),
+            )
+
+    def test_an_artifact_path_is_required(self):
+        document = self._locked_document("no-artifact-path")
+        with self.assertRaises(TypeError):
+            record_classification(
+                document,
+                ShantenGuardOutcome.ROLLOUT_SIGNAL,
+                checkpoint=locked_checkpoint(),
+            )
 
     def test_a_non_checkpoint_is_rejected(self):
         document = self._locked_document("type-checkpoint")
         with self.assertRaises(TypeError):
             record_classification(
-                document, ShantenGuardOutcome.ROLLOUT_SIGNAL, checkpoint=object()
+                document,
+                ShantenGuardOutcome.ROLLOUT_SIGNAL,
+                checkpoint=object(),
+                artifact_path=self._artifact_path("type-checkpoint"),
             )
 
     def test_an_outcome_the_rule_does_not_derive_is_rejected(self):
@@ -674,6 +698,7 @@ class DiagnosticClassificationRecordingTest(unittest.TestCase):
                 document,
                 ShantenGuardOutcome.ROLLOUT_NEGATIVE,
                 checkpoint=locked_checkpoint(),
+                artifact_path=self._artifact_path("mismatch"),
             )
 
     def test_a_pre_result_state_is_never_recorded(self):
@@ -683,7 +708,12 @@ class DiagnosticClassificationRecordingTest(unittest.TestCase):
             ShantenGuardOutcome.STOP_INVALID,
         ):
             with self.assertRaises(ShantenGuardDiagnosticError):
-                record_classification(document, outcome, checkpoint=locked_checkpoint())
+                record_classification(
+                    document,
+                    outcome,
+                    checkpoint=locked_checkpoint(),
+                    artifact_path=self._artifact_path("blocked"),
+                )
 
     def test_a_fixture_candidate_is_never_real_evidence(self):
         document = self._document("fixture")
@@ -695,6 +725,7 @@ class DiagnosticClassificationRecordingTest(unittest.TestCase):
                 document,
                 ShantenGuardOutcome.ROLLOUT_SIGNAL,
                 checkpoint=fixture_checkpoint(),
+                artifact_path=self._artifact_path("fixture"),
             )
 
     def test_an_outcome_cannot_be_recorded_twice(self):
@@ -709,13 +740,17 @@ class DiagnosticClassificationRecordingTest(unittest.TestCase):
                 classified,
                 ShantenGuardOutcome.ROLLOUT_SIGNAL,
                 checkpoint=locked_checkpoint(),
+                artifact_path=self._artifact_path("twice"),
             )
 
     def test_a_non_outcome_value_is_rejected(self):
         document = self._locked_document("type")
         with self.assertRaises(TypeError):
             record_classification(
-                document, "SHANTEN GUARD ROLLOUT SIGNAL", checkpoint=locked_checkpoint()
+                document,
+                "SHANTEN GUARD ROLLOUT SIGNAL",
+                checkpoint=locked_checkpoint(),
+                artifact_path=self._artifact_path("type"),
             )
 
     def test_a_recorded_outcome_that_contradicts_the_interval_is_rejected(self):
@@ -744,8 +779,125 @@ class DiagnosticClassificationRecordingTest(unittest.TestCase):
         self.assertIs(derive_classification(document), ShantenGuardOutcome.INACTIVE)
         with self.assertRaises(OfflineQError):
             record_classification(
-                document, ShantenGuardOutcome.INACTIVE, checkpoint=locked_checkpoint()
+                document,
+                ShantenGuardOutcome.INACTIVE,
+                checkpoint=locked_checkpoint(),
+                artifact_path=self._artifact_path("inactive"),
             )
+
+    def test_save_classified_result_never_persists_for_a_fixture_candidate(self):
+        """recordできないclassificationは、classified fileも一切作らない。"""
+        document = self._document("fixture-save")
+        outcome = derive_classification(document)
+        classified_path = self._tmp / "fixture-save-classified.json"
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            save_classified_result(
+                classified_path,
+                document,
+                outcome,
+                checkpoint=fixture_checkpoint(),
+                artifact_path=self._artifact_path("fixture-save"),
+            )
+        self.assertFalse(classified_path.exists())
+
+
+class SeedFreshnessEnforcementTest(unittest.TestCase):
+    """seed freshnessはcaller disciplineではなくexecution boundaryでfail closedにする。"""
+
+    def test_a_collision_stops_the_run_before_any_game_or_checkpoint_access(self):
+        with (
+            mock.patch.object(
+                p1_shanten_guard_diagnostic,
+                "declared_allocated_seeds",
+                return_value=frozenset({522}),
+            ),
+            mock.patch(
+                "lisjong_arena.single_round_evaluation._run_single_game"
+            ) as fake_run_single_game,
+        ):
+            with self.assertRaises(ShantenGuardDiagnosticError) as ctx:
+                p1_shanten_guard_diagnostic.run_shanten_guard_diagnostic(
+                    None, "unused-artifact.json", "unused-result.json"
+                )
+            self.assertIn(SEED_PLAN_REFORMULATE, str(ctx.exception))
+        fake_run_single_game.assert_not_called()
+
+
+class DiagnosticResultPersistenceTest(unittest.TestCase):
+    """diagnostic result document自体もwrite-once / strict readbackで永続化する。"""
+
+    def setUp(self):
+        self._tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+        self.artifact_path = self._tmp / "artifact.json"
+        self.document = diagnostic_result_document(self.artifact_path)
+
+    def test_save_and_load_round_trip(self):
+        result_path = self._tmp / "result.json"
+        saved = save_diagnostic_result(result_path, self.document)
+        self.assertEqual(saved, self.document)
+        self.assertEqual(load_diagnostic_result(result_path), self.document)
+
+    def test_an_existing_result_path_is_never_overwritten(self):
+        result_path = self._tmp / "result.json"
+        save_diagnostic_result(result_path, self.document)
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            save_diagnostic_result(result_path, self.document)
+
+    def test_a_missing_result_file_is_rejected(self):
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            load_diagnostic_result(self._tmp / "absent.json")
+
+    def test_a_tampered_result_file_is_rejected_on_readback(self):
+        from lisjong_arena._artifact_io import canonical_json_text
+
+        result_path = self._tmp / "result.json"
+        save_diagnostic_result(result_path, self.document)
+        tampered = json.loads(result_path.read_text(encoding="utf-8"))
+        tampered["limitations"] = []
+        result_path.write_text(
+            canonical_json_text(tampered), encoding="utf-8", newline="\n"
+        )
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            load_diagnostic_result(result_path)
+
+    def test_a_non_canonical_result_file_is_rejected(self):
+        result_path = self._tmp / "result.json"
+        save_diagnostic_result(result_path, self.document)
+        text = result_path.read_text(encoding="utf-8")
+        result_path.write_text(f" {text}", encoding="utf-8")
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            load_diagnostic_result(result_path)
+
+    def test_a_non_json_result_file_is_rejected(self):
+        result_path = self._tmp / "result.json"
+        result_path.write_text("not json", encoding="utf-8")
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            load_diagnostic_result(result_path)
+
+    def test_bind_recorded_artifact_accepts_the_matching_artifact(self):
+        validated = validate_diagnostic_result(self.document)
+        artifact = bind_recorded_artifact(validated, self.artifact_path)
+        self.assertEqual(len(artifact.game_results), 100)
+
+    def test_bind_recorded_artifact_rejects_a_sha_mismatch(self):
+        validated = validate_diagnostic_result(self.document)
+        self.artifact_path.write_bytes(self.artifact_path.read_bytes() + b"\ntampered")
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            bind_recorded_artifact(validated, self.artifact_path)
+
+    def test_bind_recorded_artifact_rejects_a_missing_artifact(self):
+        validated = validate_diagnostic_result(self.document)
+        self.artifact_path.unlink()
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            bind_recorded_artifact(validated, self.artifact_path)
+
+    def test_bind_recorded_artifact_rejects_a_renamed_artifact_file(self):
+        validated = validate_diagnostic_result(self.document)
+        renamed = self._tmp / "renamed.json"
+        self.artifact_path.rename(renamed)
+        with self.assertRaises(ShantenGuardDiagnosticError):
+            bind_recorded_artifact(validated, renamed)
 
 
 class LockedCandidateReuseTest(unittest.TestCase):

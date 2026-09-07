@@ -11,6 +11,8 @@ G — SHANTEN-GUARDED candidate  同じcandidate binding + selection guardだけ
 ```
 
 ```text
+require_fresh_seed_plan()   execution boundaryでmachine-enforced（caller discipline非依存）
+        |
 exact #162 P1 serving checkpoint
         |
         +-- U: HybridPolicy（無変更）
@@ -26,7 +28,13 @@ exact #162 P1 serving checkpoint
                              |
                   summarize_single_round_strength()  canonical re-derivation
                              |
-                  build_diagnostic_result() -> validate -> derive_classification()
+                  build_diagnostic_result()
+                             |
+                  save_diagnostic_result()        write-once + strict readback
+                             |
+                  validate -> derive_classification()
+                             |
+                  record_classification() -> save_classified_result()  write-once
 ```
 
 primary changed axisは1つだけである。
@@ -68,10 +76,12 @@ secondary Mahjong diagnostics、serving diagnosticsはこのladderを一切通�
 """
 
 import hashlib
+import json
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from tempfile import mkstemp
 
 from lisjong_arena._artifact_io import canonical_json_text
 from lisjong_arena.model import (
@@ -1140,6 +1150,64 @@ def validate_diagnostic_result(document: object) -> dict:
     return validated
 
 
+# --- Durable result persistence ---------------------------------------------
+#
+# `SingleRoundStrengthArtifact`はwrite-once / strict readbackだが、guard
+# diagnostics（`action_change_count`等）とexhaustive classificationはこの
+# result documentにしか存在しない。したがってresult document自体も
+# strength artifactと同じ規律（write-once、staging + atomic rename、
+# strict readback）でoperator-local durable storageへ保存する。
+
+
+def save_diagnostic_result(path: str | Path, document: dict) -> dict:
+    """diagnostic result document（unclassified / classified）をwrite-onceで保存する。
+
+    既存fileを上書きせず、公開後は必ず`load_diagnostic_result()`で読み直した
+    結果を返す。stdoutやin-memory documentをmeasurementのsource of truthに
+    しないための境界である。
+    """
+    path = Path(path)
+    if path.exists():
+        raise _error(
+            "diagnostic result destination already exists; results are write-once"
+        )
+    validated = validate_diagnostic_result(document)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, staging_name = mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".staging"
+    )
+    staging = Path(staging_name)
+    published = False
+    try:
+        with open(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(canonical_json_text(validated))
+        staging.rename(path)
+        published = True
+    finally:
+        if not published:
+            staging.unlink(missing_ok=True)
+    return load_diagnostic_result(path)
+
+
+def load_diagnostic_result(path: str | Path) -> dict:
+    """diagnostic result documentをdiskから読み、strict validateして返す。
+
+    document自身が名乗る値をauthorityにしない。bytesそのものがcanonical
+    JSONであることと、`validate_diagnostic_result()`の全条件を要求する。
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise _error("diagnostic result path does not exist or is not a file")
+    text = path.read_text(encoding="utf-8")
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise _error("diagnostic result file is not valid JSON") from error
+    if canonical_json_text(document) != text:
+        raise _error("diagnostic result file is not canonical JSON")
+    return validate_diagnostic_result(document)
+
+
 def classify_interval(lower: float, upper: float) -> ShantenGuardOutcome:
     """lockedなone-way classification ruleをcanonical intervalへ適用する。"""
     if lower > 0:
@@ -1195,13 +1263,88 @@ def bind_recorded_candidate(
     return reloaded
 
 
+def bind_recorded_artifact(
+    validated: dict, artifact_path: str | Path
+) -> SingleRoundStrengthArtifact:
+    """classification時に、result documentをactual strength artifactへbindする。
+
+    `result_identity`はdocument自身のself-consistencyでしかなく、external
+    source of truthであるstrength artifactへのbindingにはならない。documentの
+    `canonical_summary`を書き換えてから`result_identity`を計算し直せば、raw
+    100 gamesと一致しないsummaryでも自己整合的なdocumentは作れてしまう。
+
+    そこでartifact fileを改めてdiskからstrict readbackし、そのbytesのsha256、
+    protocol条件、そしてraw gamesから再導出したcanonical summaryをresult
+    documentと突き合わせる。この境界を通れるのは、実際にそのraw 100 gamesを
+    持つartifactだけである。
+    """
+    artifact_path = Path(artifact_path)
+    recorded = validated["strength_artifact"]
+    if not artifact_path.is_file():
+        raise _error(
+            "the strength artifact this classification binds to does not exist "
+            "at the given path; a shanten guard outcome binds to an actually "
+            "readback artifact, never to a recorded digest alone"
+        )
+    if artifact_path.name != recorded["filename"]:
+        raise _error(
+            "the strength artifact file name is not the one the result records"
+        )
+    if _sha256_file(artifact_path) != recorded["sha256"]:
+        raise _error(
+            "the strength artifact bytes do not match the digest the result "
+            "records; the recorded measurement and the retained artifact are "
+            "not the same run"
+        )
+    artifact = load_single_round_artifact(artifact_path)
+    if artifact.schema_version != recorded["schema_version"]:
+        raise _error("the strength artifact schema version is not the recorded one")
+    if artifact.evaluation_protocol != recorded["evaluation_protocol"]:
+        raise _error(
+            "the strength artifact evaluation protocol is not the recorded one"
+        )
+    if len(artifact.game_results) != recorded["game_count"]:
+        raise _error("the strength artifact game count is not the recorded one")
+    require_diagnostic_artifact(
+        artifact,
+        guarded_identity=validated["guarded_candidate"]["identity"],
+        unguarded_identity=validated["unguarded_candidate"]["identity"],
+    )
+    summary = summarize_single_round_strength(
+        aggregate_candidate_metrics(
+            artifact.plan.candidate_identity, artifact.game_results
+        ),
+        artifact.game_results,
+    )
+    if summary != artifact.summary:
+        raise _error(
+            "the canonical summary regenerated from the retained raw games "
+            "differs from the summary stored in the artifact"
+        )
+    if summary_to_dict(summary) != validated["canonical_summary"]:
+        raise _error(
+            "the recorded canonical summary is not the one the retained raw "
+            "games regenerate; a shanten guard outcome is classified from the "
+            "artifact's own 100 games, never from a summary written into the "
+            "result document"
+        )
+    return artifact
+
+
 def record_classification(
     document: dict,
     outcome: ShantenGuardOutcome,
     *,
     checkpoint: LoadedP1ServingCheckpoint,
+    artifact_path: str | Path,
 ) -> dict:
-    """validated resultへexhaustive outcomeを1件だけ記録する。"""
+    """validated resultへexhaustive outcomeを1件だけ記録する。
+
+    `checkpoint`と`artifact_path`はいずれも必須である。classificationは
+    identity文字列やdocument内のself-consistencyではなく、diskからstrict
+    readbackしたcheckpoint bytesとstrength artifact bytesの両方へbindされる
+    （`bind_recorded_candidate()` / `bind_recorded_artifact()`）。
+    """
     validated = validate_diagnostic_result(document)
     if not isinstance(outcome, ShantenGuardOutcome):
         raise TypeError("outcome must be a ShantenGuardOutcome")
@@ -1227,7 +1370,28 @@ def record_classification(
             f"guard diagnostics / canonical interval, not {outcome.value!r}"
         )
     bind_recorded_candidate(validated, checkpoint)
+    bind_recorded_artifact(validated, artifact_path)
     return validate_diagnostic_result({**validated, "classification": outcome.value})
+
+
+def save_classified_result(
+    classified_result_path: str | Path,
+    document: dict,
+    outcome: ShantenGuardOutcome,
+    *,
+    checkpoint: LoadedP1ServingCheckpoint,
+    artifact_path: str | Path,
+) -> dict:
+    """review後のexhaustive outcomeを1件だけ記録し、別のwrite-once fileへ保存する。
+
+    unclassified resultは上書きせず、classified resultは常に新しいpathへ
+    write-onceで公開する。返り値は保存後に`load_diagnostic_result()`で
+    読み直した結果である。
+    """
+    classified = record_classification(
+        document, outcome, checkpoint=checkpoint, artifact_path=artifact_path
+    )
+    return save_diagnostic_result(classified_result_path, classified)
 
 
 # --- Execution ---------------------------------------------------------------
@@ -1240,6 +1404,7 @@ class ShantenGuardDiagnosticMeasurement:
     artifact: SingleRoundStrengthArtifact
     summary: object
     document: dict
+    result_path: Path
     derived_outcome: ShantenGuardOutcome
     guard_diagnostics: GuardDiagnostics
     guarded_activation_diagnostics: ActivationDiagnostics
@@ -1251,15 +1416,22 @@ class ShantenGuardDiagnosticMeasurement:
 def run_shanten_guard_diagnostic(
     checkpoint: LoadedP1ServingCheckpoint,
     artifact_path: str | Path,
+    result_path: str | Path,
     *,
     progress_callback=None,
 ) -> ShantenGuardDiagnosticMeasurement:
-    """diagnosticを1回実行し、artifactを保存してから読み直して検証する。
+    """diagnosticを1回実行し、artifactとresult documentを保存してから読み直して検証する。
+
+    real execution前に`require_fresh_seed_plan()`をmachine-enforcedに実行する。
+    seed freshnessはpre-execution protocol conditionであり、caller discipline
+    ではなくこのexecution boundary自体がfail closedにする。
 
     新しいgame runner / rotation / aggregationを作らず、既存
     `run_single_round_evaluation()`をserial（workers = 1）でthin reuseする。
     """
+    require_fresh_seed_plan()
     artifact_path = Path(artifact_path)
+    result_path = Path(result_path)
     plan, guard_registry, unguarded_registry = build_diagnostic_plan(checkpoint)
 
     wall_started = time.perf_counter()
@@ -1291,7 +1463,8 @@ def run_shanten_guard_diagnostic(
     guarded_activation = collect_activation_diagnostics(guard_registry.instances)
     unguarded_activation = collect_activation_diagnostics(unguarded_registry.instances)
 
-    document = validate_diagnostic_result(
+    document = save_diagnostic_result(
+        result_path,
         build_diagnostic_result(
             checkpoint=checkpoint,
             artifact=artifact,
@@ -1300,12 +1473,13 @@ def run_shanten_guard_diagnostic(
             guard_diagnostics=guard_diagnostics,
             guarded_activation_diagnostics=guarded_activation,
             unguarded_activation_diagnostics=unguarded_activation,
-        )
+        ),
     )
     return ShantenGuardDiagnosticMeasurement(
         artifact=artifact,
         summary=summary,
         document=document,
+        result_path=result_path,
         derived_outcome=derive_classification(document),
         guard_diagnostics=guard_diagnostics,
         guarded_activation_diagnostics=guarded_activation,
@@ -1343,6 +1517,7 @@ __all__ = [
     "ShantenGuardDiagnosticMeasurement",
     "ShantenGuardOutcome",
     "artifact_block",
+    "bind_recorded_artifact",
     "bind_recorded_candidate",
     "build_diagnostic_plan",
     "build_diagnostic_result",
@@ -1353,6 +1528,7 @@ __all__ = [
     "guard_diagnostics_block",
     "guarded_candidate_block",
     "guarded_mahjong_metrics",
+    "load_diagnostic_result",
     "plan_block",
     "record_classification",
     "require_diagnostic_artifact",
@@ -1360,6 +1536,8 @@ __all__ = [
     "require_fresh_seed_plan",
     "result_identity",
     "run_shanten_guard_diagnostic",
+    "save_classified_result",
+    "save_diagnostic_result",
     "serving_diagnostics_block",
     "unguarded_candidate_block",
     "unguarded_mahjong_metrics",
