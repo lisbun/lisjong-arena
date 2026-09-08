@@ -51,6 +51,11 @@ class DirectMainPushTests(unittest.TestCase):
                     )
                 )
 
+    def test_blocks_head_alias_pushes_from_main(self) -> None:
+        for command in ("git push origin HEAD", "git push origin @"):
+            with self.subTest(command=command):
+                self.assertTrue(guard.is_direct_main_push(command, "main"))
+
     def test_does_not_treat_remote_named_main_as_main_ref(self) -> None:
         self.assertFalse(
             guard.is_direct_main_push(

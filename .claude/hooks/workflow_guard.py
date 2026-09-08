@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 MAIN_REF_NAMES = {"main", "refs/heads/main"}
+MAIN_SOURCE_ALIASES = {"HEAD", "@"}
 FORBIDDEN_SUFFIXES = {
     ".ckpt",
     ".key",
@@ -159,6 +160,10 @@ def is_direct_main_push(command: str, current_branch: str) -> bool:
         positionals = _positionals_after_push(tokens)
         refspecs = positionals if remote_via_option else positionals[1:]
         if any(_targets_main(refspec) for refspec in refspecs):
+            return True
+        if current_branch == "main" and any(
+            refspec.lstrip("+") in MAIN_SOURCE_ALIASES for refspec in refspecs
+        ):
             return True
 
         # With no explicit refspec, git pushes the current branch according to
