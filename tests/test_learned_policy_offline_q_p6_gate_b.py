@@ -110,6 +110,29 @@ class PopulationContractTest(unittest.TestCase):
             gate_b.seed_freshness_block(external_freshness_confirmed=False)
 
 
+class ExecutionTargetTest(unittest.TestCase):
+    def test_execution_target_is_issue_183_specific(self):
+        current = provenance()
+        with mock.patch.object(
+            gate_b,
+            "_require_clean_arena_head",
+            return_value=current.lisjong_arena_revision,
+        ):
+            target = gate_b.execution_target_block(current)
+        self.assertEqual(target["source_pr"], "lisbun/lisjong-arena#184")
+        self.assertEqual(target["source_issue"], gate_b.SOURCE_ISSUE)
+        self.assertIs(target["head_equals_origin_main"], True)
+        self.assertEqual(target["merged_main_revision"], current.lisjong_arena_revision)
+
+    def test_execution_target_rejects_provenance_revision_drift(self):
+        current = provenance()
+        with mock.patch.object(
+            gate_b, "_require_clean_arena_head", return_value="f" * 40
+        ):
+            with self.assertRaises(gate_b.P6GateBError):
+                gate_b.execution_target_block(current)
+
+
 class LockSurfaceTest(unittest.TestCase):
     def test_lock_comment_must_belong_to_issue_183(self):
         accepted = "https://github.com/lisbun/lisjong-arena/issues/183#issuecomment-123"

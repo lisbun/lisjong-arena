@@ -63,7 +63,6 @@ from .p1_serving import (
 )
 from .p1_shanten_guard_higher_fidelity import (
     _require_clean_arena_head,
-    execution_target_block,
     runtime_block,
 )
 from .p1_shanten_guard_higher_fidelity_successor import (
@@ -473,6 +472,27 @@ def _require_output_destinations_ready(locations: object) -> None:
             raise _error(f"locked output {name} parent directory is not writable")
 
 
+def execution_target_block(
+    provenance: SingleRoundExecutionProvenance,
+) -> dict[str, object]:
+    """Bind execution to clean fetched merged main for Issue #183."""
+    if not isinstance(provenance, SingleRoundExecutionProvenance):
+        raise TypeError("provenance must be a SingleRoundExecutionProvenance")
+    current_revision = _require_clean_arena_head()
+    if current_revision != provenance.lisjong_arena_revision:
+        raise _error(
+            "Arena provenance revision is not the Issue #183 merged-main target"
+        )
+    return {
+        "branch": "main",
+        "head_equals_origin_main": True,
+        "merge_status": "merged-main",
+        "merged_main_revision": current_revision,
+        "source_pr": "lisbun/lisjong-arena#184",
+        "source_issue": SOURCE_ISSUE,
+    }
+
+
 def lock_identity(document: dict[str, object]) -> str:
     payload = {
         name: value for name, value in document.items() if name != "lock_identity"
@@ -644,11 +664,15 @@ def validate_pre_execution_lock(document: object) -> dict[str, object]:
     if document["runtime"] != runtime_block():
         raise _error("pre-execution lock runtime drifted")
     target = document["execution_target"]
-    if (
-        type(target) is not dict
-        or target.get("merged_main_revision") != provenance.lisjong_arena_revision
-        or target.get("head_matches_merged_main") is not True
-    ):
+    expected_target = {
+        "branch": "main",
+        "head_equals_origin_main": True,
+        "merge_status": "merged-main",
+        "merged_main_revision": provenance.lisjong_arena_revision,
+        "source_pr": "lisbun/lisjong-arena#184",
+        "source_issue": SOURCE_ISSUE,
+    }
+    if target != expected_target:
         raise _error("pre-execution lock execution target is invalid")
     identity = document["lock_identity"]
     if type(identity) is not str or len(identity) != 64:
