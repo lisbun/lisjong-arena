@@ -1,0 +1,100 @@
+name: P6 Gate B Autofix
+
+on:
+  push:
+    branches:
+      - issue-183-p6-gate-b
+
+permissions:
+  contents: write
+
+jobs:
+  autofix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-183-p6-gate-b
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install Ruff
+        run: python -m pip install 'ruff==0.16.0'
+      - name: Apply self-review hardening and Ruff fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py')
+          text = path.read_text(encoding='utf-8')
+
+          text = text.replace(
+              'from .errors import OfflineQError\n',
+              'from .artifact import vocabulary_block\nfrom .errors import OfflineQError\n',
+          )
+          text = text.replace(
+              'from .p1_gate_b_comparator import (\n',
+              'from .p1_features import p1_feature_block\nfrom .p1_gate_b_comparator import (\n',
+          )
+          text = text.replace(
+              '    load_p6_checkpoint,\n    p6_training_block,\n',
+              '    load_p6_checkpoint,\n    p6_model_block,\n    p6_training_block,\n',
+          )
+
+          marker = '@dataclass(frozen=True, slots=True)\nclass GateAEvidence:'
+          helper = '''def _expected_candidate_block() -> dict[str, object]:\n    return {\n        "checkpoint_schema_version": P6_CHECKPOINT_SCHEMA_VERSION,\n        "candidate_identity": EXPECTED_CANDIDATE_IDENTITY,\n        "canonical_model_weights_digest": EXPECTED_WEIGHTS_DIGEST,\n        "source_dataset_identity": EXPECTED_SOURCE_DATASET_IDENTITY,\n        "supported_indices_digest": EXPECTED_SUPPORT_DIGEST,\n        "selected_epoch": EXPECTED_SELECTED_EPOCH,\n        "p1_feature": p1_feature_block(),\n        "action_vocabulary": vocabulary_block(),\n        "model": p6_model_block(),\n        "training": p6_training_block(),\n    }\n\n\n'''
+          if helper not in text:
+              text = text.replace(marker, helper + marker)
+
+          old = '''    if manifest["training"] != p6_training_block():\n        raise _error("the #181 P6 training/objective binding drifted")\n    return GateAEvidence(checkpoint, result, classified)\n'''
+          new = '''    if manifest["training"] != p6_training_block():\n        raise _error("the #181 P6 training/objective binding drifted")\n    evidence = GateAEvidence(checkpoint, result, classified)\n    if evidence.candidate_block() != _expected_candidate_block():\n        raise _error("the retained #181 candidate block drifted from its exact binding")\n    return evidence\n'''
+          text = text.replace(old, new)
+
+          old = '''    candidate = document["candidate"]\n    if type(candidate) is not dict:\n        raise _error("pre-execution lock candidate is invalid")\n    expected_candidate = {\n        "checkpoint_schema_version": P6_CHECKPOINT_SCHEMA_VERSION,\n        "candidate_identity": EXPECTED_CANDIDATE_IDENTITY,\n        "canonical_model_weights_digest": EXPECTED_WEIGHTS_DIGEST,\n        "source_dataset_identity": EXPECTED_SOURCE_DATASET_IDENTITY,\n        "supported_indices_digest": EXPECTED_SUPPORT_DIGEST,\n        "selected_epoch": EXPECTED_SELECTED_EPOCH,\n    }\n    for name, expected in expected_candidate.items():\n        if candidate.get(name) != expected:\n            raise _error(f"pre-execution lock candidate {name} drifted")\n'''
+          new = '''    candidate = document["candidate"]\n    if candidate != _expected_candidate_block():\n        raise _error("pre-execution lock candidate binding drifted")\n'''
+          text = text.replace(old, new)
+
+          old = '''    locations = document["artifact_locations"]\n    if type(locations) is not dict:\n        raise _error("pre-execution lock artifact locations are invalid")\n    if locations.get("retention_backend") != RETENTION_BACKEND:\n'''
+          new = '''    locations = document["artifact_locations"]\n    expected_location_fields = {\n        "retention_backend",\n        "candidate_checkpoint",\n        "gate_a_result",\n        "gate_a_classified",\n        "strength_artifact",\n        "result",\n        "classified_result",\n        "retention_keys",\n    }\n    if type(locations) is not dict or set(locations) != expected_location_fields:\n        raise _error("pre-execution lock artifact locations are invalid")\n    if any(\n        type(locations[name]) is not str or not locations[name]\n        for name in expected_location_fields - {"retention_keys"}\n    ):\n        raise _error("pre-execution lock artifact location value is invalid")\n    if locations.get("retention_backend") != RETENTION_BACKEND:\n'''
+          text = text.replace(old, new)
+
+          old = '''    candidate = document["candidate"]\n    if type(candidate) is not dict:\n        raise _error("P6 Gate B result candidate block is invalid")\n    if candidate.get("candidate_identity") != EXPECTED_CANDIDATE_IDENTITY:\n        raise _error("P6 Gate B result candidate identity drifted")\n    if (\n        candidate.get("canonical_model_weights_digest") != EXPECTED_WEIGHTS_DIGEST\n        or candidate.get("supported_indices_digest") != EXPECTED_SUPPORT_DIGEST\n        or candidate.get("source_dataset_identity")\n        != EXPECTED_SOURCE_DATASET_IDENTITY\n        or candidate.get("selected_epoch") != EXPECTED_SELECTED_EPOCH\n    ):\n        raise _error("P6 Gate B result candidate binding drifted")\n'''
+          new = '''    candidate = document["candidate"]\n    if candidate != _expected_candidate_block():\n        raise _error("P6 Gate B result candidate binding drifted")\n'''
+          text = text.replace(old, new)
+
+          old = '''    digest = artifact.get("sha256")\n    if type(digest) is not str or len(digest) != 64:\n        raise _error("P6 Gate B strength artifact digest is invalid")\n'''
+          new = '''    digest = artifact.get("sha256")\n    if type(digest) is not str or len(digest) != 64:\n        raise _error("P6 Gate B strength artifact digest is invalid")\n    filename = artifact.get("filename")\n    if (\n        type(filename) is not str\n        or not filename\n        or "/" in filename\n        or "\\\\" in filename\n    ):\n        raise _error("P6 Gate B strength artifact filename must be a bare name")\n'''
+          text = text.replace(old, new)
+
+          old = '''    if checkpoint.candidate_identity != document["candidate"]["candidate_identity"]:\n        raise _error("result checkpoint identity differs from the locked candidate")\n    document["result_identity"] = _result_identity(document)\n'''
+          new = '''    if checkpoint.candidate_identity != document["candidate"]["candidate_identity"]:\n        raise _error("result checkpoint identity differs from the locked candidate")\n    if artifact.provenance != parse_execution_provenance(lock["provenance"]):\n        raise _error("result artifact provenance differs from the posted lock")\n    document["provenance"] = execution_provenance_to_dict(artifact.provenance)\n    document["result_identity"] = _result_identity(document)\n'''
+          text = text.replace(old, new)
+
+          old = '''    require_gate_b_artifact(\n        artifact,\n        candidate_identity=evidence.checkpoint.candidate_identity,\n        ordered_seeds=lock["plan"]["ordered_seeds"],\n    )\n    summary = summarize_single_round_strength(\n'''
+          new = '''    require_gate_b_artifact(\n        artifact,\n        candidate_identity=evidence.checkpoint.candidate_identity,\n        ordered_seeds=lock["plan"]["ordered_seeds"],\n    )\n    if artifact.provenance != parse_execution_provenance(lock["provenance"]):\n        raise _error("artifact execution provenance does not match the posted lock")\n    summary = summarize_single_round_strength(\n'''
+          text = text.replace(old, new)
+
+          path.write_text(text, encoding='utf-8', newline='\n')
+
+          test_path = Path('tests/test_learned_policy_offline_q_p6_gate_b.py')
+          test_text = test_path.read_text(encoding='utf-8')
+          start = '''        "candidate": {\n            "checkpoint_schema_version": (\n                "arena-learned-policy-p6-conservative-q-checkpoint-v1"\n            ),\n            "candidate_identity": gate_b.EXPECTED_CANDIDATE_IDENTITY,\n            "canonical_model_weights_digest": gate_b.EXPECTED_WEIGHTS_DIGEST,\n            "source_dataset_identity": gate_b.EXPECTED_SOURCE_DATASET_IDENTITY,\n            "supported_indices_digest": gate_b.EXPECTED_SUPPORT_DIGEST,\n            "selected_epoch": 20,\n        },\n'''
+          test_text = test_text.replace(start, '        "candidate": gate_b._expected_candidate_block(),\n')
+          anchor = '''    def test_gate_a_signal_identity_is_fixed(self):\n'''
+          addition = '''    def test_result_rejects_nested_candidate_binding_drift(self):\n        document = _result(0.1, 1.0)\n        document["candidate"]["training"] = {"tampered": True}\n        document["result_identity"] = gate_b._result_identity(document)\n        with mock.patch.object(gate_b, "require_baseline_provenance"):\n            with self.assertRaises(gate_b.P6GateBError):\n                gate_b.validate_result(document)\n\n'''
+          if addition not in test_text:
+              test_text = test_text.replace(anchor, addition + anchor)
+          test_path.write_text(test_text, encoding='utf-8', newline='\n')
+      - name: Ruff format and lint fix
+        run: |
+          python -m ruff format src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b_ml.py
+          python -m ruff check --fix src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b_ml.py
+      - name: Commit fixes
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b_ml.py
+          git commit -m 'Harden and format P6 Gate B protocol'
+          git push origin HEAD:issue-183-p6-gate-b
