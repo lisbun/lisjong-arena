@@ -247,7 +247,7 @@ Actual completed path:
   -> #45 P8/data-source review
   -> #192 external-teacher Gate 0
   -> EXTERNAL-TEACHER ML-USE COMPLIANCE HOLD
-  -> #45 current P8 data-source / permission / scale decision
+  -> #45 parent review; no automatic next experiment
 ```
 
 どのresultもstrength claimではなく、automatic next experimentもない。
