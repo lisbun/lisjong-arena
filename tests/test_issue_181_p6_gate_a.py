@@ -10,7 +10,6 @@ from lisjong_arena.learned_policy_offline_q.errors import OfflineQProtocolError
 from lisjong_arena.learned_policy_offline_q.hand_progression import (
     MeasurementAvailability,
 )
-from lisjong_arena.learned_policy_offline_q.p1_candidate import LOCKED_P1_CANDIDATE
 from lisjong_arena.learned_policy_offline_q.p1_features import p1_feature_block
 from lisjong_arena.learned_policy_offline_q.p1_gate_a import P1GateARole
 from lisjong_arena.learned_policy_offline_q.p1_q_training import (

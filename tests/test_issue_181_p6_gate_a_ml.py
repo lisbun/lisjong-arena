@@ -32,8 +32,8 @@ from lisjong_arena.learned_policy_offline_q.p6_conservative_q import (
 from lisjong_arena.learned_policy_offline_q.p6_gate_a import evaluate_p6_role
 from lisjong_arena.learned_policy_offline_q.protocol import (
     MAXIMUM_EPOCHS,
-    Split,
     VOCABULARY_SIZE,
+    Split,
 )
 from lisjong_arena.learned_policy_offline_q.split_tensors import load_split_tensors
 from lisjong_arena.learned_policy_stage2.network import create_model, parameter_count

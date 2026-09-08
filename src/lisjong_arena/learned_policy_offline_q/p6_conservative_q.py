@@ -41,7 +41,6 @@ from .p1_q_training import (
 from .protocol import (
     BATCH_SIZE,
     DATALOADER_SEED,
-    DATALOADER_WORKERS,
     HUBER_LOSS_DELTA,
     LEARNING_RATE,
     MAXIMUM_EPOCHS,

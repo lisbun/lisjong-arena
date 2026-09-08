@@ -68,7 +68,7 @@ from .p6_conservative_q import (
     train_p6_conservative_q,
     verify_p6_protocol_delta,
 )
-from .protocol import BATCH_SIZE, MAXIMUM_EPOCHS, Split, VOCABULARY_SIZE
+from .protocol import BATCH_SIZE, MAXIMUM_EPOCHS, VOCABULARY_SIZE, Split
 from .q_network import masked_argmax_q, q_value_at
 from .q_training import load_checkpoint as load_q_checkpoint
 from .replacement_test import (
