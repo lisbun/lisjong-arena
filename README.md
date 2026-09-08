@@ -262,6 +262,21 @@ RiichiEnv
 lisjong Policy contract
 ```
 
+正常終了したstandard `LocalGameRunner` gameは、opt-inの
+[Durable local game record](docs/durable-local-game-record.md)としてoperator指定の
+local pathへ保存できます。これは#55のsame-process inspectionをstrictな
+cross-process readbackへ拡張するArena-owned raw recordであり、training datasetや
+project-wide canonical `GameRecord`ではありません。
+
+```bash
+python -m lisjong_arena.durable_local_game_record_cli record \
+  --seed 12345 \
+  --game-mode 4p-red-single \
+  --policy 0=two-step --policy 1=two-step \
+  --policy 2=two-step --policy 3=two-step \
+  --output /durable/path/game-12345
+```
+
 ### RiichiLab
 
 ranked / validation / continuous participationのclient、session、transport、protocol bridge、
@@ -392,6 +407,7 @@ runbook、schema、result interpretationは各purpose-specific documentを正本
 - [Policy strength evaluation policy](docs/policy-strength-evaluation.md)
 - [Automated Strength Evaluation v0](docs/automated-strength-evaluation.md)
 - [RiichiEnv compatibility](docs/riichienv-compatibility.md)
+- [Durable local game record](docs/durable-local-game-record.md)
 - [RiichiLab client](docs/riichilab-client.md)
 - [RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)
 - [Learned Policy input schema](docs/learned-policy-input-schema.md)

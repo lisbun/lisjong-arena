@@ -10,16 +10,37 @@ heavyな半荘compatibility testはArena default suiteでPolicyごとに保持�
 """
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from lisjong.policies import MinimalPolicy
 from lisjong.policy_contract import Seat
 
+from lisjong_arena.durable_local_game_record import (
+    load_local_game_record,
+    save_local_game_record,
+)
 from lisjong_arena.riichienv.local_game_runner import (
     LocalGameInspectionRecorder,
     LocalGameRunner,
 )
+from lisjong_arena.single_round_artifact import SingleRoundExecutionProvenance
 
 _SEED = 12345
+
+
+def _fixture_provenance() -> SingleRoundExecutionProvenance:
+    return SingleRoundExecutionProvenance(
+        execution_environment="riichienv",
+        lisjong_arena_version="0.1.0",
+        lisjong_arena_revision="a" * 40,
+        lisjong_version="0.1.0",
+        lisjong_revision="b" * 40,
+        lisjong_engine_version="0.1.0",
+        lisjong_engine_revision="c" * 40,
+        riichienv_version="0.4.8",
+        python_version="3.14.6",
+    )
 
 
 class LocalGameRunnerIntegrationTest(unittest.TestCase):
@@ -47,6 +68,20 @@ class LocalGameRunnerIntegrationTest(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first_inspection, second_inspection)
+
+        # Existing two-run fixtureのfirst runをそのままpersistし、追加のreal gameを
+        # 実行せずfresh loader boundaryから同一inspectionを復元する。
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "record"
+            save_local_game_record(
+                first_inspection,
+                path,
+                policy_identities={seat: "minimal" for seat in Seat},
+                max_steps=None,
+                provenance=_fixture_provenance(),
+            )
+            durable = load_local_game_record(path)
+        self.assertEqual(durable.inspection, first_inspection)
         self.assertEqual(first_trace, second_trace)
         self.assertEqual(first.seed, _SEED)
         self.assertEqual(first.game_mode, "4p-red-single")

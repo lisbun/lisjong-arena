@@ -92,6 +92,34 @@ Arena
 
 各pathは共通化可能性を実測してから抽出し、future consumerを推測して`GameBackend`等のgeneric abstractionを先行設計しない。
 
+### Same-process inspection and durable local record
+
+standard RiichiEnv `LocalGameRunner`では、objective `GameTrace`、existing
+`LocalGameResult`、実際にPolicyへ渡したplayer-safe `PolicyInput`と
+`DecisionTrace`をstep単位でcorrelateするsame-process inspectionを提供する。
+
+そのcompleted inspectionをprocess終了後に利用するconcrete consumerには、
+Arena-ownedの[durable local game record](durable-local-game-record.md)を使う。
+versioned bundleとstrict loaderはraw execution / decision dataをtransportするが、
+次の境界は変更しない。
+
+```text
+same-process inspection
+    -> completed runのin-memory composition
+
+durable local record
+    -> standard RiichiEnv completed runのcross-process transport
+
+project-wide canonical GameRecord
+    -> introducedしない
+
+training dataset / viewer presentation
+    -> downstream consumer-specific
+```
+
+durable recordはGameTraceへAI analysisを混ぜず、PolicyInputへoffline / omniscient
+truthを合成しない。loaderはPolicy factoryやexecutable objectを復元しない。
+
 ## Experiment-local Research / ML
 
 Arenaは、bounded research questionを検証するために必要なpurpose-specific ML / analysis implementationを所有できる。
