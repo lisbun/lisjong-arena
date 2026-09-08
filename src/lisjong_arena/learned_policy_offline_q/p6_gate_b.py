@@ -33,6 +33,7 @@ from lisjong_arena.model import (
 from lisjong_arena.single_round_artifact import (
     SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION,
     SINGLE_ROUND_EVALUATION_PROTOCOL,
+    SingleRoundExecutionProvenance,
     SingleRoundStrengthArtifact,
     collect_execution_provenance,
     execution_provenance_to_dict,
@@ -63,7 +64,6 @@ from .p1_serving import (
 from .p1_shanten_guard_higher_fidelity import (
     _require_clean_arena_head,
     execution_target_block,
-    require_baseline_provenance,
     runtime_block,
 )
 from .p1_shanten_guard_higher_fidelity_successor import (
@@ -124,6 +124,8 @@ EXPECTED_GATE_A_CLASSIFIED_IDENTITY = (
 )
 EXPECTED_GATE_A_CLASSIFICATION = P6GateAOutcome.SIGNAL.value
 EXPECTED_SELECTED_EPOCH = 20
+GATE_B_LISJONG_REVISION = "99a30c267a3c3e301e132c8799726eb10e012a95"
+GATE_B_ENGINE_REVISION = "8735e89e1aea000ab59368d0368d476787827741"
 
 DEFAULT_ORDERED_SEEDS = tuple(range(597, 622))
 SEED_BLOCK_COUNT = 25
@@ -192,6 +194,17 @@ _RECORDABLE_OUTCOMES = frozenset(
 
 def _error(message: str) -> P6GateBError:
     return P6GateBError(message)
+
+
+def require_gate_b_provenance(provenance: SingleRoundExecutionProvenance) -> None:
+    if not isinstance(provenance, SingleRoundExecutionProvenance):
+        raise TypeError("provenance must be a SingleRoundExecutionProvenance")
+    if provenance.lisjong_revision != GATE_B_LISJONG_REVISION:
+        raise _error("lisjong revision differs from the established #162 Gate B family")
+    if provenance.lisjong_engine_revision != GATE_B_ENGINE_REVISION:
+        raise _error(
+            "lisjong-engine revision differs from the established #162 Gate B family"
+        )
 
 
 def _sha256_file(path: Path) -> str:
@@ -491,7 +504,7 @@ def build_pre_execution_lock(
     location_document = locations.to_document()
     _require_output_destinations_ready(location_document)
     provenance = collect_execution_provenance()
-    require_baseline_provenance(provenance)
+    require_gate_b_provenance(provenance)
     execution_target = execution_target_block(provenance)
     seeds = require_seed_plan(ordered_seeds)
     freshness = seed_freshness_block(
@@ -627,7 +640,7 @@ def validate_pre_execution_lock(document: object) -> dict[str, object]:
     }:
         raise _error("pre-execution lock retention keys drifted")
     provenance = parse_execution_provenance(document["provenance"])
-    require_baseline_provenance(provenance)
+    require_gate_b_provenance(provenance)
     if document["runtime"] != runtime_block():
         raise _error("pre-execution lock runtime drifted")
     target = document["execution_target"]
@@ -909,7 +922,7 @@ def validate_result(
     ):
         raise _error("P6 Gate B scientific boundary drifted")
     provenance = parse_execution_provenance(document["provenance"])
-    require_baseline_provenance(provenance)
+    require_gate_b_provenance(provenance)
     classification = document["classification"]
     if classification is not None:
         if not allow_classified:
@@ -967,7 +980,7 @@ def run_gate_b(
     if _require_clean_arena_head() != target_revision:
         raise _error("live Arena HEAD differs from the locked merged main revision")
     live_provenance = collect_execution_provenance()
-    require_baseline_provenance(live_provenance)
+    require_gate_b_provenance(live_provenance)
     if execution_provenance_to_dict(live_provenance) != lock["provenance"]:
         raise _error("live execution provenance differs from the posted lock")
     if runtime_block() != lock["runtime"]:

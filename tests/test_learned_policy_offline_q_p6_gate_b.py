@@ -135,7 +135,7 @@ class LockSurfaceTest(unittest.TestCase):
 
 class ClassificationTest(unittest.TestCase):
     def _derive(self, lower, upper):
-        with mock.patch.object(gate_b, "require_baseline_provenance"):
+        with mock.patch.object(gate_b, "require_gate_b_provenance"):
             return gate_b.derive_classification(_result(lower, upper))
 
     def test_positive_requires_lower_bound_above_zero(self):
@@ -153,7 +153,7 @@ class ClassificationTest(unittest.TestCase):
 
     def test_recorded_classification_is_rederived(self):
         document = _result(0.1, 1.0)
-        with mock.patch.object(gate_b, "require_baseline_provenance"):
+        with mock.patch.object(gate_b, "require_gate_b_provenance"):
             classified = gate_b.record_classification(
                 document, gate_b.P6GateBOutcome.POSITIVE_SIGNAL
             )
@@ -172,7 +172,7 @@ class ClassificationTest(unittest.TestCase):
         second["serving_diagnostics"]["total_activations"] = 1
         second["serving_diagnostics"]["activation_rate"] = 0.001
         second["result_identity"] = gate_b._result_identity(second)
-        with mock.patch.object(gate_b, "require_baseline_provenance"):
+        with mock.patch.object(gate_b, "require_gate_b_provenance"):
             self.assertIs(
                 gate_b.derive_classification(first),
                 gate_b.P6GateBOutcome.POSITIVE_SIGNAL,
@@ -181,6 +181,39 @@ class ClassificationTest(unittest.TestCase):
                 gate_b.derive_classification(second),
                 gate_b.P6GateBOutcome.POSITIVE_SIGNAL,
             )
+
+
+class ProvenanceBindingTest(unittest.TestCase):
+    def test_established_162_dependency_revisions_are_locked(self):
+        current = provenance()
+        exact = type(current)(
+            execution_environment=current.execution_environment,
+            lisjong_arena_version=current.lisjong_arena_version,
+            lisjong_arena_revision=current.lisjong_arena_revision,
+            lisjong_version=current.lisjong_version,
+            lisjong_revision=gate_b.GATE_B_LISJONG_REVISION,
+            lisjong_engine_version=current.lisjong_engine_version,
+            lisjong_engine_revision=gate_b.GATE_B_ENGINE_REVISION,
+            riichienv_version=current.riichienv_version,
+            python_version=current.python_version,
+        )
+        gate_b.require_gate_b_provenance(exact)
+
+    def test_dependency_revision_drift_is_rejected(self):
+        current = provenance()
+        wrong = type(current)(
+            execution_environment=current.execution_environment,
+            lisjong_arena_version=current.lisjong_arena_version,
+            lisjong_arena_revision=current.lisjong_arena_revision,
+            lisjong_version=current.lisjong_version,
+            lisjong_revision="0" * 40,
+            lisjong_engine_version=current.lisjong_engine_version,
+            lisjong_engine_revision=gate_b.GATE_B_ENGINE_REVISION,
+            riichienv_version=current.riichienv_version,
+            python_version=current.python_version,
+        )
+        with self.assertRaises(gate_b.P6GateBError):
+            gate_b.require_gate_b_provenance(wrong)
 
 
 class BindingTest(unittest.TestCase):
@@ -196,7 +229,7 @@ class BindingTest(unittest.TestCase):
         document = _result(0.1, 1.0)
         document["candidate"]["training"] = {"tampered": True}
         document["result_identity"] = gate_b._result_identity(document)
-        with mock.patch.object(gate_b, "require_baseline_provenance"):
+        with mock.patch.object(gate_b, "require_gate_b_provenance"):
             with self.assertRaises(gate_b.P6GateBError):
                 gate_b.validate_result(document)
 
