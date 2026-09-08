@@ -99,6 +99,7 @@ seed blocks      25
 rotations/seed   4
 total games      100
 game mode        4p-red-single
+max steps/game   10000
 workers          1
 formal TEST      false
 seat assignment  ABBB
@@ -191,7 +192,8 @@ python -m lisjong_arena.learned_policy_offline_q.p6_gate_b run `
   --lock-comment-url https://github.com/lisbun/lisjong-arena/issues/183#issuecomment-XXXXXXXXXX
 ```
 
-The runner re-validates the posted lock, clean merged-main revision, exact
+The runner re-validates the posted lock, a clean HEAD that still equals the
+locally fetched `origin/main` and the locked merged-main revision, exact
 runtime/provenance, all #181 input identities, and all output destinations before
 game 1. It then:
 
@@ -202,9 +204,11 @@ game 1. It then:
   -> canonical summary re-derivation from raw games
   -> write unclassified result
   -> strict readback
+  -> rebind artifact digest, metadata, provenance, and canonical summary
   -> derive locked classification
   -> write classified result
   -> strict readback
+  -> rebind artifact digest, metadata, provenance, and canonical summary
 ```
 
 Stdout is not the source of truth.

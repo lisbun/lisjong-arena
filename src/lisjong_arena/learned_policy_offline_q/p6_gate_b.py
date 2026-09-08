@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import os
 import re
 import sys
@@ -63,6 +64,7 @@ from .p1_serving import (
 )
 from .p1_shanten_guard_higher_fidelity import (
     _require_clean_arena_head,
+    _resolve_execution_target_revision,
     runtime_block,
 )
 from .p1_shanten_guard_higher_fidelity_successor import (
@@ -131,6 +133,7 @@ SEED_BLOCK_COUNT = 25
 ROTATIONS_PER_SEED = SINGLE_ROUND_ROTATION_COUNT
 GAME_COUNT = SEED_BLOCK_COUNT * ROTATIONS_PER_SEED
 GAME_MODE = SINGLE_ROUND_GAME_MODE
+MAX_STEPS = 10_000
 MAX_WORKERS = 1
 FORMAL_TEST = False
 ROLE = "DEVELOPMENT-ONLY P6 GATE B"
@@ -226,12 +229,10 @@ def require_seed_plan(ordered_seeds) -> tuple[int, ...]:
         seeds = tuple(ordered_seeds)
     except TypeError:
         raise TypeError("ordered_seeds must be an ordered collection of ints") from None
-    if len(seeds) != SEED_BLOCK_COUNT:
-        raise _error(f"the plan must contain exactly {SEED_BLOCK_COUNT} seeds")
     if any(type(seed) is not int for seed in seeds):
         raise TypeError("ordered_seeds must contain only exact ints")
-    if seeds != tuple(range(seeds[0], seeds[0] + SEED_BLOCK_COUNT)):
-        raise _error("the seed plan must be one contiguous increasing range")
+    if seeds != DEFAULT_ORDERED_SEEDS:
+        raise _error("the seed plan must be exactly the ordered seeds 597..621")
     return seeds
 
 
@@ -280,6 +281,7 @@ def plan_block(ordered_seeds=DEFAULT_ORDERED_SEEDS) -> dict[str, object]:
         "rotation_count": ROTATIONS_PER_SEED,
         "game_count": GAME_COUNT,
         "game_mode": GAME_MODE,
+        "max_steps": MAX_STEPS,
         "max_workers": MAX_WORKERS,
         "formal_test": FORMAL_TEST,
         "role": ROLE,
@@ -456,11 +458,13 @@ class P6GateBArtifactLocations:
 def _require_output_destinations_ready(locations: object) -> None:
     if type(locations) is not dict:
         raise _error("locked artifact locations are invalid")
+    resolved_outputs: list[Path] = []
     for name in _OUTPUT_NAMES:
         value = locations.get(name)
         if type(value) is not str or not value or "\x00" in value:
             raise _error(f"locked output {name} path is unusable")
         path = Path(value)
+        resolved_outputs.append(path.resolve(strict=False))
         if path.exists():
             raise _error(f"locked output {name} already exists; outputs are write-once")
         parent = path.parent
@@ -470,6 +474,8 @@ def _require_output_destinations_ready(locations: object) -> None:
             raise _error(f"locked output {name} parent is not a directory")
         if not os.access(parent, os.W_OK):
             raise _error(f"locked output {name} parent directory is not writable")
+    if len(set(resolved_outputs)) != len(resolved_outputs):
+        raise _error("each output must have a distinct location")
 
 
 def execution_target_block(
@@ -479,9 +485,12 @@ def execution_target_block(
     if not isinstance(provenance, SingleRoundExecutionProvenance):
         raise TypeError("provenance must be a SingleRoundExecutionProvenance")
     current_revision = _require_clean_arena_head()
+    merged_main_revision = _resolve_execution_target_revision()
     if current_revision != provenance.lisjong_arena_revision:
+        raise _error("Arena HEAD differs from collected execution provenance")
+    if current_revision != merged_main_revision:
         raise _error(
-            "Arena provenance revision is not the Issue #183 merged-main target"
+            "Arena HEAD must equal the locally fetched origin/main merged revision"
         )
     return {
         "branch": "main",
@@ -652,6 +661,11 @@ def validate_pre_execution_lock(document: object) -> dict[str, object]:
         raise _error("pre-execution lock artifact location value is invalid")
     if locations.get("retention_backend") != RETENTION_BACKEND:
         raise _error("pre-execution lock retention backend drifted")
+    output_paths = [
+        Path(locations[name]).resolve(strict=False) for name in _OUTPUT_NAMES
+    ]
+    if len(set(output_paths)) != len(output_paths):
+        raise _error("pre-execution lock outputs must have distinct locations")
     keys = locations.get("retention_keys")
     if keys != {
         "strength_artifact": ARTIFACT_RETENTION_KEY,
@@ -709,6 +723,7 @@ def build_gate_b_plan(
         candidate=candidate,
         baseline=passive_tsumogiri_spec(),
         seeds=seeds,
+        max_steps=MAX_STEPS,
     )
     return plan, registry
 
@@ -722,8 +737,12 @@ def require_gate_b_artifact(
     plan = artifact.plan
     if plan.seeds != seeds:
         raise _error("artifact seeds differ from the locked Gate B population")
-    if plan.game_mode != GAME_MODE or plan.rotation_count != ROTATIONS_PER_SEED:
-        raise _error("artifact game mode or rotation count drifted")
+    if (
+        plan.game_mode != GAME_MODE
+        or plan.rotation_count != ROTATIONS_PER_SEED
+        or plan.max_steps != MAX_STEPS
+    ):
+        raise _error("artifact game mode, rotation count, or max steps drifted")
     if len(artifact.game_results) != GAME_COUNT:
         raise _error(f"artifact must contain exactly {GAME_COUNT} games")
     if plan.candidate_identity != candidate_identity:
@@ -784,6 +803,18 @@ def build_result(
 ) -> dict[str, object]:
     validate_pre_execution_lock(lock)
     require_pre_execution_comment_url(pre_execution_comment_url)
+    require_gate_b_artifact(
+        artifact,
+        candidate_identity=lock["candidate"]["candidate_identity"],
+        ordered_seeds=lock["plan"]["ordered_seeds"],
+    )
+    if (
+        Path(artifact_path).resolve()
+        != Path(lock["artifact_locations"]["strength_artifact"]).resolve()
+    ):
+        raise _error("result strength artifact path differs from the posted lock")
+    if summary != artifact.summary:
+        raise _error("result summary differs from the strict-read strength artifact")
     document: dict[str, object] = {
         "result_schema_version": RESULT_SCHEMA_VERSION,
         "experiment_id": EXPERIMENT_ID,
@@ -803,7 +834,7 @@ def build_result(
         "classification_rule": dict(CLASSIFICATION_RULE),
         "limitations": list(LIMITATIONS),
         "no_rescue_boundary": NO_RESCUE_BOUNDARY,
-        "provenance": execution_provenance_to_dict(collect_execution_provenance()),
+        "provenance": execution_provenance_to_dict(artifact.provenance),
         "classification": None,
         "result_identity": None,
     }
@@ -811,7 +842,6 @@ def build_result(
         raise _error("result checkpoint identity differs from the locked candidate")
     if artifact.provenance != parse_execution_provenance(lock["provenance"]):
         raise _error("result artifact provenance differs from the posted lock")
-    document["provenance"] = execution_provenance_to_dict(artifact.provenance)
     document["result_identity"] = _result_identity(document)
     return validate_result(document)
 
@@ -829,6 +859,8 @@ def _summary_statistics(document: dict[str, object]) -> dict[str, object]:
     upper = statistics.get("normal_approx_95_interval_upper")
     if type(lower) not in (int, float) or type(upper) not in (int, float):
         raise _error("Gate B classification interval is undefined")
+    if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
+        raise _error("Gate B classification interval is invalid")
     return statistics
 
 
@@ -918,7 +950,21 @@ def validate_result(
         raise _error("P6 Gate B strength artifact filename must be a bare name")
     _summary_statistics(document)
     diagnostics = document["serving_diagnostics"]
-    if type(diagnostics) is not dict:
+    diagnostic_fields = {
+        "policy_instance_count",
+        "total_decisions",
+        "total_activations",
+        "activation_rate",
+        "total_scaffold_fallbacks",
+        "scaffold_fallback_rate",
+        "total_support_fallbacks",
+        "support_fallback_rate",
+        "illegal_selection_count",
+        "non_finite_q_output_count",
+        "resolve_failure_count",
+        "fail_closed_at_decision_time",
+    }
+    if type(diagnostics) is not dict or set(diagnostics) != diagnostic_fields:
         raise _error("P6 Gate B serving diagnostics are invalid")
     for name in (
         "policy_instance_count",
@@ -939,6 +985,26 @@ def validate_result(
         or diagnostics.get("fail_closed_at_decision_time") is not True
     ):
         raise _error("P6 Gate B serving failure counters are not zero")
+    if diagnostics["policy_instance_count"] != GAME_COUNT:
+        raise _error("P6 Gate B candidate policy instance count is invalid")
+    total_decisions = diagnostics["total_decisions"]
+    if total_decisions <= 0:
+        raise _error("P6 Gate B serving diagnostics contain no decisions")
+    activations = diagnostics["total_activations"]
+    fallbacks = diagnostics["total_scaffold_fallbacks"]
+    support_fallbacks = diagnostics["total_support_fallbacks"]
+    if activations + fallbacks != total_decisions or support_fallbacks > fallbacks:
+        raise _error("P6 Gate B serving diagnostic counts are inconsistent")
+    for rate_name, numerator in (
+        ("activation_rate", activations),
+        ("scaffold_fallback_rate", fallbacks),
+        ("support_fallback_rate", support_fallbacks),
+    ):
+        rate = diagnostics[rate_name]
+        if type(rate) is not float or not math.isfinite(rate):
+            raise _error(f"P6 Gate B diagnostic {rate_name} is invalid")
+        if rate != numerator / total_decisions:
+            raise _error(f"P6 Gate B diagnostic {rate_name} is inconsistent")
     if (
         document["classification_rule"] != CLASSIFICATION_RULE
         or document["limitations"] != list(LIMITATIONS)
@@ -965,6 +1031,54 @@ def validate_result(
         if classification != derived.value:
             raise _error("recorded P6 Gate B classification is not derivable")
     return document
+
+
+def bind_result_artifact(
+    document: object,
+    *,
+    artifact_path: str | Path,
+    lock_document: object,
+    allow_classified: bool = False,
+) -> SingleRoundStrengthArtifact:
+    """Strict-read and re-derive the retained evidence bound by a result."""
+    result = validate_result(document, allow_classified=allow_classified)
+    lock = validate_pre_execution_lock(lock_document)
+    path = Path(artifact_path)
+    if (
+        path.resolve()
+        != Path(lock["artifact_locations"]["strength_artifact"]).resolve()
+    ):
+        raise _error("retained strength artifact path differs from the posted lock")
+    for name in (
+        "candidate",
+        "gate_a_binding",
+        "serving",
+        "fallback_policy",
+        "comparator",
+        "plan",
+        "provenance",
+    ):
+        if result[name] != lock[name]:
+            raise _error(f"P6 Gate B result {name} differs from the posted lock")
+    if result["lock_identity"] != lock["lock_identity"]:
+        raise _error("P6 Gate B result lock identity differs from the posted lock")
+    artifact = load_single_round_artifact(path)
+    require_gate_b_artifact(
+        artifact,
+        candidate_identity=lock["candidate"]["candidate_identity"],
+        ordered_seeds=lock["plan"]["ordered_seeds"],
+    )
+    if artifact.provenance != parse_execution_provenance(lock["provenance"]):
+        raise _error(
+            "retained strength artifact provenance differs from the posted lock"
+        )
+    if result["strength_artifact"] != artifact_block(artifact, path):
+        raise _error(
+            "retained strength artifact digest or metadata differs from result"
+        )
+    if result["canonical_summary"] != summary_to_dict(artifact.summary):
+        raise _error("result summary differs from canonical retained evidence")
+    return artifact
 
 
 def record_classification(
@@ -1001,8 +1115,13 @@ def run_gate_b(
     lock = validate_pre_execution_lock(lock_document)
     require_pre_execution_comment_url(pre_execution_comment_url)
     target_revision = lock["execution_target"]["merged_main_revision"]
-    if _require_clean_arena_head() != target_revision:
+    current_revision = _require_clean_arena_head()
+    if current_revision != target_revision:
         raise _error("live Arena HEAD differs from the locked merged main revision")
+    if _resolve_execution_target_revision() != target_revision:
+        raise _error(
+            "live Arena HEAD no longer equals the fetched origin/main revision"
+        )
     live_provenance = collect_execution_provenance()
     require_gate_b_provenance(live_provenance)
     if execution_provenance_to_dict(live_provenance) != lock["provenance"]:
@@ -1061,7 +1180,10 @@ def run_gate_b(
     result_path = Path(locations["result"])
     write_new_artifact_file(result_path, canonical_json_text(result))
     strict_result = read_json_document(result_path)
+    if strict_result != result:
+        raise _error("unclassified result strict readback differs")
     validate_result(strict_result)
+    bind_result_artifact(strict_result, artifact_path=strength_path, lock_document=lock)
     outcome = derive_classification(strict_result)
     classified = record_classification(strict_result, outcome)
     classified_path = Path(locations["classified_result"])
@@ -1070,6 +1192,12 @@ def run_gate_b(
     if strict_classified != classified:
         raise _error("classified result strict readback differs")
     validate_result(strict_classified, allow_classified=True)
+    bind_result_artifact(
+        strict_classified,
+        artifact_path=strength_path,
+        lock_document=lock,
+        allow_classified=True,
+    )
     return P6GateBMeasurement(
         artifact=artifact,
         document=strict_result,
@@ -1161,6 +1289,7 @@ __all__ = [
     "P6GateBArtifactLocations",
     "P6GateBMeasurement",
     "P6GateBOutcome",
+    "bind_result_artifact",
     "build_gate_b_plan",
     "build_pre_execution_lock",
     "derive_classification",
