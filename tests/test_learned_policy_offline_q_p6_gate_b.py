@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 from _single_round_artifact_fixtures import provenance
-from lisjong_arena.single_round_artifact import execution_provenance_to_dict
+
 from lisjong_arena.learned_policy_offline_q import p6_gate_b as gate_b
 from lisjong_arena.learned_policy_offline_q.p1_gate_b_comparator import (
     PASSIVE_TSUMOGIRI_IDENTITY,
@@ -16,6 +16,7 @@ from lisjong_arena.learned_policy_offline_q.p1_serving import (
     fallback_policy_block,
     hybrid_activation_block,
 )
+from lisjong_arena.single_round_artifact import execution_provenance_to_dict
 
 
 def _result(lower: float, upper: float):
@@ -28,21 +29,10 @@ def _result(lower: float, upper: float):
         "lock_comment_url": (
             "https://github.com/lisbun/lisjong-arena/issues/183#issuecomment-1"
         ),
-        "candidate": {
-            "checkpoint_schema_version": (
-                "arena-learned-policy-p6-conservative-q-checkpoint-v1"
-            ),
-            "candidate_identity": gate_b.EXPECTED_CANDIDATE_IDENTITY,
-            "canonical_model_weights_digest": gate_b.EXPECTED_WEIGHTS_DIGEST,
-            "source_dataset_identity": gate_b.EXPECTED_SOURCE_DATASET_IDENTITY,
-            "supported_indices_digest": gate_b.EXPECTED_SUPPORT_DIGEST,
-            "selected_epoch": 20,
-        },
+        "candidate": gate_b._expected_candidate_block(),
         "gate_a_binding": {
             "unclassified_result_identity": gate_b.EXPECTED_GATE_A_RESULT_IDENTITY,
-            "classified_result_identity": (
-                gate_b.EXPECTED_GATE_A_CLASSIFIED_IDENTITY
-            ),
+            "classified_result_identity": (gate_b.EXPECTED_GATE_A_CLASSIFIED_IDENTITY),
             "classification": gate_b.EXPECTED_GATE_A_CLASSIFICATION,
         },
         "serving": hybrid_activation_block(),
@@ -101,9 +91,7 @@ class PopulationContractTest(unittest.TestCase):
         self.assertEqual(gate_b.plan_block()["max_workers"], 1)
         self.assertIs(gate_b.plan_block()["formal_test"], False)
         self.assertFalse(
-            gate_b.declared_allocated_seeds().intersection(
-                gate_b.DEFAULT_ORDERED_SEEDS
-            )
+            gate_b.declared_allocated_seeds().intersection(gate_b.DEFAULT_ORDERED_SEEDS)
         )
 
     def test_issue_179_population_is_declared_consumed(self):
@@ -124,9 +112,7 @@ class PopulationContractTest(unittest.TestCase):
 
 class LockSurfaceTest(unittest.TestCase):
     def test_lock_comment_must_belong_to_issue_183(self):
-        accepted = (
-            "https://github.com/lisbun/lisjong-arena/issues/183#issuecomment-123"
-        )
+        accepted = "https://github.com/lisbun/lisjong-arena/issues/183#issuecomment-123"
         self.assertEqual(gate_b.require_pre_execution_comment_url(accepted), accepted)
         with self.assertRaises(gate_b.P6GateBError):
             gate_b.require_pre_execution_comment_url(
@@ -153,14 +139,10 @@ class ClassificationTest(unittest.TestCase):
             return gate_b.derive_classification(_result(lower, upper))
 
     def test_positive_requires_lower_bound_above_zero(self):
-        self.assertIs(
-            self._derive(0.01, 2.0), gate_b.P6GateBOutcome.POSITIVE_SIGNAL
-        )
+        self.assertIs(self._derive(0.01, 2.0), gate_b.P6GateBOutcome.POSITIVE_SIGNAL)
 
     def test_negative_requires_upper_bound_below_zero(self):
-        self.assertIs(
-            self._derive(-2.0, -0.01), gate_b.P6GateBOutcome.NEGATIVE_SIGNAL
-        )
+        self.assertIs(self._derive(-2.0, -0.01), gate_b.P6GateBOutcome.NEGATIVE_SIGNAL)
 
     def test_crossing_or_touching_zero_is_inconclusive(self):
         for lower, upper in ((-1.0, 1.0), (0.0, 1.0), (-1.0, 0.0)):
@@ -203,14 +185,20 @@ class ClassificationTest(unittest.TestCase):
 
 class BindingTest(unittest.TestCase):
     def test_comparator_is_the_established_gate_b_comparator(self):
-        self.assertEqual(
-            comparator_block()["identity"], PASSIVE_TSUMOGIRI_IDENTITY
-        )
+        self.assertEqual(comparator_block()["identity"], PASSIVE_TSUMOGIRI_IDENTITY)
 
     def test_guard_is_not_part_of_serving_binding(self):
         block = hybrid_activation_block()
         self.assertEqual(block["selection"], "legal-masked-argmax-q")
         self.assertNotIn("guard", block["semantics_id"])
+
+    def test_result_rejects_nested_candidate_binding_drift(self):
+        document = _result(0.1, 1.0)
+        document["candidate"]["training"] = {"tampered": True}
+        document["result_identity"] = gate_b._result_identity(document)
+        with mock.patch.object(gate_b, "require_baseline_provenance"):
+            with self.assertRaises(gate_b.P6GateBError):
+                gate_b.validate_result(document)
 
     def test_gate_a_signal_identity_is_fixed(self):
         self.assertEqual(

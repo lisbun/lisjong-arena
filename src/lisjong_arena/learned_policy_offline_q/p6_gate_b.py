@@ -47,7 +47,9 @@ from lisjong_arena.single_round_evaluation import (
     summarize_single_round_strength,
 )
 
+from .artifact import vocabulary_block
 from .errors import OfflineQError
+from .p1_features import p1_feature_block
 from .p1_gate_b_comparator import (
     PASSIVE_TSUMOGIRI_IDENTITY,
     comparator_block,
@@ -74,12 +76,15 @@ from .p6_conservative_q import (
     P6_CHECKPOINT_SCHEMA_VERSION,
     LoadedP6Checkpoint,
     load_p6_checkpoint,
+    p6_model_block,
     p6_training_block,
 )
 from .p6_gate_a import (
     P6GateAOutcome,
-    classified_document as gate_a_classified_document,
     validate_gate_a_result,
+)
+from .p6_gate_a import (
+    classified_document as gate_a_classified_document,
 )
 from .strength import (
     ActivationDiagnostics,
@@ -272,6 +277,21 @@ def plan_block(ordered_seeds=DEFAULT_ORDERED_SEEDS) -> dict[str, object]:
     }
 
 
+def _expected_candidate_block() -> dict[str, object]:
+    return {
+        "checkpoint_schema_version": P6_CHECKPOINT_SCHEMA_VERSION,
+        "candidate_identity": EXPECTED_CANDIDATE_IDENTITY,
+        "canonical_model_weights_digest": EXPECTED_WEIGHTS_DIGEST,
+        "source_dataset_identity": EXPECTED_SOURCE_DATASET_IDENTITY,
+        "supported_indices_digest": EXPECTED_SUPPORT_DIGEST,
+        "selected_epoch": EXPECTED_SELECTED_EPOCH,
+        "p1_feature": p1_feature_block(),
+        "action_vocabulary": vocabulary_block(),
+        "model": p6_model_block(),
+        "training": p6_training_block(),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class GateAEvidence:
     checkpoint: LoadedP6Checkpoint
@@ -314,10 +334,16 @@ def load_gate_a_evidence(
     classified = read_json_document(Path(gate_a_classified_path))
     expected_classified = gate_a_classified_document(result)
     if classified != expected_classified:
-        raise _error("the retained #181 classified result differs from strict re-derivation")
+        raise _error(
+            "the retained #181 classified result differs from strict re-derivation"
+        )
     manifest = checkpoint.manifest
     checks = (
-        (checkpoint.candidate_identity, EXPECTED_CANDIDATE_IDENTITY, "candidate identity"),
+        (
+            checkpoint.candidate_identity,
+            EXPECTED_CANDIDATE_IDENTITY,
+            "candidate identity",
+        ),
         (
             manifest["canonical_model_weights_digest"],
             EXPECTED_WEIGHTS_DIGEST,
@@ -366,7 +392,10 @@ def load_gate_a_evidence(
         raise _error("the #181 checkpoint schema version drifted")
     if manifest["training"] != p6_training_block():
         raise _error("the #181 P6 training/objective binding drifted")
-    return GateAEvidence(checkpoint, result, classified)
+    evidence = GateAEvidence(checkpoint, result, classified)
+    if evidence.candidate_block() != _expected_candidate_block():
+        raise _error("the retained #181 candidate block drifted from its exact binding")
+    return evidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -546,19 +575,8 @@ def validate_pre_execution_lock(document: object) -> dict[str, object]:
         if document[name] != expected:
             raise _error(f"pre-execution lock {name} is not the locked value")
     candidate = document["candidate"]
-    if type(candidate) is not dict:
-        raise _error("pre-execution lock candidate is invalid")
-    expected_candidate = {
-        "checkpoint_schema_version": P6_CHECKPOINT_SCHEMA_VERSION,
-        "candidate_identity": EXPECTED_CANDIDATE_IDENTITY,
-        "canonical_model_weights_digest": EXPECTED_WEIGHTS_DIGEST,
-        "source_dataset_identity": EXPECTED_SOURCE_DATASET_IDENTITY,
-        "supported_indices_digest": EXPECTED_SUPPORT_DIGEST,
-        "selected_epoch": EXPECTED_SELECTED_EPOCH,
-    }
-    for name, expected in expected_candidate.items():
-        if candidate.get(name) != expected:
-            raise _error(f"pre-execution lock candidate {name} drifted")
+    if candidate != _expected_candidate_block():
+        raise _error("pre-execution lock candidate binding drifted")
     gate_a = document["gate_a_binding"]
     if gate_a != {
         "unclassified_result_identity": EXPECTED_GATE_A_RESULT_IDENTITY,
@@ -582,8 +600,23 @@ def validate_pre_execution_lock(document: object) -> dict[str, object]:
     if declared_allocated_seeds().intersection(plan["ordered_seeds"]):
         raise _error("pre-execution lock seeds now collide with repository allocations")
     locations = document["artifact_locations"]
-    if type(locations) is not dict:
+    expected_location_fields = {
+        "retention_backend",
+        "candidate_checkpoint",
+        "gate_a_result",
+        "gate_a_classified",
+        "strength_artifact",
+        "result",
+        "classified_result",
+        "retention_keys",
+    }
+    if type(locations) is not dict or set(locations) != expected_location_fields:
         raise _error("pre-execution lock artifact locations are invalid")
+    if any(
+        type(locations[name]) is not str or not locations[name]
+        for name in expected_location_fields - {"retention_keys"}
+    ):
+        raise _error("pre-execution lock artifact location value is invalid")
     if locations.get("retention_backend") != RETENTION_BACKEND:
         raise _error("pre-execution lock retention backend drifted")
     keys = locations.get("retention_keys")
@@ -614,7 +647,9 @@ def validate_pre_execution_lock(document: object) -> dict[str, object]:
 
 def require_pre_execution_comment_url(value: str) -> str:
     if type(value) is not str or _LOCK_COMMENT_URL.fullmatch(value) is None:
-        raise _error("pre-execution comment URL must be an exact Issue #183 comment URL")
+        raise _error(
+            "pre-execution comment URL must be an exact Issue #183 comment URL"
+        )
     return value
 
 
@@ -737,6 +772,9 @@ def build_result(
     }
     if checkpoint.candidate_identity != document["candidate"]["candidate_identity"]:
         raise _error("result checkpoint identity differs from the locked candidate")
+    if artifact.provenance != parse_execution_provenance(lock["provenance"]):
+        raise _error("result artifact provenance differs from the posted lock")
+    document["provenance"] = execution_provenance_to_dict(artifact.provenance)
     document["result_identity"] = _result_identity(document)
     return validate_result(document)
 
@@ -808,17 +846,7 @@ def validate_result(
         raise _error("P6 Gate B result identity fields drifted")
     require_pre_execution_comment_url(document["lock_comment_url"])
     candidate = document["candidate"]
-    if type(candidate) is not dict:
-        raise _error("P6 Gate B result candidate block is invalid")
-    if candidate.get("candidate_identity") != EXPECTED_CANDIDATE_IDENTITY:
-        raise _error("P6 Gate B result candidate identity drifted")
-    if (
-        candidate.get("canonical_model_weights_digest") != EXPECTED_WEIGHTS_DIGEST
-        or candidate.get("supported_indices_digest") != EXPECTED_SUPPORT_DIGEST
-        or candidate.get("source_dataset_identity")
-        != EXPECTED_SOURCE_DATASET_IDENTITY
-        or candidate.get("selected_epoch") != EXPECTED_SELECTED_EPOCH
-    ):
+    if candidate != _expected_candidate_block():
         raise _error("P6 Gate B result candidate binding drifted")
     if document["gate_a_binding"] != {
         "unclassified_result_identity": EXPECTED_GATE_A_RESULT_IDENTITY,
@@ -848,6 +876,9 @@ def validate_result(
     digest = artifact.get("sha256")
     if type(digest) is not str or len(digest) != 64:
         raise _error("P6 Gate B strength artifact digest is invalid")
+    filename = artifact.get("filename")
+    if type(filename) is not str or not filename or "/" in filename or "\\" in filename:
+        raise _error("P6 Gate B strength artifact filename must be a bare name")
     _summary_statistics(document)
     diagnostics = document["serving_diagnostics"]
     if type(diagnostics) is not dict:
@@ -882,7 +913,9 @@ def validate_result(
     classification = document["classification"]
     if classification is not None:
         if not allow_classified:
-            raise _error("unclassified P6 Gate B result unexpectedly has a classification")
+            raise _error(
+                "unclassified P6 Gate B result unexpectedly has a classification"
+            )
         if classification not in {outcome.value for outcome in _RECORDABLE_OUTCOMES}:
             raise _error("P6 Gate B classification is invalid")
     identity = document["result_identity"]
@@ -966,6 +999,8 @@ def run_gate_b(
         candidate_identity=evidence.checkpoint.candidate_identity,
         ordered_seeds=lock["plan"]["ordered_seeds"],
     )
+    if artifact.provenance != parse_execution_provenance(lock["provenance"]):
+        raise _error("artifact execution provenance does not match the posted lock")
     summary = summarize_single_round_strength(
         aggregate_candidate_metrics(
             artifact.plan.candidate_identity, artifact.game_results
@@ -1027,7 +1062,9 @@ def _parser() -> argparse.ArgumentParser:
     lock.add_argument("--classified-result", required=True)
     lock.add_argument("--lock-output", required=True)
     lock.add_argument("--external-freshness-confirmed", action="store_true")
-    lock.add_argument("--additional-allocated-seed", type=int, action="append", default=[])
+    lock.add_argument(
+        "--additional-allocated-seed", type=int, action="append", default=[]
+    )
 
     run = subparsers.add_parser("run")
     run.add_argument("--lock-file", required=True)
