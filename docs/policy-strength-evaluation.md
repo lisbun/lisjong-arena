@@ -224,6 +224,31 @@ Policy-vs-Policy ABBB pathが対象である。Mortal candidateのmixed evaluati
 `--artifact-out`が未対応であり、RiichiLab、first-party `lisjong-engine`、その他すべての
 strength evaluation pathにartifact persistenceが実装済みであるとは扱わない。
 
+## Portable orchestration
+
+[`Automated Strength Evaluation v0`](automated-strength-evaluation.md)は、上記の既存ABBB
+evaluator、immutable strength artifact、strict readback、canonical aggregationを1回の
+machine-readable locked runとして薄くcompositionする。新しいstrength protocolやmetricは
+所有しない。
+
+```text
+existing ABBB primitives
+    low-level execution / measurement
+
+Automated Strength Evaluation v0
+    one portable locked orchestration run
+
+future Strength Loop
+    candidate generation / scheduling / Champion–Challenger
+    not implemented
+```
+
+operatorは実行前にdurable output parentを準備する。runnerはgame 1より前にfinal target absent、
+parent exists / directory / observably writableを確認するが、missing parentをmkdirで修復せず、
+final targetをpreflightで作成・truncateしない。成功にはimmutable strength artifact、strict
+readback、artifactからのcanonical summary再導出、machine-readable resultのstrict readbackが
+必要である。automatic retry / resume / rescueやstdout-only evidenceは提供しない。
+
 ## Provenance and reproducibility
 
 comparison evidenceでは、利用可能なcurrent artifact contractまたは個別Issueにより、可能な範囲で

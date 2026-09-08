@@ -322,6 +322,11 @@ explicit importできることはcurated catalogへのpromotionを意味しま�
 Policy strength comparisonの恒久的な規律は
 [Policy strength evaluation policy](docs/policy-strength-evaluation.md)を正本とします。
 
+既存ABBB primitiveを1つのmachine-readable / non-interactive locked runとして
+compositionする場合は、[Automated Strength Evaluation v0](docs/automated-strength-evaluation.md)
+を利用できます。これは1回のevaluation orchestrationであり、candidate生成、seed allocation、
+Champion promotion、retry / resumeを行うStrength Loopではありません。
+
 ### External competitor
 
 Mortal等のexternal competitorはArena evaluationがorchestrateできます。
@@ -383,6 +388,7 @@ runbook、schema、result interpretationは各purpose-specific documentを正本
 - [Architecture](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
 - [Policy strength evaluation policy](docs/policy-strength-evaluation.md)
+- [Automated Strength Evaluation v0](docs/automated-strength-evaluation.md)
 - [RiichiEnv compatibility](docs/riichienv-compatibility.md)
 - [RiichiLab client](docs/riichilab-client.md)
 - [RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)

@@ -23,6 +23,10 @@ from lisjong.policies import (
 )
 
 from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_file
+from lisjong_arena._execution_safety import (
+    ExecutionSafetyError,
+    require_new_artifact_destinations,
+)
 from lisjong_arena.model import (
     SINGLE_ROUND_GAME_MODE,
     SINGLE_ROUND_ROTATION_COUNT,
@@ -749,22 +753,14 @@ def _require_checkpoint_matches_lock(
 
 def _require_output_destinations_ready(locations: object) -> None:
     """Reject deterministic write-once destination defects before game 1."""
-    if type(locations) is not dict:
-        raise _error("locked artifact locations are invalid")
-    for name in _OUTPUT_LOCATION_NAMES:
-        value = locations.get(name)
-        if type(value) is not str or not value or "\x00" in value:
-            raise _error(f"locked output {name} path is unusable")
-        path = Path(value)
-        if path.exists():
-            raise _error(f"locked output {name} already exists; outputs are write-once")
-        parent = path.parent
-        if not parent.exists():
-            raise _error(f"locked output {name} parent directory does not exist")
-        if not parent.is_dir():
-            raise _error(f"locked output {name} parent is not a directory")
-        if not os.access(parent, os.W_OK):
-            raise _error(f"locked output {name} parent directory is not writable")
+    try:
+        require_new_artifact_destinations(
+            locations,
+            required_names=_OUTPUT_LOCATION_NAMES,
+            writable_check=os.access,
+        )
+    except ExecutionSafetyError as exc:
+        raise _error(str(exc)) from exc
 
 
 def build_evaluation_plan(
