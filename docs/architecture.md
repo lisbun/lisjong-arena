@@ -194,6 +194,21 @@ Execution / Observationまたはresearch candidateをconsumerとして利用し�
 
 Evaluationはcandidateを生成するresearch conditionを暗黙に変更しない。research結果を見てtraining seed / feature / threshold / datasetを変更した場合はnew candidate / new experimentとして扱う。
 
+portable automationでは、既存ABBB execution / artifact / aggregationを再実装せず、
+machine-readable specから1回のlocked orchestrationとしてcompositionする。このlayerは
+candidate generation、seed allocation、scheduling、Champion promotionを所有しない。
+
+```text
+ABBB primitives
+    -> low-level execution / measurement
+
+Automated Strength Evaluation
+    -> one locked orchestration run
+
+future Strength Loop
+    -> upper-layer research scheduling / promotion decision
+```
+
 ```text
 NEGATIVE
 !=
@@ -484,6 +499,9 @@ lisjong-arena/docs/roadmap.md
 
 purpose-specific docs
     exact schema / protocol / experiment contract
+
+docs/automated-strength-evaluation.md
+    portable ABBB orchestration contract
 
 GitHub Issues / PRs
     current work / concrete result / adoption decision
