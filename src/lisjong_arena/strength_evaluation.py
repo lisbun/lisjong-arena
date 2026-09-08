@@ -326,6 +326,11 @@ def _document_identity(document: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json_text(document).encode("utf-8")).hexdigest()
 
 
+def _same_canonical_json_value(left: object, right: object) -> bool:
+    """Compare JSON values without Python's bool/int/float equality coercion."""
+    return canonical_json_text({"value": left}) == canonical_json_text({"value": right})
+
+
 def _policy_reference(value: object, context: str) -> PolicyReference:
     raw = expect_object(value, {"identity", "reference"}, context)
     identity = raw["identity"]
@@ -715,7 +720,7 @@ def _validate_result_document(
     )
     if raw["spec_identity"] != semantic_spec.identity:
         raise StrengthEvaluationResultError("spec identity does not match contents")
-    if spec_raw != semantic_spec.semantic_document():
+    if not _same_canonical_json_value(spec_raw, semantic_spec.semantic_document()):
         raise StrengthEvaluationResultError("spec semantics are not canonical")
 
     lock_raw = raw["lock"]
@@ -737,7 +742,8 @@ def _validate_result_document(
     }
     if set(lock_raw) != expected_lock_fields:
         raise StrengthEvaluationResultError("lock fields are invalid")
-    if lock_raw["lock_version"] != LOCK_VERSION:
+    lock_version = expect_int(lock_raw["lock_version"], "lock.lock_version")
+    if lock_version != LOCK_VERSION:
         raise StrengthEvaluationResultError("lock version is unsupported")
     lock_payload = {
         name: item for name, item in lock_raw.items() if name != "lock_identity"
@@ -755,7 +761,7 @@ def _validate_result_document(
         "ordered_seeds",
         "protocol",
     ):
-        if lock_raw[name] != spec_raw[name]:
+        if not _same_canonical_json_value(lock_raw[name], spec_raw[name]):
             raise StrengthEvaluationResultError(
                 f"lock {name} differs from spec semantics"
             )
@@ -770,7 +776,9 @@ def _validate_result_document(
     workers = expect_int(options["workers"], "execution_options.workers")
     if max_steps <= 0 or workers <= 0:
         raise StrengthEvaluationResultError("execution options must be positive")
-    if raw["execution_options"] != spec_raw["execution_options"]:
+    if not _same_canonical_json_value(
+        raw["execution_options"], spec_raw["execution_options"]
+    ):
         raise StrengthEvaluationResultError("result execution options differ from spec")
     seeds = tuple(
         expect_int(seed, f"ordered_seeds[{index}]")
@@ -778,7 +786,7 @@ def _validate_result_document(
     )
     if not seeds or len(set(seeds)) != len(seeds):
         raise StrengthEvaluationResultError("ordered seeds are invalid")
-    if raw["ordered_seeds"] != spec_raw["ordered_seeds"]:
+    if not _same_canonical_json_value(raw["ordered_seeds"], spec_raw["ordered_seeds"]):
         raise StrengthEvaluationResultError("result ordered seeds differ from spec")
     game_count = expect_int(raw["game_count"], "game_count")
     if game_count != SINGLE_ROUND_ROTATION_COUNT * len(seeds):
@@ -824,9 +832,13 @@ def _validate_result_document(
         raise StrengthEvaluationResultError(
             "resolved baseline identity differs from explicit spec identity"
         )
-    if raw["resolved_candidate"] != lock_raw["resolved_candidate"]:
+    if not _same_canonical_json_value(
+        raw["resolved_candidate"], lock_raw["resolved_candidate"]
+    ):
         raise StrengthEvaluationResultError("result candidate differs from lock")
-    if raw["resolved_baseline"] != lock_raw["resolved_baseline"]:
+    if not _same_canonical_json_value(
+        raw["resolved_baseline"], lock_raw["resolved_baseline"]
+    ):
         raise StrengthEvaluationResultError("result baseline differs from lock")
 
     provenance = parse_execution_provenance(raw["provenance"])
@@ -845,9 +857,11 @@ def _validate_result_document(
         raise StrengthEvaluationResultError(
             "execution target differs from result provenance"
         )
-    if raw["execution_target"] != lock_raw["execution_target"]:
+    if not _same_canonical_json_value(
+        raw["execution_target"], lock_raw["execution_target"]
+    ):
         raise StrengthEvaluationResultError("result execution target differs from lock")
-    if raw["provenance"] != lock_raw["provenance"]:
+    if not _same_canonical_json_value(raw["provenance"], lock_raw["provenance"]):
         raise StrengthEvaluationResultError("result provenance differs from lock")
 
     artifact_ref = expect_object(
@@ -859,7 +873,10 @@ def _validate_result_document(
         raise StrengthEvaluationResultError("strength artifact reference is invalid")
     if artifact_ref["evaluation_protocol"] != SINGLE_ROUND_EVALUATION_PROTOCOL:
         raise StrengthEvaluationResultError("strength artifact protocol is invalid")
-    if artifact_ref["schema_version"] != SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION:
+    artifact_schema_version = expect_int(
+        artifact_ref["schema_version"], "strength_artifact.schema_version"
+    )
+    if artifact_schema_version != SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION:
         raise StrengthEvaluationResultError("strength artifact schema is invalid")
     digest = expect_str(artifact_ref["sha256"], "strength_artifact.sha256")
     if digest != _artifact_digest(strength_artifact_path):
@@ -875,20 +892,24 @@ def _validate_result_document(
         raise StrengthEvaluationResultError("artifact provenance differs from result")
     if len(artifact.game_results) != game_count:
         raise StrengthEvaluationResultError("artifact game count differs from result")
-    if raw["canonical_summary"] != summary_to_dict(artifact.summary):
+    if not _same_canonical_json_value(
+        raw["canonical_summary"], summary_to_dict(artifact.summary)
+    ):
         raise StrengthEvaluationResultError(
             "canonical summary is not derived from the strength artifact"
         )
 
     rule = _classification_rule(raw["classification_rule"])
-    if raw["classification_rule"] != spec_raw["classification_rule"]:
+    if not _same_canonical_json_value(
+        raw["classification_rule"], spec_raw["classification_rule"]
+    ):
         raise StrengthEvaluationResultError(
             "result classification rule differs from spec"
         )
     expected_classification = classify_strength_summary(artifact.summary, rule)
     if expected_classification["kind"] == "INVALID":
         raise StrengthEvaluationResultError("result classification is invalid")
-    if raw["classification"] != expected_classification:
+    if not _same_canonical_json_value(raw["classification"], expected_classification):
         raise StrengthEvaluationResultError(
             "classification is not derived from the strength artifact"
         )

@@ -7,6 +7,8 @@ population.
 from __future__ import annotations
 
 import contextlib
+import copy
+import hashlib
 import io
 import json
 import tempfile
@@ -45,6 +47,25 @@ from lisjong_arena.strength_evaluation import (
 )
 
 ARENA_REVISION = provenance().lisjong_arena_revision
+
+
+def document_identity(document: dict) -> str:
+    return hashlib.sha256(canonical_json_text(document).encode("utf-8")).hexdigest()
+
+
+def refresh_result_identities(document: dict, *, lock_changed: bool = False) -> None:
+    if lock_changed:
+        lock_payload = {
+            name: value
+            for name, value in document["lock"].items()
+            if name != "lock_identity"
+        }
+        document["lock"]["lock_identity"] = document_identity(lock_payload)
+        document["lock_identity"] = document["lock"]["lock_identity"]
+    result_payload = {
+        name: value for name, value in document.items() if name != "result_identity"
+    }
+    document["result_identity"] = document_identity(result_payload)
 
 
 def rule(threshold: float = 0.0) -> IntervalClassificationRule:
@@ -465,6 +486,49 @@ class ExecutionAndResultTest(unittest.TestCase):
                     value.result_output,
                     strength_artifact_path=value.artifact_output,
                 )
+
+    def test_rehashed_non_integer_versions_and_counts_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value, _, _ = self.run_fixture(Path(directory))
+            original = json.loads(value.result_output.read_text(encoding="utf-8"))
+            cases = (
+                ("result_version", True),
+                ("result_version", 1.0),
+                ("lock_version", True),
+                ("lock_version", 1.0),
+                ("artifact_schema_version", True),
+                ("artifact_schema_version", 1.0),
+                ("game_count", True),
+                ("game_count", 8.0),
+                ("locked_workers", True),
+                ("locked_seed", 20_200.0),
+            )
+            for target, malformed in cases:
+                with self.subTest(target=target, malformed=malformed):
+                    document = copy.deepcopy(original)
+                    lock_changed = False
+                    if target == "lock_version":
+                        document["lock"]["lock_version"] = malformed
+                        lock_changed = True
+                    elif target == "artifact_schema_version":
+                        document["strength_artifact"]["schema_version"] = malformed
+                    elif target == "locked_workers":
+                        document["lock"]["execution_options"]["workers"] = malformed
+                        lock_changed = True
+                    elif target == "locked_seed":
+                        document["lock"]["ordered_seeds"][0] = malformed
+                        lock_changed = True
+                    else:
+                        document[target] = malformed
+                    refresh_result_identities(document, lock_changed=lock_changed)
+                    value.result_output.write_text(
+                        canonical_json_text(document), encoding="utf-8"
+                    )
+                    with self.assertRaises(StrengthEvaluationResultError):
+                        load_strength_evaluation_result(
+                            value.result_output,
+                            strength_artifact_path=value.artifact_output,
+                        )
 
     def test_execution_and_artifact_failures_never_create_completed_result(self):
         with tempfile.TemporaryDirectory() as directory:
