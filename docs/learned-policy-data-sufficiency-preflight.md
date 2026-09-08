@@ -18,6 +18,53 @@ masked cross entropyが明確に改善し続けているか
 Policy strength、architecture優劣、formal generalization、learning-curve saturationは
 測定しない。結果にかかわらずP2、data generation、strength rolloutを自動開始しない。
 
+## Completed result and successor
+
+Issue #190はcompletedで、locked primary comparisonは次だった。
+
+```text
+VALIDATION CE
+S15  1.5103418194
+S20  0.9129060786
+
+CE(S20) - CE(S15)
+mean         -0.5859937489
+95% interval [-0.8398527674, -0.3321347303]
+```
+
+locked rule `interval upper < 0` により最終classificationは:
+
+```text
+CLEAR DATA SCALE SIGNAL
+```
+
+result identity:
+
+```text
+0fb0d70a85ac5f8566f1a071966bad72ccbb7458d5f847d137fa98e777f8a9a0
+```
+
+この結果はcurrent 20-hanchan TRAINがmaterially data-sensitiveであることを示すが、
+20半荘でのsaturation、more-dataによるstrength改善、P2 rejectionは意味しない。
+
+parent #45はこの結果を受けてP8 data-source / scale axisを先に検討し、successor Arena #192で
+locally executable external teacherのGate 0 feasibilityを評価した。#192の最終結果は:
+
+```text
+EXTERNAL-TEACHER ML-USE COMPLIANCE HOLD
+```
+
+canonical Akochanはbounded local execution / player-safe trajectory / exact-history replayで技術的に
+`GO`だった一方、program outputをML/distillation labelへ利用する明示的なbasisが確認できず
+`ML / DISTILLATION USE = HOLD`となった。したがって#190からexternal-teacher training corpusや
+P2を自動開始していない。
+
+#190のyakuhai-call imitation CEはcross-teacher quality metricではない。teacherが変わるfuture studyでは
+teacher action distributionやvisited state distributionも変わるため、teacher-neutralなdownstream designを
+別途lockする。
+
+Exact #190 protocol / result detailはIssue #190、successor Gate 0 detailはIssue #192を正本とする。
+
 ## Exact retained source
 
 sourceはIssue #140でretainされた次のdataset identityだけである。
@@ -156,7 +203,7 @@ locked planの確認:
 .\.venv\Scripts\python.exe -m lisjong_arena.learned_policy_data_sufficiency plan
 ```
 
-post-mergeのscientific run（このimplementation PRでは実行しない）:
+post-mergeのscientific run（historical command; #190 completed済み）:
 
 ```powershell
 .\.venv\Scripts\python.exe -m lisjong_arena.learned_policy_data_sufficiency run `
@@ -179,6 +226,8 @@ non-zeroで終了する。
 
 ## Interpretation handoff
 
+Historical #190 handoff:
+
 ```text
 CLEAR DATA SCALE SIGNAL
   -> #45へ戻す
@@ -191,4 +240,14 @@ NO CLEAR DATA SCALE SIGNAL
   -> saturation claimはしない
 ```
 
-どちらもstrength claimではなく、automatic next experimentもない。
+Actual completed path:
+
+```text
+#190 CLEAR DATA SCALE SIGNAL
+  -> #45 P8/data-source review
+  -> #192 external-teacher Gate 0
+  -> EXTERNAL-TEACHER ML-USE COMPLIANCE HOLD
+  -> #45 current P8 data-source / permission / scale decision
+```
+
+どのresultもstrength claimではなく、automatic next experimentもない。
