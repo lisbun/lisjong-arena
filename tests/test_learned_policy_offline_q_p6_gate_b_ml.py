@@ -36,8 +36,8 @@ def _checkpoint():
 class P6GateBServingTest(unittest.TestCase):
     def test_plan_reuses_p1_hybrid_serving_and_passive_comparator(self):
         plan, registry = build_gate_b_plan(_checkpoint())
-        self.assertEqual(plan.candidate_identity, EXPECTED_CANDIDATE_IDENTITY)
-        self.assertEqual(plan.baseline_identity, PASSIVE_TSUMOGIRI_IDENTITY)
+        self.assertEqual(plan.candidate.identity, EXPECTED_CANDIDATE_IDENTITY)
+        self.assertEqual(plan.baseline.identity, PASSIVE_TSUMOGIRI_IDENTITY)
         self.assertEqual(plan.seeds, DEFAULT_ORDERED_SEEDS)
         policy = registry.create_policy()
         self.assertIsInstance(policy, HybridPolicy)
