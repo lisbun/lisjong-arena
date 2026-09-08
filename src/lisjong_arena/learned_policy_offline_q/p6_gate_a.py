@@ -41,7 +41,12 @@ from .errors import (
     OfflineQProtocolError,
 )
 from .hand_progression import MeasurementAvailability, hand_progression_for_row
-from .p1_candidate import LOCKED_P1_CANDIDATE, load_p1_serving_checkpoint
+from .p1_candidate import (
+    LOCKED_P1_CANDIDATE,
+    candidate_binding_document,
+    candidate_logical_identity,
+    load_p1_serving_checkpoint,
+)
 from .p1_features import (
     derive_all_split_tensors,
     derive_replacement_test_tensors,
@@ -55,13 +60,15 @@ from .p6_conservative_q import (
     P6TrainingRun,
     cql_gap,
     load_p6_checkpoint,
+    p6_candidate_binding,
+    p6_candidate_identity,
     p6_model_block,
     p6_training_block,
     save_p6_checkpoint,
     train_p6_conservative_q,
     verify_p6_protocol_delta,
 )
-from .protocol import BATCH_SIZE, Split, VOCABULARY_SIZE
+from .protocol import BATCH_SIZE, MAXIMUM_EPOCHS, Split, VOCABULARY_SIZE
 from .q_network import masked_argmax_q, q_value_at
 from .q_training import load_checkpoint as load_q_checkpoint
 from .replacement_test import (
@@ -201,8 +208,32 @@ def _load_inputs(dataset_path, bc_path, q_path, replacement_path, p1_control_pat
     if p1_control.manifest["supported_indices_digest"] != (
         LOCKED_SOURCE_IDENTITIES.supported_indices_digest
     ):
-        raise _error("the P1 control support set is not the exact retained TRAIN support")
+        raise _error(
+            "the P1 control support set is not the exact retained TRAIN support"
+        )
     return dataset, bc, q, replacement, binding, p1_control
+
+
+def _expected_p1_control_binding() -> dict[str, object]:
+    """Return the exact #158 serving-control binding required by Issue #181."""
+    logical_binding = candidate_binding_document(
+        canonical_model_weights_digest=(
+            LOCKED_P1_CANDIDATE.canonical_model_weights_digest
+        ),
+        support_set_digest=LOCKED_P1_CANDIDATE.support_set_digest,
+    )
+    return {
+        "candidate_identity": candidate_logical_identity(logical_binding),
+        "canonical_model_weights_digest": (
+            LOCKED_P1_CANDIDATE.canonical_model_weights_digest
+        ),
+        "source_dataset_identity": LOCKED_P1_CANDIDATE.source_dataset_identity,
+        "p1_feature": p1_feature_block(),
+        "action_vocabulary": vocabulary_block(),
+        "supported_indices_digest": LOCKED_P1_CANDIDATE.support_set_digest,
+        "model": p1_model_block(),
+        "training": p1_training_block(),
+    }
 
 
 def _input_binding_document(binding, p1_control) -> dict[str, object]:
@@ -216,9 +247,7 @@ def _input_binding_document(binding, p1_control) -> dict[str, object]:
             "source_dataset_identity": p1_control.manifest["source_dataset_identity"],
             "p1_feature": p1_control.manifest["p1_feature"],
             "action_vocabulary": p1_control.manifest["action_vocabulary"],
-            "supported_indices_digest": p1_control.manifest[
-                "supported_indices_digest"
-            ],
+            "supported_indices_digest": p1_control.manifest["supported_indices_digest"],
             "model": p1_control.manifest["model"],
             "training": p1_control.manifest["training"],
         },
@@ -364,16 +393,10 @@ def validate_pre_result_lock(document: object) -> dict[str, object]:
     if retained != expected_retained:
         raise _error("P6 pre-result lock does not bind the exact retained artifacts")
     control = inputs["p1_control"]
-    if type(control) is not dict:
-        raise _error("P6 P1 control binding is invalid")
-    if control.get("canonical_model_weights_digest") != (
-        LOCKED_P1_CANDIDATE.canonical_model_weights_digest
-    ):
-        raise _error("P6 pre-result lock P1 control weights drifted")
-    if control.get("supported_indices_digest") != (
-        LOCKED_SOURCE_IDENTITIES.supported_indices_digest
-    ):
-        raise _error("P6 pre-result lock P1 control support drifted")
+    if control != _expected_p1_control_binding():
+        raise _error(
+            "P6 pre-result lock does not bind the exact #158 P1 serving control"
+        )
     retention = document["retention"]
     if type(retention) is not dict or set(retention) != {"backend", "key"}:
         raise _error("P6 pre-result lock retention reference is invalid")
@@ -382,7 +405,9 @@ def validate_pre_result_lock(document: object) -> dict[str, object]:
 
 def require_lock_comment_url(url: object) -> str:
     if type(url) is not str or LOCK_COMMENT_PATTERN.fullmatch(url) is None:
-        raise _error("P6 run requires the posted Issue #181 pre-result lock comment URL")
+        raise _error(
+            "P6 run requires the posted Issue #181 pre-result lock comment URL"
+        )
     return url
 
 
@@ -429,9 +454,7 @@ def _hand_progression_block(features, rows, selections: dict[str, list[int]]) ->
             "p6_vs_p1": None,
             "conditions": None,
         }
-    summaries = {
-        arm: hand_progression_arm_summary(progressions[arm]) for arm in arms
-    }
+    summaries = {arm: hand_progression_arm_summary(progressions[arm]) for arm in arms}
     pair = hand_progression_pair_summary(progressions["p6"], progressions["p1"])
     p6_behavior_agree = _agreement_count(selections["p6"], selections["behavior"])
     p1_behavior_agree = _agreement_count(selections["p1"], selections["behavior"])
@@ -476,7 +499,9 @@ def _hand_progression_block(features, rows, selections: dict[str, list[int]]) ->
     }
 
 
-def _q_snapshot_diagnostics(model, p1_tensors, selector, support_mask) -> dict[str, object]:
+def _q_snapshot_diagnostics(
+    model, p1_tensors, selector, support_mask
+) -> dict[str, object]:
     """Read-only Q/CQL/TD diagnostics on the exact eligible common rows."""
     import torch
 
@@ -768,6 +793,25 @@ def validate_gate_a_result(document: object) -> dict[str, object]:
     ):
         raise _error("P6 Gate A result does not belong to Issue #181")
     require_lock_comment_url(document["lock_comment_url"])
+    if document["parent_issue"] != PARENT_ISSUE:
+        raise _error("P6 Gate A result parent issue drifted")
+    lock_identity = document["lock_identity"]
+    if type(lock_identity) is not str or len(lock_identity) != 64:
+        raise _error("P6 Gate A result lock identity is not a sha256 digest")
+    input_binding = document["input_binding"]
+    if type(input_binding) is not dict or set(input_binding) != {
+        "retained_artifacts",
+        "p1_control",
+    }:
+        raise _error("P6 Gate A result input binding is invalid")
+    expected_retained = {
+        **LOCKED_SOURCE_IDENTITIES.to_document(),
+        "real_artifact_execution": True,
+    }
+    if input_binding["retained_artifacts"] != expected_retained:
+        raise _error("P6 Gate A result retained artifact binding drifted")
+    if input_binding["p1_control"] != _expected_p1_control_binding():
+        raise _error("P6 Gate A result P1 control binding drifted")
     if (
         document["p1_feature"] != p1_feature_block()
         or document["action_vocabulary"] != vocabulary_block()
@@ -802,6 +846,22 @@ def validate_gate_a_result(document: object) -> dict[str, object]:
         != LOCKED_SOURCE_IDENTITIES.supported_indices_digest
     ):
         raise _error("P6 candidate support digest is not the locked retained support")
+    weights_digest = candidate.get("canonical_model_weights_digest")
+    if type(weights_digest) is not str or len(weights_digest) != 64:
+        raise _error("P6 candidate weights digest is invalid")
+    expected_candidate_identity = p6_candidate_identity(
+        p6_candidate_binding(
+            source_dataset_identity=LOCKED_SOURCE_IDENTITIES.dataset_identity,
+            supported_indices_digest=(
+                LOCKED_SOURCE_IDENTITIES.supported_indices_digest
+            ),
+            weights_digest=weights_digest,
+        )
+    )
+    if candidate.get("candidate_identity") != expected_candidate_identity:
+        raise _error("P6 candidate identity is not derivable from its locked binding")
+    if candidate.get("selected_epoch") != MAXIMUM_EPOCHS:
+        raise _error("P6 candidate selected epoch is not the fixed final iteration")
     roles = document["roles"]
     if type(roles) is not list or len(roles) != len(ALL_ROLES):
         raise _error("P6 Gate A result must contain all four roles")
@@ -835,9 +895,7 @@ def validate_gate_a_result(document: object) -> dict[str, object]:
         disagreements = comparison.get("p6_vs_p1_disagreement_count")
         if type(disagreements) is not int or not 0 <= disagreements <= count:
             raise _error("P6 Gate A disagreement count is invalid")
-        if comparison.get("p6_vs_p1_disagreement_rate") != rate(
-            disagreements, count
-        ):
+        if comparison.get("p6_vs_p1_disagreement_rate") != rate(disagreements, count):
             raise _error("P6 Gate A disagreement rate is not derivable")
         for key in (
             "p6_vs_behavior_agreement_count",
@@ -934,7 +992,9 @@ def run_locked_gate_a(
         )
     )
     if trained_support_digest != LOCKED_SOURCE_IDENTITIES.supported_indices_digest:
-        raise _error("P6 candidate TRAIN support differs from exact #158 control support")
+        raise _error(
+            "P6 candidate TRAIN support differs from exact #158 control support"
+        )
 
     target.bundle_path.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(mkdtemp(prefix=".p6-181-staging-", dir=target.bundle_path.parent))
@@ -977,7 +1037,9 @@ def run_locked_gate_a(
     write_new_artifact_file(
         target.bundle_path / "gate-a-classified.json", canonical_json_text(classified)
     )
-    strict_classified = read_json_document(target.bundle_path / "gate-a-classified.json")
+    strict_classified = read_json_document(
+        target.bundle_path / "gate-a-classified.json"
+    )
     if strict_classified != classified:
         raise OfflineQArtifactError("P6 classified result strict readback differs")
     return strict_result, classified

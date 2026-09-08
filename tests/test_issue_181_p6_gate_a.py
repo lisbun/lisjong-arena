@@ -7,7 +7,9 @@ from lisjong_arena.learned_policy_offline_q import p6_gate_a
 from lisjong_arena.learned_policy_offline_q.artifact import vocabulary_block
 from lisjong_arena.learned_policy_offline_q.diagnosis import LOCKED_SOURCE_IDENTITIES
 from lisjong_arena.learned_policy_offline_q.errors import OfflineQProtocolError
-from lisjong_arena.learned_policy_offline_q.hand_progression import MeasurementAvailability
+from lisjong_arena.learned_policy_offline_q.hand_progression import (
+    MeasurementAvailability,
+)
 from lisjong_arena.learned_policy_offline_q.p1_candidate import LOCKED_P1_CANDIDATE
 from lisjong_arena.learned_policy_offline_q.p1_features import p1_feature_block
 from lisjong_arena.learned_policy_offline_q.p1_gate_a import P1GateARole
@@ -24,18 +26,7 @@ from lisjong_arena.learned_policy_offline_q.p6_conservative_q import (
 
 
 def _control_binding():
-    return {
-        "candidate_identity": "learned-offlineq-p1-gateb:test",
-        "canonical_model_weights_digest": (
-            LOCKED_P1_CANDIDATE.canonical_model_weights_digest
-        ),
-        "source_dataset_identity": LOCKED_SOURCE_IDENTITIES.dataset_identity,
-        "p1_feature": p1_feature_block(),
-        "action_vocabulary": vocabulary_block(),
-        "supported_indices_digest": LOCKED_SOURCE_IDENTITIES.supported_indices_digest,
-        "model": p1_model_block(),
-        "training": p1_training_block(),
-    }
+    return p6_gate_a._expected_p1_control_binding()
 
 
 def _lock():
@@ -179,6 +170,14 @@ def _role(role, *, direction="signal"):
 
 def _result(primary_direction="signal", replacement_direction=None):
     replacement_direction = replacement_direction or primary_direction
+    candidate_weights_digest = "c" * 64
+    candidate_identity = p6_gate_a.p6_candidate_identity(
+        p6_gate_a.p6_candidate_binding(
+            source_dataset_identity=LOCKED_SOURCE_IDENTITIES.dataset_identity,
+            supported_indices_digest=LOCKED_SOURCE_IDENTITIES.supported_indices_digest,
+            weights_digest=candidate_weights_digest,
+        )
+    )
     directions = {
         P1GateARole.DATASET_TRAIN: "flat",
         P1GateARole.DATASET_VALIDATION: "flat",
@@ -200,8 +199,8 @@ def _result(primary_direction="signal", replacement_direction=None):
         "base_training": p1_training_block(),
         "p6_training": p6_training_block(),
         "candidate": {
-            "candidate_identity": "learned-p6-conservative-q:test",
-            "canonical_model_weights_digest": "c" * 64,
+            "candidate_identity": candidate_identity,
+            "canonical_model_weights_digest": candidate_weights_digest,
             "source_dataset_identity": LOCKED_SOURCE_IDENTITIES.dataset_identity,
             "supported_indices_digest": LOCKED_SOURCE_IDENTITIES.supported_indices_digest,
             "model": p6_model_block(),
@@ -254,6 +253,35 @@ class P6GateAContractTests(unittest.TestCase):
         tampered["lock_identity"] = p6_gate_a._sha256_document(logical)
         with self.assertRaises(OfflineQProtocolError):
             p6_gate_a.validate_pre_result_lock(tampered)
+
+    def test_full_p1_control_binding_is_fail_closed(self):
+        document = _lock()
+        tampered = copy.deepcopy(document)
+        tampered["inputs"]["p1_control"]["candidate_identity"] = "x"
+        logical = {k: v for k, v in tampered.items() if k != "lock_identity"}
+        tampered["lock_identity"] = p6_gate_a._sha256_document(logical)
+        with self.assertRaises(OfflineQProtocolError):
+            p6_gate_a.validate_pre_result_lock(tampered)
+
+    def test_result_rederives_input_and_candidate_identity(self):
+        document = _result("signal")
+        p6_gate_a.validate_gate_a_result(document)
+
+        tampered = copy.deepcopy(document)
+        tampered["input_binding"]["p1_control"]["model"]["hidden_width"] += 1
+        logical = {k: v for k, v in tampered.items() if k != "result_identity"}
+        tampered["result_identity"] = p6_gate_a._sha256_document(logical)
+        with self.assertRaises(OfflineQProtocolError):
+            p6_gate_a.validate_gate_a_result(tampered)
+
+        tampered = copy.deepcopy(document)
+        tampered["candidate"]["candidate_identity"] = (
+            "learned-p6-conservative-q:tampered"
+        )
+        logical = {k: v for k, v in tampered.items() if k != "result_identity"}
+        tampered["result_identity"] = p6_gate_a._sha256_document(logical)
+        with self.assertRaises(OfflineQProtocolError):
+            p6_gate_a.validate_gate_a_result(tampered)
 
     def test_exhaustive_primary_classification(self):
         self.assertEqual(

@@ -11,7 +11,10 @@ from _learned_policy_offline_q_p1_gate_a_fixtures import write_hand_dataset
 
 from lisjong_arena.learned_policy_offline_q.errors import OfflineQProtocolError
 from lisjong_arena.learned_policy_offline_q.p1_features import derive_all_split_tensors
-from lisjong_arena.learned_policy_offline_q.p1_gate_a import P1GateARole, P1RolePopulation
+from lisjong_arena.learned_policy_offline_q.p1_gate_a import (
+    P1GateARole,
+    P1RolePopulation,
+)
 from lisjong_arena.learned_policy_offline_q.p1_q_training import (
     P1_EXPECTED_PARAMETER_COUNT,
     create_p1_model,
@@ -161,9 +164,7 @@ class P6ConservativeQTests(unittest.TestCase):
         self.assertIn(
             document["hand_progression"]["status"], {"AVAILABLE", "UNAVAILABLE"}
         )
-        self.assertEqual(
-            document["conservative_q_diagnostics"]["finite_q_rate"], 1.0
-        )
+        self.assertEqual(document["conservative_q_diagnostics"]["finite_q_rate"], 1.0)
 
 
 if __name__ == "__main__":

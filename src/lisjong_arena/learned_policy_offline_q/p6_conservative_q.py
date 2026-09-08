@@ -124,9 +124,7 @@ def _require_support_mask(support_mask):
     if support_mask.dtype is not torch.bool or tuple(support_mask.shape) != (
         VOCABULARY_SIZE,
     ):
-        raise OfflineQProtocolError(
-            f"support_mask must be bool[{VOCABULARY_SIZE}]"
-        )
+        raise OfflineQProtocolError(f"support_mask must be bool[{VOCABULARY_SIZE}]")
     if not bool(support_mask.any()):
         raise OfflineQProtocolError("TRAIN support set must not be empty")
     return support_mask
@@ -162,7 +160,9 @@ def conservative_action_mask(legal_mask, behavior_action_index, support_mask):
         raise OfflineQProtocolError(
             "a TRAIN row has no current legal action inside the locked support set"
         )
-    behavior_in_set = action_mask.gather(1, behavior_action_index.unsqueeze(1)).squeeze(1)
+    behavior_in_set = action_mask.gather(1, behavior_action_index.unsqueeze(1)).squeeze(
+        1
+    )
     if not bool(behavior_in_set.all()):
         raise OfflineQProtocolError(
             "a behavior action is outside current-legal intersect exact TRAIN support"
@@ -229,7 +229,9 @@ class P6TrainingRun:
     runtime: dict[str, object]
 
 
-def _objective_metrics(model, target_model, tensors, support_mask) -> tuple[float, float, float]:
+def _objective_metrics(
+    model, target_model, tensors, support_mask
+) -> tuple[float, float, float]:
     import torch
 
     if tensors.row_count <= 0:
@@ -339,7 +341,9 @@ def train_p6_conservative_q(tensors: dict) -> P6TrainingRun:
             gap_total += float(gaps.detach().sum())
             seen += int(behavior.shape[0])
         if seen != train.row_count:
-            raise OfflineQProtocolError("P6 training epoch did not visit every TRAIN row")
+            raise OfflineQProtocolError(
+                "P6 training epoch did not visit every TRAIN row"
+            )
 
         validation_huber, validation_gap, validation_total = _objective_metrics(
             model, target_model, validation, support_mask
@@ -384,7 +388,9 @@ def _supported_indices(support_mask) -> list[int]:
     import torch
 
     _require_support_mask(support_mask)
-    return sorted(int(index) for index in torch.nonzero(support_mask).flatten().tolist())
+    return sorted(
+        int(index) for index in torch.nonzero(support_mask).flatten().tolist()
+    )
 
 
 def p6_candidate_binding(
@@ -426,7 +432,9 @@ class LoadedP6Checkpoint:
         return str(self.manifest["candidate_identity"])
 
 
-def _checkpoint_manifest(dataset: LoadedOfflineQDataset, run: P6TrainingRun, weights: bytes):
+def _checkpoint_manifest(
+    dataset: LoadedOfflineQDataset, run: P6TrainingRun, weights: bytes
+):
     indices = _supported_indices(run.support_mask)
     support_digest = support_set_identity(indices)
     canonical_weights_digest = model_weights_digest(run.model)
@@ -484,7 +492,9 @@ def save_p6_checkpoint(
     if not destination.parent.is_dir():
         raise OfflineQArtifactError("P6 checkpoint parent directory must already exist")
 
-    staging = Path(mkdtemp(prefix=f".{destination.name}-staging-", dir=destination.parent))
+    staging = Path(
+        mkdtemp(prefix=f".{destination.name}-staging-", dir=destination.parent)
+    )
     published = False
     try:
         weights_path = staging / WEIGHTS_FILENAME
@@ -516,7 +526,9 @@ def load_p6_checkpoint(path: str | Path) -> LoadedP6Checkpoint:
     try:
         manifest = json.loads(manifest_text)
     except json.JSONDecodeError as error:
-        raise OfflineQArtifactError("P6 checkpoint manifest is not valid JSON") from error
+        raise OfflineQArtifactError(
+            "P6 checkpoint manifest is not valid JSON"
+        ) from error
     if type(manifest) is not dict or canonical_json_text(manifest) != manifest_text:
         raise OfflineQArtifactError("P6 checkpoint manifest is not canonical JSON")
     if manifest.get("checkpoint_schema_version") != P6_CHECKPOINT_SCHEMA_VERSION:
@@ -536,7 +548,9 @@ def load_p6_checkpoint(path: str | Path) -> LoadedP6Checkpoint:
     if manifest.get("selected_epoch") != MAXIMUM_EPOCHS:
         raise OfflineQArtifactError("P6 checkpoint is not fixed_final_iteration")
     if manifest.get("strength_claim") is not None:
-        raise OfflineQArtifactError("P6 Gate A checkpoint must not carry a strength claim")
+        raise OfflineQArtifactError(
+            "P6 Gate A checkpoint must not carry a strength claim"
+        )
 
     indices = manifest.get("supported_indices")
     if (
@@ -552,16 +566,20 @@ def load_p6_checkpoint(path: str | Path) -> LoadedP6Checkpoint:
         raise OfflineQArtifactError("P6 checkpoint support digest differs")
 
     weights = (path / WEIGHTS_FILENAME).read_bytes()
-    if len(weights) != manifest.get("weights_bytes") or _sha256(weights) != manifest.get(
-        "weights_sha256"
-    ):
+    if len(weights) != manifest.get("weights_bytes") or _sha256(
+        weights
+    ) != manifest.get("weights_sha256"):
         raise OfflineQArtifactError("P6 checkpoint weights bytes/digest differ")
-    state_dict = torch.load(path / WEIGHTS_FILENAME, weights_only=True, map_location="cpu")
+    state_dict = torch.load(
+        path / WEIGHTS_FILENAME, weights_only=True, map_location="cpu"
+    )
     model = create_p1_model()
     try:
         model.load_state_dict(state_dict, strict=True)
     except RuntimeError as error:
-        raise OfflineQArtifactError("P6 checkpoint state_dict does not match P1 model") from error
+        raise OfflineQArtifactError(
+            "P6 checkpoint state_dict does not match P1 model"
+        ) from error
     model.eval()
     for parameter in model.parameters():
         parameter.requires_grad_(False)
