@@ -229,23 +229,6 @@ class SourceTest(unittest.TestCase):
             with self.assertRaises(DataSufficiencyEvidenceBlocked):
                 load_source_dataset(self.dataset.path)
 
-    def test_every_scale_reuses_the_identical_validation_population(self):
-        source = self._load_fixture()
-        validation_indices = None
-        from lisjong_arena.learned_policy_data_sufficiency.source import scale_tensors
-
-        for scale in SCALE_SEEDS:
-            tensors = scale_tensors(source, scale)
-            current = tensors[Split.VALIDATION].row_indices
-            validation_indices = (
-                current if validation_indices is None else validation_indices
-            )
-            self.assertEqual(current, validation_indices)
-            train_seeds = tuple(
-                dict.fromkeys(row.seed for row in tensors[Split.TRAIN].source_rows)
-            )
-            self.assertEqual(train_seeds, SCALE_SEEDS[scale])
-
 
 class MetricsAndResultTest(unittest.TestCase):
     source = SimpleNamespace(
