@@ -34,6 +34,8 @@ class DirectMainPushTests(unittest.TestCase):
             "git push origin main",
             "git push origin HEAD:main",
             "git push origin HEAD:refs/heads/main",
+            "git push --repo origin main",
+            "git push --repo=origin HEAD:main",
             "git push origin :main",
             "git push origin --delete main",
             "git push --all origin",
@@ -56,6 +58,11 @@ class DirectMainPushTests(unittest.TestCase):
                 "issue-188-claude-workflow-pilot",
             )
         )
+
+    def test_allows_non_updating_push_modes_from_main(self) -> None:
+        for command in ("git push --dry-run origin main", "git push --tags origin"):
+            with self.subTest(command=command):
+                self.assertFalse(guard.is_direct_main_push(command, "main"))
 
     def test_ignores_non_push_command(self) -> None:
         self.assertFalse(guard.is_direct_main_push("git status", "main"))
@@ -126,7 +133,11 @@ class GitInspectionTests(unittest.TestCase):
     def test_candidate_commit_paths_include_staged_files(self) -> None:
         secret = self.repo / ".env.production"
         secret.write_text("not-a-real-secret\n", encoding="utf-8")
-        subprocess.run(["git", "add", "-f", ".env.production"], cwd=self.repo, check=True)
+        subprocess.run(
+            ["git", "add", "-f", ".env.production"],
+            cwd=self.repo,
+            check=True,
+        )
 
         paths = guard._candidate_commit_paths(self.repo, "git commit -m test")
 

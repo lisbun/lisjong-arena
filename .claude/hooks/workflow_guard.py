@@ -22,7 +22,14 @@ FORBIDDEN_SUFFIXES = {
     ".safetensors",
 }
 ALLOWED_ENV_EXAMPLES = {".env.example", ".env.sample", ".env.template"}
-FORBIDDEN_BASENAMES = {".env", ".envrc", ".pypirc", "id_ed25519", "id_rsa", "secrets.toml"}
+FORBIDDEN_BASENAMES = {
+    ".env",
+    ".envrc",
+    ".pypirc",
+    "id_ed25519",
+    "id_rsa",
+    "secrets.toml",
+}
 PROTECTED_ACTIONS = {"direct-main-push", "commit-artifacts", "pre-pr"}
 SHELL_SEPARATORS = re.compile(r"(?:&&|\|\||;|\n)")
 GIT_PUSH = re.compile(r"(?<![\w-])git\s+push(?:\s|$)", re.IGNORECASE)
@@ -141,18 +148,24 @@ def is_direct_main_push(command: str, current_branch: str) -> bool:
             continue
 
         args = tokens[2:]
+        if any(arg in {"--dry-run", "-n"} for arg in args):
+            continue
         if any(arg in {"--all", "--mirror"} for arg in args):
             return True
 
+        remote_via_option = "--repo" in args or any(
+            arg.startswith("--repo=") for arg in args
+        )
         positionals = _positionals_after_push(tokens)
-        refspecs = positionals[1:] if positionals else []
+        refspecs = positionals if remote_via_option else positionals[1:]
         if any(_targets_main(refspec) for refspec in refspecs):
             return True
 
         # With no explicit refspec, git pushes the current branch according to
         # push.default/upstream configuration. A default push from main must not
         # be allowed to bypass the repository's no-direct-main-push policy.
-        if not refspecs and current_branch == "main":
+        # --tags without a refspec is tag-only and therefore does not update main.
+        if not refspecs and current_branch == "main" and "--tags" not in args:
             return True
 
     return False
@@ -243,17 +256,22 @@ def _guard_direct_main_push(command: str, cwd: Path) -> None:
     branch = _current_branch(cwd)
     if is_direct_main_push(command, branch):
         raise GuardError(
-            "Direct pushes that can update main are blocked. Push the Issue branch instead."
+            "Direct pushes that can update main are blocked. "
+            "Push the Issue branch instead."
         )
 
 
 def _guard_commit_artifacts(command: str, cwd: Path) -> None:
     forbidden = [
-        path for path in _candidate_commit_paths(cwd, command) if is_forbidden_path(path)
+        path
+        for path in _candidate_commit_paths(cwd, command)
+        if is_forbidden_path(path)
     ]
     if forbidden:
         paths = ", ".join(forbidden)
-        raise GuardError(f"Commit contains forbidden artifact/credential file class: {paths}")
+        raise GuardError(
+            f"Commit contains forbidden artifact/credential file class: {paths}"
+        )
 
 
 def _guard_pre_pr(cwd: Path) -> None:
@@ -269,7 +287,9 @@ def _guard_pre_pr(cwd: Path) -> None:
     ]
     if forbidden:
         paths = ", ".join(forbidden)
-        raise GuardError(f"PR contains forbidden artifact/credential file class: {paths}")
+        raise GuardError(
+            f"PR contains forbidden artifact/credential file class: {paths}"
+        )
 
     _run_check(cwd, ["git", "diff", "--check", f"{merge_base}..HEAD"])
     _run_check(cwd, [sys.executable, "-m", "ruff", "format", "--check", "."])
@@ -279,7 +299,10 @@ def _guard_pre_pr(cwd: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1 or args[0] not in PROTECTED_ACTIONS:
-        print("usage: workflow_guard.py <direct-main-push|commit-artifacts|pre-pr>", file=sys.stderr)
+        print(
+            "usage: workflow_guard.py <direct-main-push|commit-artifacts|pre-pr>",
+            file=sys.stderr,
+        )
         return 2
 
     action = args[0]
