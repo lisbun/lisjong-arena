@@ -6,7 +6,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER_PATH = ROOT / ".claude" / "hooks" / "git_global_option_guard.py"
-SPEC = importlib.util.spec_from_file_location("claude_git_global_option_guard", HELPER_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "claude_git_global_option_guard", HELPER_PATH
+)
 assert SPEC is not None and SPEC.loader is not None
 helper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(helper)
