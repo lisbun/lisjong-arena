@@ -74,7 +74,9 @@ def normalize_global_git_subcommand(command: str, subcommand: str) -> str | None
                     break
                 if token in GIT_GLOBAL_OPTIONS_WITH_VALUE:
                     if cursor + 1 >= len(tokens):
-                        raise guard.GuardError("Git global option is missing its value.")
+                        raise guard.GuardError(
+                            "Git global option is missing its value."
+                        )
                     cursor += 2
                     continue
                 if token in GIT_GLOBAL_FLAG_OPTIONS:
