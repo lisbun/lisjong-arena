@@ -1,0 +1,72 @@
+name: P6 Gate B Provenance Fix
+
+on:
+  push:
+    branches:
+      - issue-183-p6-gate-b
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-183-p6-gate-b
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install Ruff
+        run: python -m pip install 'ruff==0.16.0'
+      - name: Bind exact Gate B dependency provenance
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '    SingleRoundStrengthArtifact,\n',
+              '    SingleRoundExecutionProvenance,\n    SingleRoundStrengthArtifact,\n',
+          )
+          text = text.replace(
+              '    execution_target_block,\n    require_baseline_provenance,\n    runtime_block,\n',
+              '    execution_target_block,\n    runtime_block,\n',
+          )
+          marker = 'EXPECTED_SELECTED_EPOCH = 20\n'
+          addition = '''EXPECTED_SELECTED_EPOCH = 20\nGATE_B_LISJONG_REVISION = "99a30c267a3c3e301e132c8799726eb10e012a95"\nGATE_B_ENGINE_REVISION = "8735e89e1aea000ab59368d0368d476787827741"\n'''
+          text = text.replace(marker, addition)
+
+          marker = '''def _sha256_file(path: Path) -> str:\n'''
+          helper = '''def require_gate_b_provenance(provenance: SingleRoundExecutionProvenance) -> None:\n    if not isinstance(provenance, SingleRoundExecutionProvenance):\n        raise TypeError("provenance must be a SingleRoundExecutionProvenance")\n    if provenance.lisjong_revision != GATE_B_LISJONG_REVISION:\n        raise _error("lisjong revision differs from the established #162 Gate B family")\n    if provenance.lisjong_engine_revision != GATE_B_ENGINE_REVISION:\n        raise _error(\n            "lisjong-engine revision differs from the established #162 Gate B family"\n        )\n\n\n'''
+          if helper not in text:
+              text = text.replace(marker, helper + marker)
+          text = text.replace('require_baseline_provenance(', 'require_gate_b_provenance(')
+          path.write_text(text, encoding='utf-8', newline='\n')
+
+          test_path = Path('tests/test_learned_policy_offline_q_p6_gate_b.py')
+          test_text = test_path.read_text(encoding='utf-8')
+          test_text = test_text.replace(
+              'mock.patch.object(gate_b, "require_baseline_provenance")',
+              'mock.patch.object(gate_b, "require_gate_b_provenance")',
+          )
+          anchor = '''class BindingTest(unittest.TestCase):\n'''
+          addition = '''class ProvenanceBindingTest(unittest.TestCase):\n    def test_established_162_dependency_revisions_are_locked(self):\n        current = provenance()\n        exact = type(current)(\n            execution_environment=current.execution_environment,\n            lisjong_arena_version=current.lisjong_arena_version,\n            lisjong_arena_revision=current.lisjong_arena_revision,\n            lisjong_version=current.lisjong_version,\n            lisjong_revision=gate_b.GATE_B_LISJONG_REVISION,\n            lisjong_engine_version=current.lisjong_engine_version,\n            lisjong_engine_revision=gate_b.GATE_B_ENGINE_REVISION,\n            riichienv_version=current.riichienv_version,\n            python_version=current.python_version,\n        )\n        gate_b.require_gate_b_provenance(exact)\n\n    def test_dependency_revision_drift_is_rejected(self):\n        current = provenance()\n        wrong = type(current)(\n            execution_environment=current.execution_environment,\n            lisjong_arena_version=current.lisjong_arena_version,\n            lisjong_arena_revision=current.lisjong_arena_revision,\n            lisjong_version=current.lisjong_version,\n            lisjong_revision="0" * 40,\n            lisjong_engine_version=current.lisjong_engine_version,\n            lisjong_engine_revision=gate_b.GATE_B_ENGINE_REVISION,\n            riichienv_version=current.riichienv_version,\n            python_version=current.python_version,\n        )\n        with self.assertRaises(gate_b.P6GateBError):\n            gate_b.require_gate_b_provenance(wrong)\n\n\n'''
+          if addition not in test_text:
+              test_text = test_text.replace(anchor, addition + anchor)
+          test_path.write_text(test_text, encoding='utf-8', newline='\n')
+      - name: Format and lint
+        run: |
+          python -m ruff format src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b.py
+          python -m ruff check --fix src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b.py
+      - name: Commit fix
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lisjong_arena/learned_policy_offline_q/p6_gate_b.py tests/test_learned_policy_offline_q_p6_gate_b.py
+          git commit -m 'Bind P6 Gate B to established dependency revisions'
+          git push origin HEAD:issue-183-p6-gate-b
