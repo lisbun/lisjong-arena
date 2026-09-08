@@ -1,0 +1,124 @@
+name: Issue 181 autofix
+
+on:
+  push:
+    branches:
+      - issue-181-p6-conservative-q-gate-a
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, '[issue-181-autofix]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-181-p6-conservative-q-gate-a
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install locked formatter
+        run: python -m pip install ruff==0.16.0
+      - name: Apply self-review hardening
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path('src/lisjong_arena/learned_policy_offline_q/p6_gate_a.py')
+          text = path.read_text(encoding='utf-8')
+
+          old = 'from .p1_candidate import LOCKED_P1_CANDIDATE, load_p1_serving_checkpoint\n'
+          new = '''from .p1_candidate import (\n    LOCKED_P1_CANDIDATE,\n    candidate_binding_document,\n    candidate_logical_identity,\n    load_p1_serving_checkpoint,\n)\n'''
+          if old not in text:
+              raise SystemExit('p1_candidate import marker not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    p6_model_block,\n    p6_training_block,\n    save_p6_checkpoint,\n'''
+          new = '''    p6_candidate_binding,\n    p6_candidate_identity,\n    p6_model_block,\n    p6_training_block,\n    save_p6_checkpoint,\n'''
+          if old not in text:
+              raise SystemExit('p6 import marker not found')
+          text = text.replace(old, new, 1)
+
+          old = 'from .protocol import BATCH_SIZE, Split, VOCABULARY_SIZE\n'
+          new = 'from .protocol import BATCH_SIZE, MAXIMUM_EPOCHS, Split, VOCABULARY_SIZE\n'
+          if old not in text:
+              raise SystemExit('protocol import marker not found')
+          text = text.replace(old, new, 1)
+
+          marker = 'def _input_binding_document(binding, p1_control) -> dict[str, object]:\n'
+          helper = '''def _expected_p1_control_binding() -> dict[str, object]:\n    """Return the exact #158 serving-control binding required by Issue #181."""\n    logical_binding = candidate_binding_document(\n        canonical_model_weights_digest=(\n            LOCKED_P1_CANDIDATE.canonical_model_weights_digest\n        ),\n        support_set_digest=LOCKED_P1_CANDIDATE.support_set_digest,\n    )\n    return {\n        "candidate_identity": candidate_logical_identity(logical_binding),\n        "canonical_model_weights_digest": (\n            LOCKED_P1_CANDIDATE.canonical_model_weights_digest\n        ),\n        "source_dataset_identity": LOCKED_P1_CANDIDATE.source_dataset_identity,\n        "p1_feature": p1_feature_block(),\n        "action_vocabulary": vocabulary_block(),\n        "supported_indices_digest": LOCKED_P1_CANDIDATE.support_set_digest,\n        "model": p1_model_block(),\n        "training": p1_training_block(),\n    }\n\n\n'''
+          if marker not in text:
+              raise SystemExit('input binding marker not found')
+          text = text.replace(marker, helper + marker, 1)
+
+          old = '''    control = inputs["p1_control"]\n    if type(control) is not dict:\n        raise _error("P6 P1 control binding is invalid")\n    if control.get("canonical_model_weights_digest") != (\n        LOCKED_P1_CANDIDATE.canonical_model_weights_digest\n    ):\n        raise _error("P6 pre-result lock P1 control weights drifted")\n    if control.get("supported_indices_digest") != (\n        LOCKED_SOURCE_IDENTITIES.supported_indices_digest\n    ):\n        raise _error("P6 pre-result lock P1 control support drifted")\n'''
+          new = '''    control = inputs["p1_control"]\n    if control != _expected_p1_control_binding():\n        raise _error(\n            "P6 pre-result lock does not bind the exact #158 P1 serving control"\n        )\n'''
+          if old not in text:
+              raise SystemExit('lock control validation marker not found')
+          text = text.replace(old, new, 1)
+
+          marker = '    require_lock_comment_url(document["lock_comment_url"])\n'
+          addition = '''    if document["parent_issue"] != PARENT_ISSUE:\n        raise _error("P6 Gate A result parent issue drifted")\n    lock_identity = document["lock_identity"]\n    if type(lock_identity) is not str or len(lock_identity) != 64:\n        raise _error("P6 Gate A result lock identity is not a sha256 digest")\n    input_binding = document["input_binding"]\n    if (\n        type(input_binding) is not dict\n        or set(input_binding) != {"retained_artifacts", "p1_control"}\n    ):\n        raise _error("P6 Gate A result input binding is invalid")\n    expected_retained = {\n        **LOCKED_SOURCE_IDENTITIES.to_document(),\n        "real_artifact_execution": True,\n    }\n    if input_binding["retained_artifacts"] != expected_retained:\n        raise _error("P6 Gate A result retained artifact binding drifted")\n    if input_binding["p1_control"] != _expected_p1_control_binding():\n        raise _error("P6 Gate A result P1 control binding drifted")\n'''
+          if marker not in text:
+              raise SystemExit('result lock comment marker not found')
+          text = text.replace(marker, marker + addition, 1)
+
+          marker = '''    if (\n        candidate.get("supported_indices_digest")\n        != LOCKED_SOURCE_IDENTITIES.supported_indices_digest\n    ):\n        raise _error("P6 candidate support digest is not the locked retained support")\n'''
+          addition = '''    weights_digest = candidate.get("canonical_model_weights_digest")\n    if type(weights_digest) is not str or len(weights_digest) != 64:\n        raise _error("P6 candidate weights digest is invalid")\n    expected_candidate_identity = p6_candidate_identity(\n        p6_candidate_binding(\n            source_dataset_identity=LOCKED_SOURCE_IDENTITIES.dataset_identity,\n            supported_indices_digest=(\n                LOCKED_SOURCE_IDENTITIES.supported_indices_digest\n            ),\n            weights_digest=weights_digest,\n        )\n    )\n    if candidate.get("candidate_identity") != expected_candidate_identity:\n        raise _error("P6 candidate identity is not derivable from its locked binding")\n    if candidate.get("selected_epoch") != MAXIMUM_EPOCHS:\n        raise _error("P6 candidate selected epoch is not the fixed final iteration")\n'''
+          if marker not in text:
+              raise SystemExit('candidate support marker not found')
+          text = text.replace(marker, marker + addition, 1)
+          path.write_text(text, encoding='utf-8', newline='\n')
+
+          test_path = Path('tests/test_issue_181_p6_gate_a.py')
+          test = test_path.read_text(encoding='utf-8')
+          pattern = re.compile(r'def _control_binding\(\):\n.*?\n\ndef _lock\(\):', re.S)
+          replacement = '''def _control_binding():\n    return p6_gate_a._expected_p1_control_binding()\n\n\ndef _lock():'''
+          test, count = pattern.subn(replacement, test, count=1)
+          if count != 1:
+              raise SystemExit('test control binding marker not found')
+
+          marker = '''def _result(primary_direction="signal", replacement_direction=None):\n    replacement_direction = replacement_direction or primary_direction\n'''
+          addition = '''def _result(primary_direction="signal", replacement_direction=None):\n    replacement_direction = replacement_direction or primary_direction\n    candidate_weights_digest = "c" * 64\n    candidate_identity = p6_gate_a.p6_candidate_identity(\n        p6_gate_a.p6_candidate_binding(\n            source_dataset_identity=LOCKED_SOURCE_IDENTITIES.dataset_identity,\n            supported_indices_digest=LOCKED_SOURCE_IDENTITIES.supported_indices_digest,\n            weights_digest=candidate_weights_digest,\n        )\n    )\n'''
+          if marker not in test:
+              raise SystemExit('result fixture marker not found')
+          test = test.replace(marker, addition, 1)
+          test = test.replace(
+              '"candidate_identity": "learned-p6-conservative-q:test",\n            "canonical_model_weights_digest": "c" * 64,',
+              '"candidate_identity": candidate_identity,\n            "canonical_model_weights_digest": candidate_weights_digest,',
+              1,
+          )
+
+          marker = '''    def test_exhaustive_primary_classification(self):\n'''
+          addition = '''    def test_full_p1_control_binding_is_fail_closed(self):\n        document = _lock()\n        tampered = copy.deepcopy(document)\n        tampered["inputs"]["p1_control"]["candidate_identity"] = "x"\n        logical = {k: v for k, v in tampered.items() if k != "lock_identity"}\n        tampered["lock_identity"] = p6_gate_a._sha256_document(logical)\n        with self.assertRaises(OfflineQProtocolError):\n            p6_gate_a.validate_pre_result_lock(tampered)\n\n    def test_result_rederives_input_and_candidate_identity(self):\n        document = _result("signal")\n        p6_gate_a.validate_gate_a_result(document)\n\n        tampered = copy.deepcopy(document)\n        tampered["input_binding"]["p1_control"]["model"]["hidden_width"] += 1\n        logical = {k: v for k, v in tampered.items() if k != "result_identity"}\n        tampered["result_identity"] = p6_gate_a._sha256_document(logical)\n        with self.assertRaises(OfflineQProtocolError):\n            p6_gate_a.validate_gate_a_result(tampered)\n\n        tampered = copy.deepcopy(document)\n        tampered["candidate"]["candidate_identity"] = "learned-p6-conservative-q:tampered"\n        logical = {k: v for k, v in tampered.items() if k != "result_identity"}\n        tampered["result_identity"] = p6_gate_a._sha256_document(logical)\n        with self.assertRaises(OfflineQProtocolError):\n            p6_gate_a.validate_gate_a_result(tampered)\n\n'''
+          if marker not in test:
+              raise SystemExit('test insertion marker not found')
+          test = test.replace(marker, addition + marker, 1)
+          test_path.write_text(test, encoding='utf-8', newline='\n')
+      - name: Format new Issue 181 code
+        run: >-
+          python -m ruff format
+          src/lisjong_arena/learned_policy_offline_q/p6_conservative_q.py
+          src/lisjong_arena/learned_policy_offline_q/p6_gate_a.py
+          tests/test_issue_181_p6_gate_a.py
+          tests/test_issue_181_p6_gate_a_ml.py
+      - name: Verify patch
+        run: git diff --check
+      - name: Commit and push
+        run: |
+          if git diff --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/lisjong_arena/learned_policy_offline_q/p6_conservative_q.py \
+                  src/lisjong_arena/learned_policy_offline_q/p6_gate_a.py \
+                  tests/test_issue_181_p6_gate_a.py \
+                  tests/test_issue_181_p6_gate_a_ml.py
+          git commit -m '[issue-181-autofix] Format and harden P6 bindings'
+          git push origin HEAD:issue-181-p6-conservative-q-gate-a
