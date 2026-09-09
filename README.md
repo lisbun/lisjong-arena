@@ -235,6 +235,7 @@ stable semanticsや将来production consumer semanticsは`lisjong`側の責務�
 - [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
 - [Epoch-budget adequacy study](docs/epoch-budget-adequacy.md)
 - [Optimization-budget saturation study](docs/optimization-budget-saturation.md)
+- [Phase 11 public-riichi wait readout](docs/phase11-public-riichi-wait-readout.md)
 
 component prediction qualityとPolicy decision value / game strengthは別claimとして扱います。
 
