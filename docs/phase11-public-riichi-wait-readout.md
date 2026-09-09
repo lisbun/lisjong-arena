@@ -184,6 +184,10 @@ schema、logical identity、lock/coverage bindingを検証する。readout weigh
 manifest、per-hanchan/per-tile/reliability/subgroup sufficient statisticsからmetrics、bootstrap、
 classification、diagnostic、outcomeを再導出し、recorded valueとのexact一致を要求する。
 
+`lock`はArena worktree全体がcleanであることを要求し、そのexact HEADをinstalled execution
+provenanceと`--arena-revision`の双方へ照合する。`preflight`、`train`、`evaluate`もlockをliveに
+再構成するたび同じclean-HEAD checkを行うため、lock後のdirty changeやHEAD driftを拒否する。
+
 generated weights、coverage、result、retained corpusはGitへcommitしない。
 
 ## Post-merge runbook

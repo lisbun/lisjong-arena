@@ -6,6 +6,7 @@ import sysconfig
 
 from lisjong_engine.rules import RuleSet
 
+from lisjong_arena._execution_safety import require_clean_arena_head
 from lisjong_arena.phase4_raw_corpus.extraction import phase4_provenance
 from lisjong_arena.stage3_mix_pilot.generation import _provenance_value
 from lisjong_arena.stage3_optimization_saturation.protocol import RULES
@@ -154,8 +155,19 @@ def current_receipt(
     torch.set_num_threads(FORMAL_TRAINING_CONFIG.torch_threads)
     if torch.cuda.is_available():
         raise Phase11Error("Arena #172 requires the locked CPU-only runtime")
+    clean_head = require_clean_arena_head()
     evidence = load_retained(corpus_root, phase157_root, phase167_root)
     provenance = _provenance_value(phase4_provenance(RuleSet.default()))
+    exact(
+        clean_head,
+        provenance["source_revisions"]["lisjong_arena"],
+        "clean Arena HEAD against execution provenance",
+    )
+    exact(
+        clean_head,
+        arena_revision,
+        "clean Arena HEAD against execution target",
+    )
     exact(
         provenance["source_revisions"]["lisjong_arena"],
         arena_revision,
