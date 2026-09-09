@@ -188,10 +188,13 @@ def run_game_jobs(
     変更しない。失敗outcomeはcompleted successとして数えず、既存fail-closed
     semanticsをそのまま保つ。
 
-    ``game_runner``はtestのためだけの差し替え口であり、既定値は実際に
-    ``LocalGameRunner``を実行する``_run_game_job``である。public parallel
-    entry point（``run_comparison_parallel`` / ``run_single_round_evaluation_parallel``）
-    はこれを上書きしない。
+    ``game_runner``は既定では実際に``LocalGameRunner``を実行する
+    ``_run_game_job``である。通常のpublic parallel entry point
+    （``run_comparison_parallel`` / ``run_single_round_evaluation_parallel``）は
+    これを上書きしない。Issue #196のpurpose-specific diagnosticsだけは、同じ
+    process lifecycle / completion-order-independent collectionを維持したまま
+    candidate wrapperのper-game aggregateも返す専用top-level workerへ差し替える。
+    generic backend / worker registryとして公開しない。
     """
     validate_max_workers(max_workers)
 

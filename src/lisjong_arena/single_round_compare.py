@@ -47,11 +47,27 @@ from lisjong_arena.mortal_single_round_evaluation import (
     MortalSingleRoundEvaluationResult,
     run_mortal_single_round_evaluation,
 )
+from lisjong_arena.open_hand_call_diagnostic_artifact import (
+    load_open_hand_diagnostic_artifact,
+    save_open_hand_diagnostic_artifact,
+)
+from lisjong_arena.open_hand_call_diagnostics import (
+    OPEN_HAND_DIAGNOSTIC_BASELINE_IDENTITY,
+    OPEN_HAND_DIAGNOSTIC_CANDIDATE_IDENTITY,
+    OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION,
+    OpenHandDiagnosticEvaluationResult,
+    OpenHandDiagnosticSummary,
+    run_open_hand_diagnostic_evaluation,
+    run_open_hand_diagnostic_evaluation_parallel,
+)
 from lisjong_arena.policy_reference import (
     PolicyReferenceError,
     resolve_policy_reference,
 )
-from lisjong_arena.single_round_artifact import save_single_round_artifact
+from lisjong_arena.single_round_artifact import (
+    collect_execution_provenance,
+    save_single_round_artifact,
+)
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
     run_single_round_evaluation,
@@ -166,6 +182,15 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
         help=(
             "save the successful evaluation as a new immutable JSON artifact "
             "(Policy candidates only; never overwrites an existing path)"
+        ),
+    )
+    parser.add_argument(
+        "--open-hand-call-diagnostics-out",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "save Issue #196 OpenHandYakuAwareCallPolicy vs yakuhai-call "
+            "decision diagnostics as a strength-artifact-bound sidecar"
         ),
     )
     parser.add_argument(
@@ -323,6 +348,44 @@ def format_summary(result: _SummaryResult, *, workers: int) -> str:
     return "\n".join(lines)
 
 
+def format_open_hand_diagnostic_summary(
+    summary: OpenHandDiagnosticSummary,
+) -> str:
+    """Issue #196 diagnosticsをstrength summaryとは別sectionで表示する。"""
+    mean = summary.mean_divergences_per_divergent_game
+    mean_text = "n/a" if mean is None else f"{mean:.3f}"
+    return "\n".join(
+        (
+            "Open-hand call decision diagnostics (not a strength metric):",
+            f"  candidate-seat decisions: {summary.total_candidate_seat_decisions}",
+            f"  same actions: {summary.same_action_decisions}",
+            f"  divergent actions: {summary.divergent_action_decisions}",
+            f"  action divergence rate: {summary.action_divergence_rate:.3%}",
+            "  raw initial-call opportunities: "
+            f"{summary.raw_initial_call_opportunities}",
+            "  baseline Pass -> candidate Chi: "
+            f"{summary.baseline_pass_to_candidate_chi}",
+            "  baseline Pass -> candidate Pon: "
+            f"{summary.baseline_pass_to_candidate_pon}",
+            f"  candidate-only Chi: {summary.candidate_only_chi_count}",
+            f"  candidate-only Pon: {summary.candidate_only_pon_count}",
+            f"  games with divergence: {summary.divergent_game_count}",
+            f"  seed blocks with divergence: {summary.divergent_seed_block_count}",
+            "  seed blocks with nonzero score delta: "
+            f"{summary.nonzero_score_delta_seed_block_count}",
+            "  divergent seed blocks (positive / zero / negative): "
+            f"{summary.divergent_positive_score_delta_seed_blocks} / "
+            f"{summary.divergent_zero_score_delta_seed_blocks} / "
+            f"{summary.divergent_negative_score_delta_seed_blocks}",
+            f"  mean divergences per divergent game: {mean_text}",
+            "  divergent decisions by candidate seat (E/S/W/N): "
+            + " / ".join(
+                str(value) for value in summary.divergent_decisions_by_candidate_seat
+            ),
+        )
+    )
+
+
 def _run_cli(argv: Sequence[str] | None = None) -> int:
     """``python -m lisjong_arena.single_round_compare``のentry point。
 
@@ -369,6 +432,57 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         return 2
 
     artifact_path: Path | None = args.artifact_out
+    diagnostic_path: Path | None = args.open_hand_call_diagnostics_out
+    if diagnostic_path is not None:
+        if artifact_path is None:
+            print(
+                "invalid comparison: --open-hand-call-diagnostics-out requires "
+                "--artifact-out",
+                file=sys.stderr,
+            )
+            return 2
+        if is_mortal:
+            print(
+                "invalid comparison: open-hand call diagnostics do not support "
+                "the Mortal candidate",
+                file=sys.stderr,
+            )
+            return 2
+        if (
+            args.candidate != "lisjong.policies:OpenHandYakuAwareCallPolicy"
+            or args.candidate_id != OPEN_HAND_DIAGNOSTIC_CANDIDATE_IDENTITY
+            or args.baseline != OPEN_HAND_DIAGNOSTIC_BASELINE_IDENTITY
+            or args.baseline_id is not None
+        ):
+            print(
+                "invalid comparison: open-hand call diagnostics require exact "
+                "candidate lisjong.policies:OpenHandYakuAwareCallPolicy with "
+                "--candidate-id open-hand-yaku-aware-call and baseline "
+                "yakuhai-call",
+                file=sys.stderr,
+            )
+            return 2
+        if diagnostic_path == artifact_path:
+            print(
+                "invalid comparison: strength artifact and diagnostic sidecar "
+                "paths must differ",
+                file=sys.stderr,
+            )
+            return 2
+        if diagnostic_path.exists():
+            print(
+                "invalid comparison: diagnostic sidecar path already exists: "
+                f"{diagnostic_path}",
+                file=sys.stderr,
+            )
+            return 2
+        if not diagnostic_path.parent.is_dir():
+            print(
+                "invalid comparison: diagnostic sidecar directory does not exist: "
+                f"{diagnostic_path.parent}",
+                file=sys.stderr,
+            )
+            return 2
     if artifact_path is not None:
         if is_mortal:
             print(
@@ -391,6 +505,29 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+
+        if diagnostic_path is not None:
+            try:
+                preflight_provenance = collect_execution_provenance()
+            except Exception as error:
+                print(
+                    "artifact provenance preflight failed: "
+                    f"{type(error).__name__}: {error}",
+                    file=sys.stderr,
+                )
+                return 1
+            if (
+                preflight_provenance.lisjong_revision
+                != OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION
+            ):
+                print(
+                    "artifact provenance preflight failed: open-hand call "
+                    "diagnostics require exact lisjong revision "
+                    f"{OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION}, got "
+                    f"{preflight_provenance.lisjong_revision}",
+                    file=sys.stderr,
+                )
+                return 1
 
     if is_mortal:
         if args.workers != 1:
@@ -446,6 +583,7 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
             ROTATION_COUNT * len(plan.seeds), stream=sys.stderr
         )
 
+    diagnostic_result: OpenHandDiagnosticEvaluationResult | None = None
     try:
         if is_mortal:
             if progress_reporter is None:
@@ -454,6 +592,26 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
                 result = run_mortal_single_round_evaluation(
                     plan, progress_callback=progress_reporter
                 )
+        elif diagnostic_path is not None and args.workers == 1:
+            if progress_reporter is None:
+                diagnostic_result = run_open_hand_diagnostic_evaluation(plan)
+            else:
+                diagnostic_result = run_open_hand_diagnostic_evaluation(
+                    plan, progress_callback=progress_reporter
+                )
+            result = diagnostic_result.evaluation_result
+        elif diagnostic_path is not None:
+            if progress_reporter is None:
+                diagnostic_result = run_open_hand_diagnostic_evaluation_parallel(
+                    plan, max_workers=args.workers
+                )
+            else:
+                diagnostic_result = run_open_hand_diagnostic_evaluation_parallel(
+                    plan,
+                    max_workers=args.workers,
+                    progress_callback=progress_reporter,
+                )
+            result = diagnostic_result.evaluation_result
         elif args.workers == 1:
             if progress_reporter is None:
                 result = run_single_round_evaluation(plan)
@@ -483,6 +641,9 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     if progress_reporter is not None:
         progress_reporter.close()
     print(format_summary(result, workers=args.workers))
+    if diagnostic_result is not None:
+        print()
+        print(format_open_hand_diagnostic_summary(diagnostic_result.summary))
 
     if artifact_path is not None:
         try:
@@ -490,6 +651,25 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         except Exception as error:
             print(
                 f"artifact save failed: {type(error).__name__}: {error}",
+                file=sys.stderr,
+            )
+            return 1
+    if diagnostic_path is not None:
+        assert artifact_path is not None
+        assert diagnostic_result is not None
+        try:
+            save_open_hand_diagnostic_artifact(
+                diagnostic_result,
+                strength_artifact_path=artifact_path,
+                path=diagnostic_path,
+            )
+            load_open_hand_diagnostic_artifact(
+                diagnostic_path,
+                strength_artifact_path=artifact_path,
+            )
+        except Exception as error:
+            print(
+                f"diagnostic sidecar save failed: {type(error).__name__}: {error}",
                 file=sys.stderr,
             )
             return 1

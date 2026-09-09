@@ -406,6 +406,7 @@ runbook、schema、result interpretationは各purpose-specific documentを正本
 - [Architecture](docs/architecture.md)
 - [Roadmap](docs/roadmap.md)
 - [Policy strength evaluation policy](docs/policy-strength-evaluation.md)
+- [Open-hand call divergence diagnostics](docs/open-hand-call-divergence-diagnostics.md)
 - [Automated Strength Evaluation v0](docs/automated-strength-evaluation.md)
 - [RiichiEnv compatibility](docs/riichienv-compatibility.md)
 - [Durable local game record](docs/durable-local-game-record.md)
