@@ -119,6 +119,13 @@ raw execution / decision record
 
 project-wide canonical `GameRecord`を先に発明しない。
 
+standard RiichiEnv local executionでは、completed same-process inspectionから
+versioned local bundleを作り、strict loaderでcross-process readbackする最小能力を
+維持する。bundleはobjective trace、final result、decision observationを別payloadに
+保ち、consumerがtraining feature / labelやviewer presentationを独自に導出する。
+この能力を理由に、all backend共通record、database、registry、random-access replayへ
+自動拡張しない。
+
 ## Track 2 — Experiment-local Research / ML
 
 このtrackは、bounded research questionを再現可能なcandidate / evidenceへ変換する。
