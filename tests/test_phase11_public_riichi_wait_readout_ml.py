@@ -8,10 +8,13 @@ from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from _phase4_raw_corpus_fixtures import fixture_corpus
-from test_phase11_public_riichi_wait_readout import _lock, _records
+from test_phase11_public_riichi_wait_readout import _lock, _records, _runtime
 
+import lisjong_arena.phase11_public_riichi_wait_readout.lock as phase11_lock
+from lisjong_arena._execution_safety import ExecutionSafetyError
 from lisjong_arena.phase4_raw_corpus.persistence import save_raw_corpus
 from lisjong_arena.phase5_belief_dataset.builder import (
     build_phase5_belief_dataset,
@@ -39,6 +42,7 @@ from lisjong_arena.phase11_public_riichi_wait_readout.evaluation import (
     evaluate_readout,
     mean_binary_log_loss,
 )
+from lisjong_arena.phase11_public_riichi_wait_readout.lock import current_receipt
 from lisjong_arena.phase11_public_riichi_wait_readout.model import (
     assert_frozen_state_unchanged,
     create_readout_head,
@@ -49,6 +53,7 @@ from lisjong_arena.phase11_public_riichi_wait_readout.protocol import (
     Phase11Error,
     ReadoutTrainingConfig,
     identity,
+    retained_value,
 )
 from lisjong_arena.phase11_public_riichi_wait_readout.result import (
     assemble_result,
@@ -60,6 +65,80 @@ from lisjong_arena.phase11_public_riichi_wait_readout.training import (
 )
 
 TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")
+class ExecutionLockHeadTest(unittest.TestCase):
+    def _receipt(self, *, clean_head: str, provenance_revision: str, target: str):
+        provenance = copy.deepcopy(_lock()["provenance"])
+        provenance["source_revisions"]["lisjong_arena"] = provenance_revision
+        evidence = SimpleNamespace(phase167_lock={"runtime": _runtime()})
+        with (
+            patch.object(
+                phase11_lock, "require_clean_arena_head", return_value=clean_head
+            ),
+            patch.object(phase11_lock, "load_retained", return_value=evidence),
+            patch.object(
+                phase11_lock,
+                "retained_readback_value",
+                return_value=retained_value(),
+            ),
+            patch.object(phase11_lock, "phase4_provenance", return_value=None),
+            patch.object(phase11_lock, "_provenance_value", return_value=provenance),
+            patch.object(phase11_lock, "_runtime", return_value=_runtime()),
+        ):
+            return current_receipt(
+                arena_revision=target,
+                corpus_root="corpus",
+                phase157_root="phase157",
+                phase167_root="phase167",
+                artifact_audit="Issue #172 retained audit fixture",
+            )
+
+    def test_dirty_arena_worktree_rejects_lock_before_artifact_readback(self):
+        with (
+            patch.object(
+                phase11_lock,
+                "require_clean_arena_head",
+                side_effect=ExecutionSafetyError("Arena worktree must be clean"),
+            ),
+            patch.object(phase11_lock, "load_retained") as load_retained,
+        ):
+            with self.assertRaisesRegex(ExecutionSafetyError, "must be clean"):
+                current_receipt(
+                    arena_revision="3" * 40,
+                    corpus_root="corpus",
+                    phase157_root="phase157",
+                    phase167_root="phase167",
+                    artifact_audit="Issue #172 retained audit fixture",
+                )
+        load_retained.assert_not_called()
+
+    def test_clean_head_must_match_execution_provenance(self):
+        with self.assertRaisesRegex(Phase11Error, "execution provenance"):
+            self._receipt(
+                clean_head="4" * 40,
+                provenance_revision="3" * 40,
+                target="4" * 40,
+            )
+
+    def test_clean_head_must_match_locked_execution_target(self):
+        with self.assertRaisesRegex(Phase11Error, "execution target"):
+            self._receipt(
+                clean_head="3" * 40,
+                provenance_revision="3" * 40,
+                target="4" * 40,
+            )
+
+    def test_exact_clean_head_is_recorded(self):
+        receipt = self._receipt(
+            clean_head="3" * 40,
+            provenance_revision="3" * 40,
+            target="3" * 40,
+        )
+        self.assertEqual(
+            receipt["provenance"]["source_revisions"]["lisjong_arena"], "3" * 40
+        )
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")

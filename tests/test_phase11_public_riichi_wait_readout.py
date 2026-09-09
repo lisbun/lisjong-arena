@@ -11,8 +11,6 @@ from lisjong_engine.public_state import PublicMeldType, PublicRiichiStatus
 from lisjong_engine.seat import Seat as EngineSeat
 from lisjong_engine.wind import Wind as EngineWind
 
-import lisjong_arena.phase11_public_riichi_wait_readout.lock as phase11_lock
-from lisjong_arena._execution_safety import ExecutionSafetyError
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 from lisjong_arena.phase11_public_riichi_wait_readout.coverage import (
     build_coverage,
@@ -28,10 +26,7 @@ from lisjong_arena.phase11_public_riichi_wait_readout.evaluation import (
     fit_train_prevalence,
     paired_comparison,
 )
-from lisjong_arena.phase11_public_riichi_wait_readout.lock import (
-    current_receipt,
-    validate_lock,
-)
+from lisjong_arena.phase11_public_riichi_wait_readout.lock import validate_lock
 from lisjong_arena.phase11_public_riichi_wait_readout.protocol import (
     BOOTSTRAP_ORDER_INDICES,
     BOOTSTRAP_REPLICATES,
@@ -225,79 +220,6 @@ class ProtocolTest(unittest.TestCase):
     def test_readout_budget_bound_is_diagnostic_only(self):
         self.assertEqual(budget_diagnostics(160), ["READOUT BUDGET BOUND"])
         self.assertEqual(budget_diagnostics(159), [])
-
-
-class ExecutionLockHeadTest(unittest.TestCase):
-    def _receipt(self, *, clean_head: str, provenance_revision: str, target: str):
-        provenance = copy.deepcopy(_lock()["provenance"])
-        provenance["source_revisions"]["lisjong_arena"] = provenance_revision
-        evidence = SimpleNamespace(phase167_lock={"runtime": _runtime()})
-        with (
-            patch.object(
-                phase11_lock, "require_clean_arena_head", return_value=clean_head
-            ),
-            patch.object(phase11_lock, "load_retained", return_value=evidence),
-            patch.object(
-                phase11_lock,
-                "retained_readback_value",
-                return_value=retained_value(),
-            ),
-            patch.object(phase11_lock, "phase4_provenance", return_value=None),
-            patch.object(phase11_lock, "_provenance_value", return_value=provenance),
-            patch.object(phase11_lock, "_runtime", return_value=_runtime()),
-        ):
-            return current_receipt(
-                arena_revision=target,
-                corpus_root="corpus",
-                phase157_root="phase157",
-                phase167_root="phase167",
-                artifact_audit="Issue #172 retained audit fixture",
-            )
-
-    def test_dirty_arena_worktree_rejects_lock_before_artifact_readback(self):
-        with (
-            patch.object(
-                phase11_lock,
-                "require_clean_arena_head",
-                side_effect=ExecutionSafetyError("Arena worktree must be clean"),
-            ),
-            patch.object(phase11_lock, "load_retained") as load_retained,
-        ):
-            with self.assertRaisesRegex(ExecutionSafetyError, "must be clean"):
-                current_receipt(
-                    arena_revision="3" * 40,
-                    corpus_root="corpus",
-                    phase157_root="phase157",
-                    phase167_root="phase167",
-                    artifact_audit="Issue #172 retained audit fixture",
-                )
-        load_retained.assert_not_called()
-
-    def test_clean_head_must_match_execution_provenance(self):
-        with self.assertRaisesRegex(Phase11Error, "execution provenance"):
-            self._receipt(
-                clean_head="4" * 40,
-                provenance_revision="3" * 40,
-                target="4" * 40,
-            )
-
-    def test_clean_head_must_match_locked_execution_target(self):
-        with self.assertRaisesRegex(Phase11Error, "execution target"):
-            self._receipt(
-                clean_head="3" * 40,
-                provenance_revision="3" * 40,
-                target="4" * 40,
-            )
-
-    def test_exact_clean_head_is_recorded(self):
-        receipt = self._receipt(
-            clean_head="3" * 40,
-            provenance_revision="3" * 40,
-            target="3" * 40,
-        )
-        self.assertEqual(
-            receipt["provenance"]["source_revisions"]["lisjong_arena"], "3" * 40
-        )
 
 
 class EligibilityAndCoverageTest(unittest.TestCase):
