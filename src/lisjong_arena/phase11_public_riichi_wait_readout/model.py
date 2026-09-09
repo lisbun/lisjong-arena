@@ -40,9 +40,14 @@ def frozen_state_snapshot(model) -> FrozenStateSnapshot:
     """Capture every recurrent and expected-count state byte without serialization."""
     rows = []
     for name, value in model.state_dict().items():
-        tensor = value.detach().cpu().contiguous()
+        tensor = value.detach().cpu().contiguous().clone()
         rows.append(
-            (name, str(tensor.dtype), tuple(tensor.shape), tensor.numpy().tobytes())
+            (
+                name,
+                str(tensor.dtype),
+                tuple(tensor.shape),
+                bytes(tensor.untyped_storage()),
+            )
         )
     digest = hashlib.sha256()
     for name, dtype, shape, payload in rows:
