@@ -413,6 +413,7 @@ runbook、schema、result interpretationは各purpose-specific documentを正本
 - [Roadmap](docs/roadmap.md)
 - [Claude Code workflow (Skills / Hooks)](docs/claude-code-workflow.md)
 - [Policy strength evaluation policy](docs/policy-strength-evaluation.md)
+- [Open-hand call divergence diagnostics](docs/open-hand-call-divergence-diagnostics.md)
 - [Automated Strength Evaluation v0](docs/automated-strength-evaluation.md)
 - [RiichiEnv compatibility](docs/riichienv-compatibility.md)
 - [Durable local game record](docs/durable-local-game-record.md)
