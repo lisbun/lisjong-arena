@@ -361,8 +361,8 @@ def format_open_hand_diagnostic_summary(
             f"  same actions: {summary.same_action_decisions}",
             f"  divergent actions: {summary.divergent_action_decisions}",
             f"  action divergence rate: {summary.action_divergence_rate:.3%}",
-            "  raw initial-call opportunities: "
-            f"{summary.raw_initial_call_opportunities}",
+            "  shared-prefix initial-call opportunities: "
+            f"{summary.shared_prefix_initial_call_opportunities}",
             "  baseline Pass -> candidate Chi: "
             f"{summary.baseline_pass_to_candidate_chi}",
             "  baseline Pass -> candidate Pon: "

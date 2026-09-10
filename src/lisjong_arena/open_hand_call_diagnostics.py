@@ -66,7 +66,7 @@ class OpenHandGameDiagnostics:
     total_candidate_seat_decisions: int
     same_action_decisions: int
     divergent_action_decisions: int
-    raw_initial_call_opportunities: int
+    shared_prefix_initial_call_opportunities: int
     baseline_pass_to_candidate_chi: int
     baseline_pass_to_candidate_pon: int
     scaled_candidate_score_delta: int
@@ -86,7 +86,7 @@ class OpenHandGameDiagnostics:
             "total_candidate_seat_decisions",
             "same_action_decisions",
             "divergent_action_decisions",
-            "raw_initial_call_opportunities",
+            "shared_prefix_initial_call_opportunities",
             "baseline_pass_to_candidate_chi",
             "baseline_pass_to_candidate_pon",
         )
@@ -105,13 +105,16 @@ class OpenHandGameDiagnostics:
             raise ValueError(
                 "same and divergent decisions must partition total decisions"
             )
-        if self.raw_initial_call_opportunities > self.total_candidate_seat_decisions:
-            raise ValueError("raw opportunities must not exceed total decisions")
+        if (
+            self.shared_prefix_initial_call_opportunities
+            > self.total_candidate_seat_decisions
+        ):
+            raise ValueError(
+                "shared-prefix opportunities must not exceed total decisions"
+            )
         accepted_calls = (
             self.baseline_pass_to_candidate_chi + self.baseline_pass_to_candidate_pon
         )
-        if accepted_calls > self.raw_initial_call_opportunities:
-            raise ValueError("accepted calls must not exceed raw opportunities")
         if accepted_calls > self.divergent_action_decisions:
             raise ValueError("accepted calls must be divergent decisions")
 
@@ -134,7 +137,7 @@ class OpenHandDiagnosticSummary:
     same_action_decisions: int
     divergent_action_decisions: int
     action_divergence_rate: float
-    raw_initial_call_opportunities: int
+    shared_prefix_initial_call_opportunities: int
     baseline_pass_to_candidate_chi: int
     baseline_pass_to_candidate_pon: int
     candidate_only_chi_count: int
@@ -155,7 +158,7 @@ class OpenHandDiagnosticSummary:
             "total_candidate_seat_decisions",
             "same_action_decisions",
             "divergent_action_decisions",
-            "raw_initial_call_opportunities",
+            "shared_prefix_initial_call_opportunities",
             "baseline_pass_to_candidate_chi",
             "baseline_pass_to_candidate_pon",
             "candidate_only_chi_count",
@@ -270,8 +273,8 @@ def aggregate_open_hand_diagnostics(
         action_divergence_rate=(
             0.0 if total_decisions == 0 else divergent_decisions / total_decisions
         ),
-        raw_initial_call_opportunities=sum(
-            game.raw_initial_call_opportunities for game in games
+        shared_prefix_initial_call_opportunities=sum(
+            game.shared_prefix_initial_call_opportunities for game in games
         ),
         baseline_pass_to_candidate_chi=sum(
             game.baseline_pass_to_candidate_chi for game in games
@@ -342,18 +345,20 @@ class _DecisionRecorder:
         "baseline_pass_to_candidate_chi",
         "baseline_pass_to_candidate_pon",
         "divergent_action_decisions",
-        "raw_initial_call_opportunities",
         "same_action_decisions",
+        "shared_prefix_initial_call_opportunities",
         "total_candidate_seat_decisions",
+        "_shared_prefix",
     )
 
     def __init__(self) -> None:
         self.total_candidate_seat_decisions = 0
         self.same_action_decisions = 0
         self.divergent_action_decisions = 0
-        self.raw_initial_call_opportunities = 0
+        self.shared_prefix_initial_call_opportunities = 0
         self.baseline_pass_to_candidate_chi = 0
         self.baseline_pass_to_candidate_pon = 0
+        self._shared_prefix = True
 
     def record(
         self,
@@ -371,12 +376,16 @@ class _DecisionRecorder:
             isinstance(action, (ChiAction, PonAction))
             for action in decision.legal_actions
         )
-        if baseline_pass and legal_call:
-            self.raw_initial_call_opportunities += 1
+        # このdecision自体は比較開始時点でshared prefix上にある。opportunityを
+        # 数えてからprefixを閉じ、first divergenceだけはdenominatorへ含める。
+        if self._shared_prefix and baseline_pass and legal_call:
+            self.shared_prefix_initial_call_opportunities += 1
         if baseline_pass and isinstance(candidate_action, ChiAction):
             self.baseline_pass_to_candidate_chi += 1
         if baseline_pass and isinstance(candidate_action, PonAction):
             self.baseline_pass_to_candidate_pon += 1
+        if candidate_action != baseline_action:
+            self._shared_prefix = False
 
     def snapshot(
         self,
@@ -393,7 +402,9 @@ class _DecisionRecorder:
             total_candidate_seat_decisions=self.total_candidate_seat_decisions,
             same_action_decisions=self.same_action_decisions,
             divergent_action_decisions=self.divergent_action_decisions,
-            raw_initial_call_opportunities=self.raw_initial_call_opportunities,
+            shared_prefix_initial_call_opportunities=(
+                self.shared_prefix_initial_call_opportunities
+            ),
             baseline_pass_to_candidate_chi=self.baseline_pass_to_candidate_chi,
             baseline_pass_to_candidate_pon=self.baseline_pass_to_candidate_pon,
             scaled_candidate_score_delta=score_delta,

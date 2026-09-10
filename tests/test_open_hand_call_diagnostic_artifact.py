@@ -77,7 +77,7 @@ def _diagnostic_result() -> OpenHandDiagnosticEvaluationResult:
             total_candidate_seat_decisions=10,
             same_action_decisions=9,
             divergent_action_decisions=1,
-            raw_initial_call_opportunities=1,
+            shared_prefix_initial_call_opportunities=1,
             baseline_pass_to_candidate_chi=1 if rotation % 2 == 0 else 0,
             baseline_pass_to_candidate_pon=1 if rotation % 2 == 1 else 0,
             scaled_candidate_score_delta=0,

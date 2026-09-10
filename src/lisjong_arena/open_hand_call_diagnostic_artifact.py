@@ -134,7 +134,9 @@ def _game_to_dict(game: OpenHandGameDiagnostics) -> dict[str, Any]:
         "baseline_pass_to_candidate_pon": game.baseline_pass_to_candidate_pon,
         "candidate_seat": int(game.candidate_seat),
         "divergent_action_decisions": game.divergent_action_decisions,
-        "raw_initial_call_opportunities": game.raw_initial_call_opportunities,
+        "shared_prefix_initial_call_opportunities": (
+            game.shared_prefix_initial_call_opportunities
+        ),
         "rotation": game.rotation,
         "same_action_decisions": game.same_action_decisions,
         "scaled_candidate_score_delta": game.scaled_candidate_score_delta,
@@ -172,7 +174,9 @@ def _summary_to_dict(summary: OpenHandDiagnosticSummary) -> dict[str, Any]:
         "nonzero_score_delta_seed_block_count": (
             summary.nonzero_score_delta_seed_block_count
         ),
-        "raw_initial_call_opportunities": summary.raw_initial_call_opportunities,
+        "shared_prefix_initial_call_opportunities": (
+            summary.shared_prefix_initial_call_opportunities
+        ),
         "same_action_decisions": summary.same_action_decisions,
         "seed_block_count": summary.seed_block_count,
         "total_candidate_seat_decisions": (summary.total_candidate_seat_decisions),
@@ -307,7 +311,7 @@ def _parse_game(value: object, index: int) -> OpenHandGameDiagnostics:
             "baseline_pass_to_candidate_pon",
             "candidate_seat",
             "divergent_action_decisions",
-            "raw_initial_call_opportunities",
+            "shared_prefix_initial_call_opportunities",
             "rotation",
             "same_action_decisions",
             "scaled_candidate_score_delta",
@@ -333,9 +337,9 @@ def _parse_game(value: object, index: int) -> OpenHandGameDiagnostics:
             raw["divergent_action_decisions"],
             f"{context}.divergent_action_decisions",
         ),
-        raw_initial_call_opportunities=expect_int(
-            raw["raw_initial_call_opportunities"],
-            f"{context}.raw_initial_call_opportunities",
+        shared_prefix_initial_call_opportunities=expect_int(
+            raw["shared_prefix_initial_call_opportunities"],
+            f"{context}.shared_prefix_initial_call_opportunities",
         ),
         baseline_pass_to_candidate_chi=expect_int(
             raw["baseline_pass_to_candidate_chi"],
@@ -369,7 +373,7 @@ def _parse_summary(value: object) -> OpenHandDiagnosticSummary:
         "game_count",
         "mean_divergences_per_divergent_game",
         "nonzero_score_delta_seed_block_count",
-        "raw_initial_call_opportunities",
+        "shared_prefix_initial_call_opportunities",
         "same_action_decisions",
         "seed_block_count",
         "total_candidate_seat_decisions",
@@ -398,9 +402,9 @@ def _parse_summary(value: object) -> OpenHandDiagnosticSummary:
         action_divergence_rate=expect_float(
             raw["action_divergence_rate"], "summary.action_divergence_rate"
         ),
-        raw_initial_call_opportunities=expect_int(
-            raw["raw_initial_call_opportunities"],
-            "summary.raw_initial_call_opportunities",
+        shared_prefix_initial_call_opportunities=expect_int(
+            raw["shared_prefix_initial_call_opportunities"],
+            "summary.shared_prefix_initial_call_opportunities",
         ),
         baseline_pass_to_candidate_chi=expect_int(
             raw["baseline_pass_to_candidate_chi"],

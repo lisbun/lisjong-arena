@@ -16,7 +16,7 @@ ABBB rotation、canonical strength aggregationは変更しない。
 集計するprimary diagnosticsは次のとおり。
 
 - candidate-seat decision総数、same / divergent decision数、divergence rate
-- raw initial-call opportunity数
+- shared-prefix initial-call opportunity数
 - baseline Pass -> candidate Chi / Pon数（candidate-only Chi / Pon）
 - divergenceを1件以上含むgame数とseed-block数
 - score deltaがnonzeroの全seed-block数
@@ -26,20 +26,25 @@ secondaryとして、divergent gameあたりの平均divergence数とcandidate s
 divergent decision数も保存する。route別countは、lisjongのpublic / stable seamが
 存在しないため取得しない。Arenaからprivate yaku-route helperをimportして再判定しない。
 
-### Raw opportunityとaccepted divergence
+### Shared-prefix opportunityとaccepted divergence
 
-raw initial-call opportunityは、candidate decision contextで次を同時に満たすdecision
-である。
+shared-prefix initial-call opportunityは、candidateとshadow baselineがまだ一度も
+divergeしていない共有trajectory上で、次を同時に満たすdecisionである。
 
 ```text
 shadow baseline action == Pass
 AND legal_actions contains ChiAction or PonAction
 ```
 
-accepted divergenceは、そのうちactual candidate actionがChiまたはPonになったdecision
-である。candidateもPassしたdecisionはopportunityには数えるが、accepted divergenceには
-数えない。これにより、legal opportunity自体の希少性とcandidate eligibilityによる
-filteringを混同しない。
+candidate-only accepted divergenceは、shared prefixかどうかにかかわらず、shadow
+baselineがPassしactual candidate actionがChiまたはPonになったdecisionである。
+shared prefix上でcandidateもPassしたdecisionはopportunityには数えるが、accepted
+divergenceには数えない。これにより、legal opportunity自体の希少性とcandidate
+eligibilityによるfilteringを混同しない。
+
+first divergenceを生んだdecision自身はshared prefixに含めるが、その後の
+candidate-only trajectoryにあるdecisionはopportunity denominatorへ含めない。一方、
+後続のdivergenceおよびcandidate-only Chi / Ponは診断値として引き続き数える。
 
 ## Persistence and provenance
 
@@ -87,6 +92,7 @@ python -m lisjong_arena.single_round_compare `
 ```
 
 `84% zero seed blocks`だけからeligibilityが保守的すぎるとは結論しない。fresh resultは
-raw opportunity、candidate-only call、divergence coverage、divergent block outcomeの順で
+shared-prefix opportunity、candidate-only call、divergence coverage、divergent block
+outcomeの順で
 読み、その後にeligibility bottleneckの有無を判断する。同一rangeのrerun、seed追加による
 救済、Policy変更、strength promotionはこのdiagnosticから自動的に行わない。

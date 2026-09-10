@@ -180,16 +180,41 @@ class ShadowDecisionTest(unittest.TestCase):
         self.assertEqual(diagnostic.same_action_decisions, 1)
         self.assertEqual(diagnostic.divergent_action_decisions, 0)
 
-    def test_raw_opportunity_is_separate_from_accepted_call(self) -> None:
+    def test_shared_prefix_opportunity_is_separate_from_accepted_call(self) -> None:
         selected = _pass()
         opportunity_only = self._run(selected, selected, (selected, _chi()))
         accepted = self._run(_chi(), selected, (selected, _chi()))
-        self.assertEqual(opportunity_only.raw_initial_call_opportunities, 1)
+        self.assertEqual(opportunity_only.shared_prefix_initial_call_opportunities, 1)
         self.assertEqual(opportunity_only.candidate_only_chi_count, 0)
         self.assertEqual(opportunity_only.divergent_action_decisions, 0)
-        self.assertEqual(accepted.raw_initial_call_opportunities, 1)
+        self.assertEqual(accepted.shared_prefix_initial_call_opportunities, 1)
         self.assertEqual(accepted.candidate_only_chi_count, 1)
         self.assertEqual(accepted.divergent_action_decisions, 1)
+
+    def test_shared_prefix_opportunity_stops_after_first_divergence(self) -> None:
+        passed = _pass()
+        chi = _chi()
+        pon = _pon()
+        context = DecisionContext(
+            input=_policy_input(), legal_actions=(passed, chi, pon)
+        )
+        recorder = _DecisionRecorder()
+
+        recorder.record(context, passed, passed)
+        recorder.record(context, chi, passed)
+        recorder.record(context, pon, passed)
+        diagnostic = recorder.snapshot(
+            seed=1,
+            rotation=0,
+            candidate_seat=Seat.SEAT_0,
+            score_delta=0,
+        )
+
+        self.assertEqual(diagnostic.total_candidate_seat_decisions, 3)
+        self.assertEqual(diagnostic.shared_prefix_initial_call_opportunities, 2)
+        self.assertEqual(diagnostic.divergent_action_decisions, 2)
+        self.assertEqual(diagnostic.candidate_only_chi_count, 1)
+        self.assertEqual(diagnostic.candidate_only_pon_count, 1)
 
 
 def _game(
@@ -205,7 +230,7 @@ def _game(
         total_candidate_seat_decisions=10,
         same_action_decisions=10 - divergences,
         divergent_action_decisions=divergences,
-        raw_initial_call_opportunities=divergences,
+        shared_prefix_initial_call_opportunities=divergences,
         baseline_pass_to_candidate_chi=divergences,
         baseline_pass_to_candidate_pon=0,
         scaled_candidate_score_delta=score_delta,
