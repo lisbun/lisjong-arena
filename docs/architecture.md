@@ -92,6 +92,11 @@ Arena
 
 各pathは共通化可能性を実測してから抽出し、future consumerを推測して`GameBackend`等のgeneric abstractionを先行設計しない。
 
+RiichiLabのthird-party server log acquisitionは、ranked session transportおよびfirst-party corpusとは
+独立したpurpose-specific execution / observation contractとする。raw identityは`game_id`、target Botの
+参加情報は別recordとし、bounded snapshot/plan、local cache、validation、provenanceまでをArenaが所有する。
+player-perspective dataset化、HandBelief / Learned Policy training、再配布はこのcontractに含めない。
+
 ### Same-process inspection and durable local record
 
 standard RiichiEnv `LocalGameRunner`では、objective `GameTrace`、existing

@@ -294,6 +294,12 @@ python -m lisjong_arena.riichilab.continuous_ranked --profile lisjong-dev
 詳細は[RiichiLab client runtime contract](docs/riichilab-client.md)と
 [RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)を参照してください。
 
+強豪Botのcurrent recent gamesからpersonal / non-commercial research用のserver-side MJAI corpusを
+取得・検証するoperator toolは、ranked clientやfirst-party corpusとは独立した
+[RiichiLab bounded server-log corpus](docs/riichilab-corpus.md)です。live acquisitionはmerge後に
+`snapshot -> plan -> acquire -> validate/report`の順で明示的に実行し、raw outputはGit worktree外へ
+保存します。
+
 ### First-party `lisjong-engine`
 
 Arena-owned bridgeを介してfirst-party `lisjong-engine`上でもlisjong Policyを実行できます。

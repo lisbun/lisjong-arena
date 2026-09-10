@@ -206,6 +206,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Third-party RiichiLab server logs (the CLI also rejects Git worktree output).
+/local-riichilab-corpus/
+
 # PyPI configuration file
 .pypirc
 
