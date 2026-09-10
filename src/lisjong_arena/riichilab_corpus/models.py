@@ -68,6 +68,28 @@ def utc_now_text() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def normalize_played_at(value: object, context: str) -> str:
+    """Normalize a RiichiLab-origin ``played_at`` without inventing timezone semantics.
+
+    RiichiLab Bot API responses observed on merged ``main`` (Issue #201) return
+    ``played_at`` as a timezone-naive wall-clock timestamp. Its timezone is
+    currently unspecified, so a naive input is preserved as a naive canonical
+    string instead of being coerced to UTC. A timezone-aware input (offset or
+    ``Z``) is still supported and normalized to canonical UTC, matching the
+    pre-existing contract for sources that do carry timezone information.
+    """
+    if type(value) is not str or not value:
+        raise CorpusError(f"{context} must be a timestamp string")
+    candidate = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as exc:
+        raise CorpusError(f"{context} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        return parsed.isoformat()
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class Participation:
     game_id: str
@@ -84,7 +106,7 @@ class Participation:
         if type(self.seat) is not int or not 0 <= self.seat <= 3:
             raise CorpusError("seat must be an integer from 0 through 3")
         object.__setattr__(
-            self, "played_at", normalize_timestamp(self.played_at, "played_at")
+            self, "played_at", normalize_played_at(self.played_at, "played_at")
         )
         if self.rank is not None and (
             type(self.rank) is not int or not 1 <= self.rank <= 4
@@ -326,6 +348,7 @@ __all__ = [
     "TARGET_BOTS",
     "build_snapshot",
     "canonical_json_bytes",
+    "normalize_played_at",
     "normalize_timestamp",
     "sha256_bytes",
     "snapshot_from_value",
