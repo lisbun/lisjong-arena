@@ -300,6 +300,11 @@ python -m lisjong_arena.riichilab.continuous_ranked --profile lisjong-dev
 `snapshot -> plan -> acquire -> validate/report`の順で明示的に実行し、raw outputはGit worktree外へ
 保存します。
 
+取得済みcorpusがplayer-safeなdecision-time reconstructionとsupervision surfaceを供給できるかの
+offline判定は、同じCLIの`qualify-downstream` subcommandと
+[RiichiLab corpus downstream reconstruction qualification](docs/riichilab-downstream-qualification.md)が
+担当します。network accessもtrainingも行わず、aggregateだけのreport artifactを生成します。
+
 ### First-party `lisjong-engine`
 
 Arena-owned bridgeを介してfirst-party `lisjong-engine`上でもlisjong Policyを実行できます。

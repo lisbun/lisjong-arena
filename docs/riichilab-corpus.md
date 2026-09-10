@@ -99,3 +99,11 @@ owner/avatar/GitHub profile、cookie、Authorization header、credentialは保�
 JSON、self digest、raw logical `corpus_identity`を持ちます。raw identityはordered
 `game_id + compressed SHA-256`だけから計算し、participation / retrieval metadataはmanifest provenanceとして
 別に保持します。
+
+## Downstream reconstruction qualification
+
+取得済みcorpusをplayer-safeなdecision-time reconstructionへ変換できるかどうかのoffline判定は、
+同じCLIの`qualify-downstream` subcommandが担当します。local manifest / cacheを読むだけで、
+`snapshot` / `acquire` pathとHTTP transportは呼びません。source identity boundary、
+reconstruction contract、classification rule、post-merge operator flowは
+`docs/riichilab-downstream-qualification.md`が正本です。
