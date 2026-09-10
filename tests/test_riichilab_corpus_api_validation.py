@@ -15,6 +15,7 @@ from lisjong_arena.riichilab_corpus.models import (
     CorpusError,
     Participation,
     build_snapshot,
+    normalize_timestamp,
     snapshot_from_value,
 )
 from lisjong_arena.riichilab_corpus.persistence import resolve_log_url
@@ -105,6 +106,66 @@ class ApiParsingAndSnapshotTest(unittest.TestCase):
         )
         with self.assertRaises(CorpusError):
             _participation(126, "../escape")
+
+
+class PlayedAtSourceNaiveTest(unittest.TestCase):
+    """Issue #201: merged-main live shape returns a timezone-naive played_at."""
+
+    def test_naive_played_at_from_bot_api_is_accepted(self) -> None:
+        payload = bot_response(
+            126,
+            [game("game-1", "2026-08-21 03:03:07", [player(126, 0)])],
+        )
+        result = parse_bot_recent_games(payload, 126)
+        self.assertEqual(result[0].played_at, "2026-08-21T03:03:07")
+
+    def test_naive_played_at_canonical_form_carries_no_timezone(self) -> None:
+        participation = Participation("game-1", 126, 0, "2026-08-21 03:03:07")
+        self.assertEqual(participation.played_at, "2026-08-21T03:03:07")
+        self.assertFalse(participation.played_at.endswith("Z"))
+        self.assertNotIn("+", participation.played_at)
+
+    def test_naive_played_at_log_url_preserves_source_calendar_date(self) -> None:
+        participation = Participation("game-1", 126, 0, "2026-08-21 03:03:07")
+        self.assertEqual(
+            resolve_log_url((participation,)),
+            "https://logs.riichi.dev/mjai-logs/2026/08/21/game-1.jsonl.gz",
+        )
+
+    def test_timezone_aware_played_at_remains_supported(self) -> None:
+        participation = Participation("game-1", 126, 0, "2026-09-08T12:34:56Z")
+        self.assertEqual(participation.played_at, "2026-09-08T12:34:56Z")
+
+    def test_equivalent_naive_representations_do_not_conflict_for_shared_game(
+        self,
+    ) -> None:
+        sources = tuple(f"{API_BASE_URL}/bots/{item[0]}" for item in TARGET_BOTS)
+        snapshot = build_snapshot(
+            retrieved_at="2026-09-09T00:00:00Z",
+            source_apis=sources,
+            target_bots=TARGET_BOTS,
+            participations=(
+                Participation("game-1", 126, 0, "2026-08-21 03:03:07", 1, 30000),
+                Participation("game-1", 120, 1, "2026-08-21T03:03:07", 2, 25000),
+            ),
+        )
+        self.assertEqual(snapshot.game_ids, ("game-1",))
+        self.assertEqual(
+            {item.played_at for item in snapshot.participations},
+            {"2026-08-21T03:03:07"},
+        )
+
+    def test_arena_generated_timestamps_still_reject_naive_values(self) -> None:
+        with self.assertRaisesRegex(CorpusError, "must include a timezone"):
+            normalize_timestamp("2026-09-09 00:00:00", "retrieved_at")
+        sources = tuple(f"{API_BASE_URL}/bots/{item[0]}" for item in TARGET_BOTS)
+        with self.assertRaisesRegex(CorpusError, "must include a timezone"):
+            build_snapshot(
+                retrieved_at="2026-09-09 00:00:00",
+                source_apis=sources,
+                target_bots=TARGET_BOTS,
+                participations=(_participation(126),),
+            )
 
 
 class MjaiValidationTest(unittest.TestCase):
