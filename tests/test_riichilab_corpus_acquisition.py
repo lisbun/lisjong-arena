@@ -136,6 +136,14 @@ class PlanSafetyTest(unittest.TestCase):
 
 
 class CacheAndAcquisitionTest(unittest.TestCase):
+    def assert_compliance_boundaries(self, report) -> None:
+        self.assertEqual(report["personal_noncommercial_ml_use_basis"], "GO")
+        self.assertEqual(report["local_retention"], "GO")
+        self.assertEqual(
+            report["redistribution"],
+            "NO-GO pending explicit policy/permission",
+        )
+
     def test_downloads_once_per_game_then_strictly_reuses_cache(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as directory:
             root = Path(directory) / "cache"
@@ -156,6 +164,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
                 snapshot, plan, first, inter_request_sleeper=delays.append
             )
             self.assertEqual(report["bounded_acquisition"], "COMPLETE")
+            self.assert_compliance_boundaries(report)
             self.assertEqual(report["downloaded_count"], 2)
             self.assertEqual(len(first.calls), 2)
             self.assertEqual(delays, [0.5])
@@ -279,8 +288,33 @@ class CacheAndAcquisitionTest(unittest.TestCase):
                 )
             report = read_json(root / REPORT_FILENAME, "report")
             self.assertEqual(report["bounded_acquisition"], "INVALID")
+            self.assert_compliance_boundaries(report)
             self.assertEqual(report["failed_count"], 1)
             self.assertIn("HTTP 404", report["failures"][0]["reason"])
+
+    def test_partial_report_preserves_compliance_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+            root = Path(directory) / "cache"
+            snapshot = _snapshot()
+            plan = create_acquisition_plan(snapshot, root, requested_ceiling=2)
+            transport = FakeTransport(
+                [
+                    HttpResponse(200, {}, synthetic_mjai()),
+                    HttpResponse(404, {}, b"missing"),
+                ]
+            )
+            with self.assertRaises(AcquisitionFailed):
+                acquire_from_plan(
+                    snapshot,
+                    plan,
+                    transport,
+                    inter_request_sleeper=lambda _: None,
+                )
+            report = read_json(root / REPORT_FILENAME, "report")
+            self.assertEqual(report["bounded_acquisition"], "PARTIAL")
+            self.assert_compliance_boundaries(report)
+            self.assertEqual(report["usable_game_count"], 1)
+            self.assertEqual(report["failed_count"], 1)
 
     def test_cache_change_after_plan_requires_replan(self) -> None:
         with tempfile.TemporaryDirectory(dir="/tmp") as directory:
