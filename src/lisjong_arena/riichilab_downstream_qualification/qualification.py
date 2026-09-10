@@ -224,11 +224,9 @@ class _Aggregate:
         if not result.replayable:
             self.games_unsupported += 1
             reason = result.unsupported_reason
-            self.game_unsupported_reasons[
-                UnsupportedReason.EVENT_OUT_OF_ORDER.value
-                if reason is None
-                else reason.value
-            ] += 1
+            if reason is None:
+                raise ValueError("an unsupported game must carry a reason code")
+            self.game_unsupported_reasons[reason.value] += 1
             return
         self.games_replayable += 1
         for decision in result.decisions:

@@ -158,10 +158,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = qualify_local_corpus(
             _load_snapshot(arguments.snapshot), arguments.output_dir
         )
-        # `write_report`がGit worktree外であることを再確認し、既存fileを
-        # 上書きせずに書き出す。
-        write_report(arguments.report_output, result)
+        # 先にstdoutへ出す。`write_report`はGit worktree外であることを
+        # 再確認し、既存fileを上書きせずに書き出すため、destination衝突で
+        # 失敗しても実行結果そのものは失われない。
         _print(result.to_value())
+        write_report(arguments.report_output, result)
         return 0 if result.overall_outcome is not OverallOutcome.STOP_INVALID else 1
 
     output = ensure_outside_git_worktree(arguments.output_dir)

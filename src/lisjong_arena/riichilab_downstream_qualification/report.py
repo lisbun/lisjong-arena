@@ -202,10 +202,6 @@ class DownstreamQualificationReport:
         }
 
 
-def report_filename(snapshot_identity: str) -> str:
-    return f"downstream-qualification-{snapshot_identity}.json"
-
-
 def write_report(destination: Path, report: DownstreamQualificationReport) -> Path:
     """report artifactをGit worktree外へ新規fileとして書き出す。
 
@@ -226,6 +222,5 @@ __all__ = [
     "BehaviorMeasurements",
     "DownstreamQualificationReport",
     "HiddenStateMeasurements",
-    "report_filename",
     "write_report",
 ]

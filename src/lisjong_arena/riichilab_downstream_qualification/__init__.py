@@ -31,7 +31,6 @@ from lisjong_arena.riichilab_downstream_qualification.qualification import (
 )
 from lisjong_arena.riichilab_downstream_qualification.report import (
     DownstreamQualificationReport,
-    report_filename,
     write_report,
 )
 
@@ -44,6 +43,5 @@ __all__ = [
     "SurfaceClassification",
     "UnsupportedReason",
     "qualify_local_corpus",
-    "report_filename",
     "write_report",
 ]

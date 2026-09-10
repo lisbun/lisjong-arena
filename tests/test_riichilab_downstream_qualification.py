@@ -80,10 +80,7 @@ from lisjong_arena.riichilab_downstream_qualification.qualification import (
     qualify_local_corpus,
 )
 from lisjong_arena.riichilab_downstream_qualification.replay import replay_game
-from lisjong_arena.riichilab_downstream_qualification.report import (
-    REPORT_SCHEMA_ID,
-    report_filename,
-)
+from lisjong_arena.riichilab_downstream_qualification.report import REPORT_SCHEMA_ID
 
 _PLAYED_AT = "2026-09-08T12:34:56Z"
 _RETRIEVED_AT = "2026-09-09T00:00:00Z"
@@ -931,7 +928,7 @@ class OfflineCliTests(unittest.TestCase):
             )
             snapshot_path = directory / "snapshot.json"
             write_new_json(snapshot_path, snapshot.to_value())
-            report_path = directory / report_filename(snapshot.snapshot_identity)
+            report_path = directory / "downstream-qualification.json"
             with (
                 mock.patch.object(
                     corpus_main, "StdlibHttpTransport", ForbiddenTransport
