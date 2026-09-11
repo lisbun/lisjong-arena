@@ -93,6 +93,13 @@ from lisjong_arena.riichienv.local_game_runner import (
     SeatDecisionObservation,
     StepDecisionObservation,
 )
+from lisjong_arena.riichienv.round_result import (
+    RoundDrawFact,
+    RoundResult,
+    RoundWinFact,
+    RoundWinScoring,
+    RoundYaku,
+)
 from lisjong_arena.riichienv.round_stats import SeatRoundStats
 from lisjong_arena.single_round_artifact import (
     SingleRoundExecutionProvenance,
@@ -102,18 +109,26 @@ from lisjong_arena.single_round_artifact import (
 )
 
 LOCAL_GAME_RECORD_SCHEMA_ID = "lisjong-arena-durable-local-game-record"
-LOCAL_GAME_RECORD_SCHEMA_VERSION = 1
+LOCAL_GAME_RECORD_SCHEMA_VERSION = 2
+LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS = 1
 LOCAL_GAME_RECORD_BACKEND = "riichienv-local-game-runner"
 
 MANIFEST_FILENAME = "manifest.json"
 OBJECTIVE_TRACE_FILENAME = "objective_trace.json"
 DECISIONS_FILENAME = "decisions.json"
 RESULT_FILENAME = "result.json"
+ROUND_RESULTS_FILENAME = "round_results.json"
 
 _EXPECTED_FILES = frozenset(
-    {MANIFEST_FILENAME, OBJECTIVE_TRACE_FILENAME, DECISIONS_FILENAME, RESULT_FILENAME}
+    {
+        MANIFEST_FILENAME,
+        OBJECTIVE_TRACE_FILENAME,
+        DECISIONS_FILENAME,
+        RESULT_FILENAME,
+        ROUND_RESULTS_FILENAME,
+    }
 )
-_PAYLOAD_NAMES = ("objective_trace", "decisions", "result")
+_PAYLOAD_NAMES = ("objective_trace", "decisions", "result", "round_results")
 _SHA256_LENGTH = 64
 _HEX_DIGITS = frozenset("0123456789abcdef")
 
@@ -204,6 +219,10 @@ class LocalGameRecordSummary:
     steps: int
     decisions: int
     decisions_with_analysis: int
+    rounds: int
+    wins: int
+    wins_with_backend_scoring: int
+    draws: int
 
 
 def _sha256(data: bytes) -> str:
@@ -1173,6 +1192,307 @@ def _parse_result(value: object) -> LocalGameResult:
     )
 
 
+def _yaku_to_value(yaku: RoundYaku) -> dict[str, object]:
+    return {"name": yaku.name, "name_en": yaku.name_en, "yaku_id": yaku.yaku_id}
+
+
+def _scoring_to_value(scoring: RoundWinScoring | None) -> dict[str, object] | None:
+    if scoring is None:
+        return None
+    return {
+        "fu": scoring.fu,
+        "han": scoring.han,
+        "pao_payer": None if scoring.pao_payer is None else int(scoring.pao_payer),
+        "ron_points": scoring.ron_points,
+        "tsumo_points_ko": scoring.tsumo_points_ko,
+        "tsumo_points_oya": scoring.tsumo_points_oya,
+        "yaku": [_yaku_to_value(item) for item in scoring.yaku],
+        "yakuman": scoring.yakuman,
+    }
+
+
+def _win_to_value(win: RoundWinFact, context: str) -> dict[str, object]:
+    return {
+        "deltas": list(win.deltas),
+        "event_sequence": win.event_sequence,
+        "loser_seat": None if win.loser_seat is None else int(win.loser_seat),
+        "scoring": _scoring_to_value(win.scoring),
+        "tsumo": win.tsumo,
+        "ura_indicators": _tiles_to_value(
+            win.ura_indicators, f"{context}.ura_indicators"
+        ),
+        "winner_seat": int(win.winner_seat),
+    }
+
+
+def _draw_to_value(draw: RoundDrawFact | None) -> dict[str, object] | None:
+    if draw is None:
+        return None
+    return {
+        "deltas": list(draw.deltas),
+        "event_sequence": draw.event_sequence,
+        "exhaustive": draw.exhaustive,
+        "reason": draw.reason,
+    }
+
+
+def _round_result_to_value(
+    round_result: RoundResult, context: str
+) -> dict[str, object]:
+    return {
+        "dealer_seat": int(round_result.dealer_seat),
+        "dora_indicators": _tiles_to_value(
+            round_result.dora_indicators, f"{context}.dora_indicators"
+        ),
+        "draw": _draw_to_value(round_result.draw),
+        "end_scores": list(round_result.end_scores),
+        "hand_number": round_result.hand_number,
+        "honba": round_result.honba,
+        "riichi_seats": [int(seat) for seat in round_result.riichi_seats],
+        "riichi_sticks_after": round_result.riichi_sticks_after,
+        "riichi_sticks_before": round_result.riichi_sticks_before,
+        "round_wind": round_result.round_wind.value,
+        "start_event_sequence": round_result.start_event_sequence,
+        "start_scores": list(round_result.start_scores),
+        "wins": [
+            _win_to_value(win, f"{context}.wins[{index}]")
+            for index, win in enumerate(round_result.wins)
+        ],
+    }
+
+
+def _round_results_document(inspection: LocalGameInspection) -> dict[str, Any]:
+    return {
+        "game_mode": inspection.result.game_mode,
+        "round_count": len(inspection.round_results),
+        "rounds": [
+            _round_result_to_value(round_result, f"rounds[{index}]")
+            for index, round_result in enumerate(inspection.round_results)
+        ],
+        "seed": inspection.result.seed,
+    }
+
+
+_ROUND_RESULTS_DOCUMENT_KEYS = {"game_mode", "round_count", "rounds", "seed"}
+_ROUND_RESULT_KEYS = {
+    "dealer_seat",
+    "dora_indicators",
+    "draw",
+    "end_scores",
+    "hand_number",
+    "honba",
+    "riichi_seats",
+    "riichi_sticks_after",
+    "riichi_sticks_before",
+    "round_wind",
+    "start_event_sequence",
+    "start_scores",
+    "wins",
+}
+_WIN_KEYS = {
+    "deltas",
+    "event_sequence",
+    "loser_seat",
+    "scoring",
+    "tsumo",
+    "ura_indicators",
+    "winner_seat",
+}
+_SCORING_KEYS = {
+    "fu",
+    "han",
+    "pao_payer",
+    "ron_points",
+    "tsumo_points_ko",
+    "tsumo_points_oya",
+    "yaku",
+    "yakuman",
+}
+_YAKU_KEYS = {"name", "name_en", "yaku_id"}
+_DRAW_KEYS = {"deltas", "event_sequence", "exhaustive", "reason"}
+
+
+def _parse_four_ints(value: object, context: str) -> tuple[int, int, int, int]:
+    items = tuple(
+        expect_int(item, f"{context}[{index}]")
+        for index, item in enumerate(expect_list(value, context))
+    )
+    if len(items) != 4:
+        raise DurableLocalGameRecordError(f"{context} must contain four values")
+    return items
+
+
+def _parse_scoring(value: object, context: str) -> RoundWinScoring | None:
+    if value is None:
+        return None
+    raw = expect_object(value, _SCORING_KEYS, context)
+    yaku = []
+    for index, item in enumerate(expect_list(raw["yaku"], f"{context}.yaku")):
+        yaku_context = f"{context}.yaku[{index}]"
+        row = expect_object(item, _YAKU_KEYS, yaku_context)
+        yaku.append(
+            _construct(
+                RoundYaku,
+                yaku_context,
+                yaku_id=expect_int(row["yaku_id"], f"{yaku_context}.yaku_id"),
+                name=expect_str(row["name"], f"{yaku_context}.name"),
+                name_en=expect_str(row["name_en"], f"{yaku_context}.name_en"),
+            )
+        )
+    yaku = tuple(yaku)
+    return _construct(
+        RoundWinScoring,
+        context,
+        han=expect_int(raw["han"], f"{context}.han"),
+        fu=expect_int(raw["fu"], f"{context}.fu"),
+        yakuman=expect_bool(raw["yakuman"], f"{context}.yakuman"),
+        yaku=yaku,
+        ron_points=expect_int(raw["ron_points"], f"{context}.ron_points"),
+        tsumo_points_oya=expect_int(
+            raw["tsumo_points_oya"], f"{context}.tsumo_points_oya"
+        ),
+        tsumo_points_ko=expect_int(
+            raw["tsumo_points_ko"], f"{context}.tsumo_points_ko"
+        ),
+        pao_payer=None
+        if raw["pao_payer"] is None
+        else _parse_seat(raw["pao_payer"], f"{context}.pao_payer"),
+    )
+
+
+def _parse_win(value: object, context: str) -> RoundWinFact:
+    raw = expect_object(value, _WIN_KEYS, context)
+    return _construct(
+        RoundWinFact,
+        context,
+        winner_seat=_parse_seat(raw["winner_seat"], f"{context}.winner_seat"),
+        tsumo=expect_bool(raw["tsumo"], f"{context}.tsumo"),
+        loser_seat=None
+        if raw["loser_seat"] is None
+        else _parse_seat(raw["loser_seat"], f"{context}.loser_seat"),
+        deltas=_parse_four_ints(raw["deltas"], f"{context}.deltas"),
+        ura_indicators=_parse_tiles(raw["ura_indicators"], f"{context}.ura_indicators"),
+        event_sequence=expect_int(raw["event_sequence"], f"{context}.event_sequence"),
+        scoring=_parse_scoring(raw["scoring"], f"{context}.scoring"),
+    )
+
+
+def _parse_draw(value: object, context: str) -> RoundDrawFact | None:
+    if value is None:
+        return None
+    raw = expect_object(value, _DRAW_KEYS, context)
+    return _construct(
+        RoundDrawFact,
+        context,
+        reason=expect_str(raw["reason"], f"{context}.reason"),
+        exhaustive=expect_bool(raw["exhaustive"], f"{context}.exhaustive"),
+        deltas=_parse_four_ints(raw["deltas"], f"{context}.deltas"),
+        event_sequence=expect_int(raw["event_sequence"], f"{context}.event_sequence"),
+    )
+
+
+def _parse_round_result(value: object, context: str) -> RoundResult:
+    raw = expect_object(value, _ROUND_RESULT_KEYS, context)
+    return _construct(
+        RoundResult,
+        context,
+        round_wind=_parse_enum(Wind, raw["round_wind"], f"{context}.round_wind"),
+        hand_number=expect_int(raw["hand_number"], f"{context}.hand_number"),
+        honba=expect_int(raw["honba"], f"{context}.honba"),
+        dealer_seat=_parse_seat(raw["dealer_seat"], f"{context}.dealer_seat"),
+        riichi_sticks_before=expect_int(
+            raw["riichi_sticks_before"], f"{context}.riichi_sticks_before"
+        ),
+        riichi_sticks_after=expect_int(
+            raw["riichi_sticks_after"], f"{context}.riichi_sticks_after"
+        ),
+        start_scores=_parse_four_ints(raw["start_scores"], f"{context}.start_scores"),
+        end_scores=_parse_four_ints(raw["end_scores"], f"{context}.end_scores"),
+        dora_indicators=_parse_tiles(
+            raw["dora_indicators"], f"{context}.dora_indicators"
+        ),
+        riichi_seats=tuple(
+            _parse_seat(item, f"{context}.riichi_seats[{index}]")
+            for index, item in enumerate(
+                expect_list(raw["riichi_seats"], f"{context}.riichi_seats")
+            )
+        ),
+        start_event_sequence=expect_int(
+            raw["start_event_sequence"], f"{context}.start_event_sequence"
+        ),
+        wins=tuple(
+            _parse_win(item, f"{context}.wins[{index}]")
+            for index, item in enumerate(expect_list(raw["wins"], f"{context}.wins"))
+        ),
+        draw=_parse_draw(raw["draw"], f"{context}.draw"),
+    )
+
+
+def _parse_round_results(value: object) -> tuple[int, str, tuple[RoundResult, ...]]:
+    raw = expect_object(value, _ROUND_RESULTS_DOCUMENT_KEYS, "round_results")
+    rounds = tuple(
+        _parse_round_result(item, f"round_results.rounds[{index}]")
+        for index, item in enumerate(expect_list(raw["rounds"], "round_results.rounds"))
+    )
+    if expect_int(raw["round_count"], "round_results.round_count") != len(rounds):
+        raise DurableLocalGameRecordError(
+            "round_results.round_count does not match the recorded rounds"
+        )
+    for previous, current in zip(rounds, rounds[1:]):
+        if current.start_scores != previous.end_scores:
+            raise DurableLocalGameRecordError(
+                "recorded round start scores do not continue the previous round"
+            )
+        if current.riichi_sticks_before != previous.riichi_sticks_after:
+            raise DurableLocalGameRecordError(
+                "recorded round riichi sticks do not continue the previous round"
+            )
+    return (
+        expect_int(raw["seed"], "round_results.seed"),
+        expect_str(raw["game_mode"], "round_results.game_mode"),
+        rounds,
+    )
+
+
+def _validate_round_identities(inspection: LocalGameInspection) -> None:
+    """recorded round identityがdecision observation側と同じ局を指すか確認する。
+
+    ``PolicyInput.round``はlisjongが所有するplayer-safe decision semanticsで
+    あり、round-result factはArenaが所有するobjective terminal truthである。
+    ここでは両者のsemanticsを混ぜず、同一runの同じ局を指しているかどうかだけを
+    突き合わせる。
+
+    ある``env.step()``で選ばれたdecisionは、そのstepが生成したeventより前の局に
+    属する。したがって``event_sequence_start``以下で最後に始まった局が、その
+    stepのdecisionが属する局である。
+    """
+    boundaries = [
+        round_result.start_event_sequence for round_result in inspection.round_results
+    ]
+    for step in inspection.step_observations:
+        index = -1
+        for boundary in boundaries:
+            if boundary > step.event_sequence_start:
+                break
+            index += 1
+        if index < 0:
+            raise DurableLocalGameRecordError(
+                "decision step precedes the first recorded round"
+            )
+        round_result = inspection.round_results[index]
+        for decision in step.seat_decisions:
+            observed = decision.policy_input.round
+            if (
+                observed.round_wind is not round_result.round_wind
+                or observed.hand_number != round_result.hand_number
+                or observed.honba != round_result.honba
+                or observed.dealer_seat != round_result.dealer_seat
+            ):
+                raise DurableLocalGameRecordError(
+                    "decision round identity does not match the recorded round result"
+                )
+
+
 def _normalize_policy_identities(
     value: Mapping[Seat, str],
 ) -> tuple[str, str, str, str]:
@@ -1284,12 +1604,14 @@ def save_local_game_record(
         "objective_trace": _trace_document(inspection.game_trace),
         "decisions": _decisions_document(inspection),
         "result": _result_document(inspection.result),
+        "round_results": _round_results_document(inspection),
     }
     data = {name: _canonical_bytes(document) for name, document in documents.items()}
     filenames = {
         "objective_trace": OBJECTIVE_TRACE_FILENAME,
         "decisions": DECISIONS_FILENAME,
         "result": RESULT_FILENAME,
+        "round_results": ROUND_RESULTS_FILENAME,
     }
     payloads = {
         name: _payload_reference(filenames[name], data[name]) for name in _PAYLOAD_NAMES
@@ -1371,10 +1693,13 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
         != LOCAL_GAME_RECORD_SCHEMA_ID
     ):
         raise DurableLocalGameRecordError("unsupported record schema id")
-    if (
-        expect_int(manifest["schema_version"], "manifest.schema_version")
-        != LOCAL_GAME_RECORD_SCHEMA_VERSION
-    ):
+    schema_version = expect_int(manifest["schema_version"], "manifest.schema_version")
+    if schema_version != LOCAL_GAME_RECORD_SCHEMA_VERSION:
+        if schema_version == LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS:
+            raise DurableLocalGameRecordError(
+                "schema version 1 records do not contain per-round result facts "
+                "and are not readable by this version 2 only loader"
+            )
         raise DurableLocalGameRecordError("unsupported record schema version")
     if (
         expect_str(manifest["execution_backend"], "manifest.execution_backend")
@@ -1434,7 +1759,7 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
     expected_names = {payloads[name].filename for name in _PAYLOAD_NAMES} | {
         MANIFEST_FILENAME
     }
-    if expected_names != _EXPECTED_FILES or len(expected_names) != 4:
+    if expected_names != _EXPECTED_FILES or len(expected_names) != len(_EXPECTED_FILES):
         raise DurableLocalGameRecordError("manifest payload filenames are invalid")
 
     payload_documents = {}
@@ -1468,9 +1793,14 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
     decision_seed, decision_mode, step_count, decision_count, steps = _parse_decisions(
         payload_documents["decisions"]
     )
-    if not (seed == trace.seed == result.seed == decision_seed):
+    round_seed, round_mode, round_results = _parse_round_results(
+        payload_documents["round_results"]
+    )
+    if not (seed == trace.seed == result.seed == decision_seed == round_seed):
         raise DurableLocalGameRecordError("record seed fields do not identify one run")
-    if not (game_mode == trace.game_mode == result.game_mode == decision_mode):
+    if not (
+        game_mode == trace.game_mode == result.game_mode == decision_mode == round_mode
+    ):
         raise DurableLocalGameRecordError(
             "record game mode fields do not identify one run"
         )
@@ -1482,7 +1812,9 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
         result=result,
         game_trace=trace,
         step_observations=steps,
+        round_results=round_results,
     )
+    _validate_round_identities(inspection)
     return _construct(
         DurableLocalGameRecord,
         "record",
@@ -1524,6 +1856,21 @@ def summarize_local_game_record(
         decision.policy_input.self_seat
         decision.decision_trace.legal_actions
         decision.decision_trace.selected_action
+    rounds = record.inspection.round_results
+    for round_result in rounds:
+        # Access自体がconsumer seam。round identity / settlement / win facts は
+        # construction時点で検証済みであり、Mahjong ruleを評価せずに読める。
+        round_result.round_wind
+        round_result.end_scores
+        round_result.riichi_seats
+        for win in round_result.wins:
+            win.winner_seat
+            win.tsumo
+            win.ura_indicators
+            win.scoring
+        if round_result.draw is not None:
+            round_result.draw.reason
+            round_result.draw.exhaustive
     result = record.inspection.result
     return LocalGameRecordSummary(
         record_identity=record.record_identity,
@@ -1534,6 +1881,14 @@ def summarize_local_game_record(
         decisions_with_analysis=sum(
             decision.decision_trace.analysis is not None for decision in decisions
         ),
+        rounds=len(rounds),
+        wins=sum(len(round_result.wins) for round_result in rounds),
+        wins_with_backend_scoring=sum(
+            win.scoring is not None
+            for round_result in rounds
+            for win in round_result.wins
+        ),
+        draws=sum(round_result.draw is not None for round_result in rounds),
     )
 
 
@@ -1572,9 +1927,11 @@ __all__ = [
     "LOCAL_GAME_RECORD_BACKEND",
     "LOCAL_GAME_RECORD_SCHEMA_ID",
     "LOCAL_GAME_RECORD_SCHEMA_VERSION",
+    "LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS",
     "MANIFEST_FILENAME",
     "OBJECTIVE_TRACE_FILENAME",
     "RESULT_FILENAME",
+    "ROUND_RESULTS_FILENAME",
     "DurableLocalGameRecord",
     "DurableLocalGameRecordError",
     "LocalGameRecordSummary",

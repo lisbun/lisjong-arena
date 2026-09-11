@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
 
+from _round_result_fixtures import neutral_round_result, scored_round_result
 from lisjong.policies.finite_horizon_completion import (
     FiniteHorizonCandidateEvaluation,
     FiniteHorizonCompletionAnalysis,
@@ -59,6 +60,7 @@ from lisjong_arena.durable_local_game_record import (
     MANIFEST_FILENAME,
     OBJECTIVE_TRACE_FILENAME,
     RESULT_FILENAME,
+    ROUND_RESULTS_FILENAME,
     DurableLocalGameRecordError,
     load_local_game_record,
     run_and_save_local_game_record,
@@ -235,6 +237,7 @@ def _inspection() -> LocalGameInspection:
     return LocalGameInspection(
         result=result,
         game_trace=trace,
+        round_results=(neutral_round_result(),),
         step_observations=(
             StepDecisionObservation(
                 step_ordinal=0,
@@ -378,6 +381,7 @@ class DurableLocalGameRecordRoundTripTest(unittest.TestCase):
         changed_inspection = LocalGameInspection(
             result=inspection.result,
             game_trace=inspection.game_trace,
+            round_results=inspection.round_results,
             step_observations=(changed_step, inspection.step_observations[1]),
         )
         path = self.root / "all-actions"
@@ -438,7 +442,7 @@ class DurableLocalGameRecordRoundTripTest(unittest.TestCase):
     def test_unknown_version_and_tampered_manifest_fail_closed(self):
         for field, value, message in (
             ("schema_id", "future-schema", "unsupported"),
-            ("schema_version", 2, "unsupported"),
+            ("schema_version", 3, "unsupported"),
             ("seed", 8, "identity"),
             ("record_identity", "0" * 64, "identity"),
         ):
@@ -449,6 +453,18 @@ class DurableLocalGameRecordRoundTripTest(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(DurableLocalGameRecordError, message):
                     load_local_game_record(path)
+
+    def test_version_1_records_are_rejected_with_an_explicit_reason(self):
+        path = self._save("legacy-v1")
+        _rewrite_json(
+            path / MANIFEST_FILENAME,
+            lambda row: row.__setitem__("schema_version", 1),
+        )
+
+        with self.assertRaisesRegex(
+            DurableLocalGameRecordError, "schema version 1 records"
+        ):
+            load_local_game_record(path)
 
     def test_wrong_manifest_field_type_uses_the_dedicated_error(self):
         path = self._save()
@@ -530,6 +546,202 @@ class DurableLocalGameRecordRoundTripTest(unittest.TestCase):
         self.assertEqual(tuple(self.root.iterdir()), ())
 
 
+def _scored_inspection() -> LocalGameInspection:
+    """backend-computed scoringまで揃ったround resultを持つinspection。"""
+    base = _inspection()
+    scores = (33_000, 17_000, 25_000, 25_000)
+    result = LocalGameResult(
+        seed=base.result.seed,
+        game_mode=base.result.game_mode,
+        scores=scores,
+        ranks=(1, 4, 2, 3),
+        steps=base.result.steps,
+        decisions=base.result.decisions,
+        seat_round_stats=tuple(
+            SeatRoundStats(
+                start_score=25_000,
+                end_score=scores[seat],
+                won=False,
+                win_points=None,
+                dealt_in=False,
+                deal_in_loss=None,
+                exhaustive_draw=False,
+                tenpai_at_exhaustive_draw=None,
+                first_tenpai_turn=None,
+            )
+            for seat in range(4)
+        ),
+    )
+    return LocalGameInspection(
+        result=result,
+        game_trace=base.game_trace,
+        step_observations=base.step_observations,
+        round_results=(scored_round_result(),),
+    )
+
+
+class DurableLocalGameRecordRoundResultTest(unittest.TestCase):
+    """Issue #207で追加したper-round result payloadのpersistence contract。"""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def _save(self, name: str = "record") -> Path:
+        path = self.root / name
+        save_local_game_record(
+            _scored_inspection(),
+            path,
+            policy_identities=_identities(),
+            max_steps=10,
+            provenance=_provenance(),
+        )
+        return path
+
+    def test_round_results_round_trip_preserves_typed_backend_facts(self):
+        path = self._save()
+
+        record = load_local_game_record(path)
+
+        self.assertEqual(record.inspection.round_results, (scored_round_result(),))
+        (round_result,) = record.inspection.round_results
+        self.assertIs(round_result.round_wind, Wind.EAST)
+        self.assertIs(round_result.dealer_seat, Seat.SEAT_0)
+        self.assertEqual(round_result.riichi_seats, (Seat.SEAT_0,))
+        self.assertEqual(round_result.dora_indicators, (_TILE,))
+        (win,) = round_result.wins
+        self.assertIs(win.winner_seat, Seat.SEAT_0)
+        self.assertIs(win.loser_seat, Seat.SEAT_1)
+        self.assertEqual(win.ura_indicators, (_TILE,))
+        self.assertEqual(win.scoring.han, 4)
+        self.assertEqual(win.scoring.fu, 30)
+        self.assertEqual(win.scoring.yaku[0].name, "立直")
+        self.assertTrue(round_result.win_scoring_available)
+
+    def test_payload_is_listed_in_the_manifest_with_its_own_digest(self):
+        path = self._save()
+
+        record = load_local_game_record(path)
+
+        reference = record.payloads["round_results"]
+        self.assertEqual(reference.filename, ROUND_RESULTS_FILENAME)
+        data = (path / ROUND_RESULTS_FILENAME).read_bytes()
+        self.assertEqual(reference.byte_count, len(data))
+        self.assertEqual(reference.sha256, hashlib.sha256(data).hexdigest())
+
+    def test_missing_round_results_payload_is_rejected(self):
+        path = self._save("missing")
+        (path / ROUND_RESULTS_FILENAME).unlink()
+
+        with self.assertRaisesRegex(DurableLocalGameRecordError, "missing or extra"):
+            load_local_game_record(path)
+
+    def test_tampered_round_results_payload_fails_the_integrity_check(self):
+        path = self._save("tampered")
+        _rewrite_json(
+            path / ROUND_RESULTS_FILENAME,
+            lambda row: row["rounds"][0]["wins"][0]["scoring"].__setitem__("han", 13),
+        )
+
+        with self.assertRaisesRegex(
+            DurableLocalGameRecordError, "round_results payload"
+        ):
+            load_local_game_record(path)
+
+    def test_equal_length_round_results_tamper_fails_the_digest(self):
+        path = self._save("digest")
+        _rewrite_json(
+            path / ROUND_RESULTS_FILENAME,
+            lambda row: row["rounds"][0]["wins"][0]["scoring"].__setitem__("fu", 40),
+        )
+
+        with self.assertRaisesRegex(DurableLocalGameRecordError, "digest mismatch"):
+            load_local_game_record(path)
+
+    def test_rehashed_round_results_tamper_fails_the_record_identity(self):
+        path = self._save("rehashed")
+        _rewrite_json(
+            path / ROUND_RESULTS_FILENAME,
+            lambda row: row["rounds"][0]["wins"][0]["scoring"].__setitem__("han", 13),
+        )
+        payload_data = (path / ROUND_RESULTS_FILENAME).read_bytes()
+
+        def update_manifest(row):
+            row["payloads"]["round_results"]["sha256"] = hashlib.sha256(
+                payload_data
+            ).hexdigest()
+            row["payloads"]["round_results"]["byte_count"] = len(payload_data)
+
+        _rewrite_json(path / MANIFEST_FILENAME, update_manifest)
+
+        with self.assertRaisesRegex(DurableLocalGameRecordError, "identity"):
+            load_local_game_record(path)
+
+    def test_round_identity_that_contradicts_the_decisions_fails_closed(self):
+        path = self._save("identity")
+        _rewrite_json(
+            path / ROUND_RESULTS_FILENAME,
+            lambda row: row["rounds"][0].__setitem__("honba", 3),
+        )
+        _refresh_payload_reference(path, "round_results")
+
+        with self.assertRaisesRegex(
+            DurableLocalGameRecordError, "decision round identity"
+        ):
+            load_local_game_record(path)
+
+    def test_seed_mismatch_in_the_round_payload_fails_closed(self):
+        path = self._save("seed")
+        _rewrite_json(
+            path / ROUND_RESULTS_FILENAME, lambda row: row.__setitem__("seed", 99)
+        )
+        _refresh_payload_reference(path, "round_results")
+
+        with self.assertRaisesRegex(DurableLocalGameRecordError, "seed"):
+            load_local_game_record(path)
+
+    def test_consumer_smoke_reads_round_facts_without_mahjong_rule_execution(self):
+        path = self._save("smoke")
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("the strict loader must not evaluate Mahjong rules")
+
+        with (
+            patch("riichienv.HandEvaluator", forbidden),
+            patch("riichienv.calculate_score", forbidden),
+            patch(
+                "lisjong_arena.riichienv.round_stats.HandEvaluator",
+                forbidden,
+            ),
+        ):
+            record = load_local_game_record(path)
+            summary = summarize_local_game_record(record)
+
+        self.assertEqual(summary.rounds, 1)
+        self.assertEqual(summary.wins, 1)
+        self.assertEqual(summary.wins_with_backend_scoring, 1)
+        self.assertEqual(summary.draws, 0)
+
+    def test_summary_counts_rounds_without_backend_scoring_separately(self):
+        path = self.root / "unscored"
+        save_local_game_record(
+            _inspection(),
+            path,
+            policy_identities=_identities(),
+            max_steps=10,
+            provenance=_provenance(),
+        )
+
+        summary = summarize_local_game_record(load_local_game_record(path))
+
+        self.assertEqual(summary.rounds, 1)
+        self.assertEqual(summary.wins, 0)
+        self.assertEqual(summary.wins_with_backend_scoring, 0)
+        self.assertEqual(summary.draws, 1)
+        self.assertEqual(neutral_round_result().draw.reason, "exhaustive_draw")
+
+
 class DurableLocalGameRecordAcquisitionTest(unittest.TestCase):
     def test_failed_runner_does_not_finalize_a_record(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -574,6 +786,7 @@ class DurableLocalGameRecordAcquisitionTest(unittest.TestCase):
         changed_inspection = LocalGameInspection(
             result=inspection.result,
             game_trace=inspection.game_trace,
+            round_results=inspection.round_results,
             step_observations=(changed_step, inspection.step_observations[1]),
         )
         with tempfile.TemporaryDirectory() as temporary:

@@ -115,10 +115,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             {
                 "decisions": summary.decisions,
                 "decisions_with_analysis": summary.decisions_with_analysis,
+                "draws": summary.draws,
                 "game_mode": summary.game_mode,
                 "record_identity": summary.record_identity,
+                "rounds": summary.rounds,
                 "seed": summary.seed,
                 "steps": summary.steps,
+                "wins": summary.wins,
+                "wins_with_backend_scoring": summary.wins_with_backend_scoring,
             }
         ),
         end="",

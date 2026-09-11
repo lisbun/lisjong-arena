@@ -20,6 +20,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from _round_result_fixtures import FakeRoundResultCollector
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Seat
 
@@ -272,6 +273,10 @@ class LocalGameRunnerTest(unittest.TestCase):
             patch(f"{_MODULE}.RiichiEnv", return_value=env) as env_type,
             patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
             patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
+            patch(
                 f"{_MODULE}.build_decision",
                 side_effect=fake_build_decision,
             ),
@@ -340,6 +345,10 @@ class LocalGameRunnerTest(unittest.TestCase):
                 return_value=_FakeRoundStatsCollector(),
             ),
             patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
+            patch(
                 f"{_MODULE}.build_decision",
                 side_effect=fake_build_decision,
             ),
@@ -386,6 +395,10 @@ class LocalGameRunnerTest(unittest.TestCase):
                         return_value=_FakeRoundStatsCollector(),
                     ),
                     patch(
+                        f"{_MODULE}.RoundResultCollector",
+                        return_value=FakeRoundResultCollector(),
+                    ),
+                    patch(
                         f"{_MODULE}.build_decision",
                         side_effect=fake_build_decision,
                     ),
@@ -409,6 +422,10 @@ class LocalGameRunnerTest(unittest.TestCase):
                 f"{_MODULE}.RoundStatsCollector",
                 return_value=_FakeRoundStatsCollector(),
             ),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
         ):
             runner = LocalGameRunner(_policies(), seed=7)
             with self.assertRaisesRegex(LocalGameRunnerError, "no action requests"):
@@ -423,6 +440,10 @@ class LocalGameRunnerTest(unittest.TestCase):
             patch(
                 f"{_MODULE}.RoundStatsCollector",
                 return_value=_FakeRoundStatsCollector(),
+            ),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
             ),
             patch(
                 f"{_MODULE}.build_decision",
@@ -447,6 +468,10 @@ class LocalGameRunnerTest(unittest.TestCase):
             patch(
                 f"{_MODULE}.RoundStatsCollector",
                 return_value=_FakeRoundStatsCollector(),
+            ),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
             ),
             patch(
                 f"{_MODULE}.build_decision",
@@ -487,6 +512,10 @@ class LocalGameRunnerTest(unittest.TestCase):
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
             patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -533,6 +562,10 @@ class LocalGameRunnerTest(unittest.TestCase):
                 return_value=_FakeRoundStatsCollector(),
             ),
             patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
+            patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
                     context=object(), mapping=_FakeMapping(object())
@@ -553,6 +586,10 @@ class LocalGameRunnerTest(unittest.TestCase):
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
             patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 return_value=SimpleNamespace(
@@ -585,6 +622,10 @@ class LocalGameRunnerTest(unittest.TestCase):
                 f"{_MODULE}.RoundStatsCollector",
                 return_value=_FakeRoundStatsCollector(),
             ),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
         ):
             runner = LocalGameRunner(_policies(), seed=7, trace_sink=sink)
             with self.assertRaises(RuntimeError) as caught:
@@ -605,6 +646,10 @@ class LocalGameRunnerTest(unittest.TestCase):
             patch(
                 f"{_MODULE}.RoundStatsCollector",
                 return_value=_FakeRoundStatsCollector(),
+            ),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
             ),
             patch(
                 f"{_MODULE}.build_decision",
@@ -635,6 +680,10 @@ class LocalGameRunnerTest(unittest.TestCase):
             patch(
                 f"{_MODULE}.RoundStatsCollector",
                 return_value=_FakeRoundStatsCollector(),
+            ),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
             ),
             patch(
                 f"{_MODULE}.build_decision",

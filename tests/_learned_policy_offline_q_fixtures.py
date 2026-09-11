@@ -10,6 +10,7 @@ production側へgeneric backend abstractionは導入しない。
 なしにこのmoduleが直接構築できる。
 """
 
+from _round_result_fixtures import neutral_round_result
 from lisjong.policy_contract import (
     DecisionTrace,
     OwnHandState,
@@ -142,7 +143,12 @@ def make_game_trace(seed: int) -> GameTrace:
     return GameTrace(
         seed=seed,
         game_mode=GAME_MODE,
-        events=(GameTraceEvent(sequence=0, event='{"type": "start_game"}'),),
+        events=tuple(
+            GameTraceEvent(sequence=index, event='{"type": "%s"}' % event_type)
+            for index, event_type in enumerate(
+                ("start_game", "start_kyoku", "ryukyoku")
+            )
+        ),
     )
 
 
@@ -186,6 +192,7 @@ def make_recording(
         result=result,
         game_trace=make_game_trace(seed),
         step_observations=steps,
+        round_results=(neutral_round_result(scores=final_scores),),
     )
     return GameRecording(
         seed=seed,

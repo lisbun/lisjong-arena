@@ -267,7 +267,10 @@ lisjong Policy contract
 [Durable local game record](docs/durable-local-game-record.md)としてoperator指定の
 local pathへ保存できます。これは#55のsame-process inspectionをstrictな
 cross-process readbackへ拡張するArena-owned raw recordであり、training datasetや
-project-wide canonical `GameRecord`ではありません。
+project-wide canonical `GameRecord`ではありません。schema version 2では、完了した
+各局のauthoritative round-result factも保持します。RiichiEnv 0.4.8から取得できない
+result fieldは推測で埋めず、詳細と制約は
+[Durable local game record](docs/durable-local-game-record.md)に記載しています。
 
 ```bash
 python -m lisjong_arena.durable_local_game_record_cli record \
