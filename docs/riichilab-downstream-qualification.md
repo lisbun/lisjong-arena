@@ -41,6 +41,11 @@ manifest_sha256
 置換、raw recordのsilent repair、partial fallbackは行いません。identity gateを通過するまで、
 cached gameのbytesを読みません。
 
+manifestとcache indexはmetadataだけを表すため、identity gateの直後に**全対象gameのcached bytesと
+participation seat joinをpreflightで検証しきってから**、1件目のdownstream replayを開始します。
+raw fileが後から欠損・破損している場合も、一部gameをreplayしたあとで中断するのではなく
+`STOP / INVALID`になります。検証済みbytesはそのままreplayへ渡し、読み直しません。
+
 Issue #170から継承するcompliance boundary（personal non-commercial利用はGO、
 raw-log redistributionとpublic raw datasetはNO-GO）は本toolでも変わりません。
 
@@ -69,6 +74,20 @@ server-only hidden truth（裏dora、終局時公開手牌等）
 
 completed gameやfinal stateから過去decisionを逆算する経路はprimary implementationにしません。
 decision pointのsnapshotは、そのactionが観測される直前にfreezeします。
+
+未知のevent typeはsilentに無視しません。state transitionへ影響しないことをevent semanticsから
+確定できるtype（`start_game` / `end_game` / `none`）だけをallowlistで無視し、それ以外の未知typeは
+`unrecognized_event_type`としてfail closedします。
+
+1つのdahai / kakanに対して複数の`hora`が続くmulti-ron（および明示`none`の連続）では、`hora` /
+`none`の適用を次のnon-response eventまで遅延させ、同じtriggerへのresponse decisionをすべて
+同一のpre-response prefixからfreezeします。先行responseを観測済みのprefixから後続responseのstateを
+freezeしません。
+
+scoreは`start_kyoku`が公開した**局開始時点の値**としてだけ保持します（`round_start_seat_scores` /
+`round_start_riichi_sticks`）。局中のscore移動（立直供託の支払い、和了・流局の点数移動）は
+麻雀rules semanticsに属し、Arenaはそれを再実装しません。局中に観測できる公開事実は
+`accepted_riichi_declarations`（局内で観測したreach成立件数）として別に保持します。
 
 ### decision pointの存在証明
 
@@ -102,6 +121,11 @@ kyuushu_kyuuhai
   両方で一意性を確認します。
 - ron / tsumoは`hora`の`actor` / `target` fieldだけに依存せず、直前のtrigger contextと和了牌の
   一致まで確認します。
+- 明示`none`は、他家のdahai / kakanに対するresponse contextを解決できた場合だけ`PassAction`へ
+  対応付けます。解決できない`none`は`pass_context_unresolved`として計数します。
+- `ryukyoku`は、reason semanticsから九種九牌だと確認できた場合だけ`KyuushuKyuuhaiAction`へ
+  対応付けます。確認できない場合は`ryukyoku_reason_unresolved`であり、abortive draw種別を
+  actorの有無から推測しません。
 - exact対応付けができないdecisionは、silent dropせずreason code付きでunsupportedとして計数します。
 
 ## Hidden-state supervision（Surface B）
@@ -194,6 +218,7 @@ overall outcomeは次の対応で必ずちょうど1つに決まります。
 
 ```text
 corpus / manifest identity不一致    -> STOP / INVALID（run全体）
+cached bytes / seat joinの再検証失敗 -> STOP / INVALID（run全体、replay開始前）
 game単位のstate machine違反         -> そのgameをunsupportedとして計上し、
                                       そのgameのdecisionは採用しない
 decision単位のmapping不能           -> unsupported reasonとして計上する

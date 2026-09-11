@@ -24,6 +24,13 @@ observed MJAI action + decision trigger context
 
 added tileだけから元Ponを推測しない。`player_safe.resolve_kakan_source_pon()`が
 current meld snapshotとserver recordの`consumed`の両方で一意性を確認する。
+
+## pass / abortive draw
+
+明示`none`は、他家のdahai / kakanに対するresponse contextを解決できた場合だけ
+`PassAction`へ対応付ける。`ryukyoku`は、reason semanticsから九種九牌だと確認
+できた場合だけ`KyuushuKyuuhaiAction`へ対応付ける。どちらもactorの有無だけから
+decision種別を推測しない。
 """
 
 from collections.abc import Mapping
@@ -52,6 +59,7 @@ from lisjong_arena.riichilab_downstream_qualification.mjai_events import (
     MjaiReplayError,
     UnsupportedReason,
     event_type,
+    is_kyuushu_kyuuhai,
     read_bool,
     read_optional_seat,
     read_seat,
@@ -275,12 +283,24 @@ def map_observed_action(
         if kind == "hora":
             return _hora(mapping, actor, trigger)
         if kind == "none":
+            # passは他家のdahai / kakanに対するresponseとしてだけ存在証明
+            # できる。trigger contextを解決できない`none`をPassActionへ
+            # 丸めない。
+            if trigger is None or trigger.kind is TriggerKind.SELF_DRAW:
+                return _unsupported(UnsupportedReason.PASS_CONTEXT_UNRESOLVED)
+            if trigger.seat == actor:
+                return _unsupported(UnsupportedReason.PASS_CONTEXT_UNRESOLVED)
             return MappedAction(
                 family=ActionFamily.PASS,
                 action=PassAction(actor=actor),
                 unsupported_reason=None,
             )
         if kind == "ryukyoku":
+            # abortive draw種別をactorの有無から推測しない。九種九牌である
+            # ことをreason semanticsで確認できた場合だけcanonical actionへ
+            # 対応付ける。
+            if not is_kyuushu_kyuuhai(mapping):
+                return _unsupported(UnsupportedReason.RYUKYOKU_REASON_UNRESOLVED)
             return MappedAction(
                 family=ActionFamily.KYUUSHU_KYUUHAI,
                 action=KyuushuKyuuhaiAction(actor=actor),

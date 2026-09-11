@@ -65,11 +65,12 @@ class UnsupportedReason(Enum):
     AMBIGUOUS_CALL_TARGET = "ambiguous_call_target"
     RON_TRIGGER_CONTEXT_UNRESOLVED = "ron_trigger_context_unresolved"
     TSUMO_TRIGGER_CONTEXT_UNRESOLVED = "tsumo_trigger_context_unresolved"
+    PASS_CONTEXT_UNRESOLVED = "pass_context_unresolved"
+    RYUKYOKU_REASON_UNRESOLVED = "ryukyoku_reason_unresolved"
     DECISION_ACTION_NOT_OBSERVED = "decision_action_not_observed"
     UNSUPPORTED_ACTION_FAMILY = "unsupported_action_family"
     INCOMPLETE_INITIAL_HANDS = "incomplete_initial_hands"
     MASKED_OR_MISSING_DRAW = "masked_or_missing_draw"
-    PARTICIPATION_SEAT_JOIN_FAILED = "participation_seat_join_failed"
 
 
 class MjaiReplayError(Exception):
@@ -104,9 +105,7 @@ class VisibleEventKind(Enum):
     IGNORED = "ignored"
 
 
-# 局内でstateを更新するraw action event type。ここに無いevent typeは、
-# 局のstate machineに対してnon-criticalなserver metadataとして扱う
-# (`riichilab_corpus.validation`のforward compatibility方針と同じ)。
+# 局内でstateを更新するraw action event type。
 ACTION_EVENT_TYPES = frozenset(
     {
         "dahai",
@@ -122,17 +121,18 @@ ACTION_EVENT_TYPES = frozenset(
     }
 )
 
-_KNOWN_EVENT_TYPES = ACTION_EVENT_TYPES | {
-    "start_game",
-    "start_kyoku",
-    "tsumo",
-    "reach_accepted",
-    "dora",
-    "end_kyoku",
-    "end_game",
-}
+# 局のstate machineに影響しないことがevent semanticsから確定しているtype。
+# 無視してよいのはこのallowlistだけである。`riichilab_corpus.validation`は
+# acquisition側のforward compatibilityとして未知typeを許容するが、
+# qualificationではその許容をそのまま引き継がない。未知typeがstate
+# transitionへ影響しないことをcorpus側から証明できないためである。
+IGNORABLE_EVENT_TYPES = frozenset({"start_game", "end_game", "none"})
 
 _TERMINAL_EVENT_TYPES = frozenset({"hora", "ryukyoku"})
+
+# 九種九牌流局のreason表記。同じrule semanticsに対する転写揺れだけを受理し、
+# 未知のreasonをこの流局種別へ丸めない。
+KYUUSHU_KYUUHAI_REASONS = frozenset({"kyushukyuhai", "kyuushukyuuhai"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,15 +141,20 @@ class VisibleRoundStart:
 
     `viewer_concealed_tiles`はviewer自身の配牌だけである。他家の`tehais`は
     このvalueへ入らない。
+
+    `round_start_seat_scores`と`round_start_riichi_sticks`は、あくまで
+    `start_kyoku`時点の公開値である。局中のscore移動（立直供託の支払い等）は
+    麻雀rules semanticsに属し、Arenaはそれを再実装しない。したがってこの
+    valueをcurrent scoreとして解釈しない。
     """
 
     prevailing_wind: Wind
     hand_number: int
     honba: int
-    riichi_sticks: int | None
+    round_start_riichi_sticks: int | None
     dealer_seat: Seat
     dora_indicator: Tile
-    seat_scores: tuple[int, ...] | None
+    round_start_seat_scores: tuple[int, ...] | None
     viewer_concealed_tiles: tuple[Tile, ...]
 
 
@@ -181,14 +186,6 @@ def event_type(event: object) -> str:
             UnsupportedReason.MISSING_REQUIRED_FIELD, "event has no type"
         )
     return value
-
-
-def is_known_event_type(value: str) -> bool:
-    return value in _KNOWN_EVENT_TYPES
-
-
-def is_terminal_event_type(value: str) -> bool:
-    return value in _TERMINAL_EVENT_TYPES
 
 
 def read_seat(event: Mapping, field: str) -> Seat:
@@ -297,6 +294,18 @@ def _read_seat_scores(event: Mapping) -> tuple[int, ...] | None:
     return tuple(value)
 
 
+def is_kyuushu_kyuuhai(event: Mapping) -> bool:
+    """`ryukyoku`が九種九牌流局であることを、reason semanticsから確認する。
+
+    reasonが無い、または既知の九種九牌表記でない場合は`False`を返す。
+    abortive draw種別をactorの有無だけから推測しない。
+    """
+    reason = event.get("reason")
+    if type(reason) is not str:
+        return False
+    return reason.replace("_", "").replace("-", "").lower() in KYUUSHU_KYUUHAI_REASONS
+
+
 def read_own_initial_hand(event: Mapping, viewer: Seat) -> tuple[Tile, ...]:
     """`start_kyoku.tehais`から、viewer自身の配牌だけを読み出す。
 
@@ -367,10 +376,10 @@ def _read_round_start(event: Mapping, viewer: Seat) -> VisibleRoundStart:
         prevailing_wind=prevailing_wind,
         hand_number=hand_number,
         honba=honba,
-        riichi_sticks=riichi_sticks,
+        round_start_riichi_sticks=riichi_sticks,
         dealer_seat=read_seat(event, "oya"),
         dora_indicator=read_tile(event, "dora_marker"),
-        seat_scores=_read_seat_scores(event),
+        round_start_seat_scores=_read_seat_scores(event),
         viewer_concealed_tiles=read_own_initial_hand(event, viewer),
     )
 
@@ -454,10 +463,15 @@ def project_visible_event(event: object, viewer: Seat) -> VisibleEvent:
         return VisibleEvent(kind=VisibleEventKind.ROUND_TERMINAL)
     if kind == "end_kyoku":
         return VisibleEvent(kind=VisibleEventKind.ROUND_END)
-    if kind in {"start_game", "end_game", "none"}:
+    if kind in IGNORABLE_EVENT_TYPES:
         return VisibleEvent(kind=VisibleEventKind.IGNORED)
-    # 未知のserver metadataは、局のstate machineへ影響しないものとして無視する。
-    return VisibleEvent(kind=VisibleEventKind.IGNORED)
+    # 未知のevent typeをsilentに無視しない。そのeventがstate transitionへ
+    # 影響しないことをcorpus側から証明できないため、material ambiguityとして
+    # fail closedする。
+    raise MjaiReplayError(
+        UnsupportedReason.UNRECOGNIZED_EVENT_TYPE,
+        "event type is not part of the supported MJAI vocabulary",
+    )
 
 
 def scrub_hidden_fields(event: object, viewer: Seat) -> dict:
@@ -493,6 +507,8 @@ def scrub_hidden_fields(event: object, viewer: Seat) -> dict:
 
 __all__ = [
     "ACTION_EVENT_TYPES",
+    "IGNORABLE_EVENT_TYPES",
+    "KYUUSHU_KYUUHAI_REASONS",
     "MASKED_TILE_MARKERS",
     "MjaiReplayError",
     "UnsupportedReason",
@@ -500,8 +516,7 @@ __all__ = [
     "VisibleEventKind",
     "VisibleRoundStart",
     "event_type",
-    "is_known_event_type",
-    "is_terminal_event_type",
+    "is_kyuushu_kyuuhai",
     "project_visible_event",
     "read_bool",
     "read_int",

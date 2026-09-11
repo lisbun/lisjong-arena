@@ -18,6 +18,14 @@ raw MJAI event stream (1 game)
 target seat数分のdecisionを1 passで収集し、raw logをtarget bot数だけ重複処理
 しない。
 
+## 同じtriggerへの複数response
+
+1つのdahai / kakanに対して複数の`hora`が続くmulti-ronでは、先行responseを
+観測済みのprefixから後続responseのstateをfreezeしない。`hora` / `none`の
+適用は次のnon-response eventまで遅延させ、同じtriggerへのresponse decisionを
+すべて同一のpre-response prefixからfreezeする。同時responseのteacher stateへ
+sibling responseの情報を混入させないためである。
+
 ## decision existenceの扱い
 
 server logへ現れないdecision（callしなかった局面のpass機会など）は、rules
@@ -80,6 +88,13 @@ _RESPONSE_ACTION_TYPES = frozenset({"chi", "pon", "daiminkan", "hora", "none"})
 # pending decisionの解決前に現れてもorder違反にしないevent type。
 # dora表示やreach成立は、decisionを起こしたseatのactionとは独立に届き得る。
 _INTERLEAVABLE_EVENT_TYPES = frozenset({"dora", "reach_accepted"})
+
+# 同じtriggerに対して複数回続き得るresponse action。multi-ronでは1つの
+# dahai / kakanに対して複数の`hora`が連続する。これらのeventの適用を次の
+# non-response eventまで遅延させ、同じtriggerへのresponse decisionが
+# すべて同一のpre-response prefixからfreezeされるようにする。
+# chi / pon / daiminkanは同じtriggerに対して排他なので遅延対象にしない。
+_REPEATABLE_RESPONSE_TYPES = frozenset({"hora", "none"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +205,7 @@ def replay_game(
     rounds = 0
     pending: _PendingDecision | None = None
     trigger: ActionTrigger | None = None
+    deferred: list[tuple] = []
 
     try:
         for event in events:
@@ -256,8 +272,15 @@ def replay_game(
             if kind == "start_kyoku":
                 rounds += 1
 
-            for state, visible in zip(seat_states, projections, strict=True):
-                state.apply(visible)
+            if kind in _REPEATABLE_RESPONSE_TYPES:
+                # 同じtriggerへの後続responseが、先行responseを観測済みの
+                # prefixからfreezeされないよう、適用を遅延させる。
+                deferred.append(projections)
+            else:
+                for pending_projections in deferred:
+                    _apply(seat_states, pending_projections)
+                deferred.clear()
+                _apply(seat_states, projections)
 
             pending, trigger = _advance_context(
                 event,
@@ -266,6 +289,9 @@ def replay_game(
                 trigger=trigger,
                 drawn_tile=drawn_tile,
             )
+        for pending_projections in deferred:
+            _apply(seat_states, pending_projections)
+        deferred.clear()
     except MjaiReplayError as error:
         return GameReplayResult(
             game_id=game_id,
@@ -297,6 +323,11 @@ def replay_game(
         leakage_check_failures=leakage_failures,
         replay_consistency_failures=consistency_failures,
     )
+
+
+def _apply(seat_states: tuple[PlayerSafeRoundState, ...], projections: tuple) -> None:
+    for state, visible in zip(seat_states, projections, strict=True):
+        state.apply(visible)
 
 
 def _current_trigger(

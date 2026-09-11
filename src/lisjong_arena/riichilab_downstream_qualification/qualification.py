@@ -8,7 +8,8 @@ Issue #203のsource boundaryをここで固定する。処理開始前にlocal c
 ```text
 local cache index + snapshot-specific manifest
     -> corpus_identity / manifest_sha256の厳密一致確認
-    -> （ここで初めて）cached bytesのreplay開始
+    -> 全対象gameのcached bytes / seat joinをpreflightで再検証
+    -> （ここで初めて）downstream replay開始
     -> per-game forward replay
     -> aggregate measurements
     -> surface classification + exactly one overall outcome
@@ -28,6 +29,7 @@ from lisjong_arena.riichilab_corpus.models import (
     CorpusError,
     Participation,
     RecentGamesSnapshot,
+    sha256_bytes,
     utc_now_text,
 )
 from lisjong_arena.riichilab_corpus.persistence import (
@@ -45,9 +47,6 @@ from lisjong_arena.riichilab_downstream_qualification.classification import (
     classify_behavior_surface,
     classify_hidden_state_surface,
     combine_overall_outcome,
-)
-from lisjong_arena.riichilab_downstream_qualification.mjai_events import (
-    UnsupportedReason,
 )
 from lisjong_arena.riichilab_downstream_qualification.replay import (
     GameReplayResult,
@@ -132,6 +131,35 @@ def _target_seats(
     return seats
 
 
+def _verify_every_cached_game(
+    output: Path,
+    snapshot: RecentGamesSnapshot,
+    entries: dict[str, dict[str, object]],
+    grouped: dict[str, tuple[Participation, ...]],
+) -> dict[str, tuple[dict[Seat, int], bytes]]:
+    """全対象gameのcached bytesとseat joinを、replay開始前に検証しきる。
+
+    manifestとcache indexはmetadataだけを表す。raw fileが後から欠損・破損して
+    いても、metadataだけの照合は通ってしまう。そのため、1件目のdownstream
+    replayを始める前に`validate_cache_entry()`を全gameで完了させる。
+
+    検証済みbytesはそのまま返し、replay時に読み直さない。読み直すと、
+    preflightとreplayの間でfileが差し替わったときに検証済みでないbytesを
+    replayしてしまう。#170 corpusは固定件数のbounded corpusであり、compressed
+    bytesをin-memoryに保持できる。
+    """
+    verified: dict[str, tuple[dict[Seat, int], bytes]] = {}
+    for game_id in snapshot.game_ids:
+        participations = grouped[game_id]
+        target_seats = _target_seats(participations)
+        validate_cache_entry(output, entries[game_id], participations)
+        payload = (output / GAMES_DIRECTORY / f"{game_id}.jsonl.gz").read_bytes()
+        if sha256_bytes(payload) != entries[game_id]["compressed_sha256"]:
+            raise CorpusError("cached game bytes changed during revalidation")
+        verified[game_id] = (target_seats, payload)
+    return verified
+
+
 class _Aggregate:
     """replay結果をstreamingで畳み込むmutable accumulator。
 
@@ -201,17 +229,6 @@ class _Aggregate:
         self.structural_wait_unsupported_rows: Counter[str] = Counter()
         self.structural_tenpai_true_rows = 0
         self.red_five_rows = 0
-
-    def add_unjoinable_game(self, target_seat_count: int) -> None:
-        """participation seat joinが成立しないgameをunsupportedとして計上する。"""
-        self.games_processed += 1
-        self.games_unsupported += 1
-        self.game_unsupported_reasons[
-            UnsupportedReason.PARTICIPATION_SEAT_JOIN_FAILED.value
-        ] += 1
-        if target_seat_count > 1:
-            self.shared_games += 1
-            self.shared_game_participations += target_seat_count
 
     def add_game(self, result: GameReplayResult, target_seat_count: int) -> None:
         self.games_processed += 1
@@ -378,16 +395,21 @@ def qualify_local_corpus(
         )
 
     grouped = group_participations(snapshot)
+    try:
+        verified = _verify_every_cached_game(output, snapshot, entries, grouped)
+    except CorpusError:
+        return _stop_report(
+            snapshot,
+            stop_reason=(
+                "local cached game bytes or participation seat join failed revalidation"
+            ),
+            corpus_identity=corpus_identity,
+            manifest_sha256=manifest_sha256,
+        )
+
     aggregate = _Aggregate()
     for game_id in snapshot.game_ids:
-        participations = grouped[game_id]
-        try:
-            target_seats = _target_seats(participations)
-        except CorpusError:
-            aggregate.add_unjoinable_game(len(participations))
-            continue
-        validate_cache_entry(output, entries[game_id], participations)
-        payload = (output / GAMES_DIRECTORY / f"{game_id}.jsonl.gz").read_bytes()
+        target_seats, payload = verified[game_id]
         aggregate.add_game(
             replay_game(
                 parse_jsonl_gzip(payload),

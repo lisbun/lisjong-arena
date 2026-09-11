@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest import mock
 
 from _riichilab_downstream_qualification_fixtures import (
+    ALL_FAMILIES_HANDS,
     DEFAULT_HANDS,
     PLAIN_HAND_C,
     PLAIN_HAND_D,
@@ -26,6 +27,8 @@ from _riichilab_downstream_qualification_fixtures import (
     end_kyoku,
     gzip_jsonl,
     hora,
+    none,
+    pon,
     ryukyoku,
     simple_game,
     start_game,
@@ -229,13 +232,53 @@ class PlayerSafeProjectionTests(unittest.TestCase):
                 "hand_number",
                 "honba",
                 "dealer_seat",
-                "seat_scores",
+                "round_start_seat_scores",
                 "own_concealed_tiles",
                 "own_drawn_tile",
                 "public",
                 "visible_event_index",
             },
         )
+
+    def test_unknown_event_type_fails_closed(self) -> None:
+        events = simple_game()
+        events.insert(2, {"type": "riichilab_future_metadata", "anything": [1, 2]})
+        result = _replay(events)
+        self.assertFalse(result.replayable)
+        self.assertIs(
+            result.unsupported_reason, UnsupportedReason.UNRECOGNIZED_EVENT_TYPE
+        )
+        self.assertEqual(result.decisions, ())
+
+    def test_double_ron_freezes_both_winners_from_the_same_prefix(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                dahai(0, "5mr", tsumogiri=True),
+                hora(1, 0, "5mr"),
+                hora(2, 0, "5mr"),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        rons = [
+            decision
+            for decision in result.decisions
+            if decision.mapped.family is ActionFamily.RON
+        ]
+        self.assertEqual(
+            [decision.viewer_seat for decision in rons], [Seat(1), Seat(2)]
+        )
+        # 2人目のron decisionは、1人目のhoraを観測済みのprefixから
+        # freezeされてはならない。
+        self.assertEqual(
+            rons[0].snapshot.visible_event_index,
+            rons[1].snapshot.visible_event_index,
+        )
+        self.assertEqual(rons[0].snapshot.public, rons[1].snapshot.public)
 
     def test_replay_reports_no_leakage_or_inconsistency(self) -> None:
         result = _replay(all_action_families_game())
@@ -422,6 +465,82 @@ class BehaviorSupervisionTests(unittest.TestCase):
             result.unsupported_reason, UnsupportedReason.UNRECOGNIZED_TILE_NOTATION
         )
 
+    def test_pass_without_a_response_context_is_unsupported(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=ALL_FAMILIES_HANDS, dora_marker="8s"),
+                tsumo(0, "2p"),
+                dahai(0, "2p", tsumogiri=True),
+                pon(1, 0, "2p", ["2p", "2p"]),
+                dahai(1, "S"),
+                # 自分のdiscardに対する`none`はresponse contextを解決できない。
+                none(1),
+                ryukyoku(),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        passes = [
+            decision
+            for decision in result.decisions
+            if decision.mapped.unsupported_reason
+            is UnsupportedReason.PASS_CONTEXT_UNRESOLVED
+        ]
+        self.assertEqual(len(passes), 1)
+        self.assertNotIn(
+            ActionFamily.PASS,
+            {decision.mapped.family for decision in result.decisions},
+        )
+
+    def test_pass_with_an_exact_response_context_is_supported(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                dahai(0, "5mr", tsumogiri=True),
+                none(1),
+                ryukyoku(),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        passes = [
+            decision
+            for decision in result.decisions
+            if decision.mapped.family is ActionFamily.PASS
+        ]
+        self.assertEqual(len(passes), 1)
+        self.assertEqual(passes[0].viewer_seat, Seat(1))
+
+    def test_kyuushu_kyuuhai_requires_exact_reason_semantics(self) -> None:
+        def game(terminal: dict) -> list[dict]:
+            return [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                terminal,
+                end_kyoku(),
+                end_game(),
+            ]
+
+        supported = _replay(game(ryukyoku(actor=0)))
+        self.assertTrue(supported.replayable)
+        self.assertEqual(
+            [decision.mapped.family for decision in supported.decisions],
+            [ActionFamily.KYUUSHU_KYUUHAI],
+        )
+
+        unresolved = _replay(game({"type": "ryukyoku", "actor": 0}))
+        self.assertTrue(unresolved.replayable)
+        self.assertEqual(
+            [decision.mapped.unsupported_reason for decision in unresolved.decisions],
+            [UnsupportedReason.RYUKYOKU_REASON_UNRESOLVED],
+        )
+
     def test_masked_draw_fails_closed_for_every_seat(self) -> None:
         for actor in (0, 2):
             with self.subTest(actor=actor):
@@ -482,6 +601,22 @@ class BehaviorSupervisionTests(unittest.TestCase):
 
 class HiddenStateSupervisionTests(unittest.TestCase):
     """Surface B（server-truth hidden-state supervision）のtests。"""
+
+    def test_round_start_scores_are_never_advanced_by_reach_accepted(self) -> None:
+        result = _replay(all_action_families_game())
+        after_reach = [
+            decision
+            for decision in result.decisions
+            if decision.snapshot.hand_number == 1
+            and decision.snapshot.public.accepted_riichi_declarations > 0
+        ]
+        self.assertTrue(after_reach)
+        for decision in after_reach:
+            # scoreは`start_kyoku`が公開した局開始時点の値のままである。
+            # 立直供託の支払いはrules semanticsであり、Arenaは再計算しない。
+            self.assertEqual(decision.snapshot.round_start_seat_scores, (25000,) * 4)
+            self.assertEqual(decision.snapshot.public.round_start_riichi_sticks, 0)
+            self.assertEqual(decision.snapshot.public.accepted_riichi_declarations, 1)
 
     def test_hidden_truth_is_joined_to_the_same_decision_identity(self) -> None:
         result = _replay(simple_game(), {Seat(0): 126})
@@ -765,6 +900,43 @@ class CorpusQualificationTests(unittest.TestCase):
             report = qualify_local_corpus(snapshot, Path(raw))
         self.assertIs(report.overall_outcome, OverallOutcome.STOP_INVALID)
         self.assertIn("cache", report.stop_reason)
+
+    def test_tampered_raw_bytes_stop_before_any_replay(self) -> None:
+        snapshot = _snapshot_for({"game-a": [(126, 0)], "game-b": [(294, 1)]})
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            manifest = _build_local_cache(
+                directory,
+                {
+                    "game-a": gzip_jsonl(all_action_families_game()),
+                    "game-b": gzip_jsonl(simple_game()),
+                },
+                snapshot,
+            )
+            # cache indexとmanifestはそのままに、raw fileだけを差し替える。
+            (directory / "games" / "game-b.jsonl.gz").write_bytes(b"not a gzip stream")
+
+            def forbidden_replay(*args, **kwargs):
+                raise AssertionError("replay must not start before revalidation")
+
+            with (
+                mock.patch.object(
+                    qualification,
+                    "EXPECTED_CORPUS_IDENTITY",
+                    manifest["corpus_identity"],
+                ),
+                mock.patch.object(
+                    qualification,
+                    "EXPECTED_MANIFEST_SHA256",
+                    manifest["manifest_sha256"],
+                ),
+                mock.patch.object(qualification, "replay_game", forbidden_replay),
+            ):
+                report = qualify_local_corpus(snapshot, directory)
+        self.assertIs(report.overall_outcome, OverallOutcome.STOP_INVALID)
+        self.assertIn("revalidation", report.stop_reason)
+        self.assertIsNone(report.behavior)
+        self.assertEqual(report.corpus_identity, manifest["corpus_identity"])
 
     def test_matching_identity_produces_a_classified_report(self) -> None:
         snapshot = _snapshot_for({"game-a": [(126, 0), (120, 2)], "game-b": [(294, 1)]})

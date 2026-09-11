@@ -80,7 +80,12 @@ class PlayerSafePublicView:
     discards: tuple[tuple[Discard, ...], ...]
     riichi_states: tuple[RiichiState, ...]
     dora_indicators: tuple[Tile, ...]
-    riichi_sticks: int | None
+    accepted_riichi_declarations: int
+    """この局で成立した立直の件数。局内で観測したreach_accepted数である。"""
+
+    round_start_riichi_sticks: int | None
+    """`start_kyoku`時点の供託棒数。局中の増減を含まない。"""
+
     draw_counts: tuple[int, ...]
 
 
@@ -91,6 +96,13 @@ class PlayerSafeDecisionSnapshot:
     fieldの一覧そのものがinformation-flow boundaryの宣言である。opponent
     concealed hand、wall、未来event、terminal resultに対応するfieldは存在
     しない。
+
+    `round_start_seat_scores`はcurrent scoreではない。局中のscore移動
+    （立直供託の支払い、和了・流局の点数移動）は麻雀rules semanticsに属し、
+    Arenaはそれを再実装しない。したがってscoreは`start_kyoku`が公開した
+    局開始時点の値としてだけ保持し、consumerがcurrent scoreと誤認しないよう
+    field名とdocstringで固定する。局中に観測できる公開事実は
+    `accepted_riichi_declarations`として別に持つ。
     """
 
     viewer_seat: Seat
@@ -99,7 +111,7 @@ class PlayerSafeDecisionSnapshot:
     hand_number: int
     honba: int
     dealer_seat: Seat
-    seat_scores: tuple[int, ...] | None
+    round_start_seat_scores: tuple[int, ...] | None
     own_concealed_tiles: tuple[Tile, ...]
     own_drawn_tile: Tile | None
     public: PlayerSafePublicView
@@ -157,8 +169,9 @@ class PlayerSafeRoundState:
         "_hand_number",
         "_honba",
         "_dealer_seat",
-        "_seat_scores",
-        "_riichi_sticks",
+        "_round_start_seat_scores",
+        "_round_start_riichi_sticks",
+        "_accepted_riichi_declarations",
         "_own_concealed",
         "_own_drawn",
         "_melds",
@@ -180,8 +193,9 @@ class PlayerSafeRoundState:
         self._hand_number = 0
         self._honba = 0
         self._dealer_seat: Seat | None = None
-        self._seat_scores: tuple[int, ...] | None = None
-        self._riichi_sticks: int | None = None
+        self._round_start_seat_scores: tuple[int, ...] | None = None
+        self._round_start_riichi_sticks: int | None = None
+        self._accepted_riichi_declarations = 0
         self._own_concealed: tuple[Tile, ...] = ()
         self._own_drawn: Tile | None = None
         self._melds: list[tuple[PublicMeld, ...]] = [() for _ in range(_SEAT_COUNT)]
@@ -229,7 +243,8 @@ class PlayerSafeRoundState:
             discards=tuple(self._discards),
             riichi_states=tuple(self._riichi_states),
             dora_indicators=self._dora_indicators,
-            riichi_sticks=self._riichi_sticks,
+            accepted_riichi_declarations=self._accepted_riichi_declarations,
+            round_start_riichi_sticks=self._round_start_riichi_sticks,
             draw_counts=tuple(self._draw_counts),
         )
 
@@ -250,7 +265,7 @@ class PlayerSafeRoundState:
             hand_number=self._hand_number,
             honba=self._honba,
             dealer_seat=self._dealer_seat,
-            seat_scores=self._seat_scores,
+            round_start_seat_scores=self._round_start_seat_scores,
             own_concealed_tiles=self._own_concealed,
             own_drawn_tile=self._own_drawn,
             public=self.public_view(),
@@ -317,8 +332,9 @@ class PlayerSafeRoundState:
         self._hand_number = start.hand_number
         self._honba = start.honba
         self._dealer_seat = start.dealer_seat
-        self._seat_scores = start.seat_scores
-        self._riichi_sticks = start.riichi_sticks
+        self._round_start_seat_scores = start.round_start_seat_scores
+        self._round_start_riichi_sticks = start.round_start_riichi_sticks
+        self._accepted_riichi_declarations = 0
         self._own_concealed = start.viewer_concealed_tiles
         self._own_drawn = None
         self._melds = [() for _ in range(_SEAT_COUNT)]
@@ -433,8 +449,7 @@ class PlayerSafeRoundState:
                 "reach_accepted without a preceding reach declaration",
             )
         self._riichi_states[int(actor)] = RiichiState.ACCEPTED
-        if self._riichi_sticks is not None:
-            self._riichi_sticks += 1
+        self._accepted_riichi_declarations += 1
 
     def _consume_called_discard(
         self, target: Seat, actor: Seat, called_tile: Tile
