@@ -1,4 +1,11 @@
-"""Operator CLI for snapshot -> plan -> bounded acquisition -> validation/report."""
+"""Operator CLI for snapshot -> plan -> bounded acquisition -> validation/report.
+
+`qualify-downstream`だけはIssue #203のoffline qualificationであり、network
+acquisition pathを一切呼ばない。この`__main__`はoperator entry pointとしての
+composition rootであり、`riichilab_corpus`のlibrary moduleから
+`riichilab_downstream_qualification`へ依存しない（依存方向は
+qualification -> corpusの一方向のままである）。
+"""
 
 from __future__ import annotations
 
@@ -27,6 +34,13 @@ from lisjong_arena.riichilab_corpus.persistence import (
     read_json,
     write_new_json,
 )
+from lisjong_arena.riichilab_downstream_qualification.classification import (
+    OverallOutcome,
+)
+from lisjong_arena.riichilab_downstream_qualification.qualification import (
+    qualify_local_corpus,
+)
+from lisjong_arena.riichilab_downstream_qualification.report import write_report
 
 
 def _load_snapshot(path: Path) -> RecentGamesSnapshot:
@@ -74,6 +88,17 @@ def _parser() -> argparse.ArgumentParser:
         "report", help="print the most recent local completion report"
     )
     report.add_argument("--output-dir", type=Path, required=True)
+
+    qualify = commands.add_parser(
+        "qualify-downstream",
+        help=(
+            "offline Issue #203 downstream reconstruction qualification "
+            "against the locked local corpus"
+        ),
+    )
+    qualify.add_argument("--snapshot", type=Path, required=True)
+    qualify.add_argument("--output-dir", type=Path, required=True)
+    qualify.add_argument("--report-output", type=Path, required=True)
     return parser
 
 
@@ -126,6 +151,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 0
+
+    if arguments.command == "qualify-downstream":
+        # Issue #203はofflineのみである。snapshot / acquire pathと
+        # `StdlibHttpTransport`はこのbranchから呼ばない。
+        result = qualify_local_corpus(
+            _load_snapshot(arguments.snapshot), arguments.output_dir
+        )
+        # 先にstdoutへ出す。`write_report`はGit worktree外であることを
+        # 再確認し、既存fileを上書きせずに書き出すため、destination衝突で
+        # 失敗しても実行結果そのものは失われない。
+        _print(result.to_value())
+        write_report(arguments.report_output, result)
+        return 0 if result.overall_outcome is not OverallOutcome.STOP_INVALID else 1
 
     output = ensure_outside_git_worktree(arguments.output_dir)
     report = read_json(output / REPORT_FILENAME, "acquisition report")
