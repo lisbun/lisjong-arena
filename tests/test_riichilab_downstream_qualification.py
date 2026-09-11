@@ -27,6 +27,7 @@ from _riichilab_downstream_qualification_fixtures import (
     end_kyoku,
     gzip_jsonl,
     hora,
+    kakan,
     none,
     pon,
     ryukyoku,
@@ -424,6 +425,186 @@ class BehaviorSupervisionTests(unittest.TestCase):
         self.assertEqual(ron.target, Seat(3))
         self.assertEqual(tsumo_win.actor, Seat(2))
 
+    def test_tsumo_hora_without_pai_uses_the_self_drawn_tile(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                hora(0, 0),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        self.assertEqual(
+            [decision.mapped.family for decision in result.decisions],
+            [ActionFamily.TSUMO],
+        )
+        action = result.decisions[0].mapped.action
+        self.assertEqual(action.actor, Seat(0))
+        self.assertEqual(
+            action.winning_tile, Tile(TileType(TileCategory.MANZU, 5), True)
+        )
+
+    def test_ron_hora_without_pai_uses_the_discarded_tile(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                dahai(0, "5mr", tsumogiri=True),
+                hora(2, 0),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        ron = next(
+            decision.mapped.action
+            for decision in result.decisions
+            if decision.mapped.family is ActionFamily.RON
+        )
+        self.assertEqual(ron.actor, Seat(2))
+        self.assertEqual(ron.target, Seat(0))
+        self.assertEqual(ron.winning_tile, Tile(TileType(TileCategory.MANZU, 5), True))
+
+    def test_chankan_ron_without_pai_uses_the_added_tile(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=ALL_FAMILIES_HANDS, dora_marker="8s"),
+                tsumo(0, "2p"),
+                dahai(0, "2p", tsumogiri=True),
+                pon(1, 0, "2p", ["2p", "2p"]),
+                dahai(1, "S"),
+                tsumo(2, "1p"),
+                dahai(2, "1p", tsumogiri=True),
+                tsumo(3, "5s"),
+                dahai(3, "5s", tsumogiri=True),
+                tsumo(0, "9m"),
+                dahai(0, "9m", tsumogiri=True),
+                tsumo(1, "2p"),
+                kakan(1, "2p", ["2p", "2p", "2p"]),
+                hora(2, 1),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        ron = next(
+            decision.mapped.action
+            for decision in result.decisions
+            if decision.mapped.family is ActionFamily.RON
+        )
+        self.assertEqual(ron.target, Seat(1))
+        self.assertEqual(ron.winning_tile, Tile(TileType(TileCategory.PINZU, 2)))
+
+    def test_hora_without_pai_and_without_an_exact_trigger_is_unsupported(self) -> None:
+        cases = (
+            # 直前のdiscardはseat0のものであり、seat1をtargetにできない。
+            (hora(2, 1), UnsupportedReason.RON_TRIGGER_CONTEXT_UNRESOLVED),
+            # 他家のdiscard contextでtsumo（actor == target）は主張できない。
+            (hora(2, 2), UnsupportedReason.TSUMO_TRIGGER_CONTEXT_UNRESOLVED),
+            # 自分のdiscardに対するronも主張できない。
+            (hora(0, 0), UnsupportedReason.TSUMO_TRIGGER_CONTEXT_UNRESOLVED),
+        )
+        for terminal, expected in cases:
+            with self.subTest(actor=terminal["actor"], target=terminal["target"]):
+                result = _replay(
+                    [
+                        start_game(),
+                        start_kyoku(hands=DEFAULT_HANDS),
+                        tsumo(0, "5mr"),
+                        dahai(0, "5mr", tsumogiri=True),
+                        terminal,
+                        end_kyoku(),
+                        end_game(),
+                    ]
+                )
+                self.assertTrue(result.replayable)
+                unsupported = [
+                    decision
+                    for decision in result.decisions
+                    if decision.mapped.family is ActionFamily.UNSUPPORTED
+                ]
+                self.assertEqual(len(unsupported), 1)
+                self.assertIs(unsupported[0].mapped.unsupported_reason, expected)
+
+    def test_double_ron_without_pai_shares_the_same_trigger_tile(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                dahai(0, "5mr", tsumogiri=True),
+                hora(1, 0),
+                hora(2, 0),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        rons = [
+            decision
+            for decision in result.decisions
+            if decision.mapped.family is ActionFamily.RON
+        ]
+        self.assertEqual(
+            [decision.viewer_seat for decision in rons], [Seat(1), Seat(2)]
+        )
+        red_five = Tile(TileType(TileCategory.MANZU, 5), True)
+        self.assertEqual(
+            [decision.mapped.action.winning_tile for decision in rons],
+            [red_five, red_five],
+        )
+        self.assertEqual(
+            rons[0].snapshot.visible_event_index, rons[1].snapshot.visible_event_index
+        )
+        self.assertEqual(rons[0].snapshot.public, rons[1].snapshot.public)
+
+    def test_hora_without_pai_does_not_depend_on_later_events(self) -> None:
+        # `pai`が無いhoraの和了牌はprefixだけから決まる。event streamをhoraで
+        # 打ち切っても、後続eventを付けても、同じactionへ対応付かねばならない。
+        prefix = [
+            start_game(),
+            start_kyoku(hands=DEFAULT_HANDS),
+            tsumo(0, "5mr"),
+            dahai(0, "5mr", tsumogiri=True),
+            hora(2, 0),
+        ]
+        truncated = _replay(list(prefix))
+        continued = _replay([*prefix, end_kyoku(), end_game()])
+        self.assertTrue(truncated.replayable)
+        self.assertTrue(continued.replayable)
+        self.assertEqual(
+            [decision.mapped for decision in truncated.decisions],
+            [decision.mapped for decision in continued.decisions],
+        )
+        self.assertEqual(
+            [decision.snapshot for decision in truncated.decisions],
+            [decision.snapshot for decision in continued.decisions],
+        )
+
+    def test_hora_pai_inconsistent_with_the_trigger_is_unsupported(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                dahai(0, "5mr", tsumogiri=True),
+                # 明示`pai`はtrigger牌と一致しなければならない（赤5 identityを含む）。
+                hora(2, 0, "5m"),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        self.assertEqual(
+            [decision.mapped.unsupported_reason for decision in result.decisions][-1],
+            UnsupportedReason.RON_TRIGGER_CONTEXT_UNRESOLVED,
+        )
+
     def test_unsupported_decision_is_counted_not_dropped(self) -> None:
         events = [
             start_game(),
@@ -527,18 +708,108 @@ class BehaviorSupervisionTests(unittest.TestCase):
                 end_game(),
             ]
 
-        supported = _replay(game(ryukyoku(actor=0)))
-        self.assertTrue(supported.replayable)
-        self.assertEqual(
-            [decision.mapped.family for decision in supported.decisions],
-            [ActionFamily.KYUUSHU_KYUUHAI],
-        )
+        # current RiichiEnvのpublic MJAI fixtureは`yao9`、他の表記も同じrule
+        # semanticsを指す限り受理する。actorの有無は問わない。
+        for terminal in (
+            ryukyoku(actor=0, reason="kyushukyuhai"),
+            ryukyoku(reason="yao9"),
+            ryukyoku(actor=0, reason="yao9"),
+        ):
+            with self.subTest(terminal=sorted(terminal)):
+                supported = _replay(game(terminal))
+                self.assertTrue(supported.replayable)
+                self.assertEqual(
+                    [decision.mapped.family for decision in supported.decisions],
+                    [ActionFamily.KYUUSHU_KYUUHAI],
+                )
+                self.assertEqual(
+                    [decision.mapped.action.actor for decision in supported.decisions],
+                    [Seat(0)],
+                )
 
-        unresolved = _replay(game({"type": "ryukyoku", "actor": 0}))
-        self.assertTrue(unresolved.replayable)
+        for terminal in (ryukyoku(actor=0), ryukyoku(), ryukyoku(reason="howanpai")):
+            with self.subTest(unresolved=sorted(terminal)):
+                unresolved = _replay(game(terminal))
+                self.assertTrue(unresolved.replayable)
+                self.assertEqual(
+                    [
+                        decision.mapped.unsupported_reason
+                        for decision in unresolved.decisions
+                    ],
+                    [UnsupportedReason.RYUKYOKU_REASON_UNRESOLVED],
+                )
+
+    def test_ryukyoku_actor_conflicting_with_the_pending_decision_fails_closed(
+        self,
+    ) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=DEFAULT_HANDS),
+                tsumo(0, "5mr"),
+                ryukyoku(actor=1, reason="yao9"),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertFalse(result.replayable)
+        self.assertIs(result.unsupported_reason, UnsupportedReason.EVENT_OUT_OF_ORDER)
+
+    def test_yao9_without_a_turn_decision_is_never_kyuushu_kyuuhai(self) -> None:
+        # 通常流局（および九種九牌reasonを持つ終局eventがdecision contextを
+        # 伴わずに現れた場合）は、teacher actionを結び付けられるseatが無い。
+        for terminal in (ryukyoku(), ryukyoku(reason="yao9"), ryukyoku(actor=1)):
+            with self.subTest(terminal=sorted(terminal)):
+                result = _replay(
+                    [
+                        start_game(),
+                        start_kyoku(hands=DEFAULT_HANDS),
+                        tsumo(0, "5mr"),
+                        dahai(0, "5mr", tsumogiri=True),
+                        terminal,
+                        end_kyoku(),
+                        end_game(),
+                    ]
+                )
+                self.assertTrue(result.replayable)
+                # 直前のdahai decisionは残り、流局はdecisionを増やさない。
+                self.assertEqual(
+                    [decision.mapped.family for decision in result.decisions],
+                    [ActionFamily.DISCARD_TSUMOGIRI],
+                )
+
+    def test_ryukyoku_on_a_non_turn_decision_stays_unsupported(self) -> None:
+        result = _replay(
+            [
+                start_game(),
+                start_kyoku(hands=ALL_FAMILIES_HANDS, dora_marker="8s"),
+                tsumo(0, "2p"),
+                dahai(0, "2p", tsumogiri=True),
+                pon(1, 0, "2p", ["2p", "2p"]),
+                # 打牌が求められているdecisionへ終局eventが届いた場合、
+                # 九種九牌reasonであってもcanonical actionを発明しない。
+                ryukyoku(reason="yao9"),
+                end_kyoku(),
+                end_game(),
+            ]
+        )
+        self.assertTrue(result.replayable)
+        families = [decision.mapped.family for decision in result.decisions]
         self.assertEqual(
-            [decision.mapped.unsupported_reason for decision in unresolved.decisions],
-            [UnsupportedReason.RYUKYOKU_REASON_UNRESOLVED],
+            families,
+            [
+                ActionFamily.DISCARD_TSUMOGIRI,
+                ActionFamily.PON,
+                ActionFamily.UNSUPPORTED,
+            ],
+        )
+        self.assertIs(
+            result.decisions[-1].mapped.unsupported_reason,
+            UnsupportedReason.DECISION_ACTION_NOT_OBSERVED,
+        )
+        self.assertIs(
+            result.decisions[-1].snapshot.decision_kind,
+            DecisionKind.POST_CALL_DISCARD,
         )
 
     def test_masked_draw_fails_closed_for_every_seat(self) -> None:

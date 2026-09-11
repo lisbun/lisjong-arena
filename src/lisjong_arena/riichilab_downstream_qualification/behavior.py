@@ -67,6 +67,7 @@ from lisjong_arena.riichilab_downstream_qualification.mjai_events import (
     read_tiles,
 )
 from lisjong_arena.riichilab_downstream_qualification.player_safe import (
+    DecisionKind,
     resolve_kakan_source_pon,
 )
 
@@ -208,34 +209,55 @@ def _kakan(event: Mapping, actor: Seat, actor_melds: tuple[PublicMeld, ...]):
     )
 
 
+def _declared_winning_tile(event: Mapping) -> Tile | None:
+    """`hora.pai`を任意fieldとして読む。
+
+    current RiichiEnvのpublic MJAI parserは`hora`の`pai`をoptionalとして定義し、
+    public fixtureにも`pai`を持たない`hora`が現れる。欠落（fieldが無い、または
+    明示的な`null`）は`None`として扱い、存在する場合だけ牌として解釈する。
+    牌として解釈できない値はfail closedのまま残す。
+    """
+    if event.get("pai") is None:
+        return None
+    return read_tile(event, "pai")
+
+
 def _hora(event: Mapping, actor: Seat, trigger: ActionTrigger | None) -> MappedAction:
-    winning_tile = read_tile(event, "pai")
+    """`hora`をron / tsumoへ、trigger contextから曖昧さなく対応付ける。
+
+    和了牌は既に確立済みのtrigger（自身のtsumo牌 / 他家のdahai牌 / 他家のkakanの
+    加槓牌）から決まる。`pai`が存在する場合はその一致を従来どおり検証し、
+    存在しない場合だけtriggerから導出する。導出に使うのは常に「このdecisionより
+    前に観測済みのevent」だけであり、後続eventは参照しない。
+    """
     target = read_optional_seat(event, "target")
     if target is None:
         return _unsupported(UnsupportedReason.MISSING_REQUIRED_FIELD)
+    declared_tile = _declared_winning_tile(event)
+
     if target == actor:
         if (
             trigger is None
             or trigger.kind is not TriggerKind.SELF_DRAW
             or trigger.seat != actor
-            or trigger.tile != winning_tile
+            or (declared_tile is not None and trigger.tile != declared_tile)
         ):
             return _unsupported(UnsupportedReason.TSUMO_TRIGGER_CONTEXT_UNRESOLVED)
         return MappedAction(
             family=ActionFamily.TSUMO,
-            action=TsumoAction(actor=actor, winning_tile=winning_tile),
+            action=TsumoAction(actor=actor, winning_tile=trigger.tile),
             unsupported_reason=None,
         )
     if (
         trigger is None
         or trigger.kind not in {TriggerKind.DISCARD, TriggerKind.KAKAN}
         or trigger.seat != target
-        or trigger.tile != winning_tile
+        or (declared_tile is not None and trigger.tile != declared_tile)
     ):
         return _unsupported(UnsupportedReason.RON_TRIGGER_CONTEXT_UNRESOLVED)
     return MappedAction(
         family=ActionFamily.RON,
-        action=RonAction(actor=actor, target=target, winning_tile=winning_tile),
+        action=RonAction(actor=actor, target=target, winning_tile=trigger.tile),
         unsupported_reason=None,
     )
 
@@ -246,15 +268,21 @@ def map_observed_action(
     actor: Seat,
     actor_melds: tuple[PublicMeld, ...],
     trigger: ActionTrigger | None,
+    decision_kind: DecisionKind,
 ) -> MappedAction:
     """1件の観測済みaction eventをcanonical `InternalAction`へ対応付ける。
 
     exact対応付けが成立しない場合だけ、`UNSUPPORTED`とreason codeを返す。
     lisjong側のvalue契約違反（例: chiのtargetが上家でない）も例外にせず、
     ambiguous mappingとして計数する。
+
+    `decision_kind`は、そのactionが観測されたdecision contextである。九種九牌の
+    ように、rule上ひとつのdecision contextでしか選べないactionの判定に使う。
     """
     if not isinstance(actor, Seat):
         raise TypeError("actor must be a Seat")
+    if not isinstance(decision_kind, DecisionKind):
+        raise TypeError("decision_kind must be a DecisionKind")
     if not isinstance(event, Mapping):
         return _unsupported(UnsupportedReason.MISSING_REQUIRED_FIELD)
     mapping = event
@@ -296,9 +324,17 @@ def map_observed_action(
                 unsupported_reason=None,
             )
         if kind == "ryukyoku":
-            # abortive draw種別をactorの有無から推測しない。九種九牌である
-            # ことをreason semanticsで確認できた場合だけcanonical actionへ
-            # 対応付ける。
+            # abortive draw種別をactorの有無から推測しない。九種九牌宣言は
+            # 自身のtsumo直後のTURN decisionでしか行えないため、次の両方を
+            # 満たす場合だけcanonical actionへ対応付ける。
+            #
+            #   1. reason semanticsが九種九牌を示している
+            #   2. そのdecision contextが自身のtsumo直後のTURNである
+            #
+            # 通常流局（exhaustive draw等）はTURN decisionを伴わないため、
+            # この経路でKyuushuKyuuhaiActionへ分類されることはない。
+            if decision_kind is not DecisionKind.TURN:
+                return _unsupported(UnsupportedReason.DECISION_ACTION_NOT_OBSERVED)
             if not is_kyuushu_kyuuhai(mapping):
                 return _unsupported(UnsupportedReason.RYUKYOKU_REASON_UNRESOLVED)
             return MappedAction(

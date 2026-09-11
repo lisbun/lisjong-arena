@@ -130,9 +130,10 @@ IGNORABLE_EVENT_TYPES = frozenset({"start_game", "end_game", "none"})
 
 _TERMINAL_EVENT_TYPES = frozenset({"hora", "ryukyoku"})
 
-# 九種九牌流局のreason表記。同じrule semanticsに対する転写揺れだけを受理し、
-# 未知のreasonをこの流局種別へ丸めない。
-KYUUSHU_KYUUHAI_REASONS = frozenset({"kyushukyuhai", "kyuushukyuuhai"})
+# 九種九牌流局のreason表記。同じrule semanticsを表す既知の表記だけを受理し、
+# 未知のreasonをこの流局種別へ丸めない。`yao9`はcurrent RiichiEnvのpublic MJAI
+# fixtureが九種九牌に使う表記である。
+KYUUSHU_KYUUHAI_REASONS = frozenset({"kyushukyuhai", "kyuushukyuuhai", "yao9"})
 
 
 @dataclass(frozen=True, slots=True)
