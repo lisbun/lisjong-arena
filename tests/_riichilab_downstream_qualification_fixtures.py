@@ -152,18 +152,30 @@ def dora(dora_marker: str) -> dict:
     return {"type": "dora", "dora_marker": dora_marker}
 
 
-def hora(actor: int, target: int, pai: str, *, ura: list[str] | None = None) -> dict:
-    event = {"type": "hora", "actor": actor, "target": target, "pai": pai}
+def hora(
+    actor: int, target: int, pai: str | None = None, *, ura: list[str] | None = None
+) -> dict:
+    """`hora` event。`pai`はcurrent RiichiEnv MJAIではoptionalである。"""
+    event = {"type": "hora", "actor": actor, "target": target}
+    if pai is not None:
+        event["pai"] = pai
     if ura is not None:
         event["uradora_markers"] = list(ura)
     return event
 
 
-def ryukyoku(*, actor: int | None = None, tenpai_hands: list | None = None) -> dict:
+def ryukyoku(
+    *,
+    actor: int | None = None,
+    reason: str | None = None,
+    tenpai_hands: list | None = None,
+) -> dict:
+    """`ryukyoku` event。current RiichiEnv MJAIではactorを持たない。"""
     event: dict = {"type": "ryukyoku"}
     if actor is not None:
         event["actor"] = actor
-        event["reason"] = "kyushukyuhai"
+    if reason is not None:
+        event["reason"] = reason
     if tenpai_hands is not None:
         event["tehais"] = tenpai_hands
     return event

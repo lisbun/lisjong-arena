@@ -220,7 +220,11 @@ def replay_game(
             if kind in ACTION_EVENT_TYPES:
                 actor = _optional_actor(event)
                 decision_kind = None
-                if pending is not None:
+                if kind == "ryukyoku":
+                    actor, decision_kind, pending = _resolve_ryukyoku_context(
+                        actor, pending
+                    )
+                elif pending is not None:
                     if actor != pending.actor:
                         raise MjaiReplayError(
                             UnsupportedReason.EVENT_OUT_OF_ORDER,
@@ -230,9 +234,9 @@ def replay_game(
                     pending = None
                 elif kind in _RESPONSE_ACTION_TYPES:
                     decision_kind = DecisionKind.CALL_RESPONSE
-                elif kind != "ryukyoku":
-                    # 通常流局以外のactionが、存在証明できるdecision contextを
-                    # 伴わずに現れた場合はstate machine違反である。
+                else:
+                    # 存在証明できるdecision contextを伴わないactionが現れた
+                    # 場合はstate machine違反である。
                     raise MjaiReplayError(
                         UnsupportedReason.EVENT_OUT_OF_ORDER,
                         f"{kind} arrived without a resolvable decision context",
@@ -258,6 +262,7 @@ def replay_game(
                                     actor=actor,
                                     actor_melds=state.own_melds,
                                     trigger=_current_trigger(trigger, actor),
+                                    decision_kind=decision_kind,
                                 ),
                                 hidden=join_hidden_state_truth(seat_states, snapshot),
                             )
@@ -323,6 +328,33 @@ def replay_game(
         leakage_check_failures=leakage_failures,
         replay_consistency_failures=consistency_failures,
     )
+
+
+def _resolve_ryukyoku_context(
+    actor: Seat | None, pending: _PendingDecision | None
+) -> tuple[Seat | None, DecisionKind | None, _PendingDecision | None]:
+    """`ryukyoku`のdecision contextを解決する。
+
+    current RiichiEnvのpublic MJAI semanticsでは`ryukyoku`がactorを持たない。
+    したがってactorの欠落そのものをstate machine違反として扱わない。
+
+    - 未解決のdecisionが無い場合、この流局はdecisionではない（通常流局）。
+      teacher actionを結び付けられるseatが存在しないため、decisionを作らない。
+    - 未解決のdecisionがある場合、その宣言者だけがこの局面で行動できる唯一の
+      seatであり、pending actorがexact actorである。宣言者を推測しない。
+    - eventが明示的なactorを持つ場合は、pending actorと一致することを確認する。
+
+    teacher actionそのものの識別は`map_observed_action()`が行う。ここで
+    識別できないものを発明しない。
+    """
+    if pending is None:
+        return (actor, None, None)
+    if actor is not None and actor != pending.actor:
+        raise MjaiReplayError(
+            UnsupportedReason.EVENT_OUT_OF_ORDER,
+            "ryukyoku actor does not match the unresolved decision",
+        )
+    return (pending.actor, pending.kind, None)
 
 
 def _apply(seat_states: tuple[PlayerSafeRoundState, ...], projections: tuple) -> None:

@@ -101,6 +101,9 @@ server logへ現れないdecisionは、current Arenaのrules semanticsだけで�
 | `riichi_discard` | 自身の`reach`宣言直後 |
 | `call_response` | 他家の`dahai` / `kakan`に対するcall / ron / 明示`none`が観測された場合 |
 
+未解決のdecisionが無い状態で届いた終局`ryukyoku`は、通常流局でありdecisionではありません。
+teacher actionを結び付けられるseatが存在しないため、decisionを作りません。
+
 ## Behavior supervision（Surface A）
 
 観測されたMJAI actionを、current lisjong canonical `InternalAction` semanticsへ対応付けられるかを
@@ -121,11 +124,26 @@ kyuushu_kyuuhai
   両方で一意性を確認します。
 - ron / tsumoは`hora`の`actor` / `target` fieldだけに依存せず、直前のtrigger contextと和了牌の
   一致まで確認します。
+- `hora`の`pai`はcurrent RiichiEnv MJAIではoptionalです。存在する場合はtrigger牌との一致を
+  検証し、存在しない場合だけ既に確立済みのtriggerから和了牌を導出します
+  （自身のtsumo → tsumo牌、discardへのron → 打牌、kakanへのchankan → 加槓牌）。導出に使うのは
+  そのdecisionより前に観測済みのeventだけであり、後続eventは参照しません。`target`は必須のままで、
+  triggerのactor / target整合もfail closedで確認します。解決できない場合は
+  `ron_trigger_context_unresolved` / `tsumo_trigger_context_unresolved`として計数します。
 - 明示`none`は、他家のdahai / kakanに対するresponse contextを解決できた場合だけ`PassAction`へ
   対応付けます。解決できない`none`は`pass_context_unresolved`として計数します。
-- `ryukyoku`は、reason semanticsから九種九牌だと確認できた場合だけ`KyuushuKyuuhaiAction`へ
-  対応付けます。確認できない場合は`ryukyoku_reason_unresolved`であり、abortive draw種別を
-  actorの有無から推測しません。
+- `ryukyoku`はcurrent RiichiEnv MJAIではactorを持ちません。actorの欠落自体をstate machine違反と
+  せず、未解決のdecisionが存在する場合だけ、その宣言者をexact actorとして扱います
+  （この局面で行動できるseatは宣言者だけであり、推測を含みません）。eventが明示的なactorを持つ
+  場合はpending actorとの一致を確認します。
+- `KyuushuKyuuhaiAction`へ対応付けるのは、(1) reason semanticsが九種九牌
+  （`kyushukyuhai` / `kyuushukyuuhai` / `yao9`）を示し、かつ (2) そのdecision contextが自身の
+  tsumo直後のTURNである場合だけです。通常流局はTURN decisionを伴わないため、この経路で
+  九種九牌へ分類されることはありません。reasonが確認できない場合は
+  `ryukyoku_reason_unresolved`、TURN以外のdecision contextで終局eventが届いた場合は
+  `decision_action_not_observed`として計数します。
+- 終局時のteacher actionを識別できないことは、そのgameのplayer-safe reconstruction自体を
+  無効にしません。同じgameの他のdecisionはそのまま採用します。
 - exact対応付けができないdecisionは、silent dropせずreason code付きでunsupportedとして計数します。
 
 ## Hidden-state supervision（Surface B）
