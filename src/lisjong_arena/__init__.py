@@ -45,6 +45,13 @@ from lisjong_arena.model import (
     SingleRoundEvaluationResult,
     SingleRoundGameResult,
 )
+from lisjong_arena.riichienv.round_result import (
+    RoundDrawFact,
+    RoundResult,
+    RoundWinFact,
+    RoundWinScoring,
+    RoundYaku,
+)
 from lisjong_arena.single_round_artifact import (
     SINGLE_ROUND_ARTIFACT_SCHEMA_VERSION,
     SINGLE_ROUND_EVALUATION_PROTOCOL,
@@ -96,6 +103,11 @@ __all__ = [
     "PolicyFactoryNotSerializableError",
     "PolicyMetrics",
     "PolicySpec",
+    "RoundDrawFact",
+    "RoundResult",
+    "RoundWinFact",
+    "RoundWinScoring",
+    "RoundYaku",
     "SeatResult",
     "SingleRoundArtifactError",
     "SingleRoundArtifactPlan",

@@ -125,6 +125,22 @@ training dataset / viewer presentation
 durable recordはGameTraceへAI analysisを混ぜず、PolicyInputへoffline / omniscient
 truthを合成しない。loaderはPolicy factoryやexecutable objectを復元しない。
 
+schema version 2では、完了した各局のauthoritative round-result factを追加した。
+これはexecution時点でbackendが保持していたobjective terminal truthだけを保持する
+Arena-ownedなdurable record detailであり、GameTraceやPolicyInputのsemanticsとは
+分離する。Arenaは和了点・han・fu・yaku・tenpaiを後から再計算しない。
+
+```text
+GameTrace
+    -> objective event stream
+
+PolicyInput / DecisionTrace
+    -> player-safe decision semantics
+
+round result facts
+    -> execution時点のobjective terminal truth
+```
+
 ## Experiment-local Research / ML
 
 Arenaは、bounded research questionを検証するために必要なpurpose-specific ML / analysis implementationを所有できる。

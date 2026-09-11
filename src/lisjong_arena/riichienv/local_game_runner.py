@@ -9,6 +9,10 @@ Issue #55で、successful run後にobjective ``GameTrace``とstep-scopedな
 ``PolicyInput`` / ``DecisionTrace``を同一process内で対応付けるopt-in
 inspection compositionを追加した。通常pathは引き続き``execute_policy()``を使う。
 
+Issue #207で、inspection compositionへ完了した各局のauthoritative round-result
+factを追加した。captureそのものは``lisjong_arena.riichienv.round_result``が
+担当し、runnerはRiichiEnvのevent batchとそのGameTrace sequenceを渡すだけである。
+
 Issue #31でArena-local canonical implementationへ移行済みである。GameTraceは
 Issue #43でArena-local canonical implementation(``lisjong_arena.game_trace``)
 へ移行済みである。RiichiEnv Adapterは Issue #39でArena-local canonical
@@ -43,6 +47,7 @@ from lisjong_arena.riichienv.adapter import (
     build_decision,
     seat_from_player_index,
 )
+from lisjong_arena.riichienv.round_result import RoundResult, RoundResultCollector
 from lisjong_arena.riichienv.round_stats import RoundStatsCollector, SeatRoundStats
 
 
@@ -197,12 +202,24 @@ class LocalGameInspection:
     result: LocalGameResult
     game_trace: GameTrace
     step_observations: tuple[StepDecisionObservation, ...]
+    round_results: tuple[RoundResult, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.result, LocalGameResult):
             raise TypeError("result must be a LocalGameResult")
         if not isinstance(self.game_trace, GameTrace):
             raise TypeError("game_trace must be a GameTrace")
+        try:
+            round_results = tuple(self.round_results)
+        except TypeError:
+            raise TypeError("round_results must be an iterable") from None
+        if not round_results:
+            raise ValueError("round_results must contain at least one round")
+        if any(not isinstance(item, RoundResult) for item in round_results):
+            raise TypeError("round_results must contain only RoundResult values")
+        if round_results[-1].end_scores != self.result.scores:
+            raise ValueError("final round end scores must match result scores")
+        object.__setattr__(self, "round_results", round_results)
         try:
             step_observations = tuple(self.step_observations)
         except TypeError:
@@ -237,6 +254,17 @@ class LocalGameInspection:
             if step.event_sequence_end > event_count:
                 raise ValueError("step event interval exceeds GameTrace events")
             previous_end = step.event_sequence_end
+
+        previous_start = -1
+        for round_result in round_results:
+            if round_result.start_event_sequence <= previous_start:
+                raise ValueError("round start sequences must strictly increase")
+            previous_start = round_result.start_event_sequence
+            terminal_sequences = [win.event_sequence for win in round_result.wins]
+            if round_result.draw is not None:
+                terminal_sequences.append(round_result.draw.event_sequence)
+            if max(terminal_sequences) >= event_count:
+                raise ValueError("round terminal sequence exceeds GameTrace events")
 
         object.__setattr__(self, "step_observations", step_observations)
 
@@ -309,7 +337,9 @@ class LocalGameInspectionRecorder:
             )
         self._steps.append(observation)
 
-    def complete(self, result: LocalGameResult) -> None:
+    def complete(
+        self, result: LocalGameResult, round_results: tuple[RoundResult, ...]
+    ) -> None:
         """GameTrace completionと全composition validationをatomicに公開する。"""
         if self._state is not _InspectionRecorderState.STARTED:
             raise LocalGameInspectionLifecycleError(
@@ -323,6 +353,7 @@ class LocalGameInspectionRecorder:
             result=result,
             game_trace=self._game_trace_recorder.snapshot(),
             step_observations=tuple(self._steps),
+            round_results=tuple(round_results),
         )
         self._snapshot = snapshot
         self._state = _InspectionRecorderState.COMPLETED
@@ -399,6 +430,7 @@ class LocalGameRunner:
         "_game_mode",
         "_inspection_recorder",
         "_max_steps",
+        "_round_results",
         "_round_stats",
         "_seat_runtimes",
         "_seed",
@@ -448,6 +480,9 @@ class LocalGameRunner:
             inspection_recorder if inspection_recorder is not None else trace_sink
         )
         self._round_stats = RoundStatsCollector()
+        self._round_results = (
+            None if inspection_recorder is None else RoundResultCollector()
+        )
 
     def _build_actions(
         self,
@@ -527,6 +562,8 @@ class LocalGameRunner:
             )
 
         self._round_stats.on_new_events(new_events, self._env, observations)
+        if self._round_results is not None:
+            self._round_results.on_new_events(new_events, next_sequence, self._env)
 
         if self._trace_sink is None:
             return next_sequence + len(new_events)
@@ -612,7 +649,8 @@ class LocalGameRunner:
             seat_round_stats=self._round_stats.build(self._env),
         )
         if self._inspection_recorder is not None:
-            self._inspection_recorder.complete(result)
+            assert self._round_results is not None
+            self._inspection_recorder.complete(result, self._round_results.build())
         elif self._trace_sink is not None:
             self._trace_sink.on_complete()
         return result

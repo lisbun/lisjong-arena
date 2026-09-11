@@ -6,6 +6,9 @@ from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from _round_result_fixtures import (
+    FakeRoundResultCollector,
+)
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policies.two_step_ukeire import (
     TwoStepUkeireAnalysis,
@@ -257,6 +260,10 @@ class LocalGameInspectionTest(unittest.TestCase):
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
             patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
             patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
+            patch(
                 f"{_MODULE}.build_decision",
                 side_effect=_build_side_effect(contexts, mappings),
             ),
@@ -301,6 +308,10 @@ class LocalGameInspectionTest(unittest.TestCase):
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
             patch(f"{_MODULE}.RoundStatsCollector", return_value=round_stats),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 side_effect=_build_side_effect(contexts, mappings),
@@ -358,6 +369,10 @@ class LocalGameInspectionTest(unittest.TestCase):
         with (
             patch(f"{_MODULE}.RiichiEnv", return_value=env),
             patch(f"{_MODULE}.RoundStatsCollector", return_value=_RoundStats()),
+            patch(
+                f"{_MODULE}.RoundResultCollector",
+                return_value=FakeRoundResultCollector(),
+            ),
             patch(
                 f"{_MODULE}.build_decision",
                 side_effect=_build_side_effect(contexts, mappings),
@@ -417,6 +432,12 @@ class LocalGameInspectionTest(unittest.TestCase):
                         patch(
                             f"{_MODULE}.RoundStatsCollector",
                             return_value=_RoundStats(),
+                        )
+                    )
+                    stack.enter_context(
+                        patch(
+                            f"{_MODULE}.RoundResultCollector",
+                            return_value=FakeRoundResultCollector(),
                         )
                     )
                     if stage == "build":
@@ -504,6 +525,12 @@ class LocalGameInspectionTest(unittest.TestCase):
                         patch(
                             f"{_MODULE}.RoundStatsCollector",
                             return_value=round_stats,
+                        )
+                    )
+                    stack.enter_context(
+                        patch(
+                            f"{_MODULE}.RoundResultCollector",
+                            return_value=FakeRoundResultCollector(),
                         )
                     )
                     stack.enter_context(
