@@ -79,6 +79,25 @@ version 1 bundleは「per-round result factを持たない」という明示的�
 1局で複数の`hora`が発生した場合、`wins`はevent順にすべて保持します。単一の
 winnerへ畳み込みません。
 
+### Objective trace binding
+
+loaderは、round-result factを`objective_trace.json`のeventへstrictにbindします。
+比較するのはrecorded objective value同士だけで、麻雀ruleの再計算はしません。
+
+- 各`start_event_sequence`は実際の`start_kyoku`を指し、round wind / hand number /
+  honba / dealer seat / start scores / riichi sticks / 初期dora markerが一致する
+- 各`wins[].event_sequence`は実際の`hora`を指し、winner / tsumo・target semantics /
+  deltas / ura markersが一致する
+- `draw.event_sequence`は実際の`ryukyoku`を指し、reasonとdeltasが一致する
+- 局範囲内の`dora` / `reach_accepted`から、recorded `dora_indicators` /
+  `riichi_seats`が一意に一致する
+- trace上の`start_kyoku`とterminal eventの件数・順序がrecorded factと完全に一致する
+  (欠落・余分・順序不一致はfail closed)
+- 非最終局の`end_scores` / `riichi_sticks_after`は次局の`start_kyoku`と一致する
+
+`wins[].scoring`は`env.win_results`由来で、GameTraceに同値のfactが存在しません。
+無理に再計算して照合することはせず、この照合対象から除外します。
+
 ### Capture timing and the `win_results` gap
 
 pinned RiichiEnv 0.4.8では、非最終局のterminal event(`hora` / `ryukyoku`)と
@@ -150,6 +169,7 @@ manifestを最後にpublishするため、途中directoryはcompleted recordと�
 - existing target
 - seed / game mode / step / decision countのsame-run不整合
 - round-result payloadのround連続性(start scores / riichi sticks)の破れ
+- recorded round-result factとobjective GameTrace eventのsame-run不整合
 - recorded round identityとdecision observationの`PolicyInput.round`不一致
 - invalid GameTrace sequence、step ordinal、event interval
 - Seatと`PolicyInput.self_seat`、selected action actorの不一致

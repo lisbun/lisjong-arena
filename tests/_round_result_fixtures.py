@@ -31,7 +31,7 @@ def neutral_round_result(
         riichi_sticks_after=0,
         start_scores=scores,
         end_scores=scores,
-        dora_indicators=(),
+        dora_indicators=(Tile(TileType(TileCategory.MANZU, 1)),),
         riichi_seats=(),
         start_event_sequence=start_event_sequence,
         wins=(),

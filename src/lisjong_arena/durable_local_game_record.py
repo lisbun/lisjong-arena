@@ -85,6 +85,7 @@ from lisjong_arena._artifact_io import (
 )
 from lisjong_arena.game_trace import GameTrace, GameTraceEvent
 from lisjong_arena.model import PolicySpec
+from lisjong_arena.riichienv.adapter.tile_conversion import tile_from_mjai
 from lisjong_arena.riichienv.local_game_runner import (
     LocalGameInspection,
     LocalGameInspectionRecorder,
@@ -96,9 +97,11 @@ from lisjong_arena.riichienv.local_game_runner import (
 from lisjong_arena.riichienv.round_result import (
     RoundDrawFact,
     RoundResult,
+    RoundResultError,
     RoundWinFact,
     RoundWinScoring,
     RoundYaku,
+    wind_from_mjai_bakaze,
 )
 from lisjong_arena.riichienv.round_stats import SeatRoundStats
 from lisjong_arena.single_round_artifact import (
@@ -1454,6 +1457,272 @@ def _parse_round_results(value: object) -> tuple[int, str, tuple[RoundResult, ..
     )
 
 
+_TERMINAL_EVENT_TYPES = ("hora", "ryukyoku")
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise DurableLocalGameRecordError(message)
+
+
+def _trace_events(trace: GameTrace) -> tuple[dict[str, object], ...]:
+    """``GameTrace``のlossless event stringをcross-check用にdecodeする。
+
+    ``GameTrace``はsequenceがzero-basedかつ連続であることを保証するため、
+    decode後のindexはそのままevent sequenceとして使える。
+    """
+    events = []
+    for event in trace.events:
+        try:
+            value = json.loads(event.event)
+        except (TypeError, ValueError) as exc:
+            raise DurableLocalGameRecordError(
+                f"objective trace event {event.sequence} is not valid JSON"
+            ) from exc
+        if type(value) is not dict:
+            raise DurableLocalGameRecordError(
+                f"objective trace event {event.sequence} must be a JSON object"
+            )
+        events.append(value)
+    return tuple(events)
+
+
+def _trace_event(
+    events: tuple[dict[str, object], ...], sequence: int, expected_type: str
+) -> dict[str, object]:
+    _require(
+        0 <= sequence < len(events),
+        f"recorded {expected_type} sequence {sequence} is outside the objective trace",
+    )
+    event = events[sequence]
+    _require(
+        event.get("type") == expected_type,
+        f"objective trace event {sequence} is not a {expected_type}",
+    )
+    return event
+
+
+def _trace_int(value: object, context: str) -> int:
+    """trace eventのint fieldを厳密に読む(``True``を1として受理しない)。"""
+    _require(type(value) is int, f"{context} must be an int")
+    return value
+
+
+def _trace_four_ints(value: object, context: str) -> tuple[int, int, int, int]:
+    _require(
+        type(value) is list and len(value) == 4, f"{context} must hold four values"
+    )
+    _require(
+        all(type(item) is int for item in value), f"{context} must contain only ints"
+    )
+    return (value[0], value[1], value[2], value[3])
+
+
+def _trace_tiles(value: object, context: str) -> tuple[Tile, ...]:
+    _require(type(value) is list, f"{context} must be a list")
+    try:
+        return tuple(tile_from_mjai(item) for item in value)
+    except (TypeError, ValueError) as exc:
+        raise DurableLocalGameRecordError(f"{context} holds an unknown tile") from exc
+
+
+def _trace_tile(value: object, context: str) -> Tile:
+    try:
+        return tile_from_mjai(value)
+    except (TypeError, ValueError) as exc:
+        raise DurableLocalGameRecordError(f"{context} holds an unknown tile") from exc
+
+
+def _validate_start_kyoku(
+    round_result: RoundResult, event: dict[str, object], context: str
+) -> None:
+    """recorded round identity / start settlementを``start_kyoku`` factと照合する。"""
+    try:
+        round_wind = wind_from_mjai_bakaze(event.get("bakaze"))
+    except RoundResultError as exc:
+        raise DurableLocalGameRecordError(f"{context} has an {exc}") from None
+    _require(round_wind is round_result.round_wind, f"{context} round wind mismatch")
+    _require(
+        _trace_int(event.get("kyoku"), f"{context}.kyoku") == round_result.hand_number,
+        f"{context} hand number mismatch",
+    )
+    _require(
+        _trace_int(event.get("honba"), f"{context}.honba") == round_result.honba,
+        f"{context} honba mismatch",
+    )
+    _require(
+        _trace_int(event.get("oya"), f"{context}.oya") == int(round_result.dealer_seat),
+        f"{context} dealer seat mismatch",
+    )
+    _require(
+        _trace_int(event.get("kyotaku"), f"{context}.kyotaku")
+        == round_result.riichi_sticks_before,
+        f"{context} riichi stick mismatch",
+    )
+    _require(
+        _trace_four_ints(event.get("scores"), f"{context}.scores")
+        == round_result.start_scores,
+        f"{context} start score mismatch",
+    )
+    _require(
+        bool(round_result.dora_indicators),
+        f"{context} must record at least the initial dora indicator",
+    )
+    _require(
+        _trace_tile(event.get("dora_marker"), f"{context}.dora_marker")
+        == round_result.dora_indicators[0],
+        f"{context} initial dora indicator mismatch",
+    )
+
+
+def _validate_win(win: RoundWinFact, event: dict[str, object], context: str) -> None:
+    """recorded和了factを``hora`` eventと照合する。scoringは対応factがないため除く。"""
+    _require(
+        _trace_int(event.get("actor"), f"{context}.actor") == int(win.winner_seat),
+        f"{context} winner seat mismatch",
+    )
+    tsumo = event.get("tsumo", False)
+    _require(type(tsumo) is bool, f"{context}.tsumo must be a bool")
+    _require(tsumo == win.tsumo, f"{context} win method mismatch")
+    expected_target = int(win.winner_seat) if win.tsumo else int(win.loser_seat)
+    _require(
+        _trace_int(event.get("target"), f"{context}.target") == expected_target,
+        f"{context} target seat mismatch",
+    )
+    _require(
+        _trace_four_ints(event.get("deltas"), f"{context}.deltas") == win.deltas,
+        f"{context} score delta mismatch",
+    )
+    _require(
+        _trace_tiles(event.get("ura_markers", []), f"{context}.ura_markers")
+        == win.ura_indicators,
+        f"{context} ura indicator mismatch",
+    )
+
+
+def _validate_draw(draw: RoundDrawFact, event: dict[str, object], context: str) -> None:
+    _require(event.get("reason") == draw.reason, f"{context} draw reason mismatch")
+    _require(
+        _trace_four_ints(event.get("deltas"), f"{context}.deltas") == draw.deltas,
+        f"{context} score delta mismatch",
+    )
+
+
+def _validate_round_segment(
+    round_result: RoundResult,
+    events: tuple[dict[str, object], ...],
+    start: int,
+    stop: int,
+    context: str,
+) -> None:
+    """局のevent範囲から、recorded dora / riichi factを一意に照合する。"""
+    revealed = tuple(
+        _trace_tile(events[sequence].get("dora_marker"), f"{context}.dora[{sequence}]")
+        for sequence in range(start, stop)
+        if events[sequence].get("type") == "dora"
+    )
+    _require(
+        revealed == round_result.dora_indicators[1:],
+        f"{context} revealed dora indicators do not match the objective trace",
+    )
+
+    declared = []
+    for sequence in range(start, stop):
+        event = events[sequence]
+        if event.get("type") != "reach_accepted":
+            continue
+        actor = _trace_int(event.get("actor"), f"{context}.reach_accepted.actor")
+        _require(
+            actor not in declared,
+            f"{context} has a repeated riichi declaration",
+        )
+        declared.append(actor)
+    _require(
+        tuple(sorted(declared))
+        == tuple(int(seat) for seat in round_result.riichi_seats),
+        f"{context} riichi seats do not match the objective trace",
+    )
+
+
+def _validate_round_results_against_trace(inspection: LocalGameInspection) -> None:
+    """recorded round-result factをobjective GameTraceへstrictにsame-run bindする。
+
+    比較するのはrecorded objective value同士だけであり、麻雀ruleの再計算はしない。
+    ``wins[].scoring``はRiichiEnvの``win_results``由来でGameTraceに同値factが
+    存在しないため、ここでは照合対象にしない。
+    """
+    events = _trace_events(inspection.game_trace)
+    round_results = inspection.round_results
+
+    trace_starts = tuple(
+        sequence
+        for sequence, event in enumerate(events)
+        if event.get("type") == "start_kyoku"
+    )
+    recorded_starts = tuple(
+        round_result.start_event_sequence for round_result in round_results
+    )
+    _require(
+        trace_starts == recorded_starts,
+        "recorded rounds do not match the objective start_kyoku sequence",
+    )
+
+    trace_terminals = tuple(
+        (sequence, event.get("type"))
+        for sequence, event in enumerate(events)
+        if event.get("type") in _TERMINAL_EVENT_TYPES
+    )
+    recorded_terminals = []
+    for round_result in round_results:
+        for win in round_result.wins:
+            recorded_terminals.append((win.event_sequence, "hora"))
+        if round_result.draw is not None:
+            recorded_terminals.append((round_result.draw.event_sequence, "ryukyoku"))
+    _require(
+        trace_terminals == tuple(recorded_terminals),
+        "recorded round terminals do not match the objective terminal sequence",
+    )
+
+    for index, round_result in enumerate(round_results):
+        context = f"round_results.rounds[{index}]"
+        start = round_result.start_event_sequence
+        stop = (
+            len(events)
+            if index + 1 == len(round_results)
+            else round_results[index + 1].start_event_sequence
+        )
+        _validate_start_kyoku(
+            round_result, _trace_event(events, start, "start_kyoku"), context
+        )
+        for win_index, win in enumerate(round_result.wins):
+            _validate_win(
+                win,
+                _trace_event(events, win.event_sequence, "hora"),
+                f"{context}.wins[{win_index}]",
+            )
+        if round_result.draw is not None:
+            _validate_draw(
+                round_result.draw,
+                _trace_event(events, round_result.draw.event_sequence, "ryukyoku"),
+                f"{context}.draw",
+            )
+        _validate_round_segment(round_result, events, start, stop, context)
+
+        if index + 1 == len(round_results):
+            continue
+        next_event = _trace_event(events, stop, "start_kyoku")
+        _require(
+            _trace_four_ints(next_event.get("scores"), f"{context}.end_scores")
+            == round_result.end_scores,
+            f"{context} end scores do not match the next round's start_kyoku",
+        )
+        _require(
+            _trace_int(next_event.get("kyotaku"), f"{context}.next_kyotaku")
+            == round_result.riichi_sticks_after,
+            f"{context} riichi sticks do not match the next round's start_kyoku",
+        )
+
+
 def _validate_round_identities(inspection: LocalGameInspection) -> None:
     """recorded round identityがdecision observation側と同じ局を指すか確認する。
 
@@ -1814,6 +2083,7 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
         step_observations=steps,
         round_results=round_results,
     )
+    _validate_round_results_against_trace(inspection)
     _validate_round_identities(inspection)
     return _construct(
         DurableLocalGameRecord,

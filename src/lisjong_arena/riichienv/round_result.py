@@ -48,6 +48,18 @@ _EXHAUSTIVE_DRAW_REASON = "exhaustive_draw"
 _TERMINAL_EVENT_TYPES = frozenset({"hora", "ryukyoku"})
 
 
+def wind_from_mjai_bakaze(value: object) -> Wind:
+    """MJAI ``start_kyoku.bakaze``表記(``"E"``等)をlisjong ``Wind``へ変換する。
+
+    round-result captureとdurable recordのGameTrace cross-checkが同じmappingを
+    使うための単一の正本である。未知表記はfail closedする。
+    """
+    wind = _MJAI_BAKAZE_WINDS.get(value)
+    if wind is None:
+        raise RoundResultError(f"unrecognized MJAI bakaze: {value!r}")
+    return wind
+
+
 class RoundResultError(Exception):
     """RiichiEnvのevent / stateが局resultとして矛盾している場合。
 
@@ -357,13 +369,10 @@ class _OpenRound:
     )
 
     def __init__(self, event: dict, sequence: int) -> None:
-        bakaze = event.get("bakaze")
-        round_wind = _MJAI_BAKAZE_WINDS.get(bakaze)
-        if round_wind is None:
-            raise RoundResultError(
-                f"start_kyoku has an unrecognized bakaze: {bakaze!r}"
-            )
-        self.round_wind = round_wind
+        try:
+            self.round_wind = wind_from_mjai_bakaze(event.get("bakaze"))
+        except RoundResultError as exc:
+            raise RoundResultError(f"start_kyoku has an {exc}") from None
         self.hand_number = _required_int(event, "kyoku", "start_kyoku")
         self.honba = _required_int(event, "honba", "start_kyoku")
         self.riichi_sticks_before = _required_int(event, "kyotaku", "start_kyoku")
@@ -653,4 +662,5 @@ __all__ = [
     "RoundWinFact",
     "RoundWinScoring",
     "RoundYaku",
+    "wind_from_mjai_bakaze",
 ]
