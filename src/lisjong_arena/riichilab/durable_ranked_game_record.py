@@ -769,6 +769,38 @@ def _correlate_trace(entries: Sequence[ProtocolTraceEntry]) -> _CorrelatedTrace:
     )
 
 
+def _validate_recorded_request_actions(
+    correlated: _CorrelatedTrace, bound_seat: Seat
+) -> None:
+    """recorded `request_action`がcanonical pathで復元できることを検証する。
+
+    completed recordのinvariantとして、existing `parse_request_action()`へ
+    すべてのrecorded requestを通す。独自のObservation decoderは持たず、
+    復元不能なrecordはcompleted durable recordとして受理しない。
+
+    `observation.player_id`がbound seatと一致することも同時に確認する。これは
+    execution時点で`RiichiLabSeatAdapter`が既に強制しているinvariantであり、
+    新しいprotocol assumptionではない。
+
+    この検証をloader側へ置くことで、record corruptionをconsumer seam
+    (`iter_ranked_decisions()`)で初めて発見する構造にしない。
+    """
+    for request_id in correlated.request_ids:
+        payload = correlated.requests[request_id]
+        try:
+            parsed = parse_request_action(payload)
+        except Exception as exc:
+            raise DurableRankedGameRecordError(
+                f"recorded request_action {request_id} cannot be deserialized "
+                "through the canonical parser"
+            ) from exc
+        if int(parsed.observation.player_id) != int(bound_seat):
+            raise DurableRankedGameRecordError(
+                f"recorded request_action {request_id} observation does not "
+                "belong to the bound seat"
+            )
+
+
 def _bundle_files(directory: Path) -> None:
     if not directory.is_dir():
         raise DurableRankedGameRecordError("record directory is missing")
@@ -872,6 +904,7 @@ def _load_ranked_game_record(path: str | Path) -> DurableRankedGameRecord:
         raise DurableRankedGameRecordError(
             "manifest, result and protocol trace do not agree on the bound seat"
         )
+    _validate_recorded_request_actions(correlated, bound_seat)
     if len(correlated.requests) != result.requests_received:
         raise DurableRankedGameRecordError(
             "recorded request count does not match the ranked result"
@@ -925,6 +958,11 @@ def iter_ranked_decisions(
     Observation復元にはexisting `parse_request_action()`をそのまま使い、
     独自のObservation decoderを持たない。tensor / label / reward等の
     consumer-specific変換はここでは行わない(downstream dataset builderの責務)。
+
+    completed recordでは同じcanonical deserializeを
+    `load_ranked_game_record()`が既にinvariantとして検証済みである。ここは
+    その正本parserをconsumer向けに再利用するだけであり、record corruptionを
+    最初に発見する場所ではない。
     """
     if not isinstance(record, DurableRankedGameRecord):
         raise TypeError("record must be a DurableRankedGameRecord")
@@ -962,11 +1000,9 @@ def summarize_ranked_game_record(
     decisions = iter_ranked_decisions(record)
     for decision in decisions:
         # Access自体がconsumer seam。Observationはexisting canonical parserで
-        # 復元済みであり、ここでfeature / labelへは変換しない。
-        if int(decision.observation.player_id) != int(record.bound_seat):
-            raise DurableRankedGameRecordError(
-                "recorded observation does not belong to the bound seat"
-            )
+        # 復元済みであり、bound seatとの一致もloaderが検証済みである。ここで
+        # feature / labelへは変換しない。
+        decision.observation.player_id
         decision.possible_actions
         decision.sent_action
         decision.ack_statuses

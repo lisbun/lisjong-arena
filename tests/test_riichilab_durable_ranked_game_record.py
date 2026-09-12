@@ -401,15 +401,41 @@ class ConsumerReadbackTest(unittest.TestCase):
         self.assertEqual(first.seat, 0)
         self.assertEqual(first.scores, (32000, 24000, 23000, 21000))
 
-    def test_undeserializable_observation_is_rejected_at_readback(self) -> None:
+    def test_undeserializable_observation_is_rejected_before_publish(self) -> None:
         entries = _completed_entries()
         entries[1] = ("recv", _request_action(1, observation="not-an-observation"))
         with TemporaryDirectory() as raw:
             directory = Path(raw)
-            record = _save(directory, entries=entries)
 
             with self.assertRaises(DurableRankedGameRecordError):
-                iter_ranked_decisions(record)
+                _save(directory, entries=entries)
+
+            self.assertFalse((directory / "record").exists())
+            self.assertEqual(
+                [entry.name for entry in directory.iterdir()],
+                ["staged-protocol.jsonl"],
+            )
+
+    def test_observation_for_another_seat_is_rejected_before_publish(self) -> None:
+        """observation.player_idはbound seatと一致していなければならない。
+
+        execution時点で`RiichiLabSeatAdapter`が強制しているinvariantを、
+        completed recordのstrict readbackでも維持する。
+        """
+        entries = _completed_entries()
+        entries[0] = ("recv", {"type": "start_game", "id": 2})
+        with TemporaryDirectory() as raw:
+            directory = Path(raw)
+
+            with self.assertRaises(DurableRankedGameRecordError) as caught:
+                _save(
+                    directory,
+                    entries=entries,
+                    result=_completed_result(seat=Seat.SEAT_2),
+                )
+
+            self.assertIn("bound seat", str(caught.exception))
+            self.assertFalse((directory / "record").exists())
 
 
 class AckLifecycleTest(unittest.TestCase):
@@ -693,6 +719,26 @@ class TamperedBundleTest(unittest.TestCase):
 
             with self.assertRaises(DurableRankedGameRecordError):
                 load_ranked_game_record(bundle)
+
+    def _retamper_observation(self, bundle: Path, observation: object) -> None:
+        path = bundle / PROTOCOL_TRACE_FILENAME
+        lines = path.read_text(encoding="utf-8").splitlines()
+        entry = json.loads(lines[1])
+        entry["payload"]["observation"] = observation
+        lines[1] = json.dumps(entry)
+        path.write_text(
+            "".join(line + "\n" for line in lines), encoding="utf-8", newline="\n"
+        )
+        _repack(bundle)
+
+    def test_tampered_observation_is_rejected_by_the_loader(self) -> None:
+        with TemporaryDirectory() as raw:
+            bundle = self._bundle(Path(raw))
+            self._retamper_observation(bundle, "not-an-observation")
+
+            with self.assertRaises(DurableRankedGameRecordError) as caught:
+                load_ranked_game_record(bundle)
+        self.assertIn("canonical parser", str(caught.exception))
 
     def test_incomplete_bundle_is_rejected(self) -> None:
         with TemporaryDirectory() as raw:

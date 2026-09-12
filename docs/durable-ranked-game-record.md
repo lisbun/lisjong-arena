@@ -140,6 +140,8 @@ valid end_game
 - protocol trace digest / result digestとbyte count
 - record identityの再導出
 - protocol traceのJSONL整合性(truncation、corrupt JSON、duplicate key、非有限数)
+- recorded `request_action`がすべてexisting `parse_request_action()`でObservationへ
+  復元できること、およびその`observation.player_id`がbound seatと一致すること
 - bound seatが`start_game` / manifest / resultで一致すること
 - `request_id`のvalidityとmonotonic lifecycle
 - 送信recordが既知requestに対応し、payloadの`request_id`がrequestと一致すること
@@ -194,6 +196,11 @@ ack history
 Observation復元には既存の`parse_request_action()`をそのまま使い、独自のObservation
 decoderを持ちません。`summarize_ranked_game_record()`はそのpathがraw sourceとして
 使えることを確認するsmall deterministic smokeです。
+
+canonical deserializeそのものはcompleted recordのinvariantとして
+`load_ranked_game_record()`が既に検証しています。readback pathはその正本parserを
+consumer向けに再利用するだけであり、record corruptionを最初に発見する場所では
+ありません。
 
 ここでPolicyInput tensor、action vocabulary index、reward、Q target、BC label、
 HandBelief labelへは変換しません。これらはdownstream consumer-specific dataset
