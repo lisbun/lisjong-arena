@@ -257,20 +257,38 @@ frozen E160 digest            581f4d20138291ea7c6b22508105b2ac2ed40cc3b3668e6803
 ```
 
 Issue #209のrepair PRがmergeされた後、そのmerged `main` commitをexactにinstallし、元の
-`lisjong` / `lisjong-engine` revisionとlocked CPU runtimeを復元して一度だけ実行する。
-continuation revisionはscientific execution revisionとは別にreceiptへ記録される。
+`lisjong` / `lisjong-engine` revisionとlocked CPU runtimeを復元する。最初に`prepare`を
+一度だけ実行する。これはprospective resultをmemory上で組み立て、次の2ファイルを同一directoryの
+stagingからatomic renameでまとめて確定する。
 
-```powershell
-$repair = git rev-parse HEAD
-
-python -m lisjong_arena.phase11_public_riichi_wait_readout.continuation `
-  --corpus-root $p150 --phase157-root $p157 --phase167-root $p167 `
-  --artifact-root $root `
-  --continuation-revision $repair `
-  --continuation-audit 'Issue #209 result-only continuation recorded YYYY-MM-DD' `
-  --result "$root/result.json" `
-  --receipt "$root/continuation-receipt.json"
+```text
+continuation/
+  continuation-lock.json
+  prepared-result.json
 ```
 
-実行前に両destinationが存在しないことを要求する。実行後は`result.json`とreceiptをそれぞれ
-strict readbackし、Issue #172へscientific outcomeを記録するのは両方が成功した後だけとする。
+continuation lockはscientific execution revisionとは別にexact repair revision、immutable artifact
+binding、旧dependency/runtime、prospective result identityとprepared bytesのdigestを記録する。
+`prepared-result.json`は中断復旧用のprecommitted bytesであり、公式のresult exposureではない。
+
+```powershell
+python -m lisjong_arena.phase11_public_riichi_wait_readout.continuation prepare `
+  --corpus-root $p150 --phase157-root $p157 --phase167-root $p167 `
+  --artifact-root $root `
+  --continuation-audit 'Issue #209 continuation lock recorded YYYY-MM-DD'
+```
+
+出力されたtechnical revisionとcontinuation lock identityをIssue #209へ記録し、lockをstrict
+readbackした後だけ、同じexact revisionから`expose`する。
+
+```powershell
+python -m lisjong_arena.phase11_public_riichi_wait_readout.continuation expose `
+  --artifact-root $root
+```
+
+`expose`はmodel inferenceを再実行せず、lock済みprepared bytesだけをsame-directory stagingから
+atomicかつwrite-onceで`result.json`へpublishする。lock後・result保存前に中断しても同じ
+lockから`expose`だけを再実行できる。current HEADがlocked repair revisionと異なる場合は、
+そのrevisionが新しい`main`に含まれていても拒否し、自動採用しない。`result.json`が既に存在する
+場合は2回目のexposureを拒否する。Issue #172へscientific outcomeを記録するのはfinal resultの
+strict readbackが成功した後だけとする。

@@ -26,13 +26,16 @@ original ``execution-lock.json``, ``coverage.json``, or readout model.
 import argparse
 import hashlib
 import json
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from lisjong_engine.rules import RuleSet
 
 from lisjong_arena._execution_safety import (
+    ExecutionSafetyError,
     require_clean_arena_head,
     require_merged_arena_revision,
     require_new_artifact_destinations,
@@ -73,12 +76,16 @@ from .retained import load_retained
 LOCK_FILENAME = "execution-lock.json"
 COVERAGE_FILENAME = "coverage.json"
 MODEL_DIRNAME = "readout-model"
+RESULT_FILENAME = "result.json"
+CONTINUATION_DIRNAME = "continuation"
+CONTINUATION_LOCK_FILENAME = "continuation-lock.json"
+PREPARED_RESULT_FILENAME = "prepared-result.json"
 
 CONTINUATION_PURPOSE = "TECHNICAL RESULT-ONLY CONTINUATION"
 CONTINUATION_BRANCH = "main"
 SCIENTIFIC_EXECUTION_REVISION = "93963d85f6201c714cb4fcf39d59e9e09c85766d"
 
-RECEIPT_FIELDS = (
+CONTINUATION_LOCK_FIELDS = (
     "schema",
     "role",
     "purpose",
@@ -97,6 +104,8 @@ RECEIPT_FIELDS = (
     "locked_source_revisions",
     "continuation_source_revisions",
     "result_identity",
+    "prepared_result_sha256",
+    "prepared_result_bytes",
     "continuation_audit",
     "retrained",
     "resumed",
@@ -157,6 +166,15 @@ class BoundArtifacts:
     lock: dict
     coverage: dict
     manifest: dict
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedContinuation:
+    """Strictly read continuation lock and its immutable prepared result."""
+
+    root: Path
+    lock: dict
+    result: dict
 
 
 def _sha256_file(path: Path, name: str) -> str:
@@ -254,18 +272,30 @@ def bind_immutable_artifacts(root: str | Path) -> BoundArtifacts:
     )
 
 
-def require_continuation_revision(declared: str) -> str:
-    """Pin the repair revision: clean, checked out, merged, and not #172's."""
-    revision = digest(declared, "technical continuation revision", 40)
+def _validate_repair_revision(revision: object) -> str:
+    revision = digest(revision, "technical continuation revision", 40)
     if revision == SCIENTIFIC_EXECUTION_REVISION:
         raise Phase11Error(
             "the technical continuation revision must be the merged #209 repair "
             "commit, never the fixed #172 scientific execution revision"
         )
+    return revision
+
+
+def current_continuation_revision() -> str:
+    """Lock the clean checked-out revision after proving it is merged to main."""
+    revision = _validate_repair_revision(require_clean_arena_head())
+    require_merged_arena_revision(revision, branch=CONTINUATION_BRANCH)
+    return revision
+
+
+def require_locked_continuation_revision(locked: object) -> str:
+    """Require the exact already-locked repair revision, never a newer main."""
+    revision = _validate_repair_revision(locked)
     exact(
         require_clean_arena_head(),
         revision,
-        "clean Arena HEAD against the technical continuation revision",
+        "clean Arena HEAD against the locked technical continuation revision",
     )
     require_merged_arena_revision(revision, branch=CONTINUATION_BRANCH)
     return revision
@@ -274,10 +304,10 @@ def require_continuation_revision(declared: str) -> str:
 def require_locked_dependencies(lock: dict, *, continuation_revision: str) -> dict:
     """Require the original #172 dependency revisions, not current Arena main.
 
-    Arena main has since moved its ``lisjong`` pin forward. The continuation
-    re-derives the #172 scientific evidence, so it must run against the
-    revisions the original execution locked; only the Arena revision itself is
-    allowed to differ, and only by being exactly the repair revision.
+    Arena main has since moved its ``lisjong`` pin forward. Preparation
+    re-derives the #172 scientific evidence and exposure revalidates its locked
+    environment, so both must run against the original dependency revisions.
+    Only Arena may differ, and only at the exact locked repair revision.
     """
     import torch
 
@@ -318,20 +348,22 @@ def require_locked_dependencies(lock: dict, *, continuation_revision: str) -> di
     return {"runtime": runtime, "provenance": provenance}
 
 
-def continuation_receipt(
+def continuation_lock(
     *,
     bound: BoundArtifacts,
     continuation_revision: str,
     dependencies: dict,
     result_identity: str,
+    prepared_result_sha256: str,
+    prepared_result_bytes: int,
     continuation_audit: str,
 ) -> dict[str, object]:
-    """Technical provenance sidecar; the #172 result schema stays untouched."""
+    """Precommit technical provenance without changing the #172 result schema."""
     if type(continuation_audit) is not str or not continuation_audit.strip():
         raise Phase11Error("the continuation requires a dated operator audit string")
     binding = PHASE11_ARTIFACT_BINDING
     value = {
-        "schema": SCHEMA + "/continuation-receipt",
+        "schema": SCHEMA + "/continuation-lock",
         "role": ROLE,
         "purpose": CONTINUATION_PURPOSE,
         "scientific_execution_revision": SCIENTIFIC_EXECUTION_REVISION,
@@ -349,34 +381,38 @@ def continuation_receipt(
         "locked_source_revisions": bound.lock["provenance"]["source_revisions"],
         "continuation_source_revisions": dependencies["provenance"]["source_revisions"],
         "result_identity": digest(result_identity, "continuation result identity"),
+        "prepared_result_sha256": digest(
+            prepared_result_sha256, "prepared result SHA-256"
+        ),
+        "prepared_result_bytes": prepared_result_bytes,
         "continuation_audit": continuation_audit,
         "retrained": False,
         "resumed": False,
         "checkpoint_reselected": False,
     }
-    return validate_continuation_receipt(value)
+    return validate_continuation_lock(value)
 
 
-def validate_continuation_receipt(value: object) -> dict[str, object]:
-    if type(value) is not dict or set(value) != set(RECEIPT_FIELDS):
-        raise Phase11Error("continuation receipt fields are not exact")
+def validate_continuation_lock(value: object) -> dict[str, object]:
+    if type(value) is not dict or set(value) != set(CONTINUATION_LOCK_FIELDS):
+        raise Phase11Error("continuation lock fields are not exact")
     binding = PHASE11_ARTIFACT_BINDING
-    exact(value["schema"], SCHEMA + "/continuation-receipt", "receipt schema")
-    exact(value["role"], ROLE, "receipt role")
-    exact(value["purpose"], CONTINUATION_PURPOSE, "receipt purpose")
+    exact(value["schema"], SCHEMA + "/continuation-lock", "continuation lock schema")
+    exact(value["role"], ROLE, "continuation lock role")
+    exact(value["purpose"], CONTINUATION_PURPOSE, "continuation lock purpose")
     exact(
         value["scientific_execution_revision"],
         SCIENTIFIC_EXECUTION_REVISION,
-        "receipt scientific execution revision",
+        "continuation lock scientific execution revision",
     )
     continuation_revision = digest(
         value["technical_continuation_revision"],
-        "receipt technical continuation revision",
+        "continuation lock technical continuation revision",
         40,
     )
     if continuation_revision == SCIENTIFIC_EXECUTION_REVISION:
         raise Phase11Error(
-            "the receipt must separate the scientific and continuation revisions"
+            "the continuation lock must separate the scientific and repair revisions"
         )
     for field in (
         "execution_lock_identity",
@@ -388,9 +424,9 @@ def validate_continuation_receipt(value: object) -> dict[str, object]:
         "epochs_run",
         "frozen_e160_digest",
     ):
-        exact(value[field], getattr(binding, field), f"receipt {field}")
-    validate_runtime(value["locked_runtime"], "receipt locked runtime")
-    validate_runtime(value["continuation_runtime"], "receipt continuation runtime")
+        exact(value[field], getattr(binding, field), f"continuation lock {field}")
+    validate_runtime(value["locked_runtime"], "continuation lock locked runtime")
+    validate_runtime(value["continuation_runtime"], "continuation lock current runtime")
     for field in ("locked_source_revisions", "continuation_source_revisions"):
         revisions = value[field]
         if type(revisions) is not dict or set(revisions) != {
@@ -398,79 +434,84 @@ def validate_continuation_receipt(value: object) -> dict[str, object]:
             "lisjong_engine",
             "lisjong_arena",
         }:
-            raise Phase11Error(f"receipt {field} are not exact")
-        exact(revisions["lisjong"], LISJONG_REVISION, f"receipt {field} lisjong")
-        exact(revisions["lisjong_engine"], ENGINE_REVISION, f"receipt {field} engine")
-        digest(revisions["lisjong_arena"], f"receipt {field} Arena revision", 40)
+            raise Phase11Error(f"continuation lock {field} are not exact")
+        exact(
+            revisions["lisjong"], LISJONG_REVISION, f"continuation lock {field} lisjong"
+        )
+        exact(
+            revisions["lisjong_engine"],
+            ENGINE_REVISION,
+            f"continuation lock {field} engine",
+        )
+        digest(
+            revisions["lisjong_arena"],
+            f"continuation lock {field} Arena revision",
+            40,
+        )
     exact(
         value["locked_source_revisions"]["lisjong_arena"],
         SCIENTIFIC_EXECUTION_REVISION,
-        "receipt locked Arena revision",
+        "continuation lock scientific Arena revision",
     )
     exact(
         value["continuation_source_revisions"]["lisjong_arena"],
         continuation_revision,
-        "receipt continuation Arena revision",
+        "continuation lock repair Arena revision",
     )
-    digest(value["result_identity"], "receipt result identity")
+    digest(value["result_identity"], "continuation lock result identity")
+    digest(value["prepared_result_sha256"], "prepared result SHA-256")
+    if (
+        type(value["prepared_result_bytes"]) is not int
+        or value["prepared_result_bytes"] <= 0
+    ):
+        raise Phase11Error("prepared result byte count is invalid")
     audit = value["continuation_audit"]
     if type(audit) is not str or not audit.strip():
-        raise Phase11Error("the receipt requires a dated operator audit string")
+        raise Phase11Error("the continuation lock requires a dated operator audit")
     for field in ("retrained", "resumed", "checkpoint_reselected"):
         if type(value[field]) is not bool:
-            raise Phase11Error(f"receipt {field} must be a JSON boolean")
-        exact(value[field], False, f"receipt {field}")
+            raise Phase11Error(f"continuation lock {field} must be a JSON boolean")
+        exact(value[field], False, f"continuation lock {field}")
     return value
 
 
-def save_continuation_receipt(path: str | Path, value: dict) -> Path:
+def save_continuation_lock(path: str | Path, value: dict) -> Path:
     destination = Path(path)
     if destination.exists():
-        raise FileExistsError(f"receipt destination already exists: {destination}")
-    validate_continuation_receipt(value)
+        raise FileExistsError(
+            f"continuation lock destination already exists: {destination}"
+        )
+    validate_continuation_lock(value)
     payload = dict(value)
-    payload["receipt_identity"] = identity(value)
+    payload["continuation_lock_identity"] = identity(value)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(canonical_json_bytes(payload))
     return destination
 
 
-def load_continuation_receipt(path: str | Path) -> dict[str, object]:
+def load_continuation_lock(path: str | Path) -> dict[str, object]:
     data = Path(path).read_bytes()
     try:
         payload = json.loads(data)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise Phase11Error("continuation receipt is not valid JSON") from error
+        raise Phase11Error("continuation lock is not valid JSON") from error
     if canonical_json_bytes(payload) != data or type(payload) is not dict:
-        raise Phase11Error("continuation receipt bytes are not canonical JSON")
-    recorded = payload.pop("receipt_identity", None)
-    exact(recorded, identity(payload), "continuation receipt identity")
-    validate_continuation_receipt(payload)
-    payload["receipt_identity"] = recorded
+        raise Phase11Error("continuation lock bytes are not canonical JSON")
+    recorded = payload.pop("continuation_lock_identity", None)
+    exact(recorded, identity(payload), "continuation lock identity")
+    validate_continuation_lock(payload)
+    payload["continuation_lock_identity"] = recorded
     return payload
 
 
-def continue_result(
+def _prospective_result(
+    bound: BoundArtifacts,
     *,
-    artifact_root: str | Path,
     corpus_root: str,
     phase157_root: str,
     phase167_root: str,
-    continuation_revision: str,
-    continuation_audit: str,
-    result_path: str | Path,
-    receipt_path: str | Path,
 ) -> dict[str, object]:
-    """Expose the #172 result once, from artifacts that are already fixed."""
-    require_new_artifact_destinations(
-        {"result": result_path, "receipt": receipt_path},
-        required_names=("result", "receipt"),
-    )
-    revision = require_continuation_revision(continuation_revision)
-    bound = bind_immutable_artifacts(artifact_root)
-    dependencies = require_locked_dependencies(
-        bound.lock, continuation_revision=revision
-    )
+    """Evaluate once before the technical lock is committed."""
     lock_identity = identity(bound.lock)
     coverage = bound.coverage
     baseline = coverage["train_prevalence_baseline"]
@@ -493,16 +534,21 @@ def continue_result(
     evaluation_evidence = evaluate_readout(
         head, partition_records(records, DatasetPartition.VALIDATION), baseline
     )
-    value = assemble_result(
+    return assemble_result(
         bound.lock,
         coverage,
         baseline=baseline,
         model_manifest=manifest,
         evaluation_evidence=evaluation_evidence,
     )
-    save_result(result_path, value, bound.lock)
-    readback = load_result(result_path, bound.lock)
-    exact(readback["result_identity"], identity(value), "continuation result identity")
+
+
+def _strict_result_summary(readback: dict, expected_identity: str) -> dict[str, object]:
+    exact(
+        readback["result_identity"],
+        expected_identity,
+        "precommitted continuation result identity",
+    )
     recorded_evidence = readback["evaluation_evidence"]
     exact(
         metrics_from_evidence(recorded_evidence),
@@ -520,25 +566,176 @@ def continue_result(
         readback["outcome"],
         "outcome re-derived from the recorded result",
     )
-    receipt = continuation_receipt(
-        bound=bound,
-        continuation_revision=revision,
-        dependencies=dependencies,
-        result_identity=readback["result_identity"],
-        continuation_audit=continuation_audit,
-    )
-    save_continuation_receipt(receipt_path, receipt)
-    load_continuation_receipt(receipt_path)
     return {
-        "result": str(Path(result_path)),
-        "receipt": str(Path(receipt_path)),
         "result_identity": readback["result_identity"],
-        "scientific_execution_revision": SCIENTIFIC_EXECUTION_REVISION,
-        "technical_continuation_revision": revision,
         "outcome": readback["outcome"],
         "diagnostics": readback["diagnostics"],
         "metrics": readback["metrics"],
         "comparison": readback["comparison"],
+    }
+
+
+def _load_prepared_continuation(
+    directory: str | Path, scientific_lock: dict
+) -> PreparedContinuation:
+    root = Path(directory)
+    if not root.is_dir() or {path.name for path in root.iterdir()} != {
+        CONTINUATION_LOCK_FILENAME,
+        PREPARED_RESULT_FILENAME,
+    }:
+        raise Phase11Error("prepared continuation contains missing or extra files")
+    locked = load_continuation_lock(root / CONTINUATION_LOCK_FILENAME)
+    prepared_path = root / PREPARED_RESULT_FILENAME
+    prepared_bytes = prepared_path.read_bytes()
+    exact(
+        len(prepared_bytes),
+        locked["prepared_result_bytes"],
+        "prepared result byte count",
+    )
+    exact(
+        hashlib.sha256(prepared_bytes).hexdigest(),
+        locked["prepared_result_sha256"],
+        "prepared result SHA-256",
+    )
+    result = load_result(prepared_path, scientific_lock)
+    _strict_result_summary(result, locked["result_identity"])
+    return PreparedContinuation(root=root, lock=locked, result=result)
+
+
+def _validate_locked_context(
+    locked: dict, bound: BoundArtifacts, dependencies: dict
+) -> None:
+    exact(
+        locked["locked_runtime"],
+        bound.lock["runtime"],
+        "continuation lock against scientific runtime",
+    )
+    exact(
+        locked["locked_source_revisions"],
+        bound.lock["provenance"]["source_revisions"],
+        "continuation lock against scientific revisions",
+    )
+    exact(
+        locked["continuation_runtime"],
+        dependencies["runtime"],
+        "current runtime against continuation lock",
+    )
+    exact(
+        locked["continuation_source_revisions"],
+        dependencies["provenance"]["source_revisions"],
+        "current source revisions against continuation lock",
+    )
+
+
+def prepare_continuation(
+    *,
+    artifact_root: str | Path,
+    corpus_root: str,
+    phase157_root: str,
+    phase167_root: str,
+    continuation_audit: str,
+) -> dict[str, object]:
+    """Atomically precommit the repair revision and one evaluated result."""
+    root = Path(artifact_root)
+    result_path = root / RESULT_FILENAME
+    continuation_path = root / CONTINUATION_DIRNAME
+    require_new_artifact_destinations(
+        {"result": result_path, "continuation": continuation_path},
+        required_names=("result", "continuation"),
+    )
+    revision = current_continuation_revision()
+    bound = bind_immutable_artifacts(root)
+    dependencies = require_locked_dependencies(
+        bound.lock, continuation_revision=revision
+    )
+    value = _prospective_result(
+        bound,
+        corpus_root=corpus_root,
+        phase157_root=phase157_root,
+        phase167_root=phase167_root,
+    )
+    prospective_identity = identity(value)
+    with TemporaryDirectory(
+        prefix=f".{CONTINUATION_DIRNAME}-staging-", dir=root
+    ) as staging_name:
+        staging = Path(staging_name)
+        prepared_path = staging / PREPARED_RESULT_FILENAME
+        save_result(prepared_path, value, bound.lock)
+        prepared_bytes = prepared_path.read_bytes()
+        locked = continuation_lock(
+            bound=bound,
+            continuation_revision=revision,
+            dependencies=dependencies,
+            result_identity=prospective_identity,
+            prepared_result_sha256=hashlib.sha256(prepared_bytes).hexdigest(),
+            prepared_result_bytes=len(prepared_bytes),
+            continuation_audit=continuation_audit,
+        )
+        save_continuation_lock(staging / CONTINUATION_LOCK_FILENAME, locked)
+        prepared = _load_prepared_continuation(staging, bound.lock)
+        _validate_locked_context(prepared.lock, bound, dependencies)
+        staging.rename(continuation_path)
+    prepared = _load_prepared_continuation(continuation_path, bound.lock)
+    _validate_locked_context(prepared.lock, bound, dependencies)
+    return {
+        "continuation": str(continuation_path),
+        "continuation_lock_identity": prepared.lock["continuation_lock_identity"],
+        "result_identity": prepared.lock["result_identity"],
+        "scientific_execution_revision": SCIENTIFIC_EXECUTION_REVISION,
+        "technical_continuation_revision": revision,
+        "result_exposed": False,
+        "retrained": False,
+    }
+
+
+def _publish_new_file(source: Path, destination: Path) -> None:
+    """Publish complete bytes atomically and without an overwrite window."""
+    data = source.read_bytes()
+    with TemporaryDirectory(
+        prefix=f".{destination.name}-staging-", dir=destination.parent
+    ) as staging_name:
+        staged = Path(staging_name) / destination.name
+        staged.write_bytes(data)
+        try:
+            os.link(staged, destination)
+        except FileExistsError as error:
+            raise ExecutionSafetyError(
+                "locked output result already exists; outputs are write-once"
+            ) from error
+
+
+def expose_result(*, artifact_root: str | Path) -> dict[str, object]:
+    """Publish only the prepared result; never rerun evaluation or training."""
+    root = Path(artifact_root)
+    result_path = root / RESULT_FILENAME
+    require_new_artifact_destinations(
+        {"result": result_path}, required_names=("result",)
+    )
+    continuation_path = root / CONTINUATION_DIRNAME
+
+    # The lock is the first interpreted artifact. Tampering stops before any
+    # scientific artifact loading, and this exposure path has no evaluation.
+    locked = load_continuation_lock(continuation_path / CONTINUATION_LOCK_FILENAME)
+    revision = require_locked_continuation_revision(
+        locked["technical_continuation_revision"]
+    )
+    bound = bind_immutable_artifacts(root)
+    dependencies = require_locked_dependencies(
+        bound.lock, continuation_revision=revision
+    )
+    _validate_locked_context(locked, bound, dependencies)
+    prepared = _load_prepared_continuation(continuation_path, bound.lock)
+    exact(prepared.lock, locked, "prepared continuation lock readback")
+    _publish_new_file(prepared.root / PREPARED_RESULT_FILENAME, result_path)
+    readback = load_result(result_path, bound.lock)
+    summary = _strict_result_summary(readback, locked["result_identity"])
+    return {
+        "result": str(result_path),
+        "continuation": str(continuation_path),
+        "continuation_lock_identity": locked["continuation_lock_identity"],
+        "scientific_execution_revision": SCIENTIFIC_EXECUTION_REVISION,
+        "technical_continuation_revision": revision,
+        **summary,
         "retrained": False,
     }
 
@@ -546,52 +743,60 @@ def continue_result(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Expose the already-trained Arena #172 result exactly once from its "
-            "immutable artifacts. This path never trains."
+            "Prepare and expose the already-trained Arena #172 result without "
+            "ever training or rerunning evaluation during recovery."
         )
     )
-    parser.add_argument("--corpus-root", required=True)
-    parser.add_argument("--phase157-root", required=True)
-    parser.add_argument("--phase167-root", required=True)
-    parser.add_argument("--artifact-root", required=True)
-    parser.add_argument("--continuation-revision", required=True)
-    parser.add_argument("--continuation-audit", required=True)
-    parser.add_argument("--result", required=True)
-    parser.add_argument("--receipt", required=True)
+    commands = parser.add_subparsers(dest="command", required=True)
+    prepare = commands.add_parser(
+        "prepare", help="precommit the exact repair revision and prospective result"
+    )
+    prepare.add_argument("--corpus-root", required=True)
+    prepare.add_argument("--phase157-root", required=True)
+    prepare.add_argument("--phase167-root", required=True)
+    prepare.add_argument("--artifact-root", required=True)
+    prepare.add_argument("--continuation-audit", required=True)
+    expose = commands.add_parser(
+        "expose", help="atomically publish only the already-prepared result"
+    )
+    expose.add_argument("--artifact-root", required=True)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
-    output = continue_result(
-        artifact_root=arguments.artifact_root,
-        corpus_root=arguments.corpus_root,
-        phase157_root=arguments.phase157_root,
-        phase167_root=arguments.phase167_root,
-        continuation_revision=arguments.continuation_revision,
-        continuation_audit=arguments.continuation_audit,
-        result_path=arguments.result,
-        receipt_path=arguments.receipt,
-    )
+    if arguments.command == "prepare":
+        output = prepare_continuation(
+            artifact_root=arguments.artifact_root,
+            corpus_root=arguments.corpus_root,
+            phase157_root=arguments.phase157_root,
+            phase167_root=arguments.phase167_root,
+            continuation_audit=arguments.continuation_audit,
+        )
+    else:
+        output = expose_result(artifact_root=arguments.artifact_root)
     print(json.dumps(output, ensure_ascii=False, sort_keys=True, indent=2))
     return 0
 
 
 __all__ = [
+    "CONTINUATION_LOCK_FIELDS",
     "CONTINUATION_PURPOSE",
     "PHASE11_ARTIFACT_BINDING",
-    "RECEIPT_FIELDS",
     "SCIENTIFIC_EXECUTION_REVISION",
     "BoundArtifacts",
     "ImmutableArtifactBinding",
+    "PreparedContinuation",
     "bind_immutable_artifacts",
-    "continuation_receipt",
-    "continue_result",
-    "load_continuation_receipt",
-    "require_continuation_revision",
+    "continuation_lock",
+    "current_continuation_revision",
+    "expose_result",
+    "load_continuation_lock",
+    "prepare_continuation",
+    "require_locked_continuation_revision",
     "require_locked_dependencies",
-    "save_continuation_receipt",
-    "validate_continuation_receipt",
+    "save_continuation_lock",
+    "validate_continuation_lock",
 ]
 
 

@@ -34,6 +34,7 @@ from lisjong_arena.phase11_public_riichi_wait_readout.continuation import (
 )
 from lisjong_arena.phase11_public_riichi_wait_readout.coverage import (
     build_coverage,
+    load_coverage,
     save_coverage,
     validate_coverage,
 )
@@ -724,6 +725,67 @@ def _fixture_artifact_root(directory):
     return root, binding, lock
 
 
+def _fixture_result(root, lock):
+    coverage = load_coverage(root / "coverage.json", identity(lock))
+    baseline = coverage["train_prevalence_baseline"]
+    validation = coverage["partitions"]["validation"]
+    games = [_empty_aggregate() for _ in validation["eligible_hanchan_identities"]]
+    tiles = [_empty_aggregate() for _ in range(TILE_KIND_COUNT)]
+    reliability = {
+        "baseline": [_empty_aggregate() for _ in range(10)],
+        "readout": [_empty_aggregate() for _ in range(10)],
+    }
+    subgroups = {
+        "riichi_junme": defaultdict(_empty_aggregate),
+        "seat": defaultdict(_empty_aggregate),
+        "open_closed": defaultdict(_empty_aggregate),
+    }
+    for row_index, (identity_row, game) in enumerate(
+        zip(validation["eligible_hanchan_identities"], games, strict=True)
+    ):
+        positive_tile = identity_row["game_seed"] % TILE_KIND_COUNT
+        for tile_index, baseline_p in enumerate(baseline["probabilities"]):
+            y = int(tile_index == positive_tile)
+            readout_p = baseline_p
+            logit = math.log(readout_p / (1.0 - readout_p))
+            for aggregate in (
+                game,
+                tiles[tile_index],
+                reliability["baseline"][min(int(baseline_p * 10), 9)],
+                reliability["readout"][min(int(readout_p * 10), 9)],
+                subgroups["riichi_junme"][str(1 + row_index % 9)],
+                subgroups["seat"][str(1 + row_index % 3)],
+                subgroups["open_closed"]["closed" if row_index % 2 else "open"],
+            ):
+                _add(aggregate, y, baseline_p, readout_p, logit)
+    evidence = {
+        "finite_probabilities": True,
+        "probability_range_valid": True,
+        "per_hanchan": [
+            {**identity_row, **row}
+            for identity_row, row in zip(
+                validation["eligible_hanchan_identities"], games, strict=True
+            )
+        ],
+        "per_tile": [{"tile_index": index, **row} for index, row in enumerate(tiles)],
+        "reliability": {
+            name: _reliability_rows(rows) for name, rows in reliability.items()
+        },
+        "subgroups": {
+            name: [{"group": key, **row} for key, row in sorted(groups.items())]
+            for name, groups in subgroups.items()
+        },
+    }
+    manifest = json.loads((root / "readout-model" / MANIFEST_FILENAME).read_bytes())
+    return assemble_result(
+        lock,
+        coverage,
+        baseline=baseline,
+        model_manifest=manifest,
+        evaluation_evidence=evidence,
+    )
+
+
 class ContinuationBindingTest(unittest.TestCase):
     """Issue #209: the continuation is pinned to already-produced artifacts."""
 
@@ -844,26 +906,27 @@ class ContinuationBindingTest(unittest.TestCase):
 
 class ContinuationRevisionTest(unittest.TestCase):
     def test_the_scientific_revision_is_never_the_continuation_revision(self):
-        with patch.object(continuation, "require_clean_arena_head") as clean:
-            with self.assertRaisesRegex(Phase11Error, "repair commit"):
-                continuation.require_continuation_revision(
-                    SCIENTIFIC_EXECUTION_REVISION
-                )
-        clean.assert_not_called()
+        with self.assertRaisesRegex(Phase11Error, "repair commit"):
+            continuation.require_locked_continuation_revision(
+                SCIENTIFIC_EXECUTION_REVISION
+            )
 
-    def test_a_drifted_or_dirty_head_stops_the_continuation(self):
+    def test_locked_revision_and_head_must_match_exactly(self):
         with patch.object(
             continuation, "require_clean_arena_head", return_value="c" * 40
-        ):
+        ) as clean:
             with self.assertRaises(Phase11Error):
-                continuation.require_continuation_revision("d" * 40)
+                continuation.require_locked_continuation_revision("d" * 40)
+        clean.assert_called_once()
+
+    def test_a_dirty_head_stops_the_continuation(self):
         with patch.object(
             continuation,
             "require_clean_arena_head",
             side_effect=ExecutionSafetyError("Arena worktree must be clean"),
         ):
             with self.assertRaisesRegex(ExecutionSafetyError, "must be clean"):
-                continuation.require_continuation_revision("d" * 40)
+                continuation.require_locked_continuation_revision("d" * 40)
 
     def test_an_unmerged_revision_stops_the_continuation(self):
         with (
@@ -877,15 +940,15 @@ class ContinuationRevisionTest(unittest.TestCase):
             ),
         ):
             with self.assertRaisesRegex(ExecutionSafetyError, "not contained"):
-                continuation.require_continuation_revision("d" * 40)
+                continuation.require_locked_continuation_revision("d" * 40)
 
     def test_a_short_or_uppercase_revision_is_rejected(self):
         for value in ("D" * 40, "d" * 39, "", None):
             with self.subTest(revision=value):
                 with self.assertRaises(Phase11Error):
-                    continuation.require_continuation_revision(value)
+                    continuation.require_locked_continuation_revision(value)
 
-    def test_a_clean_merged_repair_revision_is_accepted(self):
+    def test_prepare_locks_the_current_clean_merged_revision(self):
         with (
             patch.object(
                 continuation, "require_clean_arena_head", return_value="d" * 40
@@ -894,18 +957,27 @@ class ContinuationRevisionTest(unittest.TestCase):
                 continuation, "require_merged_arena_revision", return_value="d" * 40
             ) as merged,
         ):
-            self.assertEqual(
-                continuation.require_continuation_revision("d" * 40), "d" * 40
-            )
+            self.assertEqual(continuation.current_continuation_revision(), "d" * 40)
         merged.assert_called_once()
 
+    def test_later_main_revision_is_not_adopted_after_lock(self):
+        with (
+            patch.object(
+                continuation, "require_clean_arena_head", return_value="e" * 40
+            ),
+            patch.object(continuation, "require_merged_arena_revision") as merged,
+        ):
+            with self.assertRaisesRegex(Phase11Error, "locked technical"):
+                continuation.require_locked_continuation_revision("d" * 40)
+        merged.assert_not_called()
 
-class ContinuationReceiptTest(unittest.TestCase):
-    def _receipt(self, temporary):
+
+class ContinuationLockTest(unittest.TestCase):
+    def _lock_value(self, temporary):
         root, binding, lock = _fixture_artifact_root(temporary)
         with patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding):
             bound = continuation.bind_immutable_artifacts(root)
-            value = continuation.continuation_receipt(
+            value = continuation.continuation_lock(
                 bound=bound,
                 continuation_revision="d" * 40,
                 dependencies={
@@ -918,17 +990,19 @@ class ContinuationReceiptTest(unittest.TestCase):
                     },
                 },
                 result_identity="e" * 64,
+                prepared_result_sha256="f" * 64,
+                prepared_result_bytes=123,
                 continuation_audit="Issue #209 continuation recorded 2026-09-12",
             )
         return root, binding, value
 
-    def test_receipt_is_write_once_and_round_trips(self):
+    def test_lock_is_write_once_and_round_trips(self):
         with TemporaryDirectory() as temporary:
-            root, binding, value = self._receipt(temporary)
-            destination = Path(temporary) / "continuation-receipt.json"
+            root, binding, value = self._lock_value(temporary)
+            destination = Path(temporary) / "continuation-lock.json"
             with patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding):
-                continuation.save_continuation_receipt(destination, value)
-                loaded = continuation.load_continuation_receipt(destination)
+                continuation.save_continuation_lock(destination, value)
+                loaded = continuation.load_continuation_lock(destination)
                 self.assertEqual(loaded["result_identity"], "e" * 64)
                 self.assertEqual(
                     loaded["scientific_execution_revision"],
@@ -937,48 +1011,209 @@ class ContinuationReceiptTest(unittest.TestCase):
                 self.assertEqual(loaded["technical_continuation_revision"], "d" * 40)
                 self.assertFalse(loaded["retrained"])
                 with self.assertRaises(FileExistsError):
-                    continuation.save_continuation_receipt(destination, value)
+                    continuation.save_continuation_lock(destination, value)
             self.assertTrue(root.is_dir())
 
-    def test_receipt_rejects_confused_revisions_and_training_claims(self):
+    def test_lock_rejects_confused_revisions_and_training_claims(self):
         with TemporaryDirectory() as temporary:
-            _root, binding, value = self._receipt(temporary)
+            _root, binding, value = self._lock_value(temporary)
             with patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding):
                 for field in ("retrained", "resumed", "checkpoint_reselected"):
                     tampered = copy.deepcopy(value)
                     tampered[field] = True
                     with self.assertRaises(Phase11Error):
-                        continuation.validate_continuation_receipt(tampered)
+                        continuation.validate_continuation_lock(tampered)
                 tampered = copy.deepcopy(value)
                 tampered["technical_continuation_revision"] = (
                     SCIENTIFIC_EXECUTION_REVISION
                 )
                 with self.assertRaises(Phase11Error):
-                    continuation.validate_continuation_receipt(tampered)
+                    continuation.validate_continuation_lock(tampered)
                 tampered = copy.deepcopy(value)
                 tampered["locked_source_revisions"]["lisjong"] = "f" * 40
                 with self.assertRaises(Phase11Error):
-                    continuation.validate_continuation_receipt(tampered)
+                    continuation.validate_continuation_lock(tampered)
                 tampered = copy.deepcopy(value)
                 tampered["continuation_audit"] = "   "
                 with self.assertRaises(Phase11Error):
-                    continuation.validate_continuation_receipt(tampered)
+                    continuation.validate_continuation_lock(tampered)
                 tampered = copy.deepcopy(value)
                 del tampered["result_identity"]
                 with self.assertRaises(Phase11Error):
-                    continuation.validate_continuation_receipt(tampered)
+                    continuation.validate_continuation_lock(tampered)
 
-    def test_a_tampered_receipt_file_is_rejected(self):
+    def test_a_tampered_lock_file_is_rejected(self):
         with TemporaryDirectory() as temporary:
-            _root, binding, value = self._receipt(temporary)
-            destination = Path(temporary) / "continuation-receipt.json"
+            _root, binding, value = self._lock_value(temporary)
+            destination = Path(temporary) / "continuation-lock.json"
             with patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding):
-                continuation.save_continuation_receipt(destination, value)
+                continuation.save_continuation_lock(destination, value)
                 payload = json.loads(destination.read_bytes())
                 payload["retrained"] = True
                 destination.write_bytes(canonical_json_bytes(payload))
                 with self.assertRaises(Phase11Error):
-                    continuation.load_continuation_receipt(destination)
+                    continuation.load_continuation_lock(destination)
+
+
+class ContinuationRecoveryTest(unittest.TestCase):
+    def _prepare(self, temporary):
+        root, binding, scientific_lock = _fixture_artifact_root(temporary)
+        result = _fixture_result(root, scientific_lock)
+        dependencies = {
+            "runtime": _runtime(),
+            "provenance": {
+                "source_revisions": {
+                    **scientific_lock["provenance"]["source_revisions"],
+                    "lisjong_arena": "d" * 40,
+                }
+            },
+        }
+        with (
+            patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding),
+            patch.object(
+                continuation, "current_continuation_revision", return_value="d" * 40
+            ),
+            patch.object(
+                continuation,
+                "require_locked_dependencies",
+                return_value=dependencies,
+            ),
+            patch.object(
+                continuation, "_prospective_result", return_value=result
+            ) as evaluate,
+        ):
+            prepared = continuation.prepare_continuation(
+                artifact_root=root,
+                corpus_root="corpus",
+                phase157_root="phase157",
+                phase167_root="phase167",
+                continuation_audit="Issue #209 continuation recorded 2026-09-12",
+            )
+        evaluate.assert_called_once()
+        return root, binding, dependencies, prepared
+
+    def test_interruption_after_lock_can_recover_with_result_write_only(self):
+        with TemporaryDirectory() as temporary:
+            root, binding, dependencies, prepared = self._prepare(temporary)
+            self.assertFalse((root / "result.json").exists())
+            self.assertTrue(
+                (root / "continuation" / "continuation-lock.json").is_file()
+            )
+            with (
+                patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding),
+                patch.object(
+                    continuation,
+                    "require_locked_continuation_revision",
+                    return_value="d" * 40,
+                ),
+                patch.object(
+                    continuation,
+                    "require_locked_dependencies",
+                    return_value=dependencies,
+                ),
+                patch.object(
+                    continuation,
+                    "_prospective_result",
+                    side_effect=AssertionError("evaluation must not rerun"),
+                ),
+                patch.object(
+                    continuation,
+                    "_publish_new_file",
+                    side_effect=OSError("simulated interruption before result publish"),
+                ),
+            ):
+                with self.assertRaisesRegex(OSError, "simulated interruption"):
+                    continuation.expose_result(artifact_root=root)
+            self.assertFalse((root / "result.json").exists())
+            with (
+                patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding),
+                patch.object(
+                    continuation,
+                    "require_locked_continuation_revision",
+                    return_value="d" * 40,
+                ),
+                patch.object(
+                    continuation,
+                    "require_locked_dependencies",
+                    return_value=dependencies,
+                ),
+                patch.object(
+                    continuation,
+                    "_prospective_result",
+                    side_effect=AssertionError("evaluation must not rerun"),
+                ) as evaluate,
+            ):
+                exposed = continuation.expose_result(artifact_root=root)
+            evaluate.assert_not_called()
+            self.assertEqual(exposed["result_identity"], prepared["result_identity"])
+            self.assertTrue((root / "result.json").is_file())
+
+    def test_second_result_exposure_is_rejected_before_any_work(self):
+        with TemporaryDirectory() as temporary:
+            root, binding, dependencies, _prepared = self._prepare(temporary)
+            with (
+                patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding),
+                patch.object(
+                    continuation,
+                    "require_locked_continuation_revision",
+                    return_value="d" * 40,
+                ),
+                patch.object(
+                    continuation,
+                    "require_locked_dependencies",
+                    return_value=dependencies,
+                ),
+            ):
+                continuation.expose_result(artifact_root=root)
+            with patch.object(continuation, "load_continuation_lock") as load:
+                with self.assertRaisesRegex(ExecutionSafetyError, "write-once"):
+                    continuation.expose_result(artifact_root=root)
+            load.assert_not_called()
+
+    def test_tampered_lock_stops_before_artifact_loading(self):
+        with TemporaryDirectory() as temporary:
+            root, _binding, _dependencies, _prepared = self._prepare(temporary)
+            lock_path = root / "continuation" / "continuation-lock.json"
+            lock_path.write_bytes(lock_path.read_bytes() + b" ")
+            with (
+                patch.object(continuation, "bind_immutable_artifacts") as bind,
+                patch.object(continuation, "_prospective_result") as evaluate,
+            ):
+                with self.assertRaises(Phase11Error):
+                    continuation.expose_result(artifact_root=root)
+            bind.assert_not_called()
+            evaluate.assert_not_called()
+
+    def test_precommitted_result_identity_mismatch_is_rejected(self):
+        with TemporaryDirectory() as temporary:
+            root, binding, dependencies, _prepared = self._prepare(temporary)
+            lock_path = root / "continuation" / "continuation-lock.json"
+            payload = json.loads(lock_path.read_bytes())
+            payload["result_identity"] = "a" * 64
+            without_identity = {
+                name: item
+                for name, item in payload.items()
+                if name != "continuation_lock_identity"
+            }
+            payload["continuation_lock_identity"] = identity(without_identity)
+            lock_path.write_bytes(canonical_json_bytes(payload))
+            with (
+                patch.object(continuation, "PHASE11_ARTIFACT_BINDING", binding),
+                patch.object(
+                    continuation,
+                    "require_locked_continuation_revision",
+                    return_value="d" * 40,
+                ),
+                patch.object(
+                    continuation,
+                    "require_locked_dependencies",
+                    return_value=dependencies,
+                ),
+                patch.object(continuation, "_publish_new_file") as publish,
+            ):
+                with self.assertRaisesRegex(Phase11Error, "precommitted"):
+                    continuation.expose_result(artifact_root=root)
+            publish.assert_not_called()
 
 
 class ContinuationSurfaceTest(unittest.TestCase):
@@ -1022,11 +1257,18 @@ class ContinuationSurfaceTest(unittest.TestCase):
 
     def test_the_continuation_cli_offers_no_training_or_budget_knob(self):
         parser = continuation._parser()
-        options = {
-            option for action in parser._actions for option in action.option_strings
+        command = next(action for action in parser._actions if action.dest == "command")
+        self.assertEqual(
+            set(command.choices),
+            {"prepare", "expose"},
+        )
+        prepare_options = {
+            option
+            for action in command.choices["prepare"]._actions
+            for option in action.option_strings
         }
         self.assertEqual(
-            options,
+            prepare_options,
             {
                 "-h",
                 "--help",
@@ -1034,34 +1276,44 @@ class ContinuationSurfaceTest(unittest.TestCase):
                 "--phase157-root",
                 "--phase167-root",
                 "--artifact-root",
-                "--continuation-revision",
                 "--continuation-audit",
-                "--result",
-                "--receipt",
             },
         )
+        expose_options = {
+            option
+            for action in command.choices["expose"]._actions
+            for option in action.option_strings
+        }
+        self.assertEqual(expose_options, {"-h", "--help", "--artifact-root"})
         help_text = parser.format_help().lower()
         for forbidden in ("epoch", "resume", "rescue", "hpo", "320", "seed", "train "):
             self.assertNotIn(forbidden, help_text)
 
-    def test_an_existing_result_or_receipt_stops_before_any_work(self):
+    def test_an_existing_result_or_continuation_stops_prepare_before_any_work(self):
         with TemporaryDirectory() as temporary:
-            result = Path(temporary) / "result.json"
-            receipt = Path(temporary) / "continuation-receipt.json"
-            result.write_text("{}", encoding="utf-8")
-            with patch.object(continuation, "bind_immutable_artifacts") as bind:
-                with self.assertRaisesRegex(ExecutionSafetyError, "write-once"):
-                    continuation.continue_result(
-                        artifact_root=temporary,
-                        corpus_root="corpus",
-                        phase157_root="phase157",
-                        phase167_root="phase167",
-                        continuation_revision="d" * 40,
-                        continuation_audit="Issue #209 continuation",
-                        result_path=result,
-                        receipt_path=receipt,
-                    )
-            bind.assert_not_called()
+            root = Path(temporary)
+            for existing in (root / "result.json", root / "continuation"):
+                with self.subTest(existing=existing.name):
+                    if existing.suffix:
+                        existing.write_text("{}", encoding="utf-8")
+                    else:
+                        existing.mkdir()
+                    with patch.object(
+                        continuation, "current_continuation_revision"
+                    ) as revision:
+                        with self.assertRaisesRegex(ExecutionSafetyError, "write-once"):
+                            continuation.prepare_continuation(
+                                artifact_root=root,
+                                corpus_root="corpus",
+                                phase157_root="phase157",
+                                phase167_root="phase167",
+                                continuation_audit="Issue #209 continuation",
+                            )
+                    revision.assert_not_called()
+                    if existing.is_dir():
+                        existing.rmdir()
+                    else:
+                        existing.unlink()
 
 
 class Issue209ProtocolInvariantTest(unittest.TestCase):
