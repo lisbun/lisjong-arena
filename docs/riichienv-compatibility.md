@@ -126,6 +126,12 @@ Windowsでのfull local suite（PyTorch導入済み）は3408件中、15 errors�
 
 PR #225（Issue #211）は本preflight時点ではopenであり、その未マージの`riichilab_source_pilot` replay/materialization pathはこのgateの対象外。PR #225 must rebase/revalidate its RiichiEnv 0.4.8 assumptions against 0.4.10 before merge. 特に`apply_event()` / `get_observations()` / legal-action / meld provenance / physical tile / first-turn / kakan-chankan replayを再確認する必要がある。
 
+### Post-#227 landing status
+
+上記は#228単独preflight時点の記録である。その後、#227を独立PR #230として実装・レビューし、`issue-228-riichienv-0410` branchへsquash mergeした。current branchではcall-target resolverが0.4.10のphysical tile `last_discard` contractへ適合し、通常discardは相手の最新捨て牌、chankan Ronはactive Kakan meldからtargetをexactly one opponentとして解決する。physical tile id `119`と`0..3`の回帰、Chi / Pon / Daiminkan / Ron、kakan/chankan、ambiguity fail-closedを固定している。
+
+PR #230 headではLinux CIの`quality` / `phase6-ml`がともに成功した。#230をstackへ取り込んだ後の#229 headでも同じcanonical CI gateを再実行し、greenをmerge条件とする。preflightで記録したWindows `/tmp` 9 errorsとsame-process PyTorch 2 failuresは#227 / #228と無関係であり、このupgradeのlanding blockerとはしない。live RiichiLab rankedはまだ再実行していない。
+
 ## Relationship to other work
 
 このcontractは以下を実装しない。
