@@ -97,15 +97,15 @@ class ComparisonIntegrationTest(unittest.TestCase):
         self.assertEqual(artifact.metrics_a, serial.metrics_a)
         self.assertEqual(artifact.metrics_b, serial.metrics_b)
         self.assertEqual(artifact.provenance.execution_environment, "riichienv")
-        # `pyproject.toml`のcurrent lisjong pinをそのまま固定する。Arena #204で
-        # CheapFarGuardOpenHandYakuAwareCallPolicyのmerged revisionへpinを
+        # `pyproject.toml`のcurrent lisjong pinをそのまま固定する。Arena #219で
+        # MechanismRiichiDefenseYakuhaiCallPolicyを含むrevisionへpinを
         # 更新したため、provenanceも同じexact revisionでなければならない。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "d39abcd2f609e2d48c16e7ba3ec0d28f4b7a062d",
+            "d1d3c14e3e1948cff871273b7b8b57a08c655db9",
         )
 
 

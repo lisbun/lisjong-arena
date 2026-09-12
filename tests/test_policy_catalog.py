@@ -2,7 +2,7 @@
 
 Policyのbehaviorそのものは検証しない。catalogが``two-step`` /
 ``finite-horizon`` / ``combined`` / ``hand-value-aware`` /
-``extended-combined`` / ``yakuhai-call``の6つであること、catalog keyと
+``extended-combined`` / ``yakuhai-call`` / ``mechanism-riichi-defense``の7つであること、catalog keyと
 ``PolicySpec.identity``が一致すること、factoryがtop-levelでfresh instanceを生成し
 spawn-safeであること、CLIが登録名を既存serial / parallel evaluation pathへ解決する
 ことだけを固定する。
@@ -18,6 +18,7 @@ from lisjong.policies import (
     GenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
+    MechanismRiichiDefenseYakuhaiCallPolicy,
     TwoStepUkeirePolicy,
     YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
@@ -30,6 +31,7 @@ from lisjong_arena.policy_catalog import (
     create_extended_combined,
     create_finite_horizon,
     create_hand_value_aware,
+    create_mechanism_riichi_defense,
     create_two_step,
     create_yakuhai_call,
 )
@@ -38,7 +40,7 @@ from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
 class CatalogContentsTest(unittest.TestCase):
-    def test_catalog_has_exactly_six_registered_policies(self) -> None:
+    def test_catalog_has_exactly_seven_registered_policies(self) -> None:
         self.assertEqual(
             set(POLICY_CATALOG),
             {
@@ -48,6 +50,7 @@ class CatalogContentsTest(unittest.TestCase):
                 "hand-value-aware",
                 "extended-combined",
                 "yakuhai-call",
+                "mechanism-riichi-defense",
             },
         )
 
@@ -154,6 +157,12 @@ class FactoryTest(unittest.TestCase):
             policy, YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy
         )
 
+    def test_mechanism_riichi_defense_factory_returns_intended_policy(self) -> None:
+        self.assertIsInstance(
+            create_mechanism_riichi_defense(),
+            MechanismRiichiDefenseYakuhaiCallPolicy,
+        )
+
     def test_two_step_factory_returns_a_fresh_instance_each_call(self) -> None:
         self.assertIsNot(create_two_step(), create_two_step())
 
@@ -172,6 +181,13 @@ class FactoryTest(unittest.TestCase):
     def test_yakuhai_call_factory_returns_a_fresh_instance_each_call(self) -> None:
         self.assertIsNot(create_yakuhai_call(), create_yakuhai_call())
 
+    def test_mechanism_riichi_defense_factory_returns_a_fresh_instance_each_call(
+        self,
+    ) -> None:
+        self.assertIsNot(
+            create_mechanism_riichi_defense(), create_mechanism_riichi_defense()
+        )
+
     def test_catalog_factories_are_the_same_top_level_callables(self) -> None:
         self.assertIs(POLICY_CATALOG["two-step"].factory, create_two_step)
         self.assertIs(POLICY_CATALOG["finite-horizon"].factory, create_finite_horizon)
@@ -183,6 +199,10 @@ class FactoryTest(unittest.TestCase):
             POLICY_CATALOG["extended-combined"].factory, create_extended_combined
         )
         self.assertIs(POLICY_CATALOG["yakuhai-call"].factory, create_yakuhai_call)
+        self.assertIs(
+            POLICY_CATALOG["mechanism-riichi-defense"].factory,
+            create_mechanism_riichi_defense,
+        )
 
 
 class SpawnSafetyTest(unittest.TestCase):
@@ -204,8 +224,39 @@ class SpawnSafetyTest(unittest.TestCase):
     def test_yakuhai_call_spec_is_process_serializable(self) -> None:
         check_policy_spec_serializable(POLICY_CATALOG["yakuhai-call"])
 
+    def test_mechanism_riichi_defense_spec_is_process_serializable(self) -> None:
+        check_policy_spec_serializable(POLICY_CATALOG["mechanism-riichi-defense"])
+
 
 class CliResolutionTest(unittest.TestCase):
+    def test_mechanism_riichi_defense_resolves_as_baseline(self) -> None:
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                return_value=object(),
+            ) as serial,
+            mock.patch(
+                "lisjong_arena.single_round_compare.format_summary",
+                return_value="ok",
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            return_code = _run_cli(
+                [
+                    "--candidate",
+                    "yakuhai-call",
+                    "--baseline",
+                    "mechanism-riichi-defense",
+                    "--seeds",
+                    "0",
+                ]
+            )
+
+        self.assertEqual(return_code, 0)
+        (plan,), _ = serial.call_args
+        self.assertIs(plan.candidate, POLICY_CATALOG["yakuhai-call"])
+        self.assertIs(plan.baseline, POLICY_CATALOG["mechanism-riichi-defense"])
+
     def test_extended_combined_vs_combined_resolves_on_serial_path(self) -> None:
         result = object()
         with (

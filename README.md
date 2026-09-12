@@ -197,11 +197,12 @@ installed environmentからimport可能なfirst-party research Policyはexplicit
 python -m lisjong_arena.single_round_compare `
   --candidate lisjong.policies.some_new_policy:SomeNewPolicy `
   --candidate-id some-new-policy-experiment `
-  --baseline yakuhai-call `
+  --baseline mechanism-riichi-defense `
   --seeds 0:99
 ```
 
 import可能であることはcurated catalog promotionを意味しません。
+`mechanism-riichi-defense`は今後のABBB / `4p-red-single` heuristic比較向けのcurated baselineです。`yakuhai-call`もpredecessor / historical comparatorとして引き続き指定できます。
 
 恒久的なcomparison ruleは [Policy strength evaluation policy](docs/policy-strength-evaluation.md) を正本とします。[Automated Strength Evaluation](docs/automated-strength-evaluation.md) は既存comparisonを1つのmachine-readable locked runとしてcompositionする仕組みであり、自律的なcandidate生成・Champion promotion loopではありません。
 

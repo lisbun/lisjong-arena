@@ -1018,17 +1018,16 @@ class PredecessorRegressionTests(unittest.TestCase):
         )
         self.assertEqual(GATE_B_ORDERED_SEEDS, tuple(range(440, 465)))
 
-    def test_policy_catalog_behaviour_is_unchanged(self):
-        self.assertEqual(
-            sorted(POLICY_CATALOG),
-            [
+    def test_policy_catalog_retains_predecessor_entries(self):
+        self.assertTrue(
+            {
                 "combined",
                 "extended-combined",
                 "finite-horizon",
                 "hand-value-aware",
                 "two-step",
                 "yakuhai-call",
-            ],
+            }.issubset(POLICY_CATALOG),
         )
         for name, spec in POLICY_CATALOG.items():
             self.assertEqual(spec.identity, name)

@@ -75,7 +75,7 @@ required for a `lisjong.package.module:attribute` reference.
   "artifact_output": "/prepared/durable/run-001/strength.json",
   "baseline": {
     "identity": null,
-    "reference": "yakuhai-call"
+    "reference": "mechanism-riichi-defense"
   },
   "candidate": {
     "identity": "candidate-checkpoint-abc123",
@@ -224,8 +224,8 @@ Representative shape:
     "reference": "lisjong.policies.candidate:CandidatePolicy"
   },
   "resolved_baseline": {
-    "identity": "yakuhai-call",
-    "reference": "yakuhai-call"
+    "identity": "mechanism-riichi-defense",
+    "reference": "mechanism-riichi-defense"
   },
   "protocol": "abbb-single-round-v1",
   "ordered_seeds": [700, 701],

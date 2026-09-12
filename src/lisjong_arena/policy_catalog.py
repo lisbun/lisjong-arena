@@ -1,7 +1,8 @@
 """``single_round_compare`` CLIが名前でPolicyを解決するための明示的catalog。
 
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
-``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call``の6つだけである。
+``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call`` /
+``mechanism-riichi-defense``の7つだけである。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
 
@@ -20,6 +21,7 @@ from lisjong.policies import (
     GenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
+    MechanismRiichiDefenseYakuhaiCallPolicy,
     TwoStepUkeirePolicy,
     YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
@@ -53,6 +55,10 @@ def create_yakuhai_call() -> (
     return YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy()
 
 
+def create_mechanism_riichi_defense() -> MechanismRiichiDefenseYakuhaiCallPolicy:
+    return MechanismRiichiDefenseYakuhaiCallPolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "two-step": PolicySpec(identity="two-step", factory=create_two_step),
     "finite-horizon": PolicySpec(
@@ -66,6 +72,9 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
         identity="extended-combined", factory=create_extended_combined
     ),
     "yakuhai-call": PolicySpec(identity="yakuhai-call", factory=create_yakuhai_call),
+    "mechanism-riichi-defense": PolicySpec(
+        identity="mechanism-riichi-defense", factory=create_mechanism_riichi_defense
+    ),
 }
 """登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
 
@@ -76,6 +85,7 @@ __all__ = [
     "create_extended_combined",
     "create_finite_horizon",
     "create_hand_value_aware",
+    "create_mechanism_riichi_defense",
     "create_two_step",
     "create_yakuhai_call",
 ]

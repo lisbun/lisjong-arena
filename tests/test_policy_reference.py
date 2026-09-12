@@ -22,6 +22,12 @@ class PolicyReferenceResolutionTest(unittest.TestCase):
     def test_existing_catalog_alias_resolves_to_existing_spec(self) -> None:
         self.assertIs(resolve_policy_reference("combined"), POLICY_CATALOG["combined"])
 
+    def test_mechanism_riichi_defense_alias_resolves_to_curated_spec(self) -> None:
+        self.assertIs(
+            resolve_policy_reference("mechanism-riichi-defense"),
+            POLICY_CATALOG["mechanism-riichi-defense"],
+        )
+
     def test_explicit_class_resolves_to_policy_spec_with_caller_identity(self) -> None:
         spec = resolve_policy_reference(
             _SHANTEN_REFERENCE, explicit_identity="experiment A"
@@ -77,7 +83,7 @@ class PolicyReferenceResolutionTest(unittest.TestCase):
     def test_explicit_identity_cannot_collide_with_curated_or_mortal_identity(
         self,
     ) -> None:
-        for identity in ("combined", "mortal"):
+        for identity in ("combined", "mechanism-riichi-defense", "mortal"):
             with self.subTest(identity=identity):
                 with self.assertRaisesRegex(PolicyReferenceError, "reserved"):
                     resolve_policy_reference(
@@ -174,6 +180,40 @@ class SingleRoundCliResolutionTest(unittest.TestCase):
         self.assertEqual(return_code, 2)
         self.assertIn("distinct identities", stderr.getvalue())
         serial.assert_not_called()
+
+    def test_explicit_reference_cannot_reuse_mechanism_identity_on_either_side(
+        self,
+    ) -> None:
+        for reference_args in (
+            [
+                "--candidate",
+                _SHANTEN_REFERENCE,
+                "--candidate-id",
+                "mechanism-riichi-defense",
+                "--baseline",
+                "two-step",
+            ],
+            [
+                "--candidate",
+                "two-step",
+                "--baseline",
+                _SHANTEN_REFERENCE,
+                "--baseline-id",
+                "mechanism-riichi-defense",
+            ],
+        ):
+            with self.subTest(reference_args=reference_args):
+                with (
+                    mock.patch(
+                        "lisjong_arena.single_round_compare.run_single_round_evaluation"
+                    ) as serial,
+                    contextlib.redirect_stderr(io.StringIO()) as stderr,
+                ):
+                    return_code = _run_cli([*reference_args, "--seeds", "0"])
+
+                self.assertEqual(return_code, 2)
+                self.assertIn("reserved", stderr.getvalue())
+                serial.assert_not_called()
 
 
 if __name__ == "__main__":
