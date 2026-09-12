@@ -1,24 +1,24 @@
 # Documentation map
 
-`lisjong-arena/docs` contains both **current contracts/operator documentation** and **historical bounded experiment records**. They intentionally have different lifecycle semantics.
+`lisjong-arena/docs` には、**現在のcontract / operator向け文書**と、**過去のbounded experiment記録**が共存する。両者は意図的にライフサイクルが異なる。
 
-The repository README should stay compact. Use this page to decide which document is authoritative for a question.
+repository READMEは入口に留め、本ページで「いま正本として読む文書」と「historical evidenceとして読む文書」を分ける。
 
 ## 1. Current repository contracts
 
-These documents describe current Arena responsibility or reusable behavior and should be kept synchronized with implementation changes.
+以下は現在のArena責務・再利用可能なcontractを表し、実装変更に合わせて同期する。
 
 | Document | Role |
 | --- | --- |
-| [Architecture](architecture.md) | Arena responsibility, ownership, and promotion boundaries |
-| [Roadmap](roadmap.md) | long-term Arena capability direction; not current Issue tracking |
-| [Policy strength evaluation policy](policy-strength-evaluation.md) | durable evaluation discipline / measurement source-of-truth rules |
-| [Learned Policy input schema](learned-policy-input-schema.md) | current experiment-local player-safe input/tensor contract where still referenced |
-| [Durable local game record](durable-local-game-record.md) | RiichiEnv local-record schema, writer/loader, integrity and limitations |
+| [Architecture](architecture.md) | Arena responsibility / ownership / promotion boundary |
+| [Roadmap](roadmap.md) | 長期的なArena capability。current Issue trackerではない |
+| [Policy strength evaluation policy](policy-strength-evaluation.md) | Policy比較の恒久的な評価規律 / measurement source-of-truth |
+| [Learned Policy input schema](learned-policy-input-schema.md) | current experiment-local player-safe input / tensor contract |
+| [Durable local game record](durable-local-game-record.md) | RiichiEnv local record schema / writer / loader / integrity / limitation |
 | [Automated Strength Evaluation](automated-strength-evaluation.md) | machine-readable locked evaluation orchestration contract |
-| [Claude Code workflow](claude-code-workflow.md) | repository development workflow guidance |
+| [Claude Code workflow](claude-code-workflow.md) | repository development workflow |
 
-A document being listed here does **not** make Arena the owner of stable AI semantics. Stable `PolicyInput`, Policy behavior, HandBelief semantics, value/risk semantics, and production Policy contracts remain owned by `lisjong` where applicable.
+ここへ載ることは、Arenaがstable AI semanticsのownerになることを意味しない。`PolicyInput`、Policy behavior、HandBelief、value / risk、production Policy等のstable AI-side semanticsは、該当する場合 `lisjong` がownerである。
 
 ## 2. Current execution / acquisition operator docs
 
@@ -32,13 +32,13 @@ A document being listed here does **not** make Arena the owner of stable AI sema
 - [RiichiLab bounded server-log corpus](riichilab-corpus.md)
 - [RiichiLab downstream reconstruction qualification](riichilab-downstream-qualification.md)
 
-These documents describe concrete Arena execution/acquisition surfaces. Current research choice and experiment state belong in the active GitHub Issue, not in these documents unless the reusable contract itself changes.
+これらはconcreteなexecution / acquisition surfaceのcontractを記録する。**現在どの研究を優先するか**はactive GitHub Issueを正本とし、reusable contract自体が変わらない限りoperator文書へcurrent priorityを転記しない。
 
 ## 3. Historical bounded research evidence
 
-Many files under `docs/` are **experiment records**, not current project state. Preserve them because negative, inconclusive, and superseded results remain useful evidence, but do not read their original `Status`, candidate choice, threshold, or next step as today's project priority.
+`docs/` 内にはexperiment-specificな記録が多数ある。negative / inconclusive / supersededな結果も再利用価値があるため削除しないが、元文書の `Status`、candidate choice、threshold、`Next step` を**現在のproject priorityとして読まない**。
 
-Representative Learned Policy records include:
+代表的なLearned Policy record:
 
 - `learned-policy-stage2.md`
 - `learned-policy-stage3.md`
@@ -54,49 +54,49 @@ Representative Learned Policy records include:
 - `learned-policy-p6-higher-fidelity.md`
 - `learned-policy-finite-horizon-curriculum.md`
 
-Representative HandBelief records include:
+代表的なHandBelief record:
 
 - `phase10-scale-learning-curve.md`
 - `epoch-budget-adequacy.md`
 - `optimization-budget-saturation.md`
 - `phase11-public-riichi-wait-readout.md`
 
-Policy-specific comparison reports such as `extended-combined-evaluation.md` and `yakuhai-call-evaluation.md` are likewise historical evidence unless an active Issue explicitly promotes their conclusion into current status.
+`extended-combined-evaluation.md`、`yakuhai-call-evaluation.md` 等のPolicy-specific comparison reportも、active Issueがcurrent statusへ昇格させない限りhistorical evidenceとして扱う。
 
 ### Reading rule
 
 ```text
 historical experiment document
-    = what was locked / measured / concluded in that experiment
+    = その実験で何をlockし、何を測り、何を結論したか
 
 active GitHub Issue
-    = what is currently being worked on
+    = いま何を進めているか
 
 current reusable contract document
-    = what code / operator behavior is supported now
+    = 現在どのcode / operator behaviorがsupportedか
 ```
 
-Do not rewrite historical experiment documents every time the roadmap advances. If an old experiment document is factually correct for its original run, leave it intact and update the active parent Issue or current contract document instead.
+roadmapが進むたびにhistorical experiment documentを書き換えない。元runについて事実として正しいならそのまま保持し、active parent Issueまたはcurrent contract documentを更新する。
 
-## 4. Current project status is not duplicated here
+## 4. Current project statusは重複管理しない
 
-For current work, use GitHub Issues / PRs. In particular, long-running Learned Policy and HandBelief research evolves faster than durable documentation.
+Learned Policy / HandBeliefのcurrent workはGitHub Issues / PRsを正本とする。これらはdurable documentationより速く変化するため、docsを第二のproject trackerにしない。
 
-Project-wide architecture and current research axes are coordinated in [`lisjong-project`](https://github.com/lisbun/lisjong-project). Arena documentation should not become a second project tracker.
+project-wide architectureとcurrent research axisは [`lisjong-project`](https://github.com/lisbun/lisjong-project) で調整する。
 
-## 5. When to add a new document
+## 5. 新しい文書を追加する基準
 
-Add a durable document when at least one is true:
+次のいずれかを満たす場合にdurable documentを追加する。
 
-- it defines a reusable operator or artifact contract
-- it records a bounded experiment whose exact protocol/result must remain inspectable after the Issue closes
-- it defines an Arena-local architecture boundary used by multiple changes
+- reusableなoperator / artifact contractを定義する
+- bounded experimentのexact protocol / resultをIssue close後も参照可能にする必要がある
+- 複数変更で使うArena-local architecture boundaryを定義する
 
-Prefer an Issue/PR comment instead when the content is only:
+次だけならIssue / PR commentを優先する。
 
 - current priority
-- temporary next step
+- 一時的なnext step
 - one-off implementation checklist
-- status already represented by an active Issue
+- active Issueですでに表現されているstatus
 
-This separation keeps historical evidence available without making the repository README or architecture document a chronological research diary.
+この分離により、historical evidenceを失わずにREADME / architectureがchronological research diary化するのを防ぐ。
