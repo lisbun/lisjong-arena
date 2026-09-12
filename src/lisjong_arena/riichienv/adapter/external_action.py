@@ -6,8 +6,8 @@ from riichienv import Action as RiichiEnvAction
 from riichienv import Observation
 
 from lisjong_arena.riichienv.adapter.action_mapping import (
-    UnsupportedActionError,
     _TRANSLATORS,
+    UnsupportedActionError,
 )
 
 
@@ -17,7 +17,7 @@ def translate_external_action(
     """Translate one legal RiichiEnv action without creating a mapping lifecycle.
 
     This is the same canonical semantic translator family used by
-    ``RiichiEnvActionMapping``.  It exists for offline replay/materialization
+    ``RiichiEnvActionMapping``. It exists for offline replay/materialization
     callers that already own the exact decision observation and need to map one
     observed legal action into the internal action vocabulary.
     """
