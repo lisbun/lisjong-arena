@@ -31,7 +31,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy, MinimalPolicy
+from lisjong.policies import (
+    MechanismRiichiDefenseYakuhaiCallPolicy,
+    MinimalPolicy,
+)
 from lisjong.policy_contract.policy import Policy
 
 
