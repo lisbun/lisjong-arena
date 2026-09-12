@@ -38,16 +38,17 @@ RESULT_FIELDS = (
     "diagnostics",
     "interpretation",
 )
-AGGREGATE_FIELDS = {
-    "cells",
-    "positives",
+INTEGER_AGGREGATE_FIELDS = ("cells", "positives")
+FLOAT_AGGREGATE_FIELDS = (
     "baseline_logloss_sum",
     "readout_logloss_sum",
     "baseline_brier_sum",
     "readout_brier_sum",
     "baseline_probability_sum",
     "readout_probability_sum",
-}
+)
+AGGREGATE_FIELDS = set(INTEGER_AGGREGATE_FIELDS) | set(FLOAT_AGGREGATE_FIELDS)
+UNIT_ROUNDOFF = 2.0**-53
 
 
 def _coverage_without_identity(coverage: dict) -> tuple[dict, str]:
@@ -72,7 +73,7 @@ def _validate_aggregate(
         raise Phase11Error(f"{name} cells are invalid")
     if type(positives) is not int or not 0 <= positives <= cells:
         raise Phase11Error(f"{name} positives are invalid")
-    for field in AGGREGATE_FIELDS - {"cells", "positives"}:
+    for field in FLOAT_AGGREGATE_FIELDS:
         item = row[field]
         if type(item) not in (int, float) or not math.isfinite(item) or item < 0:
             raise Phase11Error(f"{name} {field} is invalid")
@@ -81,17 +82,87 @@ def _validate_aggregate(
             raise Phase11Error(f"{name} {field} exceeds its cell count")
 
 
-def _aggregate_totals(rows: list[dict]) -> dict[str, float | int]:
-    return {field: sum(row[field] for row in rows) for field in AGGREGATE_FIELDS}
+def _gamma(roundings: int) -> float:
+    """Higham's ``gamma_n = n*u / (1 - n*u)`` for ``n`` IEEE-754 roundings."""
+    if type(roundings) is not int or roundings < 0:
+        raise Phase11Error("aggregate rounding count is invalid")
+    scaled = roundings * UNIT_ROUNDOFF
+    if scaled >= 0.5:
+        raise Phase11Error("aggregate term count exceeds the IEEE-754 error model")
+    return scaled / (1.0 - scaled)
+
+
+def _sequential_sum_error_bound(recorded: float, terms: int) -> float:
+    """Bound ``|recorded - exact|`` for a recorded sequential sum of ``terms``.
+
+    ``evaluate_readout`` builds every floating aggregate by adding one
+    non-negative cell contribution at a time, so a row covering ``terms`` cells
+    costs exactly ``terms - 1`` roundings (the first addition into ``0.0`` is
+    exact). For non-negative summands the standard forward error bound for
+    recursive summation gives
+
+        |computed - exact| <= gamma_{terms-1} * exact
+
+    with ``u = 2**-53`` and ``gamma_n = n*u / (1 - n*u)``. Only the computed
+    value survives into the evidence, so the bound is restated against it:
+    ``exact <= computed / (1 - gamma)`` yields
+
+        |computed - exact| <= computed * gamma / (1 - gamma)
+
+    Nothing here is a chosen tolerance. The width is a mechanical function of
+    the recorded magnitude and the recorded cell count alone, so it shrinks
+    with the aggregate and stays roughly ``terms * 2**-53`` relative.
+    """
+    if type(terms) is not int or terms < 0:
+        raise Phase11Error("aggregate term count is invalid")
+    if terms <= 1:
+        return 0.0
+    gamma = _gamma(terms - 1)
+    return recorded * gamma / (1.0 - gamma)
+
+
+def _aggregate_totals(rows: list[dict]) -> dict[str, object]:
+    """Total one grouping, carrying each float total's own roundoff envelope.
+
+    Integer counts stay exact. Float totals are combined with ``math.fsum`` so
+    the outer total costs a single correctly rounded step of at most ``u``
+    relative, and the envelope is that step plus each row's own accumulation
+    bound.
+    """
+    totals: dict[str, object] = {
+        field: sum(row[field] for row in rows) for field in INTEGER_AGGREGATE_FIELDS
+    }
+    for field in FLOAT_AGGREGATE_FIELDS:
+        values = [float(row[field]) for row in rows]
+        total = math.fsum(values)
+        totals[field] = (
+            total,
+            math.fsum(
+                [
+                    _sequential_sum_error_bound(value, row["cells"])
+                    for value, row in zip(values, rows, strict=True)
+                ]
+                + [total * UNIT_ROUNDOFF / (1.0 - UNIT_ROUNDOFF)]
+            ),
+        )
+    return totals
 
 
 def _same_totals(actual: dict, expected: dict, name: str) -> None:
-    for field in AGGREGATE_FIELDS:
-        left = actual[field]
-        right = expected[field]
-        if field in {"cells", "positives"}:
-            exact(left, right, f"{name} {field}")
-        elif not math.isclose(left, right, rel_tol=0, abs_tol=1e-9):
+    """Accept two groupings of the same cell evidence within their own envelopes.
+
+    Every grouping accumulates the identical per-cell ``float`` contributions,
+    only in a different order, so the two recorded totals bracket one shared
+    exact sum. Two recorded totals are consistent exactly when their derived
+    envelopes still overlap; any wider disagreement is evidence corruption,
+    not summation order.
+    """
+    for field in INTEGER_AGGREGATE_FIELDS:
+        exact(actual[field], expected[field], f"{name} {field}")
+    for field in FLOAT_AGGREGATE_FIELDS:
+        left, left_envelope = actual[field]
+        right, right_envelope = expected[field]
+        if abs(left - right) > left_envelope + right_envelope:
             raise Phase11Error(f"{name} {field} differs from per-hanchan evidence")
 
 
@@ -290,7 +361,11 @@ def validate_result(value: object, lock: dict) -> dict[str, object]:
 
 
 __all__ = [
+    "AGGREGATE_FIELDS",
+    "FLOAT_AGGREGATE_FIELDS",
+    "INTEGER_AGGREGATE_FIELDS",
     "RESULT_FIELDS",
+    "UNIT_ROUNDOFF",
     "assemble_result",
     "budget_diagnostics",
     "validate_result",

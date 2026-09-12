@@ -235,3 +235,42 @@ python -m lisjong_arena.phase11_public_riichi_wait_readout evaluate `
 coverageがinsufficientまたはsemantic-invalidなら`train`を実行しない。`evaluate`はその場合
 `--artifact`なしで対応するexhaustive outcomeをpublishできる。結果を見た後のrerun、config変更、
 rescueはせず、strict readback結果とbounded interpretationをIssueへ記録する。
+
+## Issue #209 result-only continuation
+
+上記one-shot executionはtraining完了後、最初のresult validationで浮動小数点の集計順による
+差を固定absolute toleranceが拒否して停止し、`result.json`は作成されなかった。Issue #209の
+continuationはこのtechnical failureだけを修復する例外的なresult exposureであり、通常の
+`evaluate`のrerunではない。`train`、checkpoint selection、new initializationは一切呼び出さない。
+
+continuationは次の既存artifactをprotocol invariantとしてbyte単位で固定する。
+
+```text
+scientific execution revision  93963d85f6201c714cb4fcf39d59e9e09c85766d
+execution-lock identity        5e08169c96568d692b69070245a8e2a6da61b8b1b5d4a9d8069b5dbe0130ce74
+coverage file SHA-256          12d2c4f2c0b64d22701fc47754b2a5076b41fa18bd940084fc51155b0f4e1dfa
+coverage identity             6d1cdf7696b9e3d5b1e0bbfc7a13f5b3958c8e839ce6e02420f864be0c32a310
+model manifest SHA-256        618f6d366a738c9cf99da8a5a022d8aae2ade4ba824abad3248a9a862f3dcb09
+readout weights SHA-256       91e8a4db8b8d7a664e22142070e2f581d922be8e373a5bb1d6be1c7c33852948
+selected epoch / epochs run   121 / 127
+frozen E160 digest            581f4d20138291ea7c6b22508105b2ac2ed40cc3b3668e680376f3b9adf0885e
+```
+
+Issue #209のrepair PRがmergeされた後、そのmerged `main` commitをexactにinstallし、元の
+`lisjong` / `lisjong-engine` revisionとlocked CPU runtimeを復元して一度だけ実行する。
+continuation revisionはscientific execution revisionとは別にreceiptへ記録される。
+
+```powershell
+$repair = git rev-parse HEAD
+
+python -m lisjong_arena.phase11_public_riichi_wait_readout.continuation `
+  --corpus-root $p150 --phase157-root $p157 --phase167-root $p167 `
+  --artifact-root $root `
+  --continuation-revision $repair `
+  --continuation-audit 'Issue #209 result-only continuation recorded YYYY-MM-DD' `
+  --result "$root/result.json" `
+  --receipt "$root/continuation-receipt.json"
+```
+
+実行前に両destinationが存在しないことを要求する。実行後は`result.json`とreceiptをそれぞれ
+strict readbackし、Issue #172へscientific outcomeを記録するのは両方が成功した後だけとする。

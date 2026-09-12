@@ -108,8 +108,36 @@ def require_clean_arena_head() -> str:
     return revision
 
 
+def require_merged_arena_revision(revision: str, *, branch: str = "main") -> str:
+    """Return ``revision`` only when it is contained in a long-lived branch.
+
+    A post-merge run must execute reviewed code, not an arbitrary local commit
+    that happens to be checked out. Containment in the local ``branch`` ref is
+    a read-only check, so a stale local branch fails closed and is fixed by
+    fetching, never by relaxing the check.
+    """
+    if _FULL_COMMIT_ID(revision) is None:
+        raise ExecutionSafetyError("Arena revision is not a lowercase full commit ID")
+    if type(branch) is not str or not branch:
+        raise ExecutionSafetyError("Arena containment branch is invalid")
+    resolved = _git_output("rev-parse", "--verify", f"{branch}^{{commit}}").strip()
+    if _FULL_COMMIT_ID(resolved) is None:
+        raise ExecutionSafetyError(
+            f"Arena branch {branch} does not resolve to a commit"
+        )
+    try:
+        _git_output("merge-base", "--is-ancestor", revision, resolved)
+    except ExecutionSafetyError as exc:
+        raise ExecutionSafetyError(
+            f"Arena revision {revision} is not contained in {branch}; "
+            f"fetch {branch} or check out the merged revision"
+        ) from exc
+    return revision
+
+
 __all__ = [
     "ExecutionSafetyError",
     "require_clean_arena_head",
+    "require_merged_arena_revision",
     "require_new_artifact_destinations",
 ]
