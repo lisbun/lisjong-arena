@@ -100,20 +100,20 @@ loaderは、round-result factを`objective_trace.json`のeventへstrictにbind�
 
 ### Capture timing and the `win_results` gap
 
-pinned RiichiEnv 0.4.8では、非最終局のterminal event(`hora` / `ryukyoku`)と
+pinned RiichiEnv 0.4.10でも、非最終局のterminal event(`hora` / `ryukyoku`)と
 `end_kyoku`、そして次局の`start_kyoku`が同じ`env.step()`の中でまとめて発行され
 ます。`env.step()`から戻った時点で`env.win_results` / `env.hands` / `env.melds` /
 `env.dora_indicators` / `env._get_ura_markers()` / `env.scores()`はすでに次局の
 stateへ置き換わっており、`env.step()`の内部へ割り込めるhookはありません。
 
-そのためRiichiEnv 0.4.8では、**backend-computed `WinResult`(han / fu / yaku /
+そのためRiichiEnv 0.4.10でも、**backend-computed `WinResult`(han / fu / yaku /
 yakuman / 支払い額 / pao)をcaptureできるのはgameの最終局だけ**です。それ以外の
 局では`wins[].scoring`は`null`になります。`null`をnet deltaやGameTraceから
 推測して埋めることはしません。`RoundResult.win_scoring_available`で判定できます。
 
 ### 現時点でcaptureできない値
 
-次はRiichiEnv 0.4.8のexecution boundaryからauthoritativeに取得できないため、
+次はRiichiEnv 0.4.10のexecution boundaryからauthoritativeに取得できないため、
 このschemaには含めません。推測値でのfallbackも用意しません。
 
 ```text
@@ -121,7 +121,7 @@ yakuman / 支払い額 / pao)をcaptureできるのはgameの最終局だけ**�
 和了牌(winning tile)
 和了時の手牌 / 面子構成
 exhaustive drawのtenpai seat
-  RiichiEnv 0.4.8のryukyoku eventはtenpais / tehaisを含まない
+  RiichiEnv 0.4.10のryukyoku eventはtenpais / tehaisを含まない
 typed settlement decomposition
   (本供託の移動は riichi_sticks_before / riichi_sticks_after で表現する)
 riichi宣言牌がriverのどれかというmarker(別Issue)

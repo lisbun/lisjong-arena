@@ -19,6 +19,7 @@ migration元(lisbun/lisjong#29本文および最新コメント)の固定内容�
 
 import dataclasses
 import unittest
+from types import SimpleNamespace
 
 from lisjong.policy_contract import (
     AnkanAction,
@@ -49,6 +50,7 @@ from lisjong_arena.riichienv.adapter.action_mapping import (
     StaleActionMappingError,
     UnmappedActionError,
     UnsupportedActionError,
+    _resolve_call_target,
 )
 from lisjong_arena.riichienv.adapter.seat_conversion import seat_from_player_index
 from lisjong_arena.riichienv.adapter.tile_conversion import tile_from_physical_id
@@ -313,7 +315,10 @@ class ChiConversionTest(unittest.TestCase):
         )
         discards = [[called_id], [], [], []]
         obs = make_observation(
-            player_id=1, legal_actions=[action], discards=discards, last_discard=0
+            player_id=1,
+            legal_actions=[action],
+            discards=discards,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
@@ -342,7 +347,10 @@ class ChiConversionTest(unittest.TestCase):
         # discardsの最後がcalled_tileと一致しない
         discards = [[physical_id(TileCategory.PINZU, 1)], [], [], []]
         obs = make_observation(
-            player_id=1, legal_actions=[action], discards=discards, last_discard=0
+            player_id=1,
+            legal_actions=[action],
+            discards=discards,
+            last_discard=called_id,
         )
 
         with self.assertRaises(ContextResolutionError):
@@ -375,7 +383,10 @@ class PonConversionTest(unittest.TestCase):
         )
         discards = [[], [], [], [called_id]]
         obs = make_observation(
-            player_id=2, legal_actions=[action], discards=discards, last_discard=3
+            player_id=2,
+            legal_actions=[action],
+            discards=discards,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
@@ -392,6 +403,86 @@ class PonConversionTest(unittest.TestCase):
             ),
         )
 
+    def test_physical_tile_119_resolves_to_discarding_opponent(self) -> None:
+        action = make_action(
+            ActionType.PON, tile=119, consume_tiles=[116, 117], actor=2
+        )
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[action],
+            discards=[[], [], [], [119]],
+            last_discard=119,
+        )
+
+        mapping = _build_mapping(obs)
+
+        self.assertEqual(mapping.candidates[0].target, Seat.SEAT_3)
+
+    def test_physical_tile_2_is_not_interpreted_as_seat_2(self) -> None:
+        action = make_action(ActionType.PON, tile=2, consume_tiles=[0, 1], actor=1)
+        obs = make_observation(
+            player_id=1,
+            legal_actions=[action],
+            discards=[[], [], [], [2]],
+            last_discard=2,
+        )
+
+        mapping = _build_mapping(obs)
+
+        self.assertEqual(mapping.candidates[0].target, Seat.SEAT_3)
+
+    def test_last_discard_mismatch_fails_closed(self) -> None:
+        action = make_action(
+            ActionType.PON, tile=119, consume_tiles=[116, 117], actor=2
+        )
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[action],
+            discards=[[], [], [], [119]],
+            last_discard=118,
+        )
+
+        with self.assertRaises(ContextResolutionError):
+            _build_mapping(obs)
+
+    def test_only_actor_discard_matches_fails_closed(self) -> None:
+        action = make_action(
+            ActionType.PON, tile=119, consume_tiles=[116, 117], actor=2
+        )
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[action],
+            discards=[[], [], [119], []],
+            last_discard=119,
+        )
+
+        with self.assertRaises(ContextResolutionError):
+            _build_mapping(obs)
+
+    def test_multiple_opponent_discards_match_fails_closed(self) -> None:
+        action = make_action(
+            ActionType.PON, tile=119, consume_tiles=[116, 117], actor=2
+        )
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[action],
+            discards=[[119], [], [], [119]],
+            last_discard=119,
+        )
+
+        with self.assertRaises(ContextResolutionError):
+            _build_mapping(obs)
+
+    def test_malformed_observation_rows_fail_closed(self) -> None:
+        # RiichiEnv自身は不正な行数のObservationを構築時に拒否するため、
+        # adapter境界へ破損した値を直接渡してContextResolutionErrorを検証する。
+        malformed = SimpleNamespace(
+            last_discard=119, discards=[[], [], [119]], melds=[[], [], [], []]
+        )
+
+        with self.assertRaises(ContextResolutionError):
+            _resolve_call_target(malformed, Seat.SEAT_2, 119)
+
 
 class DaiminkanConversionTest(unittest.TestCase):
     def test_target_and_consumed_tiles(self) -> None:
@@ -406,7 +497,10 @@ class DaiminkanConversionTest(unittest.TestCase):
         )
         discards = [[], [], [], [called_id]]
         obs = make_observation(
-            player_id=2, legal_actions=[action], discards=discards, last_discard=3
+            player_id=2,
+            legal_actions=[action],
+            discards=discards,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
@@ -527,7 +621,10 @@ class RonConversionTest(unittest.TestCase):
         action = make_action(ActionType.RON, tile=winning_id, actor=2)
         discards = [[], [], [], [winning_id]]
         obs = make_observation(
-            player_id=2, legal_actions=[action], discards=discards, last_discard=3
+            player_id=2,
+            legal_actions=[action],
+            discards=discards,
+            last_discard=winning_id,
         )
 
         mapping = _build_mapping(obs)
@@ -544,8 +641,8 @@ class RonConversionTest(unittest.TestCase):
         )
 
     def test_chankan_target_from_last_discard_and_kakan_meld(self) -> None:
-        # lisbun/lisjong#27の[AI-REVIEW]対応実測（RiichiEnv v0.4.8ソース確認 + 実機再現、
-        # seed=677）: kakanはlast_discard機構を転用してchankan targetを示す。
+        # seed=677の実局面: kakanは追加牌のphysical idをlast_discardへ設定する。
+        # target seatはその牌を含むactive KAKAN meldから解決する。
         winning_id = physical_id(TileCategory.SOUZU, 9, 3)
         action = make_action(ActionType.RON, tile=winning_id, actor=1)
         kakan_meld = make_meld(
@@ -565,7 +662,7 @@ class RonConversionTest(unittest.TestCase):
             legal_actions=[action],
             melds=melds,
             discards=[[], [], [], []],
-            last_discard=3,
+            last_discard=winning_id,
         )
 
         mapping = _build_mapping(obs)
@@ -580,7 +677,27 @@ class RonConversionTest(unittest.TestCase):
             legal_actions=[action],
             discards=[[], [], [], []],
             melds=[[], [], [], []],
-            last_discard=3,
+            last_discard=winning_id,
+        )
+
+        with self.assertRaises(ContextResolutionError):
+            _build_mapping(obs)
+
+    def test_normal_discard_and_kakan_targets_ambiguous_fails_closed(self) -> None:
+        winning_id = 119
+        action = make_action(ActionType.RON, tile=winning_id, actor=1)
+        kakan_meld = make_meld(
+            MeldType.Kakan,
+            [116, 117, 118, winning_id],
+            from_who=3,
+            called_tile=116,
+        )
+        obs = make_observation(
+            player_id=1,
+            legal_actions=[action],
+            discards=[[], [], [], [winning_id]],
+            melds=[[kakan_meld], [], [], []],
+            last_discard=winning_id,
         )
 
         with self.assertRaises(ContextResolutionError):
@@ -667,7 +784,10 @@ class SemanticAggregationTest(unittest.TestCase):
             for ids in candidates_ids
         ]
         obs = make_observation(
-            player_id=1, legal_actions=actions, discards=discards, last_discard=0
+            player_id=1,
+            legal_actions=actions,
+            discards=discards,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
@@ -696,7 +816,10 @@ class SemanticAggregationTest(unittest.TestCase):
             for ids in candidates_ids
         ]
         obs = make_observation(
-            player_id=2, legal_actions=actions, discards=discards, last_discard=3
+            player_id=2,
+            legal_actions=actions,
+            discards=discards,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
@@ -785,7 +908,7 @@ class SemanticAggregationTest(unittest.TestCase):
             player_id=2,
             legal_actions=[action_a, action_b],
             discards=discards,
-            last_discard=3,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
@@ -870,7 +993,7 @@ class SemanticAggregationTest(unittest.TestCase):
             player_id=1,
             legal_actions=[action_a, action_b],
             discards=discards,
-            last_discard=0,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
@@ -890,11 +1013,17 @@ class SemanticAggregationTest(unittest.TestCase):
         ]
         discards_a = [[], [], [], [called_id]]
         obs_a = make_observation(
-            player_id=2, legal_actions=actions, discards=discards_a, last_discard=3
+            player_id=2,
+            legal_actions=actions,
+            discards=discards_a,
+            last_discard=called_id,
         )
         discards_b = [[called_id], [], [], []]
         obs_b = make_observation(
-            player_id=2, legal_actions=actions, discards=discards_b, last_discard=0
+            player_id=2,
+            legal_actions=actions,
+            discards=discards_b,
+            last_discard=called_id,
         )
 
         mapping_a = _build_mapping(obs_a)
@@ -946,13 +1075,13 @@ class SemanticAggregationTest(unittest.TestCase):
             player_id=2,
             legal_actions=[make_action(ActionType.RON, tile=winning_a, actor=2)],
             discards=[[], [], [], [winning_a]],
-            last_discard=3,
+            last_discard=winning_a,
         )
         obs_b = make_observation(
             player_id=2,
             legal_actions=[make_action(ActionType.RON, tile=winning_b, actor=2)],
             discards=[[], [], [], [winning_b]],
-            last_discard=3,
+            last_discard=winning_b,
         )
 
         mapping_a = _build_mapping(obs_a)
@@ -978,7 +1107,7 @@ class SemanticAggregationTest(unittest.TestCase):
                 )
             ],
             discards=[[], [], [], [called_normal]],
-            last_discard=3,
+            last_discard=called_normal,
         )
         obs_red = make_observation(
             player_id=2,
@@ -988,7 +1117,7 @@ class SemanticAggregationTest(unittest.TestCase):
                 )
             ],
             discards=[[], [], [], [called_red]],
-            last_discard=3,
+            last_discard=called_red,
         )
 
         mapping_normal = _build_mapping(obs_normal)
@@ -1151,7 +1280,10 @@ class InformationBoundaryTest(unittest.TestCase):
         )
         discards = [[called_id], [], [], []]
         obs = make_observation(
-            player_id=1, legal_actions=[action], discards=discards, last_discard=0
+            player_id=1,
+            legal_actions=[action],
+            discards=discards,
+            last_discard=called_id,
         )
 
         mapping = _build_mapping(obs)
