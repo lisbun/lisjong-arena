@@ -34,6 +34,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 
 - [RiichiLab bounded server-log corpus](riichilab-corpus.md)
 - [RiichiLab downstream reconstruction qualification](riichilab-downstream-qualification.md)
+- [RiichiLab source pilot](riichilab-source-pilot.md)
 
 これらはconcreteなexecution / acquisition surfaceのcontractを記録する。**現在どの研究を優先するか**はactive GitHub Issueを正本とし、reusable contract自体が変わらない限りoperator文書へcurrent priorityを転記しない。
 
@@ -83,7 +84,7 @@ roadmapが進むたびにhistorical experiment documentを書き換えない。�
 
 ## 4. Current project statusは重複管理しない
 
-Learned Policy / HandBeliefのcurrent workはGitHub Issues / PRsを正本とする。これらはdurable documentationより速く変化するため、docsを第二のproject trackerにしない。
+Learned Policy / HandBeliefのcurrent workはGitHub Issues / PRsを正本とする。これらはdurable documentationより速く変わるため、docsを第二のproject trackerにしない。
 
 project-wide architectureとcurrent research axisは [`lisjong-project`](https://github.com/lisbun/lisjong-project) で調整する。
 

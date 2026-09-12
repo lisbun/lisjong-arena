@@ -24,6 +24,7 @@ from lisjong_arena.riichienv.adapter.action_mapping import (
 )
 from lisjong_arena.riichienv.adapter.decision import RiichiEnvDecision, build_decision
 from lisjong_arena.riichienv.adapter.errors import AdapterSyncError
+from lisjong_arena.riichienv.adapter.external_action import translate_external_action
 from lisjong_arena.riichienv.adapter.materialized_state import (
     KyokuIdentity,
     SeatMaterializedState,
@@ -57,4 +58,5 @@ __all__ = [
     "tile_from_mjai",
     "tile_from_physical_id",
     "tile_to_mjai",
+    "translate_external_action",
 ]
