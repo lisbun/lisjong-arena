@@ -69,6 +69,33 @@ jobs:
           )
           ((${#test_files[@]} > 0))
 
+          test_runner="$RUNNER_TEMP/run_unittest_module.py"
+          cat > "$test_runner" <<'PY'
+          import sys
+          import unittest
+
+
+          def main() -> int:
+              pattern, test_file, allow_zero_text = sys.argv[1:]
+              suite = unittest.defaultTestLoader.discover("tests", pattern=pattern)
+              test_count = suite.countTestCases()
+
+              if test_count == 0:
+                  if allow_zero_text == "true":
+                      print(f"Intentional zero-test compatibility stub: {test_file}")
+                      return 0
+                  print(f"No unittest cases discovered: {test_file}", file=sys.stderr)
+                  return 1
+
+              runner = unittest.TextTestRunner(verbosity=2, durations=30)
+              result = runner.run(suite)
+              return 0 if result.wasSuccessful() else 1
+
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PY
+
           declare -A seen_patterns=()
           for test_file in "${test_files[@]}"; do
             pattern="$(basename "$test_file")"
@@ -80,18 +107,10 @@ jobs:
             fi
             seen_patterns[$pattern]="$test_file"
 
-            if ! python -c 'import sys, unittest; suite = unittest.defaultTestLoader.discover("tests", pattern=sys.argv[1]); raise SystemExit(0 if suite.countTestCases() > 0 else 1)' "$pattern"; then
-              if [[ "$test_file" == "tests/test_comparison_parallel_integration.py" ]]; then
-                echo "Intentional zero-test compatibility stub: $test_file"
-                continue
-              fi
-              echo "No unittest cases discovered: $test_file" >&2
-              exit 1
+            allow_zero=false
+            if [[ "$test_file" == "tests/test_comparison_parallel_integration.py" ]]; then
+              allow_zero=true
             fi
 
-            python -m unittest discover \
-              -s tests \
-              -p "$pattern" \
-              -v \
-              --durations 30
+            python "$test_runner" "$pattern" "$test_file" "$allow_zero"
           done
