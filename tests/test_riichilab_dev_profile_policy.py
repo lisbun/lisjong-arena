@@ -36,7 +36,9 @@ class DevProfileMappingTest(unittest.TestCase):
         self.assertIsNot(profile.policy_factory(), profile.policy_factory())
 
     def test_other_profile_policy_mappings_are_unchanged(self) -> None:
-        self.assertIs(type(resolve_profile("lisjong-baseline").policy_factory()), MinimalPolicy)
+        self.assertIs(
+            type(resolve_profile("lisjong-baseline").policy_factory()), MinimalPolicy
+        )
         self.assertIs(type(resolve_profile("lisjong").policy_factory()), MinimalPolicy)
 
     def test_runtime_summary_reports_the_actual_mechanism_policy(self) -> None:
@@ -85,7 +87,9 @@ class DevProfileCliCompositionTest(unittest.TestCase):
             return_code = run_ranked_cli(["--profile", "lisjong-dev"])
 
         self.assertEqual(return_code, 0)
-        self.assertIs(type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy)
+        self.assertIs(
+            type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy
+        )
         self.assertEqual(captured["token"], "unit-test-token")
 
     def test_validation_cli_passes_exact_mechanism_policy_to_validator(self) -> None:
@@ -118,7 +122,9 @@ class DevProfileCliCompositionTest(unittest.TestCase):
             return_code = run_validation_cli(["--profile", "lisjong-dev"])
 
         self.assertEqual(return_code, 0)
-        self.assertIs(type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy)
+        self.assertIs(
+            type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy
+        )
         self.assertEqual(captured["token"], "unit-test-token")
 
 
