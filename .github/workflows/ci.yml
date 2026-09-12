@@ -69,6 +69,10 @@ jobs:
           )
           ((${#test_files[@]} > 0))
 
+          # The runner lives under RUNNER_TEMP, so explicitly keep the repository
+          # root importable for namespace-package imports such as `from tests import ...`.
+          export PYTHONPATH="$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
+
           test_runner="$RUNNER_TEMP/run_unittest_module.py"
           cat > "$test_runner" <<'PY'
           import sys
