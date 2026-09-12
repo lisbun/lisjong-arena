@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -840,7 +841,21 @@ class Stage3GenerationContractTest(unittest.TestCase):
 
 class Stage3ImportContractTest(unittest.TestCase):
     def test_normal_stage3_import_and_cli_contract_are_torch_free(self):
-        self.assertNotIn("torch", sys.modules)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys\n"
+                "assert 'torch' not in sys.modules\n"
+                "from lisjong_arena.stage3_entry_gate.__main__ import _parser\n"
+                "_parser().format_help()\n"
+                "assert 'torch' not in sys.modules\n",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
         from lisjong_arena.stage3_entry_gate.__main__ import _parser
 
         parser = _parser()
@@ -852,7 +867,6 @@ class Stage3ImportContractTest(unittest.TestCase):
         )
         help_text = parser.format_help().lower()
         self.assertNotIn("test partition", help_text)
-        self.assertNotIn("torch", sys.modules)
 
     def test_distinct_base_games_produce_distinct_population_datasets(self):
         with tempfile.TemporaryDirectory() as name:

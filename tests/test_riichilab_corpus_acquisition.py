@@ -98,7 +98,7 @@ class SnapshotTransportTest(unittest.TestCase):
 
 class PlanSafetyTest(unittest.TestCase):
     def test_explicit_ceiling_and_hard_ceiling_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with self.assertRaisesRegex(CorpusError, "above the explicit ceiling"):
                 create_acquisition_plan(
@@ -110,7 +110,7 @@ class PlanSafetyTest(unittest.TestCase):
                 )
 
     def test_output_inside_git_worktree_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".git").mkdir()
             (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
@@ -120,7 +120,7 @@ class PlanSafetyTest(unittest.TestCase):
                 )
 
     def test_plan_roundtrip_and_tamper_detection(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             plan = create_acquisition_plan(
                 _snapshot(), Path(directory) / "cache", requested_ceiling=2
             )
@@ -145,7 +145,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
         )
 
     def test_downloads_once_per_game_then_strictly_reuses_cache(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cache"
             snapshot = _snapshot()
             plan = create_acquisition_plan(snapshot, root, requested_ceiling=2)
@@ -223,7 +223,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
                 validate_cached_corpus(snapshot, root)
 
     def test_corrupted_and_unindexed_cache_are_rejected_not_redownloaded(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cache"
             snapshot = _snapshot()
             plan = create_acquisition_plan(snapshot, root, requested_ceiling=2)
@@ -242,7 +242,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
             with self.assertRaisesRegex(CorpusError, "digest mismatch"):
                 create_acquisition_plan(snapshot, root, requested_ceiling=2)
 
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cache"
             artifact = root / GAMES_DIRECTORY / "game-1.jsonl.gz"
             artifact.parent.mkdir(parents=True)
@@ -251,7 +251,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
                 create_acquisition_plan(_snapshot(), root, requested_ceiling=2)
 
     def test_conflicting_compressed_bytes_fail_without_overwrite(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cache"
             participation = (Participation("game-1", 126, 0, _PLAYED_AT),)
             original = synthetic_mjai()
@@ -278,7 +278,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
             )
 
     def test_http_failure_is_recorded_and_stops_the_run(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cache"
             snapshot = _snapshot()
             plan = create_acquisition_plan(snapshot, root, requested_ceiling=2)
@@ -293,7 +293,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
             self.assertIn("HTTP 404", report["failures"][0]["reason"])
 
     def test_partial_report_preserves_compliance_boundaries(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cache"
             snapshot = _snapshot()
             plan = create_acquisition_plan(snapshot, root, requested_ceiling=2)
@@ -317,7 +317,7 @@ class CacheAndAcquisitionTest(unittest.TestCase):
             self.assertEqual(report["failed_count"], 1)
 
     def test_cache_change_after_plan_requires_replan(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "cache"
             snapshot = _snapshot()
             stale = create_acquisition_plan(snapshot, root, requested_ceiling=2)
