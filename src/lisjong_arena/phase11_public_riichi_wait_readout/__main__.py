@@ -7,9 +7,6 @@ import time
 from pathlib import Path
 
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
-from lisjong_arena.stage3_optimization_saturation.experiment import (
-    saturation_population_data,
-)
 
 from .artifact import (
     load_lock,
@@ -20,10 +17,9 @@ from .artifact import (
     save_result,
 )
 from .coverage import build_coverage, load_coverage, save_coverage
-from .data import extract_frozen_latents, partition_records
+from .data import frozen_latent_records, partition_records
 from .evaluation import evaluate_readout
 from .lock import current_receipt, require_current_lock
-from .model import freeze_e160
 from .protocol import (
     COVERAGE_MINIMUM_HANCHAN,
     Phase11Error,
@@ -110,15 +106,6 @@ def _require(arguments):
     return lock
 
 
-def _records(evidence):
-    full = saturation_population_data(evidence.raw, evidence.dataset)
-    snapshot = freeze_e160(evidence.e160_model)
-    records = extract_frozen_latents(
-        evidence.e160_model, full.train_sequences + full.validation_sequences
-    )
-    return records, snapshot
-
-
 def _verify(arguments) -> dict[str, object]:
     evidence = _load_evidence(arguments)
     return {
@@ -153,7 +140,7 @@ def _lock(arguments) -> dict[str, object]:
 def _preflight(arguments) -> dict[str, object]:
     lock = _require(arguments)
     evidence = _load_evidence(arguments)
-    records, snapshot = _records(evidence)
+    records, snapshot = frozen_latent_records(evidence)
     coverage = build_coverage(records, identity(lock))
     save_coverage(arguments.coverage, coverage, identity(lock))
     return {
@@ -178,7 +165,7 @@ def _train(arguments) -> dict[str, object]:
     ):
         raise Phase11Error("coverage gate does not permit readout training")
     evidence = _load_evidence(arguments)
-    records, snapshot = _records(evidence)
+    records, snapshot = frozen_latent_records(evidence)
     rederived = build_coverage(records, identity(lock))
     exact(
         rederived,
@@ -235,7 +222,7 @@ def _evaluate(arguments) -> dict[str, object]:
             arguments.artifact, lock, coverage["coverage_identity"]
         )
         retained = _load_evidence(arguments)
-        records, snapshot = _records(retained)
+        records, snapshot = frozen_latent_records(retained)
         exact(
             snapshot.digest,
             model_manifest["frozen_digest_before"],

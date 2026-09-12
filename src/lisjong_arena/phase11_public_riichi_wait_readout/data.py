@@ -14,8 +14,11 @@ from lisjong_arena.phase8_sequential.rollout import (
     _remap_tensor_rows,
     _step_tensors,
 )
+from lisjong_arena.stage3_optimization_saturation.experiment import (
+    saturation_population_data,
+)
 
-from .model import assert_frozen_state_unchanged, frozen_state_snapshot
+from .model import assert_frozen_state_unchanged, freeze_e160, frozen_state_snapshot
 from .protocol import TILE_KIND_COUNT, Phase11Error
 
 
@@ -209,6 +212,21 @@ def partition_records(
     return selected
 
 
+def frozen_latent_records(evidence):
+    """Freeze the retained E160 and roll every retained sequence out exactly once.
+
+    The frozen byte guard and the latent records are produced together so that
+    every caller — the one-shot training path and the #209 result-only
+    continuation alike — observes the same rollout order and the same snapshot.
+    """
+    full = saturation_population_data(evidence.raw, evidence.dataset)
+    snapshot = freeze_e160(evidence.e160_model)
+    records = extract_frozen_latents(
+        evidence.e160_model, full.train_sequences + full.validation_sequences
+    )
+    return records, snapshot
+
+
 def eligible_rows(records: tuple[LatentExample, ...]):
     return tuple(
         (record, index, target)
@@ -223,5 +241,6 @@ __all__ = [
     "OpponentTarget",
     "eligible_rows",
     "extract_frozen_latents",
+    "frozen_latent_records",
     "partition_records",
 ]

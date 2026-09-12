@@ -235,3 +235,60 @@ python -m lisjong_arena.phase11_public_riichi_wait_readout evaluate `
 coverageがinsufficientまたはsemantic-invalidなら`train`を実行しない。`evaluate`はその場合
 `--artifact`なしで対応するexhaustive outcomeをpublishできる。結果を見た後のrerun、config変更、
 rescueはせず、strict readback結果とbounded interpretationをIssueへ記録する。
+
+## Issue #209 result-only continuation
+
+上記one-shot executionはtraining完了後、最初のresult validationで浮動小数点の集計順による
+差を固定absolute toleranceが拒否して停止し、`result.json`は作成されなかった。Issue #209の
+continuationはこのtechnical failureだけを修復する例外的なresult exposureであり、通常の
+`evaluate`のrerunではない。`train`、checkpoint selection、new initializationは一切呼び出さない。
+
+continuationは次の既存artifactをprotocol invariantとしてbyte単位で固定する。
+
+```text
+scientific execution revision  93963d85f6201c714cb4fcf39d59e9e09c85766d
+execution-lock identity        5e08169c96568d692b69070245a8e2a6da61b8b1b5d4a9d8069b5dbe0130ce74
+coverage file SHA-256          12d2c4f2c0b64d22701fc47754b2a5076b41fa18bd940084fc51155b0f4e1dfa
+coverage identity             6d1cdf7696b9e3d5b1e0bbfc7a13f5b3958c8e839ce6e02420f864be0c32a310
+model manifest SHA-256        618f6d366a738c9cf99da8a5a022d8aae2ade4ba824abad3248a9a862f3dcb09
+readout weights SHA-256       91e8a4db8b8d7a664e22142070e2f581d922be8e373a5bb1d6be1c7c33852948
+selected epoch / epochs run   121 / 127
+frozen E160 digest            581f4d20138291ea7c6b22508105b2ac2ed40cc3b3668e680376f3b9adf0885e
+```
+
+Issue #209のrepair PRがmergeされた後、そのmerged `main` commitをexactにinstallし、元の
+`lisjong` / `lisjong-engine` revisionとlocked CPU runtimeを復元する。最初に`prepare`を
+一度だけ実行する。これはprospective resultをmemory上で組み立て、次の2ファイルを同一directoryの
+stagingからatomic renameでまとめて確定する。
+
+```text
+continuation/
+  continuation-lock.json
+  prepared-result.json
+```
+
+continuation lockはscientific execution revisionとは別にexact repair revision、immutable artifact
+binding、旧dependency/runtime、prospective result identityとprepared bytesのdigestを記録する。
+`prepared-result.json`は中断復旧用のprecommitted bytesであり、公式のresult exposureではない。
+
+```powershell
+python -m lisjong_arena.phase11_public_riichi_wait_readout.continuation prepare `
+  --corpus-root $p150 --phase157-root $p157 --phase167-root $p167 `
+  --artifact-root $root `
+  --continuation-audit 'Issue #209 continuation lock recorded YYYY-MM-DD'
+```
+
+出力されたtechnical revisionとcontinuation lock identityをIssue #209へ記録し、lockをstrict
+readbackした後だけ、同じexact revisionから`expose`する。
+
+```powershell
+python -m lisjong_arena.phase11_public_riichi_wait_readout.continuation expose `
+  --artifact-root $root
+```
+
+`expose`はmodel inferenceを再実行せず、lock済みprepared bytesだけをsame-directory stagingから
+atomicかつwrite-onceで`result.json`へpublishする。lock後・result保存前に中断しても同じ
+lockから`expose`だけを再実行できる。current HEADがlocked repair revisionと異なる場合は、
+そのrevisionが新しい`main`に含まれていても拒否し、自動採用しない。`result.json`が既に存在する
+場合は2回目のexposureを拒否する。Issue #172へscientific outcomeを記録するのはfinal resultの
+strict readbackが成功した後だけとする。
