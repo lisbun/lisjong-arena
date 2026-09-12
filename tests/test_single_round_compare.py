@@ -615,6 +615,10 @@ class ArtifactOutTest(unittest.TestCase):
                 "lisjong_arena.single_round_artifact.collect_execution_provenance",
                 return_value=artifact_fixtures.provenance(),
             ),
+            mock.patch(
+                "lisjong_arena.single_round_compare.collect_execution_provenance",
+                return_value=artifact_fixtures.provenance(),
+            ),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):
@@ -653,6 +657,65 @@ class ArtifactOutTest(unittest.TestCase):
             _fake_result(seeds=(0, 1)).game_results,
         )
 
+    def test_provenance_failure_rejects_serial_and_parallel_before_execution(
+        self,
+    ) -> None:
+        for workers in (1, 2):
+            with self.subTest(workers=workers):
+                path = self.directory / f"run-{workers}.json"
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with (
+                    mock.patch(
+                        "lisjong_arena.single_round_compare.collect_execution_provenance",
+                        side_effect=RuntimeError("source revision cannot be verified"),
+                    ) as preflight,
+                    mock.patch(
+                        "lisjong_arena.single_round_compare.run_single_round_evaluation"
+                    ) as serial,
+                    mock.patch(
+                        "lisjong_arena.single_round_compare."
+                        "run_single_round_evaluation_parallel"
+                    ) as parallel,
+                    mock.patch(
+                        "lisjong_arena.single_round_compare.save_single_round_artifact"
+                    ) as save,
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    return_code = _run_cli(
+                        self._arguments(
+                            "--workers", str(workers), "--artifact-out", str(path)
+                        )
+                    )
+
+                self.assertEqual(return_code, 1)
+                preflight.assert_called_once_with()
+                serial.assert_not_called()
+                parallel.assert_not_called()
+                save.assert_not_called()
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertIn("artifact provenance preflight failed", stderr.getvalue())
+                self.assertFalse(path.exists())
+
+    def test_without_artifact_does_not_collect_provenance(self) -> None:
+        with (
+            mock.patch(
+                "lisjong_arena.single_round_compare.collect_execution_provenance"
+            ) as preflight,
+            mock.patch(
+                "lisjong_arena.single_round_compare.run_single_round_evaluation",
+                return_value=_fake_result(seeds=(0, 1)),
+            ) as serial,
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            return_code = _run_cli(self._arguments())
+
+        self.assertEqual(return_code, 0)
+        serial.assert_called_once()
+        preflight.assert_not_called()
+
     def test_existing_artifact_path_is_rejected_before_execution(self) -> None:
         path = self.directory / "run.json"
         path.write_text("existing", encoding="utf-8")
@@ -688,6 +751,10 @@ class ArtifactOutTest(unittest.TestCase):
                 "lisjong_arena.single_round_compare.save_single_round_artifact",
                 side_effect=OSError("disk full"),
             ),
+            mock.patch(
+                "lisjong_arena.single_round_compare.collect_execution_provenance",
+                return_value=artifact_fixtures.provenance(),
+            ),
             contextlib.redirect_stdout(stdout),
             contextlib.redirect_stderr(stderr),
         ):
@@ -704,6 +771,10 @@ class ArtifactOutTest(unittest.TestCase):
             mock.patch(
                 "lisjong_arena.single_round_compare.run_single_round_evaluation",
                 side_effect=RuntimeError("boom"),
+            ),
+            mock.patch(
+                "lisjong_arena.single_round_compare.collect_execution_provenance",
+                return_value=artifact_fixtures.provenance(),
             ),
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(stderr),

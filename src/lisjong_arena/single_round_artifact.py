@@ -371,7 +371,12 @@ def _arena_source_revision() -> str:
     installや無関係なrepository内のsite-packages等)も同様にfail closedし、
     revisionを推測しない。
     """
-    _git_output("ls-files", "--error-unmatch", "--", _ARENA_SOURCE_FILE)
+    try:
+        _git_output("ls-files", "--error-unmatch", "--", _ARENA_SOURCE_FILE)
+    except SingleRoundArtifactError as error:
+        raise SingleRoundArtifactError(
+            f"{error}; source: {_ARENA_SOURCE_DIRECTORY / _ARENA_SOURCE_FILE}"
+        ) from error
     if _git_output("status", "--porcelain", "--", ".").strip():
         raise SingleRoundArtifactError(
             "lisjong-arena source tree has uncommitted changes; "

@@ -404,9 +404,10 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     が失敗した場合はpartial summaryを出さず、non-zero exitで終了する。
 
     ``--artifact-out``を指定した場合だけ、evaluation成功後にartifactを保存する。
-    Mortal candidate、既存path、存在しない保存先directoryは、長時間のevaluationを
-    実行する前にfail closedする。保存自体が失敗した場合はpartial fileを残さず
-    non-zero exitで終了する。artifact保存の有無はevaluation semanticsへ影響しない。
+    Mortal candidate、既存path、存在しない保存先directory、検証不能なexecution
+    provenanceは、長時間のevaluationを実行する前にfail closedする。保存自体が
+    失敗した場合はpartial fileを残さずnon-zero exitで終了する。artifact保存の
+    有無はevaluation semanticsへ影響しない。
     """
     parser = build_arg_parser(prog="python -m lisjong_arena.single_round_compare")
     args = parser.parse_args(argv)
@@ -506,16 +507,16 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
             )
             return 2
 
+        try:
+            preflight_provenance = collect_execution_provenance()
+        except Exception as error:
+            print(
+                "artifact provenance preflight failed: "
+                f"{type(error).__name__}: {error}",
+                file=sys.stderr,
+            )
+            return 1
         if diagnostic_path is not None:
-            try:
-                preflight_provenance = collect_execution_provenance()
-            except Exception as error:
-                print(
-                    "artifact provenance preflight failed: "
-                    f"{type(error).__name__}: {error}",
-                    file=sys.stderr,
-                )
-                return 1
             if (
                 preflight_provenance.lisjong_revision
                 != OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION
