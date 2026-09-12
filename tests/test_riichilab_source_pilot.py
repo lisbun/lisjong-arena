@@ -399,6 +399,17 @@ class MaterializationCoverageTests(unittest.TestCase):
         # riichi宣言の直後のdiscardはforced row（legal actionが1つ）である。
         self.assertEqual(result.forced_rows, 1)
 
+    def test_forced_discard_still_validates_teacher_tsumogiri(self):
+        log = riichi_log()
+        log[4]["tsumogiri"] = False
+        result = materialize(log)
+        self.assertTrue(result.supported)
+        self.assertEqual(result.forced_rows, 0)
+        self.assertIn(
+            (RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET.value, 1),
+            result.unresolved_reasons,
+        )
+
     def test_call_families_are_materialized(self):
         for name, log, family in (
             ("chi", chi_log(), "chi"),

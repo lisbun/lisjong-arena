@@ -1536,11 +1536,7 @@ def _build_row(
         ) from error
 
     legal_count = len(decision.legal_actions)
-    if legal_count < MINIMUM_LEGAL_ACTION_COUNT:
-        # forced rowはretained populationへ入らない。Arm Yのretained
-        # sourceも同じeligibility conditionでchoice rowだけを持つ。
-        return None
-    if view.drawn_slot_ambiguous:
+    if view.drawn_slot_ambiguous and legal_count >= MINIMUM_LEGAL_ACTION_COUNT:
         raise _RowUnresolved(RowUnresolvedReason.DRAWN_TILE_SLOTS_RESTRICTED)
 
     if mjai is None:
@@ -1566,6 +1562,10 @@ def _build_row(
         selected = _observed_internal_action(mapping_view, external, mjai, runtime.seat)
     if selected not in decision.legal_actions:
         raise _RowUnresolved(RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET)
+    if legal_count < MINIMUM_LEGAL_ACTION_COUNT:
+        # forced rowもteacher intentをexact legal candidateへ解決してから
+        # supervision対象外として計上する。
+        return None
 
     try:
         mask = build_legal_action_mask(decision)
