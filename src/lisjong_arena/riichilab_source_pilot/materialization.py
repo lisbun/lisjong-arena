@@ -345,6 +345,30 @@ class GameMaterialization:
     forced_rows: int
     unresolved_reasons: tuple[tuple[str, int], ...]
 
+    def __post_init__(self) -> None:
+        if not self.supported:
+            if self.rows:
+                raise MaterializationError("an unsupported game must not carry rows")
+            return
+        if self.unsupported_reason is not None:
+            raise MaterializationError(
+                "a supported game must not carry an unsupported reason"
+            )
+        accounted = (
+            len(self.rows)
+            + self.forced_rows
+            + sum(count for _, count in self.unresolved_reasons)
+        )
+        if accounted != self.decision_opportunities:
+            raise MaterializationError(
+                "target-seat decision opportunities must equal "
+                "rows + forced + unresolved"
+            )
+
+    @property
+    def unresolved_rows(self) -> int:
+        return sum(count for _, count in self.unresolved_reasons)
+
     @property
     def explicit_rows(self) -> int:
         return sum(1 for row in self.rows if not row.implicit_pass)

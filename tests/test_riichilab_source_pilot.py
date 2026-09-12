@@ -4,7 +4,10 @@
 fixtureとArena自身のlocal RiichiEnv実行だけを使う。
 """
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from _riichilab_source_pilot_fixtures import (
     chi_log,
@@ -25,6 +28,7 @@ from _riichilab_source_pilot_fixtures import (
     tsumo_win_log,
     unknown_event_log,
 )
+from _source_pilot_strength_fixtures import save_strength_artifact
 from lisjong.action_vocabulary import (
     build_legal_action_mask,
     decode_action,
@@ -35,17 +39,28 @@ from lisjong.policy_contract.decision_context import DecisionContext
 from lisjong.policy_contract.seat import Seat
 from riichienv import ActionType, RiichiEnv
 
+from lisjong_arena._artifact_io import canonical_json_text
 from lisjong_arena.learned_policy_input import (
     build_policy_input_feature,
     tensor_values,
 )
 from lisjong_arena.riichilab_source_pilot import dataset as dataset_module
+from lisjong_arena.riichilab_source_pilot import (
+    materialization as materialization_module,
+)
 from lisjong_arena.riichilab_source_pilot import protocol as protocol_module
 from lisjong_arena.riichilab_source_pilot.artifact import (
+    RESULT_FILENAME,
+    SEED_PLAN_FILENAME,
+    STRENGTH_ARTIFACT_FILENAME,
+    load_result,
+    result_identity,
+    save_result,
     seed_plan_document,
     validate_result,
     validate_seed_plan,
 )
+from lisjong_arena.riichilab_source_pilot.bundle import verify_bundle
 from lisjong_arena.riichilab_source_pilot.dataset import (
     Gate0Report,
     build_row_budget,
@@ -58,6 +73,10 @@ from lisjong_arena.riichilab_source_pilot.errors import (
     MaterializationError,
     SourcePilotArtifactError,
     SourcePilotProtocolError,
+)
+from lisjong_arena.riichilab_source_pilot.experiment import (
+    persist_stop_invalid,
+    run_source_pilot,
 )
 from lisjong_arena.riichilab_source_pilot.materialization import (
     DecisionKind,
@@ -975,6 +994,356 @@ class SeedPlanArtifactTests(unittest.TestCase):
                     "result_identity": "0" * 64,
                 }
             )
+
+
+class LeakageCounterTests(unittest.TestCase):
+    """hidden-truth leakageは0固定のcounterにしない。"""
+
+    def _leaking_game(self) -> GameMaterialization:
+        return GameMaterialization(
+            game_id="leaky",
+            supported=False,
+            unsupported_reason=(
+                GameUnsupportedReason.SEAT_VISIBLE_EVENT_LEAKS_HIDDEN_TRUTH
+            ),
+            rounds=0,
+            decision_opportunities=0,
+            rows=(),
+            forced_rows=0,
+            unresolved_reasons=(),
+        )
+
+    def test_leakage_failures_count_the_games_that_leaked(self):
+        source = _source([_synthetic_game("g1", 10), self._leaking_game()])
+        self.assertEqual(source.report.leakage_failures, 1)
+        self.assertEqual(source.report.to_document()["leakage_check_failures"], 1)
+        self.assertFalse(source.report.gate_passed)
+
+    def test_other_unsupported_reasons_are_not_counted_as_leakage(self):
+        source = _source([_synthetic_game("g1", 0, supported=False)])
+        self.assertEqual(source.report.games_unsupported, 1)
+        self.assertEqual(source.report.leakage_failures, 0)
+        self.assertFalse(source.report.gate_passed)
+
+    def test_an_unmasked_seat_visible_event_reaches_the_counter(self):
+        """detection pathからreport counterまでが繋がっていることを確認する。
+
+        current RiichiEnvは他家のconcealed handとdrawを実際にmaskする。
+        そのためmasking sentinelを別の値へ差し替え、`"?"`でmaskされた
+        seat-visible eventをleakとして観測させる。確認対象はleakage判定の
+        結線であり、engineのmasking動作そのものではない。
+        """
+        with mock.patch.object(materialization_module, "_MASKED_TILE", "!"):
+            result = materialize(normal_discard_log(), game_id="leaky")
+        self.assertFalse(result.supported)
+        self.assertIs(
+            result.unsupported_reason,
+            GameUnsupportedReason.SEAT_VISIBLE_EVENT_LEAKS_HIDDEN_TRUTH,
+        )
+        source = _source([result])
+        self.assertEqual(source.report.leakage_failures, 1)
+
+
+class CounterConsistencyTests(unittest.TestCase):
+    """decision opportunityはrows + forced + unresolvedで説明し切る。"""
+
+    def test_unaccounted_decision_opportunities_fail_closed(self):
+        game = _synthetic_game("g1", 4)
+        with self.assertRaises(MaterializationError):
+            GameMaterialization(
+                game_id=game.game_id,
+                supported=True,
+                unsupported_reason=None,
+                rounds=game.rounds,
+                decision_opportunities=game.decision_opportunities + 1,
+                rows=game.rows,
+                forced_rows=0,
+                unresolved_reasons=(),
+            )
+
+    def test_forced_and_unresolved_decisions_are_accounted(self):
+        game = _synthetic_game("g1", 4)
+        accounted = GameMaterialization(
+            game_id=game.game_id,
+            supported=True,
+            unsupported_reason=None,
+            rounds=game.rounds,
+            decision_opportunities=6,
+            rows=game.rows,
+            forced_rows=1,
+            unresolved_reasons=(
+                (RowUnresolvedReason.DRAWN_TILE_SLOTS_RESTRICTED.value, 1),
+            ),
+        )
+        self.assertEqual(accounted.unresolved_rows, 1)
+        source = _source([accounted])
+        document = source.report.to_document()
+        self.assertEqual(
+            document["decision_opportunities"],
+            document["eligible_rows"] + document["forced_rows"] + 1,
+        )
+
+    def test_an_unsupported_game_must_not_carry_rows(self):
+        game = _synthetic_game("g1", 4)
+        with self.assertRaises(MaterializationError):
+            GameMaterialization(
+                game_id=game.game_id,
+                supported=False,
+                unsupported_reason=GameUnsupportedReason.MALFORMED_EVENT,
+                rounds=0,
+                decision_opportunities=0,
+                rows=game.rows,
+                forced_rows=0,
+                unresolved_reasons=(),
+            )
+
+    def test_materialized_games_account_for_every_opportunity(self):
+        events, _ = generated(246)
+        result = materialize(events, game_id="seed-246")
+        self.assertTrue(result.supported)
+        self.assertEqual(
+            result.decision_opportunities,
+            len(result.rows) + result.forced_rows + result.unresolved_rows,
+        )
+
+
+BACKEND = "local-directory"
+KEY = "riichilab-source-pilot-211/non-ml-test"
+FOREIGN_CANDIDATE = "learned-source-pilot-r:" + "a" * 64
+FOREIGN_BASELINE = "learned-source-pilot-y:" + "b" * 64
+
+
+class TerminalOutcomeDurabilityTests(unittest.TestCase):
+    """実行開始後のterminal outcomeは必ずwrite-once artifactとして残る。"""
+
+    def _destination(self, directory: str) -> Path:
+        return Path(directory) / "bundle"
+
+    def _blocked_run(self, directory: str, source):
+        return run_source_pilot(
+            arm_y_source=None,
+            arm_r_source=source,
+            destination=self._destination(directory),
+            backend=BACKEND,
+            key=KEY,
+        )
+
+    def _sufficient_source(self):
+        identity = "c" * 64
+        if identity not in _SUFFICIENT_SOURCES:
+            _SUFFICIENT_SOURCES[identity] = _source(
+                _sufficient_games(), identity=identity
+            )
+        return _SUFFICIENT_SOURCES[identity]
+
+    def test_gate0_failure_leaves_a_durable_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source([_synthetic_game("bad", 0, supported=False)])
+            run = self._blocked_run(directory, source)
+            self.assertIs(
+                run.outcome, SourcePilotOutcome.SOURCE_MATERIALIZATION_BLOCKED
+            )
+            persisted = load_result(run.path / RESULT_FILENAME)
+            self.assertEqual(persisted, run.result)
+            self.assertTrue(persisted["stop_reason"])
+            self.assertEqual(
+                verify_bundle(run.path)["outcome"],
+                SourcePilotOutcome.SOURCE_MATERIALIZATION_BLOCKED.value,
+            )
+
+    def test_budget_failure_leaves_a_durable_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source([_synthetic_game(f"g{index}", 10) for index in range(3)])
+            run = self._blocked_run(directory, source)
+            self.assertIs(run.outcome, SourcePilotOutcome.DATA_BUDGET_NOT_MATCHABLE)
+            self.assertEqual(
+                verify_bundle(run.path)["outcome"],
+                SourcePilotOutcome.DATA_BUDGET_NOT_MATCHABLE.value,
+            )
+
+    def test_a_failure_after_the_gate_leaves_a_durable_stop_invalid(self):
+        class _CorruptedArmYSource:
+            @property
+            def identity(self):
+                raise RuntimeError("simulated retained artifact corruption")
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = self._destination(directory)
+            with self.assertRaises(RuntimeError):
+                run_source_pilot(
+                    arm_y_source=_CorruptedArmYSource(),
+                    arm_r_source=self._sufficient_source(),
+                    destination=destination,
+                    backend=BACKEND,
+                    key=KEY,
+                )
+            result = load_result(destination / RESULT_FILENAME)
+            self.assertEqual(result["outcome"], SourcePilotOutcome.STOP_INVALID.value)
+            self.assertIn(
+                "simulated retained artifact corruption", result["stop_reason"]
+            )
+            self.assertIsNone(result["strength"])
+            document = verify_bundle(destination)
+            self.assertEqual(document["outcome"], SourcePilotOutcome.STOP_INVALID.value)
+            self.assertIn("partial STOP / INVALID bundle", document["verified"])
+
+    def test_a_recorded_terminal_outcome_blocks_a_convenient_rerun(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = _source([_synthetic_game("bad", 0, supported=False)])
+            self._blocked_run(directory, source)
+            with self.assertRaises(FileExistsError):
+                self._blocked_run(directory, source)
+
+    def test_the_first_terminal_record_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = self._destination(directory)
+            first = persist_stop_invalid(
+                destination, backend=BACKEND, key=KEY, stop_reason="first"
+            )
+            second = persist_stop_invalid(
+                destination, backend=BACKEND, key=KEY, stop_reason="second"
+            )
+            self.assertEqual(first, second)
+            self.assertEqual(first["stop_reason"], "first")
+
+
+class BundleCrossBindingTests(unittest.TestCase):
+    """bundle全体のstrict readback（comparison前のterminal outcome）。"""
+
+    def _blocked_bundle(self, directory: str) -> Path:
+        destination = Path(directory) / "bundle"
+        run_source_pilot(
+            arm_y_source=None,
+            arm_r_source=_source([_synthetic_game("bad", 0, supported=False)]),
+            destination=destination,
+            backend=BACKEND,
+            key=KEY,
+        )
+        return destination
+
+    def test_a_blocked_bundle_verifies_with_only_its_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            document = verify_bundle(self._blocked_bundle(directory))
+            self.assertEqual(document["verified"], "result-only terminal outcome")
+            self.assertTrue(document["stop_reason"])
+
+    def test_an_unexpected_entry_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._blocked_bundle(directory)
+            (bundle / "notes.txt").write_text("operator note", encoding="utf-8")
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(bundle)
+
+    def test_a_blocked_bundle_must_not_retain_evaluation_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._blocked_bundle(directory)
+            # 単体としてvalidなseed planでも、comparison前に停止した
+            # bundleへ同梱されていればevidenceとして成立しない。
+            plan = seed_plan_document(
+                candidate_identity="learned-source-pilot-r:" + "a" * 64,
+                baseline_identity="learned-source-pilot-y:" + "b" * 64,
+            )
+            (bundle / SEED_PLAN_FILENAME).write_text(
+                canonical_json_text(plan), encoding="utf-8", newline="\n"
+            )
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(bundle)
+
+    def test_a_missing_result_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty"
+            empty.mkdir()
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(empty)
+
+    def _rehashed(self, bundle: Path, directory: str, mutate) -> Path:
+        """resultをmutateし、result identityを再計算して別bundleへ保存する。"""
+        result = load_result(bundle / RESULT_FILENAME)
+        mutate(result)
+        del result["result_identity"]
+        result["result_identity"] = result_identity(result)
+        reissued = Path(directory) / "reissued"
+        reissued.mkdir()
+        save_result(reissued / RESULT_FILENAME, result)
+        return reissued
+
+    def test_a_blocked_outcome_must_match_the_decision_order(self):
+        """Gate 0 reportと矛盾するblocked outcomeを受け付けない。"""
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._blocked_bundle(directory)
+            self.assertEqual(
+                load_result(bundle / RESULT_FILENAME)["outcome"],
+                SourcePilotOutcome.SOURCE_MATERIALIZATION_BLOCKED.value,
+            )
+
+            def _pass_the_gate(result):
+                result["gate0"]["gate_passed"] = True
+
+            reissued = self._rehashed(bundle, directory, _pass_the_gate)
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(reissued)
+
+    def test_a_budget_outcome_requires_a_passed_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            run_source_pilot(
+                arm_y_source=None,
+                arm_r_source=_source(
+                    [_synthetic_game(f"g{index}", 10) for index in range(3)]
+                ),
+                destination=destination,
+                backend=BACKEND,
+                key=KEY,
+            )
+            self.assertEqual(
+                load_result(destination / RESULT_FILENAME)["outcome"],
+                SourcePilotOutcome.DATA_BUDGET_NOT_MATCHABLE.value,
+            )
+
+            def _fail_the_gate(result):
+                result["gate0"]["gate_passed"] = False
+
+            reissued = self._rehashed(destination, directory, _fail_the_gate)
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(reissued)
+
+    def test_a_blocked_outcome_must_not_carry_post_gate_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._blocked_bundle(directory)
+
+            def _claim_a_budget(result):
+                result["budget"] = {"train_rows": 9116, "validation_rows": 2555}
+
+            reissued = self._rehashed(bundle, directory, _claim_a_budget)
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(reissued)
+
+    def test_a_strength_artifact_without_a_seed_plan_fails_closed(self):
+        """STOP bundleでも実行順序（seed plan -> strength artifact）を固定する。"""
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            persist_stop_invalid(
+                destination,
+                backend=BACKEND,
+                key=KEY,
+                stop_reason="simulated interruption",
+            )
+            self.assertIn(
+                "partial STOP / INVALID bundle", verify_bundle(destination)["verified"]
+            )
+            save_strength_artifact(
+                destination / STRENGTH_ARTIFACT_FILENAME,
+                FOREIGN_CANDIDATE,
+                FOREIGN_BASELINE,
+            )
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(destination)
+
+    def test_a_non_directory_bundle_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._blocked_bundle(directory)
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(bundle / RESULT_FILENAME)
 
 
 if __name__ == "__main__":

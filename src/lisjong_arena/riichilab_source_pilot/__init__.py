@@ -21,6 +21,7 @@ evaluation）はoperatorがlocalで実行する。generated dataset rowとtraine
 weightsはrepositoryへcommitしない。
 """
 
+from .bundle import verify_bundle
 from .dataset import (
     Gate0Report,
     MaterializedSource,
@@ -38,6 +39,7 @@ from .errors import (
     SourcePilotError,
     SourcePilotProtocolError,
 )
+from .experiment import persist_stop_invalid
 from .materialization import (
     REPLAY_SEAM,
     DecisionKind,
@@ -88,6 +90,8 @@ __all__ = [
     "interpretation_boundary",
     "materialize_game",
     "materialize_local_corpus",
+    "persist_stop_invalid",
     "plan_document",
     "validate_plan",
+    "verify_bundle",
 ]
