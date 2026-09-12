@@ -1,9 +1,8 @@
 """実RiichiEnvと実spawn workerを使う``run_single_round_evaluation_parallel``の
 integration test。
 
-``tests.test_comparison_parallel_integration``と同じ理由で、module import ->
-factory resolution -> Policy instance生成 -> game実行までを実際のspawn
-worker process内部で通す。CI runtimeを抑えるためseed数は1に留める。
+module import -> factory resolution -> Policy instance生成 -> game実行までを
+実際のspawn worker process内部で通す。CI runtimeを抑えるためseed数は1に留める。
 """
 
 import unittest

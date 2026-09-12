@@ -80,14 +80,11 @@ jobs:
 
 
           def main() -> int:
-              pattern, test_file, allow_zero_text = sys.argv[1:]
+              pattern, test_file = sys.argv[1:]
               suite = unittest.defaultTestLoader.discover("tests", pattern=pattern)
               test_count = suite.countTestCases()
 
               if test_count == 0:
-                  if allow_zero_text == "true":
-                      print(f"Intentional zero-test compatibility stub: {test_file}")
-                      return 0
                   print(f"No unittest cases discovered: {test_file}", file=sys.stderr)
                   return 1
 
@@ -111,10 +108,5 @@ jobs:
             fi
             seen_patterns[$pattern]="$test_file"
 
-            allow_zero=false
-            if [[ "$test_file" == "tests/test_comparison_parallel_integration.py" ]]; then
-              allow_zero=true
-            fi
-
-            python "$test_runner" "$pattern" "$test_file" "$allow_zero"
+            python "$test_runner" "$pattern" "$test_file"
           done
