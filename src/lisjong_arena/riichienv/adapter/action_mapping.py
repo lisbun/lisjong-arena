@@ -40,7 +40,7 @@ from lisjong.policy_contract.action import (
 )
 from lisjong.policy_contract.seat import Seat
 from riichienv import Action as RiichiEnvAction
-from riichienv import ActionType, MeldType, Observation
+from riichienv import ActionType, Meld, MeldType, Observation
 
 from lisjong_arena.riichienv.adapter.seat_conversion import seat_from_player_index
 from lisjong_arena.riichienv.adapter.tile_conversion import tile_from_physical_id
@@ -112,42 +112,65 @@ class StaleActionMappingError(ActionAdapterError):
 
 
 def _resolve_call_target(
-    observation: Observation, actor: Seat, physical_tile_id: int
+    observation: Observation,
+    actor: Seat,
+    physical_tile_id: int,
+    *,
+    allow_kakan: bool = False,
 ) -> Seat:
     """Chi/Pon/Daiminkan/Ronの`target`を、同decisionのObservationから解決する。
 
-    通常discardへの応答では`Observation.last_discard`が示すseatの直近discardが
-    `physical_tile_id`と一致することを検証する。kakan chankanへの応答では、
-    RiichiEnv 0.4.8がkakanをdiscard相当としてlast_discardへ転用する実装事実
-    （lisbun/lisjong#27の`[AI-REVIEW]`対応実測、v0.4.8ソース確認済み）に基づき、
-    `last_discard`が示すseatの現在のKAKAN meldに`physical_tile_id`が含まれる
-    ことを検証する。どちらの経路でも一致しない場合はfail closedする。
+    `last_discard`はphysical tile idであり、seatではない。通常discardへの
+    応答はその牌を直近に捨てた相手を、Ronのkakan chankan応答は同じ牌を含む
+    現在のKAKAN meldの所有者を探す。両経路の合計がちょうど1件でなければ
+    推測せずfail closedする。
     """
-    target_index = observation.last_discard
-    if target_index is None:
+    if type(physical_tile_id) is not int or not 0 <= physical_tile_id <= 135:
+        raise ContextResolutionError("called/winning tile must be a physical tile id")
+    last_discard = getattr(observation, "last_discard", None)
+    if last_discard is None:
         raise ContextResolutionError(
             "observation.last_discard is None; cannot resolve call target"
         )
-
-    target = seat_from_player_index(target_index)
-    if target == actor:
-        raise ContextResolutionError("last_discard seat must differ from actor")
-
-    target_discards = observation.discards[target]
-    if target_discards and target_discards[-1] == physical_tile_id:
-        return target
-
-    target_melds = observation.melds[target]
-    if any(
-        meld.meld_type == MeldType.Kakan and physical_tile_id in meld.tiles
-        for meld in target_melds
+    if type(last_discard) is not int or last_discard != physical_tile_id:
+        raise ContextResolutionError("last_discard does not match called/winning tile")
+    discards_by_seat = getattr(observation, "discards", None)
+    melds_by_seat = getattr(observation, "melds", None)
+    if (
+        not isinstance(discards_by_seat, list)
+        or not isinstance(melds_by_seat, list)
+        or len(discards_by_seat) != 4
+        or len(melds_by_seat) != 4
     ):
-        return target
+        raise ContextResolutionError(
+            "observation must contain four discard and meld rows"
+        )
 
-    raise ContextResolutionError(
-        "called/winning tile matches neither target's last discard "
-        "nor an active kakan meld"
-    )
+    matches: list[Seat] = []
+    for seat in Seat:
+        discards = discards_by_seat[seat]
+        melds = melds_by_seat[seat]
+        if not isinstance(discards, list) or not isinstance(melds, list):
+            raise ContextResolutionError("discard and meld rows must be lists")
+        if seat == actor:
+            continue
+        if discards and discards[-1] == physical_tile_id:
+            matches.append(seat)
+        if allow_kakan:
+            for meld in melds:
+                if not isinstance(meld, Meld):
+                    raise ContextResolutionError(
+                        "opponent meld must be a RiichiEnv Meld"
+                    )
+                if meld.meld_type == MeldType.Kakan and physical_tile_id in meld.tiles:
+                    matches.append(seat)
+
+    if len(matches) != 1:
+        raise ContextResolutionError(
+            "called/winning tile target must resolve to exactly one opponent, "
+            f"found {len(matches)}"
+        )
+    return matches[0]
 
 
 def _translate_discard(
@@ -234,7 +257,7 @@ def _translate_kakan(
 def _translate_ron(
     action: RiichiEnvAction, observation: Observation, actor: Seat
 ) -> RonAction:
-    target = _resolve_call_target(observation, actor, action.tile)
+    target = _resolve_call_target(observation, actor, action.tile, allow_kakan=True)
     winning_tile = tile_from_physical_id(action.tile)
     return RonAction(actor=actor, target=target, winning_tile=winning_tile)
 
