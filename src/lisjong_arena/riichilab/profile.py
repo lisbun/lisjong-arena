@@ -10,7 +10,9 @@ profileは表示名やdefault値ではなく、
 
 本moduleは、Issue #44でlisjongへ実装されたcontract(`lisjong.riichilab_client.profile`)
 をbehavior-preservingにArenaへcanonical migrationしたものである。profile identity、
-credential環境変数名、Policy mapping、runtime namespaceは移管元contractを維持する。
+credential環境変数名、runtime namespaceは移管元contractを維持する。Issue #223では
+`lisjong-dev`だけをcurrent development targetである
+`MechanismRiichiDefenseYakuhaiCallPolicy`へ明示的に更新した。
 
 このmoduleはPolicy契約(`DecisionContext`)、`RiichiLabSeatAdapter`、
 `ValidationSession` / `RankedSession`、`Transport`のいずれへも依存を逆流させ
@@ -29,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lisjong.policies import MinimalPolicy, TwoStepUkeirePolicy
+from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy, MinimalPolicy
 from lisjong.policy_contract.policy import Policy
 
 
@@ -54,8 +56,8 @@ class RuntimeProfile:
     """1 profileが一方向に解決する実行構成。
 
     `policy_factory`は呼び出しのたびに新しい`Policy`instanceを作る。複数
-    profileが同じPolicy classを指すことは許容するが(本IssueではPolicyの
-    強さそのものを改善しない)、mapping自体は`name`ごとに固定・独立している。
+    profileが同じPolicy classを指すことは許容するが、mapping自体は`name`ごとに
+    固定・独立している。
 
     表示用のPolicy名を独立したfieldとして持たない。`build_runtime_summary()`
     が実際に起動する`policy_factory()`のinstanceから`type(...).__name__`を
@@ -73,15 +75,15 @@ def _minimal_policy_factory() -> Policy:
     return MinimalPolicy()
 
 
-def _two_step_ukeire_policy_factory() -> Policy:
-    return TwoStepUkeirePolicy()
+def _mechanism_riichi_defense_policy_factory() -> Policy:
+    return MechanismRiichiDefenseYakuhaiCallPolicy()
 
 
 _PROFILE_DEFINITIONS: tuple[RuntimeProfile, ...] = (
     RuntimeProfile(
         name="lisjong-dev",
         credential_env_var="LISJONG_DEV_BOT_TOKEN",
-        policy_factory=_two_step_ukeire_policy_factory,
+        policy_factory=_mechanism_riichi_defense_policy_factory,
         runtime_namespace="lisjong-dev",
     ),
     RuntimeProfile(
