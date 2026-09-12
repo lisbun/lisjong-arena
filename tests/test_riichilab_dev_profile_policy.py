@@ -14,12 +14,12 @@ from lisjong_arena.riichilab.profile import (
     format_runtime_summary,
     resolve_profile,
 )
+from lisjong_arena.riichilab.ranked import RankedGameResult
 from lisjong_arena.riichilab.ranked import (
-    RankedGameResult,
     _run_cli as run_ranked_cli,
 )
+from lisjong_arena.riichilab.validation import ValidationResult
 from lisjong_arena.riichilab.validation import (
-    ValidationResult,
     _run_cli as run_validation_cli,
 )
 
