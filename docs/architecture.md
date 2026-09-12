@@ -97,6 +97,14 @@ RiichiLabのthird-party server log acquisitionは、ranked session transportお�
 参加情報は別recordとし、bounded snapshot/plan、local cache、validation、provenanceまでをArenaが所有する。
 player-perspective dataset化、HandBelief / Learned Policy training、再配布はこのcontractに含めない。
 
+bounded Issueがexact corpus identityへbindしたdataset化を必要とする場合は、acquisition contractを
+拡張せず、そのIssue固有のexperiment-local materialization pathとして持つ。Arena Issue #211の
+[RiichiLab source pilot](riichilab-source-pilot.md)はその形であり、麻雀rules / state transitionを
+Arenaへ再実装せず、current dependencyである`riichienv`のreplay APIをrules authorityとして使う。
+exactに再構成できないlegal action semanticsはheuristicで補完せず、reason code付きでfail closedする。
+generic external-dataset framework、generic replay engine、project-wide canonical training datasetは
+導入しない。
+
 ### Same-process inspection and durable local record
 
 standard RiichiEnv `LocalGameRunner`では、objective `GameTrace`、existing

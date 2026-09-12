@@ -77,3 +77,4 @@ jobs:
           python -m unittest discover -s tests -p "test_stage3_epoch_budget_ml.py" -v
           python -m unittest discover -s tests -p "test_stage3_optimization_saturation_ml.py" -v
           python -m unittest discover -s tests -p "test_phase11_public_riichi_wait_readout_ml.py" -v
+          python -m unittest discover -s tests -p "test_riichilab_source_pilot_ml.py" -v
