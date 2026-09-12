@@ -132,6 +132,7 @@ def _train_one_sequence(
     policy,
     *,
     objective_cell_count: int,
+    timer=None,
 ):
     import torch
 
@@ -145,24 +146,54 @@ def _train_one_sequence(
     for start, stop in _chunk_ranges(len(sequence.steps), policy):
         chunk_squared_error = None
         for step in sequence.steps[start:stop]:
-            if rows_by_wind is None:
-                _value, rows_by_wind = _initial_tensor_rows(step)
-                if candidate is Candidate.S2:
-                    latent = torch.zeros((1, S2_LATENT_DIM), dtype=torch.float32)
-            previous = _remap_tensor_rows(rows_by_wind, step.opponent_winds)
-            features, row_marginals, column_marginals = _step_tensors(step)
-            if candidate is Candidate.S1:
-                constrained = model(features, previous, row_marginals, column_marginals)
+            if timer is None:
+                if rows_by_wind is None:
+                    _value, rows_by_wind = _initial_tensor_rows(step)
+                    if candidate is Candidate.S2:
+                        latent = torch.zeros((1, S2_LATENT_DIM), dtype=torch.float32)
+                previous = _remap_tensor_rows(rows_by_wind, step.opponent_winds)
+                features, row_marginals, column_marginals = _step_tensors(step)
+                if candidate is Candidate.S1:
+                    constrained = model(
+                        features, previous, row_marginals, column_marginals
+                    )
+                else:
+                    constrained, latent = model(
+                        features,
+                        previous,
+                        latent,
+                        row_marginals,
+                        column_marginals,
+                    )
             else:
-                constrained, latent = model(
-                    features,
-                    previous,
-                    latent,
-                    row_marginals,
-                    column_marginals,
-                )
+                with timer.measure("train_tensor"):
+                    if rows_by_wind is None:
+                        _value, rows_by_wind = _initial_tensor_rows(step)
+                        if candidate is Candidate.S2:
+                            latent = torch.zeros(
+                                (1, S2_LATENT_DIM), dtype=torch.float32
+                            )
+                    previous = _remap_tensor_rows(rows_by_wind, step.opponent_winds)
+                    features, row_marginals, column_marginals = _step_tensors(step)
+                with timer.measure("train_forward_constraint"):
+                    if candidate is Candidate.S1:
+                        constrained = model(
+                            features, previous, row_marginals, column_marginals
+                        )
+                    else:
+                        constrained, latent = model(
+                            features,
+                            previous,
+                            latent,
+                            row_marginals,
+                            column_marginals,
+                        )
             prediction = constrained.allocation[:, :3, :]
-            target = torch.tensor(step.target, dtype=torch.float64).unsqueeze(0)
+            if timer is None:
+                target = torch.tensor(step.target, dtype=torch.float64).unsqueeze(0)
+            else:
+                with timer.measure("train_tensor"):
+                    target = torch.tensor(step.target, dtype=torch.float64).unsqueeze(0)
             step_squared_error = torch.square(prediction - target).sum()
             chunk_squared_error = (
                 step_squared_error
@@ -177,7 +208,11 @@ def _train_one_sequence(
                 for index, wind in enumerate(step.opponent_winds)
             }
         loss = chunk_squared_error / objective_cell_count
-        loss.backward()
+        if timer is None:
+            loss.backward()
+        else:
+            with timer.measure("train_backward"):
+                loss.backward()
         if policy.mode is BpttMode.TRUNCATED and stop < len(sequence.steps):
             rows_by_wind, latent = detach_recurrent_state(rows_by_wind, latent)
     return squared_error_sum, cell_count, maximum_residual
@@ -190,6 +225,8 @@ def _train_pooled_epoch(
     policy: BpttPolicy,
     optimizer,
     order: tuple[int, ...] | list[int],
+    *,
+    timer=None,
 ) -> tuple[float, int, float]:
     """Apply one Adam update for the pooled expected-count cell objective."""
     import torch
@@ -209,6 +246,7 @@ def _train_pooled_epoch(
             sequences[index],
             policy,
             objective_cell_count=objective_cell_count,
+            timer=timer,
         )
         squared_error_sum += sequence_error
         cell_count += sequence_cells
@@ -222,7 +260,11 @@ def _train_pooled_epoch(
         for parameter in model.parameters()
     ):
         raise RuntimeError("training produced a non-finite gradient")
-    optimizer.step()
+    if timer is None:
+        optimizer.step()
+    else:
+        with timer.measure("train_optimizer"):
+            optimizer.step()
     return squared_error_sum, cell_count, maximum_residual
 
 
