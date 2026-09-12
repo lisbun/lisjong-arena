@@ -80,28 +80,18 @@ jobs:
             fi
             seen_patterns[$pattern]="$test_file"
 
-            allow_zero=false
-            if [[ "$test_file" == "tests/test_comparison_parallel_integration.py" ]]; then
-              allow_zero=true
+            if ! python -c 'import sys, unittest; suite = unittest.defaultTestLoader.discover("tests", pattern=sys.argv[1]); raise SystemExit(0 if suite.countTestCases() > 0 else 1)' "$pattern"; then
+              if [[ "$test_file" == "tests/test_comparison_parallel_integration.py" ]]; then
+                echo "Intentional zero-test compatibility stub: $test_file"
+                continue
+              fi
+              echo "No unittest cases discovered: $test_file" >&2
+              exit 1
             fi
 
-            python - "$pattern" "$test_file" "$allow_zero" <<'PY'
-          import sys
-          import unittest
-
-          pattern, test_file, allow_zero_text = sys.argv[1:]
-          suite = unittest.defaultTestLoader.discover("tests", pattern=pattern)
-          test_count = suite.countTestCases()
-
-          if test_count == 0:
-              if allow_zero_text == "true":
-                  print(f"Intentional zero-test compatibility stub: {test_file}")
-                  raise SystemExit(0)
-              print(f"No unittest cases discovered: {test_file}", file=sys.stderr)
-              raise SystemExit(1)
-
-          runner = unittest.TextTestRunner(verbosity=2, durations=30)
-          result = runner.run(suite)
-          raise SystemExit(0 if result.wasSuccessful() else 1)
-          PY
+            python -m unittest discover \
+              -s tests \
+              -p "$pattern" \
+              -v \
+              --durations 30
           done
