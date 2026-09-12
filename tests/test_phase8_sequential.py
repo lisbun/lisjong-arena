@@ -1,6 +1,7 @@
 """Synthetic non-ML tests for the locked Phase 8 protocol boundary."""
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -383,7 +384,21 @@ class Phase8SequentialProtocolTest(unittest.TestCase):
         self.assertIsNone(select_candidate(invalid_s1, invalid_s2).winner)
 
     def test_normal_phase8_import_and_cli_contract_are_torch_free_and_test_free(self):
-        self.assertNotIn("torch", sys.modules)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys\n"
+                "assert 'torch' not in sys.modules\n"
+                "from lisjong_arena.phase8_sequential.__main__ import _parser\n"
+                "_parser().format_help()\n"
+                "assert 'torch' not in sys.modules\n",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
         from lisjong_arena.phase8_sequential.__main__ import _parser
 
         parser = _parser()
@@ -397,7 +412,6 @@ class Phase8SequentialProtocolTest(unittest.TestCase):
         help_text = parser.format_help().lower()
         self.assertNotIn("phase 9", help_text)
         self.assertNotIn("test evaluation", help_text)
-        self.assertNotIn("torch", sys.modules)
 
 
 if __name__ == "__main__":
