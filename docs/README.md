@@ -18,6 +18,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 | [Durable ranked game record](durable-ranked-game-record.md) | RiichiLab ranked completed-hanchan raw record schema / loader / integrity / limitation |
 | [Automated Strength Evaluation](automated-strength-evaluation.md) | machine-readable locked evaluation orchestration contract |
 | [Claude Code workflow](claude-code-workflow.md) | repository development workflow |
+| [Testing policy](testing.md) | current test placement, CI coverage, and consolidation gate |
 
 ここへ載ることは、Arenaがstable AI semanticsのownerになることを意味しない。`PolicyInput`、Policy behavior、HandBelief、value / risk、production Policy等のstable AI-side semanticsは、該当する場合 `lisjong` がownerである。
 
@@ -64,6 +65,8 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - `epoch-budget-adequacy.md`
 - `optimization-budget-saturation.md`
 - `phase11-public-riichi-wait-readout.md`
+
+[September 2026 test-suite audit](test-suite-audit.md) は Issue #236 第1段階の revision 固定 inventory、historical invariant、runtime 記録である。今後の testing policy は上記の `testing.md` を正本とする。
 
 `extended-combined-evaluation.md`、`yakuhai-call-evaluation.md` 等のPolicy-specific comparison reportも、active Issueがcurrent statusへ昇格させない限りhistorical evidenceとして扱う。
 
