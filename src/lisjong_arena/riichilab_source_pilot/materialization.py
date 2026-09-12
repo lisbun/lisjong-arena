@@ -1084,7 +1084,6 @@ def _materialize_game(
                 # に対して常に古い順へ並ぶことを保証する。
                 entry, ambiguous = closing.pop(player_id)
                 close_out(entry, ambiguous=ambiguous)
-            opportunities += 1
             runtime = runtimes.get(player_id)
             if runtime is None:
                 # non-target seatはreplayを進めるためだけに必要であり、
@@ -1094,6 +1093,7 @@ def _materialize_game(
                 )
                 frozen_length = 0
             else:
+                opportunities += 1
                 frozen_length = len(runtime.events)
                 try:
                     view = _freeze_observation(observation, provenance, call_trigger)

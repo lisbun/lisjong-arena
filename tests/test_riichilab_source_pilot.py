@@ -579,6 +579,13 @@ class MaterializationCoverageTests(unittest.TestCase):
         self.assertTrue(result.supported)
         self.assertEqual({row.actor_seat for row in result.rows}, {1})
         self.assertEqual({row.bot_id for row in result.rows}, {7})
+        self.assertEqual(result.decision_opportunities, 2)
+        self.assertEqual(
+            result.decision_opportunities,
+            len(result.rows)
+            + result.forced_rows
+            + sum(count for _, count in result.unresolved_reasons),
+        )
 
     def test_a_game_needs_at_least_one_target_seat(self):
         with self.assertRaises(MaterializationError):

@@ -139,6 +139,10 @@ engineがもうそのseatへactionを求めていない、あるいは求めて�
 消費しないaction eventについても、解決済みdecisionがactingへ残り続ける間は
 再登録しない。
 
+Gate 0 reportのdecision opportunityはtarget seatだけを数える。non-target seatの
+open decisionはreplayとaction attributionのため保持するが、row / forced /
+unresolvedと同様にsupervision populationの件数へ含めない。
+
 ### implicit pass
 
 implicit Passをmaterializeするのは次の3条件がすべて成立する場合だけである。
