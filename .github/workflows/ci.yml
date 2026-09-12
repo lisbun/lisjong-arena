@@ -68,15 +68,16 @@ jobs:
           test_files=(tests/test*.py)
           ((${#test_files[@]} > 0))
           for test_file in "${test_files[@]}"; do
-            if python -m unittest discover \
+            status=0
+            python -m unittest discover \
               -s tests \
               -p "$(basename "$test_file")" \
               -v \
-              --durations 30; then
+              --durations 30 || status=$?
+
+            if [[ $status -eq 0 ]]; then
               continue
             fi
-
-            status=$?
             if [[ $status -eq 5 && "$test_file" != *_ml.py ]]; then
               echo "No unittest cases discovered in non-ML module: $test_file"
               continue
