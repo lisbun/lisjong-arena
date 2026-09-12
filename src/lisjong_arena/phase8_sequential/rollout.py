@@ -93,7 +93,9 @@ def _prediction(step, allocation) -> ExpectedCountPrediction:
     )
 
 
-def self_rollout(model, candidate: Candidate, sequences: tuple[Phase8Sequence, ...]):
+def self_rollout(
+    model, candidate: Candidate, sequences: tuple[Phase8Sequence, ...], *, timer=None
+):
     """Roll each sequence from its public baseline and its own prior predictions."""
     if not sequences:
         raise ValueError("self-rollout requires sequences")
@@ -109,6 +111,9 @@ def self_rollout(model, candidate: Candidate, sequences: tuple[Phase8Sequence, .
             rows_by_wind = None
             latent = None
             for depth, step in enumerate(sequence.steps, start=1):
+                tensor_start = (
+                    (time.perf_counter(), time.process_time()) if timer else None
+                )
                 if rows_by_wind is None:
                     previous_value, rows_by_wind = _initial_tensor_rows(step)
                     if candidate is Candidate.S2:
@@ -117,6 +122,9 @@ def self_rollout(model, candidate: Candidate, sequences: tuple[Phase8Sequence, .
                     previous_value = _state_value(rows_by_wind, step.opponent_winds)
                 previous = _remap_tensor_rows(rows_by_wind, step.opponent_winds)
                 features, row_marginals, column_marginals = _step_tensors(step)
+                if timer:
+                    timer.finish("validation_tensor", tensor_start)
+                    forward_start = (time.perf_counter(), time.process_time())
                 if candidate is Candidate.S1:
                     constrained = model(
                         features, previous, row_marginals, column_marginals
@@ -131,6 +139,9 @@ def self_rollout(model, candidate: Candidate, sequences: tuple[Phase8Sequence, .
                     )
                 else:
                     raise TypeError("candidate must be S1 or S2")
+                if timer:
+                    timer.finish("validation_forward_constraint", forward_start)
+                    remap_start = (time.perf_counter(), time.process_time())
                 prediction = _prediction(step, constrained.allocation)
                 rows_by_wind = {
                     wind: constrained.allocation[0, index, :]
@@ -138,6 +149,8 @@ def self_rollout(model, candidate: Candidate, sequences: tuple[Phase8Sequence, .
                 }
                 maximum_residual = max(maximum_residual, constrained.maximum_residual)
                 traces.append(RolloutStep(depth, previous_value, prediction))
+                if timer:
+                    timer.finish("validation_remap", remap_start)
     return RolloutResult(tuple(traces), maximum_residual, time.perf_counter() - started)
 
 
