@@ -1,19 +1,13 @@
 # lisjong-arena
 
-Reproducible execution, observation, research experimentation, and policy evaluation arena for the lisjong ecosystem.
+lisjong ecosystem向けの、reproducibleなexecution / observation / research experimentation / Policy evaluation arenaです。
 
 > [!IMPORTANT]
-> lisjong-arena is part of an independent personal Japanese mahjong AI project
-> developed by [lisbun](https://github.com/lisbun). It is not affiliated with any
-> other project using the LisJong or lisjong name.
+> `lisjong-arena` は [lisbun](https://github.com/lisbun) が開発する独立した個人の日本式麻雀AI projectの一部です。他のLisJong / lisjong名称のprojectとは関係ありません。
 
 ## 概要
 
-`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、
-controlled / reproducibleな条件で研究用candidateを生成・診断し、Policy間の
-performance differenceやgame performanceを比較・検証するrepositoryです。
-
-Arena内部では、少なくとも次の3責務を分離します。
+Arenaは次の3責務を分離します。
 
 ```text
 Execution / Observation
@@ -33,244 +27,98 @@ analysis / model artifact         metrics / artifact / provenance
 research candidate -------------------+
 ```
 
-重要なのは、**Arenaがexperiment-local MLを実装できることと、stableなAI semanticsを
-Arenaが所有することは別**だという点です。
+重要な境界は次です。
 
-lisjong ecosystem全体のrepository責務、repository間依存方向、長期ロードマップは
-[`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
+```text
+experiment-local model / feature / checkpoint
+!= stable lisjong Policy semantics
+!= production Policy
+```
 
-Arena固有の詳細な責務・ownership decisionは
-[Architecture](docs/architecture.md)、長期的な発展方針は
-[Roadmap](docs/roadmap.md)、Policy strength comparisonの恒久的な評価規律は
-[Policy strength evaluation policy](docs/policy-strength-evaluation.md)を参照してください。
+project-wideなrepository responsibility / long-term directionは [`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
 
-## 責務
+Arena内の文書は次から辿ってください。
+
+- [Documentation map](docs/README.md) — current contractとhistorical experiment recordの区別
+- [Architecture](docs/architecture.md) — responsibility / ownership
+- [Roadmap](docs/roadmap.md) — 長期的なArena capability
+- [Policy strength evaluation policy](docs/policy-strength-evaluation.md) — Policy比較の恒久的な評価規律
+
+**current work / next actionはGitHub Issues / PRsを正本**とし、READMEへ重複転記しません。
+
+## Responsibility summary
 
 ### Execution / observation
 
-Arenaがtarget responsibilityとして所有するもの:
+Arenaはconcrete environment integrationを所有します。
 
-- environment-specific integration
-- external / local runner / client
-- session lifecycle / matchmaking
-- retry / reconnect / continuous participation
-- execution profile / credential source resolution
+- local / external runner / client
+- session lifecycle、retry / reconnect、continuous participation
+- execution profile / credential-source resolution
 - protocol trace / raw game record acquisition
-- objective execution event
-- environmentへ実際に送信・適用したActionの記録
-- external representationからlisjong-owned Policy contractへのprojection
-- `InternalAction`からexternal legal Actionへのmapping / revalidation
+- objective applied-event observation
+- external representationと`lisjong` Policy contract間のprojection
+- external legal Action mapping / revalidation
 
-Execution / observationは研究仮説やcomparison semanticsを知りません。
+Execution / observationはresearch hypothesisやPolicy comparison conclusionを所有しません。
 
 ### Experiment-local research / ML
 
-Arenaは、**bounded research questionを検証するために必要なexperiment-localな
-ML / analysis implementation**を所有できます。
+bounded research questionに必要なpurpose-specific implementationはArenaで所有できます。
 
-例:
-
-- purpose-specific player-safe feature / tensor representation
-- experiment-local dataset schema / split / manifest
-- data generation / materialization harness
-- bounded training harness
-- fixed experiment model architecture / loss / optimizer configuration
+- dataset / tensor / split / manifest
+- training harness
+- fixed experiment model / loss / optimizer
 - checkpoint / result / diagnostic artifact
-- offline analysis / failure diagnosis
-- experiment-local learned Policy adapter
-- current experimentだけで使うclassification / decision rule
+- offline failure diagnosis
+- experiment-local Learned Policy adapter
 
-このownershipは、次の条件を満たす場合に限定します。
-
-```text
-bounded research question
-    + explicit provenance / reproducibility
-    + purpose-specific schema
-    + clear promotion boundary
-    + no silent production adoption
-```
-
-Arena内にmodel classやtraining codeが存在しても、それだけで次を意味しません。
-
-```text
-experiment-local model
-!= canonical lisjong model architecture
-
-experiment-local feature schema
-!= canonical PolicyInput / production feature contract
-
-experiment-local checkpoint
-!= production Policy
-
-experiment result
-!= stable public API
-```
-
-研究結果がstableなAI-side semanticsやproduction contractへ昇格する場合は、
-その時点でowner repositoryを明示的に再評価します。`lisjong`が所有すべきstable
-Policy / inference semanticsを、experiment codeがArenaにあるという理由だけで
-Arena canonical contractへ固定しません。
-
-逆に、research harnessをすべて`lisjong`へ置くことも要求しません。dataset生成、
-training、artifact、diagnostic、evaluationがArenaのcontrolled execution / evidence
-pipelineと強く結び付くbounded experimentでは、Arena-local implementationの方が
-責務を明確に保てます。
+研究で使えたことだけを理由にcanonical model / feature schema / public API / production Policyへ昇格させません。promotionはownerを含めて明示的に判断します。
 
 ### Evaluation
 
-Arenaが所有するもの:
+Arenaはreproducibleなcomparison mechanicsを所有します。
 
-- Policy / agentのmatchup定義
-- fixed seed set
-- deterministicなseat rotation
-- multiple-game / round execution plan
-- Policy / agent assignmentの記録
-- raw evaluation / comparison result
-- strength / diagnostic metrics
-- 再現可能なcomparison protocol
-- versioned immutable evaluation artifact
-- compatible artifactのstrict readback / reaggregation
-- external benchmark / external competitor orchestration
+- matchup definition
+- fixed seeds / deterministic seat rotation
+- game / round execution plan
+- immutable result artifact / provenance
+- strict readback / reaggregation
+- diagnostic / strength metrics
+- external competitor orchestration
 
-Evaluationはcandidateの生成方法を所有しません。research harnessが生成したcandidateを
-consumerとして評価できますが、評価結果を見てtraining conditionを暗黙に変更しません。
+Evaluationはcandidateをconsumerとして扱い、結果を見てcandidate生成条件を暗黙に変更しません。
 
-### `lisjong` に残すもの
+### Arenaがownerにならないもの
 
-Arenaがcanonical ownerにならないもの:
+stable AI-side semanticsは該当する場合`lisjong`側に残します。例:
 
-- Policy / AI strategy
-- `DecisionContext` / `PolicyInput` / `InternalAction` 等のstable AI-side semantic contract
-- AI-side Action identity / legality semantics
-- shanten / ukeire / HandBelief / risk / value / utility等のstable domain semantics
-- candidate evaluation / selection reason等のstable Policy-internal analysis semantics
-- production / public Learned Policy semantics
-- canonical production model / feature contract
-- AI-side public APIのpromotion decision
-- 麻雀ルール / game state transition
-- generic external-player runtime / generic process host
+- Policy behavior
+- `DecisionContext` / `PolicyInput` / `InternalAction`
+- shanten / ukeire / HandBelief / value / risk semantics
+- production Learned Policy contract
 
-境界を短く言うと、次のようになります。
+麻雀ルールやgame state transitionもArenaへ複製しません。
 
-```text
-Arena Execution / Observation
-    = what happened
+## Execution paths
 
-Arena Experiment-local Research
-    = how a bounded experiment materializes / trains / diagnoses evidence
+### RiichiEnv local execution
 
-Arena Evaluation
-    = how candidates are compared reproducibly
-
-lisjong
-    = what stable AI decisions / features / beliefs / values mean
-```
-
-## Experiment-local MLのpromotion boundary
-
-研究用implementationは、最初からproduction-quality generic frameworkへ昇格させません。
-
-```text
-bounded experiment
-    |
-    v
-experiment-local implementation
-    |
-    v
-result / evidence
-    |
-    +--> negative / inconclusive
-    |       keep as historical experiment record
-    |
-    `--> repeatedly useful / promoted principle
-            |
-            v
-       owner repository review
-            |
-            +--> remain Arena experiment infrastructure
-            `--> move / formalize as lisjong stable AI contract
-```
-
-promotion時には少なくとも次を確認します。
-
-- semanticsが特定experimentを超えてstableか
-- production / multiple consumerで必要か
-- Arena evaluation concernとAI decision concernのどちらがownerとして自然か
-- current artifact / feature identityをそのままstable contractへ流用してよいか
-- breaking-change policy / versioning / compatibilityを新たに定義すべきか
-
-「研究で使えた」だけではpromotion理由にしません。
-
-## Current research examples
-
-Arenaには現在、experiment-local ML / analysisの具体例があります。
-
-### Learned Policy input / training
-
-- [Learned Policy input schema](docs/learned-policy-input-schema.md)
-- [Learned Policy Stage 2](docs/learned-policy-stage2.md)
-- [Learned Policy Stage 3](docs/learned-policy-stage3.md)
-- [Learned Policy Stage 4A](docs/learned-policy-stage4a.md)
-- [Offline Q experiment](docs/learned-policy-offline-q.md)
-- [Offline Q failure diagnosis](docs/learned-policy-offline-q-diagnosis.md)
-- [Learned Policy data-sufficiency preflight](docs/learned-policy-data-sufficiency-preflight.md)
-- [P1 Gate A](docs/learned-policy-p1-gate-a.md)
-- [P1 Gate B](docs/learned-policy-p1-gate-b.md)
-- [FiniteHorizon-teacher curriculum](docs/learned-policy-finite-horizon-curriculum.md)
-- [Shanten-constrained Q serving diagnostic](docs/learned-policy-p1-shanten-guard.md)
-- [Guarded P1 higher-fidelity screen](docs/learned-policy-p1-guarded-higher-fidelity.md)
-- [P6 higher-fidelity screen](docs/learned-policy-p6-higher-fidelity.md)
-
-これらは、PolicyInputをplayer-safe inputとして利用しつつ、dataset / tensor / model /
-training / checkpoint / analysisをpurpose-specificなexperiment contractとして扱います。
-
-### HandBelief research
-
-HandBelief関連では、Arenaがtraining corpus、bounded learner、artifact、holdout protocol、
-scale study等のexperiment harnessを所有できます。一方、HandBeliefというAI-side概念の
-stable semanticsや将来production consumer semanticsは`lisjong`側の責務です。
-
-代表的なexperiment record:
-
-- [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
-- [Epoch-budget adequacy study](docs/epoch-budget-adequacy.md)
-- [Optimization-budget saturation study](docs/optimization-budget-saturation.md)
-- [Phase 11 public-riichi wait readout](docs/phase11-public-riichi-wait-readout.md)
-
-component prediction qualityとPolicy decision value / game strengthは別claimとして扱います。
-
-## Current execution paths
-
-Arenaは複数のconcrete execution pathを持ちますが、早期にgeneric backend abstractionへ
-統合しません。
-
-### RiichiEnv
-
-Policy-vs-Policy development evaluationでは、Arena-localの
-`lisjong_arena.riichienv.local_game_runner.LocalGameRunner`とArena-local RiichiEnv Adapter /
-GameTraceを利用します。
+Policy-vs-Policy development evaluationではArenaの`LocalGameRunner`とRiichiEnv adapter / `GameTrace`を利用します。
 
 ```text
 Arena evaluation / experiment
-        |
         v
 LocalGameRunner
-        |
         v
 RiichiEnv
-        |
         v
 lisjong Policy contract
 ```
 
-正常終了したstandard `LocalGameRunner` gameは、opt-inの
-[Durable local game record](docs/durable-local-game-record.md)としてoperator指定の
-local pathへ保存できます。これは#55のsame-process inspectionをstrictな
-cross-process readbackへ拡張するArena-owned raw recordであり、training datasetや
-project-wide canonical `GameRecord`ではありません。schema version 2では、完了した
-各局のauthoritative round-result factも保持します。RiichiEnv 0.4.8から取得できない
-result fieldは推測で埋めず、詳細と制約は
-[Durable local game record](docs/durable-local-game-record.md)に記載しています。
+正常終了したstandard local gameは、opt-inでArena-ownedの [durable local game record](docs/durable-local-game-record.md) として保存できます。recordはstrict / versioned / cross-process readableで、schema v2ではRiichiEnvからcapture時点で取得できるauthoritative per-round result factも保持します。
+
+これはtraining datasetでもproject-wide canonical `GameRecord`でもありません。
 
 ```bash
 python -m lisjong_arena.durable_local_game_record_cli record \
@@ -283,10 +131,7 @@ python -m lisjong_arena.durable_local_game_record_cli record \
 
 ### RiichiLab
 
-ranked / validation / continuous participationのclient、session、transport、protocol bridge、
-profile / credential compositionはArena execution / observationが所有します。
-
-主なentry point:
+ranked / validation / continuous participation runtime integrationはArenaが所有します。
 
 ```powershell
 python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
@@ -294,24 +139,18 @@ python -m lisjong_arena.riichilab.validation --profile lisjong-dev
 python -m lisjong_arena.riichilab.continuous_ranked --profile lisjong-dev
 ```
 
-詳細は[RiichiLab client runtime contract](docs/riichilab-client.md)と
-[RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)を参照してください。
+詳細:
 
-強豪Botのcurrent recent gamesからpersonal / non-commercial research用のserver-side MJAI corpusを
-取得・検証するoperator toolは、ranked clientやfirst-party corpusとは独立した
-[RiichiLab bounded server-log corpus](docs/riichilab-corpus.md)です。live acquisitionはmerge後に
-`snapshot -> plan -> acquire -> validate/report`の順で明示的に実行し、raw outputはGit worktree外へ
-保存します。
+- [RiichiLab client runtime contract](docs/riichilab-client.md)
+- [RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)
+- [RiichiLab bounded server-log corpus](docs/riichilab-corpus.md)
+- [RiichiLab downstream reconstruction qualification](docs/riichilab-downstream-qualification.md)
 
-取得済みcorpusがplayer-safeなdecision-time reconstructionとsupervision surfaceを供給できるかの
-offline判定は、同じCLIの`qualify-downstream` subcommandと
-[RiichiLab corpus downstream reconstruction qualification](docs/riichilab-downstream-qualification.md)が
-担当します。network accessもtrainingも行わず、aggregateだけのreport artifactを生成します。
+runtime participation、corpus acquisition、downstream ML qualificationは別責務です。technical accessibilityだけからML利用・redistribution permissionを推定しません。
 
 ### First-party `lisjong-engine`
 
-Arena-owned bridgeを介してfirst-party `lisjong-engine`上でもlisjong Policyを実行できます。
-engineのgame progressionやrule semanticsをArenaへ複製しません。
+Arena-owned bridgeを介してfirst-party `lisjong-engine`上でも`lisjong` Policyを実行できます。engine rule semanticsをArenaへ複製しません。
 
 ```text
 lisjong-arena
@@ -321,13 +160,9 @@ lisjong-arena
 
 ## Policy evaluation
 
-### AABB / ABBB
+ArenaはAABB / ABBB comparisonを、explicitなseed / seat rotation / Policy lifecycle / artifact identity / provenanceで実行します。
 
-Arenaは、controlled / reproducibleなPolicy comparisonのためにAABBとABBBのprotocolを
-提供します。seed、seat rotation、Policy lifecycle、artifact / provenanceをexplicitに扱い、
-partial successをsuccessful evaluationとして返しません。
-
-開発用single-round比較:
+single-round comparison例:
 
 ```powershell
 python -m lisjong_arena.single_round_compare `
@@ -338,8 +173,7 @@ python -m lisjong_arena.single_round_compare `
   --progress
 ```
 
-first-party research Policyは、installed environmentからimport可能なら
-`package.module:attribute`形式のexplicit import referenceでも指定できます。
+installed environmentからimport可能なfirst-party research Policyはexplicit import referenceでも指定できます。
 
 ```powershell
 python -m lisjong_arena.single_round_compare `
@@ -349,42 +183,45 @@ python -m lisjong_arena.single_round_compare `
   --seeds 0:99
 ```
 
-explicit importできることはcurated catalogへのpromotionを意味しません。
+import可能であることはcurated catalog promotionを意味しません。
 
-Policy strength comparisonの恒久的な規律は
-[Policy strength evaluation policy](docs/policy-strength-evaluation.md)を正本とします。
+恒久的なcomparison ruleは [Policy strength evaluation policy](docs/policy-strength-evaluation.md) を正本とします。[Automated Strength Evaluation](docs/automated-strength-evaluation.md) は既存comparisonを1つのmachine-readable locked runとしてcompositionする仕組みであり、自律的なcandidate生成・Champion promotion loopではありません。
 
-既存ABBB primitiveを1つのmachine-readable / non-interactive locked runとして
-compositionする場合は、[Automated Strength Evaluation v0](docs/automated-strength-evaluation.md)
-を利用できます。これは1回のevaluation orchestrationであり、candidate生成、seed allocation、
-Champion promotion、retry / resumeを行うStrength Loopではありません。
+Mortal等のexternal competitorもArena evaluationがorchestrateできますが、そのmodel / protocol semanticsをstable `lisjong` Policy contractへ取り込みません。
 
-### External competitor
+## Research documentation lifecycle
 
-Mortal等のexternal competitorはArena evaluationがorchestrateできます。
-external model / image / protocol semanticsをlisjong Policy contractへ取り込みません。
+Arenaにはnegative / inconclusive / superseded resultも含むexperiment-specific文書が多数あります。これらはevidenceとして保持しますが、**すべてがcurrent-status文書ではありません**。
+
+[docs/README.md](docs/README.md) で次を区別します。
+
+```text
+current reusable contract
+historical bounded experiment record
+operator documentation
+```
+
+古いexperiment文書の元の`Status`や`Next step`から現在のpriorityを推測しないでください。current research choiceはactive GitHub Issueを正本とします。
 
 ## Artifact discipline
 
-Arenaのexperiment / evaluation artifactは、目的ごとにversioned / immutable / fail-closedな
-contractを持たせます。
+Arena artifactはpurpose-specific / versionedで、必要なprotocolではimmutable / fail-closedに扱います。
 
 原則:
 
-- raw measurement / corpusをsource of truthにする
+- raw measurement / corpusをsource of truthとする
 - derived summaryは再計算可能にする
-- unknown schema / protocolを推測して受理しない
-- exact provenanceを確認できない場合は捏造しない
-- resultを見てseed / threshold / rescue runを暗黙追加しない
-- test fixture以外のlarge artifactをrepositoryへ常設commitしない
-- secret / credential / machine-local identityをartifactへ入れない
+- unknown schema / protocolを推測してcompatible扱いしない
+- unresolved provenanceをresolvedとして報告しない
+- result exposure後にseed / threshold / rescue runを暗黙追加しない
+- large generated artifactをrepositoryへ常設commitしない
+- secret / credential / machine-local identityをresearch artifactへ入れない
 
-artifactを保存できることと、repository-managed artifact platformを持つことは別です。
+artifactを保存できることとgeneric artifact registry / cloud platformを持つことは別です。
 
 ## 開発環境
 
-初期基準は通常版CPython 3.14です。free-threaded build（3.14t）は、依存libraryを含む
-互換性を個別に検証するまで対象外とします。
+通常版CPython 3.14を初期基準とします。free-threaded 3.14tは依存libraryを含む互換性を個別検証するまで対象外です。
 
 ```bash
 python -m venv .venv
@@ -392,15 +229,15 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ```
 
-Windows (PowerShell):
+Windows PowerShell:
 
 ```powershell
+python -m venv .venv
 .venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
 ```
 
-ML experimentを実行する場合は、そのexperiment documentationが指定するextra / exact
-provenance requirementを優先してください。formal / locked experimentではeditable local
-installを拒否する場合があります。
+ML experimentでは各experiment documentationが指定するextra / exact provenance requirementを優先します。formal / locked experimentではeditable local installを拒否する場合があります。
 
 ### 品質確認
 
@@ -412,50 +249,25 @@ python -m unittest discover -s tests -v
 
 文書のみの変更では最低限 `git diff --check` を確認します。
 
-## Detailed documentation
+repository-specificなdevelopment / review guidanceは`AGENTS.md`と [Claude Code workflow](docs/claude-code-workflow.md) を参照してください。
 
-READMEはcurrent ownershipと主要entry pointのoverviewに留めます。詳細なhistorical protocol、
-runbook、schema、result interpretationは各purpose-specific documentを正本とします。
+## Documentation rule of thumb
 
-- [Architecture](docs/architecture.md)
-- [Roadmap](docs/roadmap.md)
-- [Claude Code workflow (Skills / Hooks)](docs/claude-code-workflow.md)
-- [Policy strength evaluation policy](docs/policy-strength-evaluation.md)
-- [Open-hand call divergence diagnostics](docs/open-hand-call-divergence-diagnostics.md)
-- [Automated Strength Evaluation v0](docs/automated-strength-evaluation.md)
-- [RiichiEnv compatibility](docs/riichienv-compatibility.md)
-- [Durable local game record](docs/durable-local-game-record.md)
-- [RiichiLab client](docs/riichilab-client.md)
-- [RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)
-- [Learned Policy input schema](docs/learned-policy-input-schema.md)
-- [Learned Policy Stage 2](docs/learned-policy-stage2.md)
-- [Learned Policy Stage 3](docs/learned-policy-stage3.md)
-- [Learned Policy Stage 4A](docs/learned-policy-stage4a.md)
-- [Offline Q experiment](docs/learned-policy-offline-q.md)
-- [Offline Q failure diagnosis](docs/learned-policy-offline-q-diagnosis.md)
-- [Learned Policy data-sufficiency preflight](docs/learned-policy-data-sufficiency-preflight.md)
-- [P1 Gate A](docs/learned-policy-p1-gate-a.md)
-- [P1 Gate B](docs/learned-policy-p1-gate-b.md)
-- [FiniteHorizon-teacher curriculum](docs/learned-policy-finite-horizon-curriculum.md)
-- [Shanten-constrained Q serving diagnostic](docs/learned-policy-p1-shanten-guard.md)
-- [Guarded P1 higher-fidelity screen](docs/learned-policy-p1-guarded-higher-fidelity.md)
-- [P6 higher-fidelity screen](docs/learned-policy-p6-higher-fidelity.md)
-- [Phase 10 scale learning curve](docs/phase10-scale-learning-curve.md)
-- [Epoch-budget adequacy study](docs/epoch-budget-adequacy.md)
-- [Optimization-budget saturation study](docs/optimization-budget-saturation.md)
+```text
+current implementation / reusable contract
+    -> README / architecture / purpose-specific current doc
 
-## 現時点で持たないもの
+current work / next action
+    -> GitHub Issue / PR
 
-- generic ML platform / model registry / HPO service
-- canonical production Learned Policy architecture owned by Arena
-- project-wide canonical GameRecord / DecisionTrace schema
-- database / dashboard / artifact repository
-- distributed multi-machine job scheduler
-- automatic production promotion
-- generic external-player runtime / process host
-- speculative generic backend abstraction
+bounded experiment protocol + result
+    -> experiment record + Issue / artifact
 
-必要性はconcrete consumerとmeasured bottleneckから判断します。
+project-wide ownership / roadmap
+    -> lisjong-project
+```
+
+READMEを入口に留め、chronological research ledger化させないことを基本方針とします。
 
 ## License
 
