@@ -61,26 +61,47 @@ jobs:
       - name: Verify locked CPU PyTorch
         run: python -c "import torch; assert torch.__version__ == '2.13.0+cpu'; assert not torch.cuda.is_available()"
 
-      - name: Run test modules with ML dependency in isolated interpreters
+      - name: Run all test modules with ML dependency in isolated interpreters
         shell: bash
         run: |
-          shopt -s nullglob
-          test_files=(tests/test*.py)
+          mapfile -d '' -t test_files < <(
+            find tests -type f -name 'test*.py' -print0 | sort -z
+          )
           ((${#test_files[@]} > 0))
-          for test_file in "${test_files[@]}"; do
-            status=0
-            python -m unittest discover \
-              -s tests \
-              -p "$(basename "$test_file")" \
-              -v \
-              --durations 30 || status=$?
 
-            if [[ $status -eq 0 ]]; then
-              continue
+          declare -A seen_patterns=()
+          for test_file in "${test_files[@]}"; do
+            pattern="$(basename "$test_file")"
+            if [[ -n "${seen_patterns[$pattern]:-}" ]]; then
+              echo "Duplicate test filename cannot be isolated safely: $pattern" >&2
+              echo "  ${seen_patterns[$pattern]}" >&2
+              echo "  $test_file" >&2
+              exit 1
             fi
-            if [[ $status -eq 5 && "$test_file" != *_ml.py ]]; then
-              echo "No unittest cases discovered in non-ML module: $test_file"
-              continue
+            seen_patterns[$pattern]="$test_file"
+
+            allow_zero=false
+            if [[ "$test_file" == "tests/test_comparison_parallel_integration.py" ]]; then
+              allow_zero=true
             fi
-            exit "$status"
+
+            python - "$pattern" "$test_file" "$allow_zero" <<'PY'
+          import sys
+          import unittest
+
+          pattern, test_file, allow_zero_text = sys.argv[1:]
+          suite = unittest.defaultTestLoader.discover("tests", pattern=pattern)
+          test_count = suite.countTestCases()
+
+          if test_count == 0:
+              if allow_zero_text == "true":
+                  print(f"Intentional zero-test compatibility stub: {test_file}")
+                  raise SystemExit(0)
+              print(f"No unittest cases discovered: {test_file}", file=sys.stderr)
+              raise SystemExit(1)
+
+          runner = unittest.TextTestRunner(verbosity=2, durations=30)
+          result = runner.run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          PY
           done
