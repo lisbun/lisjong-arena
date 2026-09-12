@@ -92,9 +92,7 @@ class DevProfileCliCompositionTest(unittest.TestCase):
             return_code = run_ranked_cli(["--profile", "lisjong-dev"])
 
         self.assertEqual(return_code, 0)
-        self.assertIs(
-            type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy
-        )
+        self.assertIs(type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy)
         self.assertEqual(captured["token"], "unit-test-token")
 
     def test_validation_cli_passes_exact_mechanism_policy_to_validator(
@@ -129,9 +127,7 @@ class DevProfileCliCompositionTest(unittest.TestCase):
             return_code = run_validation_cli(["--profile", "lisjong-dev"])
 
         self.assertEqual(return_code, 0)
-        self.assertIs(
-            type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy
-        )
+        self.assertIs(type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy)
         self.assertEqual(captured["token"], "unit-test-token")
 
 
