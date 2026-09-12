@@ -524,7 +524,9 @@ class ArenaSourceRevisionTest(unittest.TestCase):
                 "lisjong_arena.single_round_artifact.subprocess.run",
                 side_effect=_fake_git(tracked=False),
             ):
-                with self.assertRaises(SingleRoundArtifactError):
+                with self.assertRaisesRegex(
+                    SingleRoundArtifactError, "source: .*single_round_artifact.py"
+                ):
                     save_single_round_artifact(fixtures.evaluation_result(), path)
             self.assertFalse(path.exists())
 
