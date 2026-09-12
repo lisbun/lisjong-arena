@@ -528,6 +528,39 @@ def multi_ron_log() -> list[dict]:
     ]
 
 
+def kyuushu_log() -> list[dict]:
+    """Dealerの初巡に九種九牌がexact legalとなるsynthetic record。"""
+    terminal_hand = [
+        "1m",
+        "9m",
+        "1p",
+        "9p",
+        "1s",
+        "9s",
+        "E",
+        "S",
+        "W",
+        "N",
+        "P",
+        "F",
+        "C",
+    ]
+    neutral_3 = list(NEUTRAL_3)
+    neutral_3[neutral_3.index("W")] = "1m"
+    return [
+        start_game(),
+        start_kyoku([terminal_hand, NEUTRAL_1, NEUTRAL_2, neutral_3]),
+        tsumo(0, "2m"),
+        {
+            "type": "ryukyoku",
+            "actor": 0,
+            "reason": "kyuushu_kyuuhai",
+            "deltas": [0, 0, 0, 0],
+        },
+        *END_EVENTS,
+    ]
+
+
 def explicit_pass_log() -> list[dict]:
     """明示`none`によるexplicit passを含むlog。"""
     return [

@@ -1,91 +1,27 @@
-"""Gate 0 — RiichiLab MJAI record -> exact current `DecisionContext`。
+"""Gate 0 — RiichiEnv 0.4.10 hybrid replay -> exact DecisionContext.
 
-Issue #211のGate 0は、新しい麻雀rules engineをArenaへ実装せず、current
-dependencyである`riichienv==0.4.10`のreplay seamをauthorityとして使う。
+Kyoku.steps() identifies decision opportunities and implicit Pass. Its optional
+Action.actor and malformed call consume fields never define the teacher action.
+For ordinary decisions, the matching apply_event()/get_observations() snapshot
+provides canonical legal candidates and player-safe event history. Chankan uses
+the replay response Observation; a missing simultaneous ron winner uses only
+the same pre-response apply_event() snapshot. Both streams are joined by game,
+round, actor, decision prefix, and teacher event ordinal or the game fails closed.
 
-```text
-MJAI jsonl event列 (player-visible public record)
-    -> RiichiEnv.apply_event()                 # rules / state transition authority
-    -> RiichiEnv.get_observations()            # 実際のdecision opportunity
-    -> Observation.legal_actions()             # exact legal action set
-    -> Observation.select_action_from_mjai()   # 観測teacher actionのlegality
-    -> current Arena adapter
-         SeatMaterializedState / RiichiEnvActionMappingSession
-    -> DecisionContext(PolicyInput, legal_actions)
-```
-
-`riichienv.MjaiReplay.from_jsonl()` / `Kyoku.steps()`も同じengineのreplay
-pathだが、そこで得られる`Observation`はseat-visible MJAI event channel
-(`Observation.events` / `new_events()`)を保持しない。current `PolicyInput`は
-discardのglobal order / tsumogiri / `called_by`、riichi段階、公開dora
-indicator、live wall残数という**履歴**を要求するため、event channelのない
-observationからはexactに構築できない。したがってGate 0は同じengineの
-`RiichiEnv.apply_event()` replay API（riichienv自身が"Use this for replay
-parsing and training data generation"と記述するentry point）をmaterialization
-seamとして使い、`MjaiReplay`は採用しない。この判断はIssue #211の
-`SOURCE MATERIALIZATION BLOCKED`境界を弱めるためのものではなく、同じengineの
-どのentry pointがcurrent contractを満たせるかという選択である。
-
-## 既知のreplay seam limitation
-
-RiichiEnv 0.4.8で記録したMJAI replayの制約を0.4.10でも再検証した。
-public MJAI recordに存在しない情報は推測補完せず、以下をcontractとして扱う。
-
-1. **meld provenance** — `apply_event()`が作るmeldは`Meld.from_who == -1`で
-   あり、`PublicMeld.from_seat`を満たせない。ただしchi / pon / daiminkanの
-   `target`はpublic MJAI recordそのものが持つ公開事実であり、麻雀rulesの
-   再導出ではない。本moduleはpublic recordのcall eventからmeld provenanceを
-   projectし、engineのmeld snapshotとkind / 件数 / 順序が一致することを
-   fail closedで確認する。一致しない場合はrowをunresolvedにする。
-2. **physical tile copy identity** — `apply_event()`は同じsemantic tileを
-   1つのcanonical physical IDへaliasする。そのため`Observation.hand`には
-   同一IDが複数現れ、`drawn_tile`がhandの既存copyと同じIDになる。current
-   adapterは`action.tile == observation.drawn_tile`でtsumogiriを決めるため、
-   この状態ではtedashi / tsumogiriというpublicに区別可能な2つのlegal
-   discardが1つへ潰れる。本moduleは、engine自身が返した**slotごとの**
-   legal discard action列とhand multisetから、この alias を一意に戻せる
-   場合だけ戻す（`n_d == h_d`）。一意に戻せない場合（drawn tile IDのslotが
-   制限されている場合）はheuristicで補完せず、rowを
-   `drawn_tile_discard_slots_restricted_under_collapsed_tile_identity`として
-   unresolvedにする。
-3. **first-turn state** — 0.4.10の`turn_count`と`is_first_turn`は
-   fixed-seed replayで進行した。ただし九種九牌の全response / call
-   contextでのexact legalityは確認できていないため、legal action setへ
-   `KYUSHU_KYUHAI`が現れるdecisionは引き続き推測せず、rowを
-   `first_turn_dependent_legal_action_not_reconstructed_by_replay_seam`として
-   unresolvedにする。
-4. **chankan response window** — `apply_event()`も`observe_event()`も、
-   kakanに対する槍槓（chankan）のron response opportunityを提示しない
-   （実測）。recordにそのseatのactionがあるのにdecision opportunityが
-   存在しない場合、観測済みteacher actionをsilentに捨てず、
-   `observed_action_without_decision_opportunity`としてそのgame全体を
-   unsupportedにする。
-5. **replay physical ID alias** — 0.4.10の`apply_event()`では別seatの
-   過去の河と直前打牌が同じIDになる。current action translatorの一意な
-   target判定を緩めず、公開MJAI打牌者とengine snapshotの一致を確認した
-   decision-local witnessだけをmappingへ渡す。PolicyInputには全河を渡す。
-
-kan宣言と補充drawの間のような中間状態は、`RiichiEnv.needs_tsumo`と
-`Phase.WaitResponse`から判定してdecision opportunityへ計上しない
-（live実行では1 stepの内側で通過するためdecisionとして露出しない）。
-
-## 情報境界
-
-`Observation.new_events()`はRiichiEnv自身がseat単位でprojectしたMJAI event
-列であり、他家の`start_kyoku.tehais`と他家の`tsumo.pai`は`"?"`でmaskされる。
-本moduleはそのmaskが実際に成立していることをfail closedで確認してから
-tracker へ渡す。opponent concealed hand、future draw、future action、
-terminal result、ura-dora等のhidden / future truthはstudent featureへ
-入れない。未解決のresponse decisionを持つseatは、同一triggerへの後続
-responseを観測する前のprefixからstateをfreezeする。
+SeatMaterializedState receives only seat-projected public events. Physical copy
+aliasing is repaired only where exact semantic slot correspondence survives;
+otherwise a specific unresolved reason blocks Gate 0.
 """
 
 import json
+import re
 import sys
+import tempfile
 from array import array
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from lisjong.action_vocabulary import (
     build_legal_action_mask,
@@ -107,7 +43,7 @@ from lisjong.policy_contract.action import (
 )
 from lisjong.policy_contract.decision_context import DecisionContext
 from lisjong.policy_contract.seat import Seat
-from riichienv import ActionType, Meld, MeldType, Phase, RiichiEnv
+from riichienv import ActionType, Meld, MeldType, MjaiReplay, Phase, RiichiEnv
 
 from lisjong_arena.learned_policy_input import (
     build_policy_input_feature,
@@ -119,14 +55,18 @@ from lisjong_arena.riichienv.adapter import (
     build_policy_input,
     translate_external_action,
 )
+from lisjong_arena.riichienv.adapter.tile_conversion import (
+    tile_from_physical_id,
+    tile_to_mjai,
+)
 
 from .errors import MaterializationError
 from .protocol import FEATURE_DIMENSION, MINIMUM_LEGAL_ACTION_COUNT, VOCABULARY_SIZE
 
 #: materialization seamとして実際に使うRiichiEnv replay API。
 REPLAY_SEAM = (
-    "riichienv.RiichiEnv.apply_event + get_observations + "
-    "Observation.legal_actions + Observation.select_action_from_mjai"
+    "riichienv.MjaiReplay.Kyoku.steps + "
+    "RiichiEnv.apply_event/get_observations public history and bounded legal snapshots"
 )
 
 #: teacher actionを運ぶMJAI event type。state transitionだけのeventへ
@@ -158,6 +98,120 @@ STATE_EVENT_TYPES = frozenset(
         "end_game",
     }
 )
+
+_MJAI_TILE = re.compile(r"(?:[1-9][mps]|5[mps]r|[ESWNPFC])")
+_ACTOR_EVENT_TYPES = ACTION_EVENT_TYPES - {"ryukyoku"} | {
+    "tsumo",
+    "reach_accepted",
+}
+_TARGET_EVENT_TYPES = frozenset({"chi", "pon", "daiminkan", "hora"})
+
+
+def _require_mjai_seat(event: dict, field: str) -> None:
+    value = event.get(field)
+    if type(value) is not int or not 0 <= value < 4:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+
+def _require_mjai_tile(value: object) -> None:
+    if type(value) is not str or _MJAI_TILE.fullmatch(value) is None:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+
+def _require_mjai_tiles(event: dict, field: str, *, count: int | None = None) -> None:
+    tiles = event.get(field)
+    if type(tiles) is not list or (count is not None and len(tiles) != count):
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+    for tile in tiles:
+        _require_mjai_tile(tile)
+
+
+def _require_mjai_scores(event: dict, field: str) -> None:
+    scores = event.get(field)
+    if (
+        type(scores) is not list
+        or len(scores) != 4
+        or any(
+            type(score) is not int or not -(2**31) <= score < 2**31 for score in scores
+        )
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+
+def _validate_replay_event(event: object) -> None:
+    """Validate the bounded MJAI shape before either RiichiEnv replay seam sees it."""
+    if type(event) is not dict:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+    event_type = event.get("type")
+    if type(event_type) is not str:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+    if event_type not in ACTION_EVENT_TYPES | STATE_EVENT_TYPES:
+        raise _GameUnsupported(GameUnsupportedReason.UNRECOGNIZED_EVENT_TYPE)
+
+    if event_type in _ACTOR_EVENT_TYPES or (
+        "actor" in event and not (event_type == "ryukyoku" and event["actor"] is None)
+    ):
+        _require_mjai_seat(event, "actor")
+    if event_type in _TARGET_EVENT_TYPES or "target" in event:
+        _require_mjai_seat(event, "target")
+
+    if event_type == "start_kyoku":
+        if event.get("bakaze") not in ("E", "S", "W", "N"):
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for field, lower, upper in (
+            ("kyoku", 1, 4),
+            ("honba", 0, 255),
+        ):
+            value = event.get(field)
+            if type(value) is not int or not lower <= value <= upper:
+                raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        stake_fields = {"kyotaku", "kyoutaku"} & event.keys()
+        if len(stake_fields) != 1:
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        stake = event[next(iter(stake_fields))]
+        if type(stake) is not int or not 0 <= stake <= 255:
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        _require_mjai_seat(event, "oya")
+        _require_mjai_scores(event, "scores")
+        _require_mjai_tile(event.get("dora_marker"))
+        tehais = event.get("tehais")
+        if type(tehais) is not list or len(tehais) != 4:
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for hand in tehais:
+            if type(hand) is not list:
+                raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+            for tile in hand:
+                _require_mjai_tile(tile)
+    elif event_type in {"tsumo", "dahai", "chi", "pon", "daiminkan", "kakan"}:
+        _require_mjai_tile(event.get("pai"))
+    elif event_type == "dora":
+        _require_mjai_tile(event.get("dora_marker"))
+    elif event_type == "hora" and "pai" in event:
+        _require_mjai_tile(event["pai"])
+
+    if event_type == "dahai" and type(event.get("tsumogiri")) is not bool:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+    if event_type in {"chi", "pon", "daiminkan", "ankan"}:
+        count = {"chi": 2, "pon": 2, "daiminkan": 3, "ankan": 4}[event_type]
+        _require_mjai_tiles(event, "consumed", count=count)
+    if event_type == "kakan" and "consumed" in event:
+        _require_mjai_tiles(event, "consumed")
+    if event_type == "ankan" and "pai" in event:
+        _require_mjai_tile(event["pai"])
+    if event_type == "hora":
+        if {"ura_markers", "uradora_markers"} <= event.keys():
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for field in ("ura_markers", "uradora_markers"):
+            if field in event:
+                _require_mjai_tiles(event, field)
+    if event_type in {"hora", "ryukyoku"}:
+        if {"delta", "deltas"} <= event.keys():
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for field in ("scores", "delta", "deltas"):
+            if field in event:
+                _require_mjai_scores(event, field)
+
 
 _CALL_EVENT_KINDS = {
     "chi": MeldType.Chi,
@@ -241,6 +295,9 @@ class GameUnsupportedReason(Enum):
     IMPOSSIBLE_TILE_MULTIPLICITY = "impossible_tile_multiplicity"
     UNRESOLVED_DECISION_AT_END_OF_RECORD = "unresolved_decision_at_end_of_record"
     SEAT_VISIBLE_EVENT_LEAKS_HIDDEN_TRUTH = "seat_visible_event_leaks_hidden_truth"
+    REPLAY_DECISION_ALIGNMENT_FAILED = "replay_decision_alignment_failed"
+    MULTI_RON_PRE_RESPONSE_MISMATCH = "multi_ron_pre_response_mismatch"
+    CHANKAN_PUBLIC_PREFIX_MISMATCH = "chankan_replay_public_prefix_mismatch"
 
 
 #: featureとlegal maskの1 row分のbyte長。bounded corpusでも1万件規模の
@@ -655,7 +712,7 @@ def _repair_discard_identity(raw, legal_actions) -> tuple:
         repaired.append(
             _ReplayAction(
                 action_type=action.action_type,
-                actor=action.actor,
+                actor=raw.player_id if action.actor is None else action.actor,
                 tile=tile,
                 consume_tiles=tuple(action.consume_tiles),
             )
@@ -819,6 +876,268 @@ def _decision_signature(raw) -> tuple:
     )
 
 
+_STEP_EVENT_TYPE = {
+    ActionType.DISCARD: "dahai",
+    ActionType.RIICHI: "reach",
+    ActionType.CHI: "chi",
+    ActionType.PON: "pon",
+    ActionType.DAIMINKAN: "daiminkan",
+    ActionType.ANKAN: "ankan",
+    ActionType.KAKAN: "kakan",
+    ActionType.RON: "hora",
+    ActionType.TSUMO: "hora",
+    ActionType.KYUSHU_KYUHAI: "ryukyoku",
+}
+
+_KYUUSHU_REASONS = frozenset(
+    {"kyushukyuhai", "kyuushukyuuhai", "kyuushu_kyuuhai", "kyushu_kyuhai", "yao9"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplayDecision:
+    round_ordinal: int
+    seat: int
+    prefix_event_index: int
+    teacher_event_index: int | None
+    observation: object
+    action_type: ActionType
+
+
+def _action_event(event: dict) -> bool:
+    return event.get("type") in ACTION_EVENT_TYPES and type(event.get("actor")) is int
+
+
+def _prefix_for_step(
+    events: list[dict], start: int, end: int, kind: ActionType, seat: int
+) -> int:
+    response = kind in (
+        ActionType.RON,
+        ActionType.CHI,
+        ActionType.PON,
+        ActionType.DAIMINKAN,
+        ActionType.PASS,
+    )
+    if response:
+        triggers = {"dahai", "kakan"}
+    else:
+        triggers = {"tsumo", "reach", "chi", "pon", "daiminkan"}
+    for index in range(end - 1, start - 1, -1):
+        event = events[index]
+        if event.get("type") in triggers and (
+            event.get("actor") != seat if response else event.get("actor") == seat
+        ):
+            return index
+    raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+
+
+def _replay_decisions(
+    events: list[dict],
+) -> tuple[dict[tuple[int, int, int], _ReplayDecision], dict[int, _ReplayDecision]]:
+    """Kyoku stepをexact MJAI event ordinalとdecision prefixへ結び付ける。
+
+    Step Actionのtile/consume/actorはteacher canonicalizationへ使わない。
+    ここではiteratorのpidとaction familyだけでpublic eventへ位置付ける。
+    """
+    round_starts = [
+        i for i, event in enumerate(events) if event["type"] == "start_kyoku"
+    ]
+    by_prefix: dict[tuple[int, int, int], _ReplayDecision] = {}
+    by_teacher: dict[int, _ReplayDecision] = {}
+    try:
+        with tempfile.TemporaryDirectory(prefix="lisjong-issue233-") as directory:
+            path = Path(directory) / "synthetic-or-local-game.jsonl"
+            path.write_text(
+                "\n".join(json.dumps(event) for event in events) + "\n",
+                encoding="utf-8",
+            )
+            replay = MjaiReplay.from_jsonl(str(path))
+            kyokus = list(replay.take_kyokus())
+    except Exception as error:
+        raise _GameUnsupported(
+            GameUnsupportedReason.REPLAY_ENGINE_REJECTED_EVENT
+        ) from error
+    if len(kyokus) != len(round_starts):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+    for round_ordinal, kyoku in enumerate(kyokus):
+        start = round_starts[round_ordinal]
+        end = (
+            round_starts[round_ordinal + 1]
+            if round_ordinal + 1 < len(round_starts)
+            else len(events)
+        )
+        cursor = start
+        try:
+            steps = kyoku.steps()
+            for pid, observation, action in steps:
+                if type(pid) is not int or observation.player_id != pid:
+                    raise _GameUnsupported(
+                        GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                    )
+                kind = action.action_type
+                if kind == ActionType.PASS:
+                    following = next(
+                        (i for i in range(cursor + 1, end) if _action_event(events[i])),
+                        None,
+                    )
+                    explicit = (
+                        following is not None
+                        and events[following].get("type") == "none"
+                        and events[following].get("actor") == pid
+                    )
+                    teacher_index = following if explicit else None
+                    prefix = _prefix_for_step(
+                        events,
+                        start,
+                        (following + 1) if explicit else (cursor + 1),
+                        kind,
+                        pid,
+                    )
+                    if explicit:
+                        cursor = following
+                else:
+                    expected = _STEP_EVENT_TYPE.get(kind)
+                    if expected is None:
+                        raise _GameUnsupported(
+                            GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                        )
+                    teacher_index = None
+                    for index in range(cursor + 1, end):
+                        event = events[index]
+                        if not _action_event(event):
+                            continue
+                        if event["type"] == expected and event["actor"] == pid:
+                            if kind == ActionType.RON and event.get("target") == pid:
+                                break
+                            if kind == ActionType.TSUMO and event.get("target") != pid:
+                                break
+                            teacher_index = index
+                            break
+                        # RiichiEnv 0.4.10 emits only the first Hule winner.
+                        # A later sibling is separately checked against the same
+                        # apply_event pre-response snapshot.
+                        previous = events[cursor]
+                        if not (
+                            event["type"] == "hora"
+                            and previous.get("type") == "hora"
+                            and event.get("target") == previous.get("target")
+                        ):
+                            raise _GameUnsupported(
+                                GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                            )
+                    if teacher_index is None:
+                        raise _GameUnsupported(
+                            GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                        )
+                    prefix = _prefix_for_step(events, start, teacher_index, kind, pid)
+                    cursor = teacher_index
+                key = (round_ordinal, pid, prefix)
+                if key in by_prefix or (
+                    teacher_index is not None and teacher_index in by_teacher
+                ):
+                    raise _GameUnsupported(
+                        GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                    )
+                decision = _ReplayDecision(
+                    round_ordinal, pid, prefix, teacher_index, observation, kind
+                )
+                by_prefix[key] = decision
+                if teacher_index is not None:
+                    by_teacher[teacher_index] = decision
+        except _GameUnsupported:
+            raise
+        except Exception as error:
+            raise _GameUnsupported(
+                GameUnsupportedReason.REPLAY_ENGINE_REJECTED_EVENT
+            ) from error
+    return by_prefix, by_teacher
+
+
+def _semantic_tile(tile_id: int | None):
+    return None if tile_id is None else tile_from_physical_id(tile_id)
+
+
+def _semantic_melds(observation) -> tuple:
+    return tuple(
+        tuple(
+            (
+                meld.meld_type,
+                tuple(
+                    sorted(
+                        tile_to_mjai(tile_from_physical_id(tile)) for tile in meld.tiles
+                    )
+                ),
+                _semantic_tile(meld.called_tile),
+            )
+            for meld in seat_melds
+        )
+        for seat_melds in observation.melds
+    )
+
+
+def _assert_same_decision_prefix(replay, applied) -> None:
+    """両RiichiEnv APIが同じseat-visible pre-decision stateにいることを確認する。"""
+    if any(
+        getattr(replay, name) != getattr(applied, name)
+        for name in (
+            "player_id",
+            "scores",
+            "riichi_sticks",
+            "honba",
+            "oya",
+            "round_wind",
+            "kyoku_index",
+        )
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+    if Counter(map(_semantic_tile, replay.hand)) != Counter(
+        map(_semantic_tile, applied.hand)
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+    if _semantic_tile(replay.drawn_tile) != _semantic_tile(applied.drawn_tile):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+    if tuple(tuple(map(_semantic_tile, pile)) for pile in replay.discards) != tuple(
+        tuple(map(_semantic_tile, pile)) for pile in applied.discards
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+    if tuple(replay.riichi_declared) != tuple(applied.riichi_declared):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+    if _semantic_melds(replay) != _semantic_melds(applied):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
+
+
+def _assert_chankan_public_prefix(replay, applied) -> None:
+    """槍槓responseにfuture dora/stateが混じらないことを検査する。"""
+    if any(
+        getattr(replay, name) != getattr(applied, name)
+        for name in (
+            "player_id",
+            "scores",
+            "riichi_sticks",
+            "honba",
+            "oya",
+            "round_wind",
+            "kyoku_index",
+            "riichi_declared",
+        )
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.CHANKAN_PUBLIC_PREFIX_MISMATCH)
+    if tuple(map(_semantic_tile, replay.dora_indicators)) != tuple(
+        map(_semantic_tile, applied.dora_indicators)
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.CHANKAN_PUBLIC_PREFIX_MISMATCH)
+    if Counter(map(_semantic_tile, replay.hand)) != Counter(
+        map(_semantic_tile, applied.hand)
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.CHANKAN_PUBLIC_PREFIX_MISMATCH)
+    if tuple(tuple(map(_semantic_tile, pile)) for pile in replay.discards) != tuple(
+        tuple(map(_semantic_tile, pile)) for pile in applied.discards
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.CHANKAN_PUBLIC_PREFIX_MISMATCH)
+    if _semantic_melds(replay) != _semantic_melds(applied):
+        raise _GameUnsupported(GameUnsupportedReason.CHANKAN_PUBLIC_PREFIX_MISMATCH)
+
+
 @dataclass(frozen=True, slots=True)
 class _PendingDecision:
     """まだactionを観測していないdecision opportunity。"""
@@ -827,6 +1146,7 @@ class _PendingDecision:
     observation: object
     frozen_event_length: int
     round_ordinal: int
+    prefix_event_index: int
     signature: tuple
 
 
@@ -877,12 +1197,16 @@ def _materialize_game(
     target_seats: dict[Seat, int],
     game_mode: str,
 ) -> GameMaterialization:
+    for event in events:
+        _validate_replay_event(event)
+    replay_by_prefix, replay_by_teacher = _replay_decisions(events)
     env = RiichiEnv(game_mode=game_mode)
     provenance = _MeldProvenance()
     runtimes = {int(seat): _SeatRuntime(seat) for seat in target_seats}
     bot_by_seat = {int(seat): bot_id for seat, bot_id in target_seats.items()}
 
     rows: list[MaterializedRow] = []
+    used_replay_prefixes: set[tuple[int, int, int]] = set()
     unresolved: Counter[str] = Counter()
     pending: dict[int, _PendingDecision] = {}
     # engineがもうactionを求めていないが、同じtriggerへの後続action
@@ -905,12 +1229,68 @@ def _materialize_game(
     round_ordinal = -1
     call_trigger: tuple[str, int] | None = None
 
-    def emit(entry: _PendingDecision, mjai: dict | None) -> None:
+    def emit(
+        entry: _PendingDecision, mjai: dict | None, teacher_event_index: int | None
+    ) -> None:
         """1 decisionのrow化を1回だけ試す。
 
         target seatでないdecisionはsupervision対象外なので何も計上しない。
         """
         nonlocal forced_rows
+        authority = replay_by_prefix.get(
+            (entry.round_ordinal, entry.seat, entry.prefix_event_index)
+        )
+        if mjai is None:
+            if (
+                authority is None
+                or authority.action_type != ActionType.PASS
+                or authority.teacher_event_index is not None
+            ):
+                raise _GameUnsupported(
+                    GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                )
+        else:
+            step = replay_by_teacher.get(teacher_event_index)
+            if step is not None:
+                if step is not authority or step.seat != entry.seat:
+                    raise _GameUnsupported(
+                        GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                    )
+            elif mjai["type"] == "hora":
+                # Only a missing simultaneous ron winner may use the bounded
+                # apply_event pre-response authority. No result event is applied
+                # to the frozen observation of this or another winner.
+                siblings = [
+                    candidate
+                    for (round_id, seat, prefix), candidate in replay_by_prefix.items()
+                    if round_id == entry.round_ordinal
+                    and prefix == entry.prefix_event_index
+                    and seat != entry.seat
+                    and candidate.action_type == ActionType.RON
+                ]
+                if (
+                    len(siblings) != 1
+                    or authority is not None
+                    or not any(
+                        action.action_type == ActionType.RON
+                        for action in entry.observation.legal_actions()
+                    )
+                ):
+                    raise _GameUnsupported(
+                        GameUnsupportedReason.MULTI_RON_PRE_RESPONSE_MISMATCH
+                    )
+            elif not (
+                mjai["type"] == "ryukyoku"
+                and mjai.get("reason") in _KYUUSHU_REASONS
+                and authority is None
+            ):
+                raise _GameUnsupported(
+                    GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED
+                )
+        if authority is not None:
+            used_replay_prefixes.add(
+                (entry.round_ordinal, entry.seat, entry.prefix_event_index)
+            )
         if entry.seat not in runtimes:
             return
         try:
@@ -947,14 +1327,19 @@ def _materialize_game(
             raise _GameUnsupported(
                 GameUnsupportedReason.DECISION_OPPORTUNITY_WITHOUT_ACTION
             )
-        if ambiguous:
+        authority = replay_by_prefix.get(
+            (entry.round_ordinal, entry.seat, entry.prefix_event_index)
+        )
+        if ambiguous and (
+            authority is None or authority.action_type != ActionType.PASS
+        ):
             if entry.seat in runtimes:
                 reason = RowUnresolvedReason.AMBIGUOUS_PASS_AFTER_COMPETING_CLAIM
                 unresolved[reason.value] += 1
             return
-        emit(entry, None)
+        emit(entry, None, None)
 
-    for event in events:
+    for event_index, event in enumerate(events):
         if type(event) is not dict:
             raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
         event_type = event.get("type")
@@ -1008,7 +1393,7 @@ def _materialize_game(
                     del closing[entry.seat]
                 explicit_in_round += 1
                 resolved[entry.seat] = entry.signature
-                emit(entry, event)
+                emit(entry, event, event_index)
             elif actor is not None and int(actor) in pending:
                 # pending seatが宣言したactionをexact legal setへ対応付け
                 # られないまま先へ進めない。そのseatをimplicit Passへ
@@ -1074,7 +1459,24 @@ def _materialize_game(
             for player_id, observation in observations.items()
             if observation.legal_actions()
         }
-        if not _is_settled_decision_state(env) and acting:
+        chankan_steps = [
+            decision
+            for (round_id, _seat, prefix), decision in replay_by_prefix.items()
+            if round_id == round_ordinal
+            and prefix == event_index
+            and event_type == "kakan"
+            and decision.action_type in (ActionType.RON, ActionType.PASS)
+        ]
+        if chankan_steps:
+            for decision in chankan_steps:
+                applied = observations.get(decision.seat)
+                if applied is None:
+                    raise _GameUnsupported(
+                        GameUnsupportedReason.CHANKAN_PUBLIC_PREFIX_MISMATCH
+                    )
+                _assert_chankan_public_prefix(decision.observation, applied)
+            acting = {decision.seat: decision.observation for decision in chankan_steps}
+        if not chankan_steps and not _is_settled_decision_state(env) and acting:
             # kan宣言とrinshan drawの間のように、engineがまだ補充draw待ちの
             # 中間状態。live実行では1 stepの内側で通過するためdecisionとして
             # 露出しない。ここでdecision opportunityへ計上すると、直後の
@@ -1120,6 +1522,19 @@ def _materialize_game(
                 opportunities += 1
                 frozen_length = len(runtime.events)
                 try:
+                    authority = replay_by_prefix.get(
+                        (round_ordinal, player_id, event_index)
+                    )
+                    if (
+                        authority is not None
+                        and observation is not authority.observation
+                    ):
+                        _assert_same_decision_prefix(authority.observation, observation)
+                    # The apply_event snapshot is the legal/public-state
+                    # authority for ordinary decisions. Kyoku certifies their
+                    # opportunity and implicit Pass. Its per-step snapshot can
+                    # already contain a future kan dora indicator, and its Pon
+                    # candidate contains the called tile as a third consume.
                     view = _freeze_observation(observation, provenance, call_trigger)
                 except _RowUnresolved as signal:
                     view = _UnmaterializableObservation(observation, signal.reason)
@@ -1128,6 +1543,7 @@ def _materialize_game(
                 observation=view,
                 frozen_event_length=frozen_length,
                 round_ordinal=max(round_ordinal, 0),
+                prefix_event_index=event_index,
                 signature=_decision_signature(observation),
             )
 
@@ -1138,6 +1554,8 @@ def _materialize_game(
         raise _GameUnsupported(
             GameUnsupportedReason.UNRESOLVED_DECISION_AT_END_OF_RECORD
         )
+    if used_replay_prefixes != set(replay_by_prefix):
+        raise _GameUnsupported(GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED)
 
     return GameMaterialization(
         game_id=game_id,
@@ -1173,10 +1591,6 @@ def _freeze_observation(
     observation, provenance: _MeldProvenance, trigger: tuple[str, int] | None
 ) -> _ReplayObservation:
     legal_actions = tuple(observation.legal_actions())
-    if any(action.action_type == ActionType.KYUSHU_KYUHAI for action in legal_actions):
-        # 0.4.10 replayのcounter進行は実測したが、九種九牌の全call / round
-        # contextでのlegalityは未確立。exact性を主張せずunresolvedにする。
-        raise _RowUnresolved(RowUnresolvedReason.FIRST_TURN_STATE_NOT_RECONSTRUCTED)
     melds = provenance.melds_for(observation)
     hand, drawn_tile, repaired, ambiguous = _repair_discard_identity(
         observation, legal_actions
@@ -1225,11 +1639,7 @@ def _build_row(
         ) from error
 
     legal_count = len(decision.legal_actions)
-    if legal_count < MINIMUM_LEGAL_ACTION_COUNT:
-        # forced rowはretained populationへ入らない。Arm Yのretained
-        # sourceも同じeligibility conditionでchoice rowだけを持つ。
-        return None
-    if view.drawn_slot_ambiguous:
+    if view.drawn_slot_ambiguous and legal_count >= MINIMUM_LEGAL_ACTION_COUNT:
         raise _RowUnresolved(RowUnresolvedReason.DRAWN_TILE_SLOTS_RESTRICTED)
 
     if mjai is None:
@@ -1240,9 +1650,25 @@ def _build_row(
             raise _RowUnresolved(
                 RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET
             )
+        if external.action_type in (
+            ActionType.CHI,
+            ActionType.PON,
+            ActionType.DAIMINKAN,
+            ActionType.RON,
+        ):
+            if (
+                view._trigger is None
+                or type(mjai.get("target")) is not int
+                or mjai["target"] != view._trigger[1]
+            ):
+                raise _RowUnresolved(RowUnresolvedReason.TEACHER_ACTION_UNMAPPABLE)
         selected = _observed_internal_action(mapping_view, external, mjai, runtime.seat)
     if selected not in decision.legal_actions:
         raise _RowUnresolved(RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET)
+    if legal_count < MINIMUM_LEGAL_ACTION_COUNT:
+        # forced rowもteacher intentをexact legal candidateへ解決してから
+        # supervision対象外として計上する。
+        return None
 
     try:
         mask = build_legal_action_mask(decision)
@@ -1299,7 +1725,7 @@ def _observed_internal_action(view, external, mjai: dict, seat: Seat):
     """
     action = _ReplayAction(
         action_type=external.action_type,
-        actor=external.actor,
+        actor=int(seat) if external.actor is None else external.actor,
         tile=external.tile,
         consume_tiles=tuple(external.consume_tiles),
     )

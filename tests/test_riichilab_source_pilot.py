@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from _riichilab_source_pilot_fixtures import (
+    ankan_log,
     chi_log,
     daiminkan_log,
     explicit_pass_log,
@@ -17,6 +18,7 @@ from _riichilab_source_pilot_fixtures import (
     generated_game_log,
     hidden_variant_logs,
     kakan_log,
+    kyuushu_log,
     multi_ron_log,
     normal_discard_log,
     pon_log,
@@ -359,6 +361,7 @@ class FixtureHygieneTests(unittest.TestCase):
             "tsumo_win": tsumo_win_log(),
             "ron": ron_log(),
             "multi_ron": multi_ron_log(),
+            "kyuushu": kyuushu_log(),
             "explicit_pass": explicit_pass_log(),
             "red_five": red_five_log(),
         }
@@ -397,6 +400,17 @@ class MaterializationCoverageTests(unittest.TestCase):
         # riichi宣言の直後のdiscardはforced row（legal actionが1つ）である。
         self.assertEqual(result.forced_rows, 1)
 
+    def test_forced_discard_still_validates_teacher_tsumogiri(self):
+        log = riichi_log()
+        log[4]["tsumogiri"] = False
+        result = materialize(log)
+        self.assertTrue(result.supported)
+        self.assertEqual(result.forced_rows, 0)
+        self.assertIn(
+            (RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET.value, 1),
+            result.unresolved_reasons,
+        )
+
     def test_call_families_are_materialized(self):
         for name, log, family in (
             ("chi", chi_log(), "chi"),
@@ -410,6 +424,46 @@ class MaterializationCoverageTests(unittest.TestCase):
                 self.assertIn(
                     family, [row.teacher_action_family for row in result.rows]
                 )
+
+    def test_pon_teacher_uses_exact_two_tile_candidate_and_iterator_pid(self):
+        log = pon_log()
+        replay_by_prefix, _ = materialization_module._replay_decisions(log)
+        replay_pon = next(
+            step
+            for step in replay_by_prefix.values()
+            if step.action_type == ActionType.PON
+        )
+        self.assertEqual(replay_pon.seat, 2)
+        raw_pon = next(
+            action
+            for action in replay_pon.observation.legal_actions()
+            if action.action_type == ActionType.PON
+        )
+        self.assertIsNone(raw_pon.actor)
+        self.assertEqual(len(raw_pon.consume_tiles), 3)
+        result = materialize(log)
+        row = next(row for row in result.rows if row.teacher_action_family == "pon")
+        canonical = decode_action(row.teacher_action_index, actor=Seat(row.actor_seat))
+        self.assertEqual(canonical.actor, Seat(2))
+        self.assertEqual(canonical.target, Seat(0))
+        self.assertEqual(len(canonical.consumed_tiles), 2)
+
+    def test_claim_teacher_targets_match_the_public_trigger(self):
+        for log, family in (
+            (chi_log(), "chi"),
+            (pon_log(), "pon"),
+            (daiminkan_log(), "daiminkan"),
+            (ron_log(), "ron"),
+        ):
+            with self.subTest(family=family):
+                result = materialize(log)
+                row = next(
+                    row for row in result.rows if row.teacher_action_family == family
+                )
+                action = decode_action(
+                    row.teacher_action_index, actor=Seat(row.actor_seat)
+                )
+                self.assertEqual(action.target, Seat(0))
 
     def test_replay_alias_collision_keeps_exact_public_call_target(self):
         """0.4.10 replayの同一ID重複でも公開打牌者でcallを帰属させる。"""
@@ -464,6 +518,28 @@ class MaterializationCoverageTests(unittest.TestCase):
             {(row.round_wind, row.hand_number, row.honba) for row in rons},
             {("EAST", 1, 0)},
         )
+        for omitted in (1, 3):
+            single = materialize(
+                [
+                    event
+                    for event in multi_ron_log()
+                    if not (
+                        event.get("type") == "hora" and event.get("actor") == omitted
+                    )
+                ]
+            )
+            winner = 3 if omitted == 1 else 1
+            multi_row = next(row for row in rons if row.actor_seat == winner)
+            single_row = next(
+                row for row in single.rows if row.teacher_action_family == "ron"
+            )
+            self.assertEqual(multi_row.feature_payload, single_row.feature_payload)
+            self.assertEqual(
+                multi_row.legal_mask_payload, single_row.legal_mask_payload
+            )
+            self.assertEqual(
+                multi_row.teacher_action_index, single_row.teacher_action_index
+            )
 
     def test_ankan_and_kan_dora_do_not_break_the_following_turn(self):
         from _riichilab_source_pilot_fixtures import ankan_log
@@ -536,15 +612,14 @@ class MaterializationCoverageTests(unittest.TestCase):
         action = decode_action(row.teacher_action_index, actor=Seat(row.actor_seat))
         self.assertEqual(type(action).__name__, "PassAction")
 
-    def test_ambiguous_pass_after_a_competing_claim_stays_unsupported(self):
+    def test_pass_after_a_competing_claim_requires_replay_step(self):
         result = materialize(ron_log())
         self.assertTrue(result.supported)
-        self.assertIn(
-            (RowUnresolvedReason.AMBIGUOUS_PASS_AFTER_COMPETING_CLAIM.value, 1),
-            result.unresolved_reasons,
+        self.assertEqual(result.unresolved_reasons, ())
+        passes = [row for row in result.rows if row.teacher_action_family == "pass"]
+        self.assertEqual(
+            [(row.actor_seat, row.implicit_pass) for row in passes], [(1, True)]
         )
-        # ambiguousなseatのrowは作らない。
-        self.assertNotIn(1, [row.actor_seat for row in result.rows])
 
     def test_unknown_event_type_fails_closed(self):
         result = materialize(unknown_event_log())
@@ -554,15 +629,172 @@ class MaterializationCoverageTests(unittest.TestCase):
         )
         self.assertEqual(result.rows, ())
 
-    def test_chankan_ron_is_not_silently_skipped(self):
-        """replay seamが槍槓response windowを提示しないことをfail closedで扱う。"""
+    def test_malformed_event_fails_closed(self):
+        log = normal_discard_log()
+        log[2] = {"type": ["tsumo"], "actor": 0}
+        result = materialize(log)
+        self.assertFalse(result.supported)
+        self.assertIs(result.unsupported_reason, GameUnsupportedReason.MALFORMED_EVENT)
+
+    def test_malformed_mjai_is_rejected_before_either_replay_seam(self):
+        cases = []
+
+        log = normal_discard_log()
+        log[2]["pai"] = "INVALID"
+        cases.append(("invalid draw tile", log))
+
+        log = normal_discard_log()
+        log[3]["pai"] = "1mgarbage"
+        cases.append(("valid tile prefix", log))
+
+        log = normal_discard_log()
+        log[2]["actor"] = 4
+        cases.append(("invalid state actor", log))
+
+        log = pon_log()
+        next(event for event in log if event["type"] == "pon")["target"] = 4
+        cases.append(("invalid call target", log))
+
+        log = pon_log()
+        next(event for event in log if event["type"] == "pon")["consumed"] = ["E"]
+        cases.append(("short pon consumed", log))
+
+        log = normal_discard_log()
+        log[1]["scores"].pop()
+        cases.append(("short start scores", log))
+
+        log = normal_discard_log()
+        log[1]["tehais"].pop()
+        cases.append(("short start hands", log))
+
+        log = normal_discard_log()
+        log[1]["tehais"][0][0] = "INVALID"
+        cases.append(("invalid initial hand tile", log))
+
+        log = normal_discard_log()
+        log[1]["dora_marker"] = "1mgarbage"
+        cases.append(("invalid first dora", log))
+
+        log = normal_discard_log()
+        log.insert(4, {"type": "dora", "dora_marker": "INVALID"})
+        cases.append(("invalid later dora", log))
+
+        log = chi_log()
+        next(event for event in log if event["type"] == "chi")["consumed"] = ["1m"]
+        cases.append(("short chi consumed", log))
+
+        log = daiminkan_log()
+        next(event for event in log if event["type"] == "daiminkan")["consumed"] = [
+            "E",
+            "E",
+        ]
+        cases.append(("short daiminkan consumed", log))
+
+        log = ankan_log()
+        next(event for event in log if event["type"] == "ankan")["consumed"].pop()
+        cases.append(("short ankan consumed", log))
+
+        log = ron_log()
+        next(event for event in log if event["type"] == "hora")["pai"] = "INVALID"
+        cases.append(("invalid winning tile", log))
+
+        log = normal_discard_log()
+        log[3]["tsumogiri"] = "false"
+        cases.append(("invalid discard shape", log))
+
+        for name, malformed in cases:
+            with self.subTest(name=name):
+                with mock.patch.object(
+                    materialization_module,
+                    "_replay_decisions",
+                    side_effect=AssertionError("invalid input reached MjaiReplay"),
+                ):
+                    result = materialize(malformed)
+                self.assertFalse(result.supported)
+                self.assertIs(
+                    result.unsupported_reason, GameUnsupportedReason.MALFORMED_EVENT
+                )
+                self.assertEqual(result.rows, ())
+
+    def test_chankan_ron_uses_replay_response_before_future_result(self):
         result = materialize(kakan_log(with_chankan_ron=True))
+        self.assertTrue(result.supported, result.unsupported_reason)
+        ron = next(row for row in result.rows if row.teacher_action_family == "ron")
+        self.assertEqual(ron.actor_seat, 3)
+        variant = kakan_log(with_chankan_ron=True)
+        hora_event = next(event for event in variant if event.get("type") == "hora")
+        hora_event["ura_markers"] = ["9m"]
+        variant_ron = next(
+            row
+            for row in materialize(variant).rows
+            if row.teacher_action_family == "ron"
+        )
+        self.assertEqual(ron.feature_payload, variant_ron.feature_payload)
+        self.assertEqual(ron.legal_mask_payload, variant_ron.legal_mask_payload)
+
+    def test_chankan_pass_is_not_inferred_without_replay_step(self):
+        log = kakan_log(with_chankan_ron=False)
+        kakan_index = next(i for i, event in enumerate(log) if event["type"] == "kakan")
+        log.insert(kakan_index + 1, {"type": "none", "actor": 3})
+        result = materialize(log)
         self.assertFalse(result.supported)
         self.assertIs(
             result.unsupported_reason,
-            GameUnsupportedReason.OBSERVED_ACTION_WITHOUT_DECISION_OPPORTUNITY,
+            GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED,
         )
-        self.assertEqual(result.rows, ())
+
+    def test_kyuushu_exact_legal_candidate_is_materialized(self):
+        result = materialize(kyuushu_log())
+        self.assertTrue(result.supported, result.unsupported_reason)
+        self.assertEqual(result.decision_opportunities, 1)
+        self.assertEqual(
+            [row.teacher_action_family for row in result.rows], ["kyuushu_kyuuhai"]
+        )
+
+    def test_kyuushu_teacher_reason_must_be_explicit(self):
+        log = kyuushu_log()
+        log[3]["reason"] = "exhaustive_draw"
+        result = materialize(log)
+        self.assertFalse(result.supported)
+        self.assertIs(
+            result.unsupported_reason,
+            GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED,
+        )
+
+    def test_non_dealer_first_draw_and_later_draw_kyuushu_legality(self):
+        from _riichilab_source_pilot_fixtures import (
+            dahai,
+            start_game,
+            start_kyoku,
+            tsumo,
+        )
+
+        hands = kyuushu_log()[1]["tehais"]
+        hands[0], hands[1] = hands[1], hands[0]
+        events = [
+            start_game(),
+            start_kyoku(hands),
+            tsumo(0, "2m"),
+            dahai(0, "2m", tsumogiri=True),
+            tsumo(1, "3m"),
+            dahai(1, "3m", tsumogiri=True),
+            tsumo(2, "4m"),
+            dahai(2, "4m", tsumogiri=True),
+            tsumo(3, "5m"),
+            dahai(3, "5m", tsumogiri=True),
+            tsumo(0, "6m"),
+            dahai(0, "6m", tsumogiri=True),
+            tsumo(1, "7m"),
+        ]
+        env = RiichiEnv(game_mode=GAME_MODE)
+        for index, event in enumerate(events):
+            env.apply_event(event)
+            if index in (4, 12):
+                legal = env.get_observations()[1].legal_actions()
+                present = any(
+                    action.action_type == ActionType.KYUSHU_KYUHAI for action in legal
+                )
+                self.assertEqual(present, index == 4)
 
     def test_every_retained_row_is_an_exact_choice_row(self):
         for log in (
@@ -659,13 +891,22 @@ class InformationBoundaryTests(unittest.TestCase):
 class LiveReplayEquivalenceTests(unittest.TestCase):
     """同じevent prefixに対して、live semanticsとreplay semanticsが一致する。"""
 
-    GENERATED_SEEDS = (245, 246)
+    GENERATED_CASES = (
+        ("4p-red-single", 245),
+        ("4p-red-single", 246),
+        ("4p-red-half", 245),
+    )
 
     def test_generated_games_match_live_semantics_exactly(self):
-        for seed in self.GENERATED_SEEDS:
-            with self.subTest(seed=seed):
-                events, live = generated(seed)
-                result = materialize(events, game_id=f"seed-{seed}")
+        for game_mode, seed in self.GENERATED_CASES:
+            with self.subTest(game_mode=game_mode, seed=seed):
+                events, live = generated(seed, game_mode=game_mode)
+                result = materialize_game(
+                    events,
+                    game_id=f"{game_mode}-{seed}",
+                    target_seats=ALL_SEATS,
+                    game_mode=game_mode,
+                )
                 self.assertTrue(result.supported, result.unsupported_reason)
                 # replay側が観測したdecision opportunityはlive decision数と一致する。
                 self.assertEqual(result.decision_opportunities, len(live))
@@ -833,6 +1074,7 @@ class Gate0ReportTests(unittest.TestCase):
         self.assertEqual(document["games_unsupported"], 0)
         self.assertEqual(document["leakage_check_failures"], 0)
         self.assertIn("apply_event", document["replay_seam"])
+        self.assertIn("MjaiReplay.Kyoku.steps", document["replay_seam"])
 
     def test_empty_population_does_not_pass_the_gate(self):
         self.assertFalse(_source([_synthetic_game("g1", 0)]).report.gate_passed)
