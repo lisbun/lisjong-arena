@@ -1,6 +1,6 @@
-"""``RoundStatsCollector``の実RiichiEnv 0.4.8 semantics fixture test。
+"""``RoundStatsCollector``の実RiichiEnv 0.4.10 semantics fixture test。
 
-Issue #61のPreflightで実測したpinned RiichiEnv 0.4.8の実際の
+Issue #61のPreflightで実測したRiichiEnv 0.4.8の実際の
 ``mjai_log``event / ``env.win_results`` / ``HandEvaluator.is_tenpai()``の
 挙動を、固定seedの小さい対局として固定する。dispatch / aggregation logic自体
 の検証は``tests/test_riichienv_round_stats.py``が担うため、ここではRiichiEnv

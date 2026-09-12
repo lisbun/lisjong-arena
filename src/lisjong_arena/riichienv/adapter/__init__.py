@@ -1,4 +1,4 @@
-"""RiichiEnv 0.4.8とlisjong内部型を変換するAdapter境界。
+"""RiichiEnv 0.4.10とlisjong内部型を変換するAdapter境界。
 
 `docs/architecture.md`の「RiichiEnv Adapter」責務のうち、lisbun/lisjong#28で
 実装されたseat-visible materialized state同期と`PolicyInput`生成、

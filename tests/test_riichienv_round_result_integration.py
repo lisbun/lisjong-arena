@@ -1,6 +1,6 @@
-"""``RoundResultCollector``の実RiichiEnv 0.4.8 semantics fixture test。
+"""``RoundResultCollector``の実RiichiEnv 0.4.10 semantics fixture test。
 
-Issue #207のPreflightで実測した次のpinned RiichiEnv 0.4.8の挙動を、固定seedの
+Issue #207のPreflightで実測した次のRiichiEnv 0.4.8の挙動を、0.4.10固定seedの
 小さい対局として固定する。
 
 - 非最終局のterminal eventと次局の``start_kyoku``が同じ``env.step()``内で
@@ -141,7 +141,7 @@ def _fixture_provenance() -> SingleRoundExecutionProvenance:
         lisjong_revision="b" * 40,
         lisjong_engine_version="0.1.0",
         lisjong_engine_revision="c" * 40,
-        riichienv_version="0.4.8",
+        riichienv_version="0.4.10",
         python_version="3.14.6",
     )
 

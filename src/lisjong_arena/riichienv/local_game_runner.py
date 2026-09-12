@@ -1,4 +1,4 @@
-"""RiichiEnv 0.4.8で1対局を進行するLocal game runner。
+"""RiichiEnv 0.4.10で1対局を進行するLocal game runner。
 
 4 seatそれぞれにPolicy、``SeatMaterializedState``、
 ``RiichiEnvActionMappingSession``を対応付け、RiichiEnvがActionを要求した全seatを

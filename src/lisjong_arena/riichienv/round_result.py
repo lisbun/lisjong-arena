@@ -1,12 +1,12 @@
 """完了した各局のauthoritative round-result factをexecution時点でcaptureする。
 
-Issue #207のPreflightで、pinned RiichiEnv 0.4.8が非最終局のterminal event
-(``hora`` / ``ryukyoku``)と次局の``start_kyoku``を同じ``env.step()``内で
+Issue #207のPreflightで0.4.8、Issue #228で0.4.10について、非最終局の
+terminal event(``hora`` / ``ryukyoku``)と次局の``start_kyoku``を同じ``env.step()``内で
 まとめて発行し、``env.step()``から戻った時点では``env.win_results`` /
 ``env.hands`` / ``env.melds`` / ``env.dora_indicators`` /
 ``env._get_ura_markers()`` / ``env.scores()``がすでに次局のstateへ
 入れ替わっていることを実測した。``env.step()``はatomicであり、その内部へ
-割り込めるhookはRiichiEnv 0.4.8に存在しない。
+割り込めるhookはRiichiEnv 0.4.10にも存在しない。
 
 したがってこのcollectorは、局ごとのresult factを次の2種類のauthoritativeな
 source からだけ構築する。

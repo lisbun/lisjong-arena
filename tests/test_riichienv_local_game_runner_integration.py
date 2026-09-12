@@ -38,7 +38,7 @@ def _fixture_provenance() -> SingleRoundExecutionProvenance:
         lisjong_revision="b" * 40,
         lisjong_engine_version="0.1.0",
         lisjong_engine_revision="c" * 40,
-        riichienv_version="0.4.8",
+        riichienv_version="0.4.10",
         python_version="3.14.6",
     )
 

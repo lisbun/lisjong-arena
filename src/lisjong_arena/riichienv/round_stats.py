@@ -1,8 +1,9 @@
-"""RiichiEnv 0.4.8の直近1局から、4 seat共通のraw round observable factを集める。
+"""RiichiEnv 0.4.10の直近1局から、4 seat共通のraw round observable factを集める。
 
-Issue #61のPreflightで実測したpinned RiichiEnv 0.4.8のevent / attribute
-semanticsだけに基づく。ABBBの``candidate`` / ``baseline``というevaluation
-identityはここに一切持ち込まない。1 gameの4 seatについてgenericな
+Issue #61のPreflightで実測したRiichiEnv 0.4.8のevent / attribute semanticsを
+Issue #228で0.4.10に対して再検証し、それだけに基づく。ABBBの``candidate`` /
+``baseline``というevaluation identityはここに一切持ち込まない。
+1 gameの4 seatについてgenericな
 ``SeatRoundStats``を4件返すだけであり、``LocalGameRunner``のPolicy
 execution境界(``SeatMaterializedState``)とは責務を分離する。
 
@@ -166,7 +167,7 @@ def _initial_hand(
 
 
 class RoundStatsCollector:
-    """RiichiEnv 0.4.8 stateから、直近1局分の4 seat分``SeatRoundStats``を集める。
+    """RiichiEnv 0.4.10 stateから、直近1局分の4 seat分``SeatRoundStats``を集める。
 
     使い方は``env.step()``(および最初の``env.reset()``)ごとに新しく追加
     された``env.mjai_log`` entryとそのobservationsを``on_new_events()``へ

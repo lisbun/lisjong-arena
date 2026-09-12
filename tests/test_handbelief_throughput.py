@@ -60,9 +60,28 @@ class ThroughputTest(unittest.TestCase):
                 "lisjong_arena.handbelief_throughput.platform.processor",
                 return_value="test CPU",
             ),
+            patch(
+                "lisjong_arena.handbelief_throughput.importlib.metadata.version",
+                return_value="0.4.8",
+            ),
         ):
             source = provenance()
         self.assertIs(type(source["runtime"]["torch"]), str)
+
+    def test_historical_measurement_rejects_current_backend(self):
+        from lisjong_arena.stage3_entry_gate.experiment import configure_torch_runtime
+
+        configure_torch_runtime()
+        with (
+            patch(
+                "lisjong_arena.handbelief_throughput.subprocess.check_output",
+                side_effect=["a" * 40, ""],
+            ),
+            self.assertRaisesRegex(
+                ThroughputError, "measurement runtime differs from the locked CPU path"
+            ),
+        ):
+            provenance()
 
     def _data(self, root):
         raw = save_raw_corpus(fixture_corpus(), root / "raw")

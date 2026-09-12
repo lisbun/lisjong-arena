@@ -304,6 +304,7 @@ class ProvenanceTest(unittest.TestCase):
     def test_unresolvable_values_are_explicit_rather_than_guessed(self) -> None:
         provenance = collect_ranked_record_provenance()
 
+        self.assertEqual(provenance.riichienv_version, "0.4.10")
         self.assertEqual(provenance.profile_identity, UNRESOLVED_PROVENANCE_VALUE)
         self.assertEqual(provenance.policy_identity, UNRESOLVED_PROVENANCE_VALUE)
         self.assertEqual(provenance.execution_environment, "riichilab-ranked")
@@ -865,6 +866,7 @@ class AcquisitionIntegrationTest(unittest.TestCase):
         self.assertEqual(summary.deserialized_observations, 1)
         self.assertEqual(loaded.provenance.profile_identity, "lisjong-dev")
         self.assertEqual(loaded.provenance.policy_identity, "MinimalPolicy")
+        self.assertEqual(loaded.provenance.riichienv_version, "0.4.10")
 
     def test_acquisition_uses_a_fresh_trace_and_leaves_no_staging(self) -> None:
         with TemporaryDirectory() as raw:
