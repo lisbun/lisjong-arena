@@ -42,6 +42,7 @@ from .errors import BudgetNotMatchableError, MaterializationError, SourceIdentit
 from .materialization import (
     REPLAY_SEAM,
     GameMaterialization,
+    GameUnsupportedReason,
     MaterializedRow,
     materialize_game,
 )
@@ -59,6 +60,11 @@ from .protocol import (
 #: 4-player red-dora gameであり、replay engineへ渡すgame modeを
 #: caller-configurableにしない。
 SOURCE_GAME_MODE = "4p-red-half"
+
+#: seat-visible eventへhidden truthが混入したときのgame-level reason code。
+#: leakage failureはこのreasonのgame数として数え、`Gate0Report`の0固定値に
+#: しない。
+_LEAKAGE_REASON = GameUnsupportedReason.SEAT_VISIBLE_EVENT_LEAKS_HIDDEN_TRUTH.value
 
 #: canonical game orderのdomain separator。source identityへbindするため、
 #: 同じgame集合でもcorpus identityが違えば順序が変わる。
@@ -304,7 +310,7 @@ def build_source(
         eligible_rows=eligible,
         unresolved_rows=unresolved_total,
         unresolved_reasons=tuple(sorted(unresolved.items())),
-        leakage_failures=0,
+        leakage_failures=game_reasons[_LEAKAGE_REASON],
         shared_games=shared_games,
         shared_game_participations=shared_participations,
     )
@@ -486,7 +492,7 @@ def dataset_identity_document(
 ) -> dict[str, object]:
     """materialized datasetのidentity block。"""
     return {
-        "source_identity": {
+        "corpus_source_identity": {
             "corpus_identity": source.corpus_identity,
             "manifest_sha256": source.manifest_sha256,
             "snapshot_identity": source.snapshot_identity,

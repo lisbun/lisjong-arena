@@ -165,6 +165,12 @@ leakage_failures       == 0
 eligible_rows          >  0
 ```
 
+counterは母数として整合している。`decision_opportunities`はtarget seatの
+decision populationだけを数え、`eligible_rows + forced_rows + unresolved_rows`
+と一致する。一致しない場合はmaterializationがfail closedする。
+`leakage_failures`は`seat_visible_event_leaks_hidden_truth`として
+unsupportedになったgame数であり、固定値ではない。
+
 いずれかを満たさない場合、`build_row_budget()`はrow budgetを作らず、
 orchestrationは`SOURCE MATERIALIZATION BLOCKED`を記録して model trainingの
 前に停止する。unmasked CEや別feature schemaへの切り替えはこのIssueに存在しない。
@@ -278,6 +284,58 @@ weights byte count + sha256
 checkpoint identity (= 上記logical fieldのsha256)
 ```
 
+### Bundle-level strict readback
+
+個々のfileが単体としてvalidでも、互いに無関係なfileを1つのbundleへ集めた
+状態はそれだけでは検出できない。`verify`はbundleを1つのevidence unitとして
+読み、次のcross-bindingを全件照合する（`riichilab_source_pilot.bundle`）。
+
+```text
+bundle直下のentry集合            既知のartifactのみ（未知entryはfail closed）
+checkpoints/ARM_R, ARM_Y
+    arm                        == directory名
+    source_identity            == Issue #211のlocked source identity
+    ARM_R corpus identity / manifest sha256 == locked #170 values
+    ARM_Y dataset identity     == exact retained #140/#190 identity
+    policy identity            == derive_policy_identity(arm, checkpoint identity)
+result.sources                 == locked source identity block
+result.gate0                   == ARM_R checkpointが束ねるGate 0 report
+result.budget                  == matched 9,116 / 2,555
+result.arms[arm].checkpoint    == 各checkpointのidentity document
+seed-plan.candidate / baseline == ARM_R / ARM_Y のpolicy identity
+strength artifact
+    candidate / baseline       == seed planと同じidentity
+    seeds / games / game mode / rotations / seed blocks == locked population
+    summary                    == raw game resultsからの再集計
+result.strength                == 再集計したcanonical summary document
+result.outcome                 == classify_outcome(...)の再計算結果
+```
+
+自己整合hashであることでは足りない。locked valueそのものと一致しなければ、
+そのfileは別実験の成果物として扱う。comparison前に停止したoutcomeのbundleは
+result 1 fileだけを許し、checkpoint / seed plan / strength artifactを同梱した
+状態をfail closedにする。
+
+### Terminal outcomeのdurability
+
+authoritative executionが始まった後のterminal outcomeは、例外経路を含めて
+すべてwrite-once result artifactとして残る。
+
+```text
+plan         read only
+materialize  NON-AUTHORITATIVE diagnostic。artifactを残さない。
+             この出力だけではIssue #211のoutcomeは成立しない。
+run          authoritative completion command
+             Gate 0 blocked / budget not matchable / 実行中のprotocol error /
+             artifact corruption / I-O failureをすべてdurableに記録する
+verify       retained bundleのbundle-level strict readback
+```
+
+`run`は実行開始後に失敗した場合も`STOP / INVALID`をbundleへ書いてから例外を
+伝播させる。先に書かれたterminal recordは後続handlerが上書きしない。bundle
+destinationが既に存在する実行は`resolve_retention_target()`とwrite-once
+artifact writerが拒否するため、同じretention keyでの都合のよいrerunはできない。
+
 ## Exhaustive outcome
 
 ```text
@@ -352,10 +410,14 @@ python -m lisjong_arena.riichilab_source_pilot materialize `
   --output-dir "$root\cache"
 ```
 
-`materialize`のexit codeは、Gate 0が成立しなければ`2`であり、出力の
-`gate0.gate_passed`が`false`、`outcome`が`SOURCE MATERIALIZATION BLOCKED`に
-なる。そのときはtrainingへ進まず、`gate0.unresolved_reasons`と
-`gate0.game_unsupported_reasons`をaggregateとして#211 / #45へ報告する。
+`materialize`はNON-AUTHORITATIVEなGate 0 diagnosticである。artifactを残さない
+ため、**この出力だけではIssue #211のoutcomeは成立しない。** 出力には
+`authoritative: false`と、その旨の`notice`が必ず付く。Gate 0が成立しなければ
+exit codeは`2`、`gate0.gate_passed`は`false`、`observed_outcome`は
+`SOURCE MATERIALIZATION BLOCKED`になる。そのときはtrainingへ進まず、
+`gate0.unresolved_reasons`と`gate0.game_unsupported_reasons`をaggregateとして
+#211 / #45へ報告する。Issue #211のoutcomeとして記録できるのは`run`が残した
+write-once result artifactだけである。
 
 Gate 0が成立した場合だけ、two-arm pilotを1回実行する。
 
@@ -376,6 +438,11 @@ python -m lisjong_arena.riichilab_source_pilot verify `
 - `--arm-y-dataset`はexact retained #140/#190 dataset directoryである
 - retention rootはGit work tree外かつtemporary directory外でなければならない
 - 既存bundleを上書きしない（write-once）
+- `run`はどのterminal outcomeでもbundleへresultを残す。失敗時の出力は
+  `durable: true`と`artifact`を含む。`durable: false`の場合はretention先へ
+  書けていないので、その旨をIssueへ記録する
+- `verify`はbundle全体のcross-bindingを照合する。`outcome`と
+  `verified`を#211へ転記する
 
 ### Issueへ転記するcompact summary
 
@@ -385,6 +452,7 @@ gate0.games_processed / games_replayable / games_unsupported (+ reason別件数)
 gate0.decision_opportunities / explicit_action_rows / implicit_pass_rows
 gate0.forced_rows / eligible_rows
 gate0.unresolved_rows (+ reason別件数)
+gate0.leakage_check_failures
 gate0.gate_passed
 
 budget.train_rows / validation_rows
@@ -400,6 +468,9 @@ strength.mean_seed_block_delta / interval_lower / interval_upper
 strength.positive_seed_blocks / zero_seed_blocks / negative_seed_blocks
 
 outcome（ちょうど1つ）
+result_identity
+
+verify.outcome / verify.verified（bundle-level strict readbackの結果）
 ```
 
 ## Relationship to other contracts

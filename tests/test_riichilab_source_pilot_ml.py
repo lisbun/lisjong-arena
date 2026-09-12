@@ -3,23 +3,51 @@
 実#170 corpus、実retained #140/#190 artifact、400-game evaluationは実行しない。
 trainerとserving pathの接続、両armの対称性、artifactのstrict readbackだけを、
 syntheticに材料化したrowとpatchされた小さなrow budgetで確認する。
+
+bundle-level strict readbackは、400 gameをplayせずに既存
+``SingleRoundEvaluationResult``契約を満たすraw game resultsを組み立て、
+evaluation実行だけを差し替えたrun pathから1つのbundleを作って確認する。
 """
 
 import importlib.util
+import shutil
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
 from _riichilab_source_pilot_fixtures import generated_game_log
+from _single_round_artifact_fixtures import game_results, save
 from lisjong.policy_contract.decision_context import DecisionContext
 from lisjong.policy_contract.seat import Seat
 
+from lisjong_arena.model import (
+    PolicySpec,
+    SingleRoundEvaluationPlan,
+    SingleRoundEvaluationResult,
+)
 from lisjong_arena.riichilab_source_pilot import artifact as artifact_module
+from lisjong_arena.riichilab_source_pilot import bundle as bundle_module
 from lisjong_arena.riichilab_source_pilot import dataset as dataset_module
 from lisjong_arena.riichilab_source_pilot import evaluation as evaluation_module
+from lisjong_arena.riichilab_source_pilot import experiment as experiment_module
 from lisjong_arena.riichilab_source_pilot import training as training_module
+from lisjong_arena.riichilab_source_pilot.__main__ import main as cli_main
+from lisjong_arena.riichilab_source_pilot.artifact import (
+    CHECKPOINTS_DIRNAME,
+    RESULT_FILENAME,
+    SEED_PLAN_FILENAME,
+    STRENGTH_ARTIFACT_FILENAME,
+    load_result,
+    result_identity,
+    save_result,
+    save_seed_plan,
+    seed_plan_document,
+)
+from lisjong_arena.riichilab_source_pilot.bundle import verify_bundle
 from lisjong_arena.riichilab_source_pilot.errors import (
     ServingError,
     SourcePilotArtifactError,
@@ -30,19 +58,36 @@ from lisjong_arena.riichilab_source_pilot.evaluation import (
     create_arm_policy,
     verify_strength_artifact,
 )
-from lisjong_arena.riichilab_source_pilot.materialization import materialize_game
+from lisjong_arena.riichilab_source_pilot.materialization import (
+    DecisionKind,
+    GameMaterialization,
+    MaterializedRow,
+    materialize_game,
+    pack_feature_values,
+)
 from lisjong_arena.riichilab_source_pilot.protocol import (
     ARM_R,
+    ARM_R_CORPUS_IDENTITY,
+    ARM_R_MANIFEST_SHA256,
+    ARM_SOURCE_IDENTITY,
     ARM_Y,
+    ARM_Y_DATASET_IDENTITY,
     EVALUATION_GAME_COUNT,
     EVALUATION_GAME_MODE,
     EVALUATION_SEEDS,
+    FEATURE_DIMENSION,
+    VOCABULARY_SIZE,
+    SourcePilotOutcome,
 )
 from lisjong_arena.riichilab_source_pilot.serving import (
     SourcePilotServingPolicy,
     create_serving_runtime,
 )
-from lisjong_arena.single_round_evaluation import ROTATION_COUNT
+from lisjong_arena.single_round_artifact import load_single_round_artifact
+from lisjong_arena.single_round_evaluation import (
+    ROTATION_COUNT,
+    aggregate_candidate_metrics,
+)
 
 TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
@@ -498,6 +543,355 @@ class StrengthArtifactVerificationTests(unittest.TestCase):
             parameters = set(inspect.signature(function).parameters)
             self.assertNotIn("seeds", parameters)
             self.assertNotIn("seed_count", parameters)
+
+
+# --- bundle-level strict readback -----------------------------------------
+
+BACKEND = "local-directory"
+KEY = "riichilab-source-pilot-211/ml-test"
+FOREIGN_CANDIDATE = "learned-source-pilot-r:" + "a" * 64
+FOREIGN_BASELINE = "learned-source-pilot-y:" + "b" * 64
+
+
+def _synthetic_row(game_id: str, index: int) -> MaterializedRow:
+    """Gate 0 reportをgate-passingにするためだけの最小rowである。"""
+    mask = bytearray(VOCABULARY_SIZE)
+    mask[0] = 1
+    mask[1] = 1
+    return MaterializedRow(
+        game_id=game_id,
+        decision_ordinal=index,
+        round_ordinal=0,
+        round_wind="E",
+        hand_number=1,
+        honba=0,
+        actor_seat=index % 4,
+        bot_id=0,
+        decision_kind=DecisionKind.TURN,
+        legal_action_count=2,
+        teacher_action_index=0,
+        teacher_action_family="discard",
+        implicit_pass=False,
+        is_open_hand=False,
+        is_riichi_declared=False,
+        feature_payload=pack_feature_values([0.0] * FEATURE_DIMENSION),
+        legal_mask_payload=bytes(mask),
+    )
+
+
+def _gate_passing_source():
+    rows = tuple(_synthetic_row("g1", index) for index in range(2))
+    game = GameMaterialization(
+        game_id="g1",
+        supported=True,
+        unsupported_reason=None,
+        rounds=1,
+        decision_opportunities=len(rows),
+        rows=rows,
+        forced_rows=0,
+        unresolved_reasons=(),
+    )
+    return dataset_module.build_source(
+        (game,),
+        corpus_identity=ARM_R_CORPUS_IDENTITY,
+        manifest_sha256=ARM_R_MANIFEST_SHA256,
+        snapshot_identity="s" * 64,
+        target_seat_counts={"g1": 1},
+    )
+
+
+def _locked_source_documents(source) -> dict:
+    """両armのlocked source identityを持つsource document。
+
+    実corpusとretained datasetを読まずにlocked identityへbindした
+    checkpointを作るため、row identity等の中身だけsyntheticにする。
+    """
+    return {
+        ARM_Y: {
+            "arm": ARM_Y.value,
+            "source_identity": ARM_SOURCE_IDENTITY[ARM_Y],
+            "dataset_identity": ARM_Y_DATASET_IDENTITY,
+            "train_rows_identity": "y" * 64,
+            "validation_rows_identity": "v" * 64,
+        },
+        ARM_R: {
+            "arm": ARM_R.value,
+            "source_identity": ARM_SOURCE_IDENTITY[ARM_R],
+            "corpus_source_identity": {
+                "corpus_identity": ARM_R_CORPUS_IDENTITY,
+                "manifest_sha256": ARM_R_MANIFEST_SHA256,
+                "snapshot_identity": source.snapshot_identity,
+                "source_game_mode": dataset_module.SOURCE_GAME_MODE,
+            },
+            "gate0": source.report.to_document(),
+            "train_row_count": TRAIN_ROWS,
+            "validation_row_count": VALIDATION_ROWS,
+            "train_rows_identity": "r" * 64,
+            "validation_rows_identity": "q" * 64,
+            "dataset_identity": "d" * 64,
+        },
+    }
+
+
+def _no_policy():  # pragma: no cover - gameをplayしないためのplaceholder
+    raise AssertionError("the bundle test never plays a game")
+
+
+def _save_strength_artifact(
+    path: Path, candidate_identity: str, baseline_identity: str
+) -> None:
+    """400 gameをplayせずlocked populationのstrength artifactを保存する。"""
+    plan = SingleRoundEvaluationPlan(
+        candidate=PolicySpec(identity=candidate_identity, factory=_no_policy),
+        baseline=PolicySpec(identity=baseline_identity, factory=_no_policy),
+        seeds=EVALUATION_SEEDS,
+    )
+    results = game_results(EVALUATION_SEEDS)
+    save(
+        SingleRoundEvaluationResult(
+            plan=plan,
+            game_results=results,
+            candidate_metrics=aggregate_candidate_metrics(candidate_identity, results),
+        ),
+        path,
+    )
+
+
+def _fake_run_evaluation(candidate, baseline, artifact_path, *, progress_callback=None):
+    """ABBB実行だけを差し替える。artifactのschemaと検証pathは本物を通す。"""
+    path = Path(artifact_path)
+    _save_strength_artifact(path, candidate.identity, baseline.identity)
+    artifact = load_single_round_artifact(path)
+    summary = verify_strength_artifact(
+        artifact,
+        candidate_identity=candidate.identity,
+        baseline_identity=baseline.identity,
+    )
+    return evaluation_module.StrengthMeasurement(
+        candidate_identity=candidate.identity,
+        baseline_identity=baseline.identity,
+        artifact=artifact,
+        summary=summary,
+    )
+
+
+_BUNDLE: dict[str, object] = {}
+
+
+def _complete_bundle() -> Path:
+    """1回だけ完全なbundleを作り、test間で共有する。"""
+    if "path" not in _BUNDLE:
+        holder = tempfile.TemporaryDirectory()
+        _BUNDLE["holder"] = holder
+        source = _gate_passing_source()
+        documents = _locked_source_documents(source)
+        budget = _small_budget()
+        tensors = _tensors(budget)
+        destination = Path(holder.name) / "bundle"
+        with mock.patch.multiple(
+            experiment_module,
+            build_row_budget=lambda _source: budget,
+            arm_y_source_document=lambda _source: documents[ARM_Y],
+            arm_r_source_document=lambda _source, _budget: documents[ARM_R],
+            retained_tensors=lambda _source: tensors,
+            materialized_tensors=lambda _budget: tensors,
+            run_evaluation=_fake_run_evaluation,
+        ):
+            run = experiment_module.run_source_pilot(
+                arm_y_source=object(),
+                arm_r_source=source,
+                destination=destination,
+                backend=BACKEND,
+                key=KEY,
+            )
+        _BUNDLE["path"] = run.path
+    return _BUNDLE["path"]
+
+
+def _matched_budget_constants():
+    """patchされた小さなbudgetをbundle verifierのlocked値として扱う。"""
+    return mock.patch.multiple(
+        bundle_module,
+        TRAIN_ROW_BUDGET=TRAIN_ROWS,
+        VALIDATION_ROW_BUDGET=VALIDATION_ROWS,
+    )
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "torch is not installed")
+class BundleStrictReadbackTests(unittest.TestCase):
+    """単体でvalidなfileを集めただけのbundleをfail closedにする。"""
+
+    def _copy(self, directory: str) -> Path:
+        copied = Path(directory) / "bundle"
+        shutil.copytree(_complete_bundle(), copied)
+        return copied
+
+    def test_a_complete_bundle_verifies_every_cross_binding(self):
+        with _matched_budget_constants():
+            document = verify_bundle(_complete_bundle())
+        self.assertEqual(document["verified"], "complete comparison bundle")
+        self.assertEqual(
+            document["outcome"], SourcePilotOutcome.RIICHILAB_SOURCE_SIGNAL.value
+        )
+        self.assertEqual(document["strength"]["games"], EVALUATION_GAME_COUNT)
+        self.assertTrue(
+            document["policies"]["candidate"].startswith("learned-source-pilot-r:")
+        )
+        self.assertTrue(
+            document["policies"]["baseline"].startswith("learned-source-pilot-y:")
+        )
+        self.assertEqual(set(document["checkpoints"]), {ARM_R.value, ARM_Y.value})
+
+    def test_the_cli_verify_command_reads_the_whole_bundle(self):
+        with _matched_budget_constants(), redirect_stdout(StringIO()) as printed:
+            self.assertEqual(
+                cli_main(["verify", "--bundle", str(_complete_bundle())]), 0
+            )
+        self.assertIn("complete comparison bundle", printed.getvalue())
+
+    def test_a_budget_that_is_not_the_matched_one_fails_closed(self):
+        # 同じbundleをlocked 9,116 / 2,555で読むと、row budgetがmatched
+        # budgetでないことが検出される。
+        with self.assertRaises(SourcePilotArtifactError) as raised:
+            verify_bundle(_complete_bundle())
+        self.assertIn("matched", str(raised.exception))
+
+    def test_a_foreign_seed_plan_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._copy(directory)
+            (bundle / SEED_PLAN_FILENAME).unlink()
+            save_seed_plan(
+                bundle / SEED_PLAN_FILENAME,
+                seed_plan_document(
+                    candidate_identity=FOREIGN_CANDIDATE,
+                    baseline_identity=FOREIGN_BASELINE,
+                ),
+            )
+            with (
+                _matched_budget_constants(),
+                self.assertRaises(SourcePilotArtifactError),
+            ):
+                verify_bundle(bundle)
+
+    def test_a_foreign_strength_artifact_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._copy(directory)
+            (bundle / STRENGTH_ARTIFACT_FILENAME).unlink()
+            _save_strength_artifact(
+                bundle / STRENGTH_ARTIFACT_FILENAME,
+                FOREIGN_CANDIDATE,
+                FOREIGN_BASELINE,
+            )
+            with (
+                _matched_budget_constants(),
+                self.assertRaises(SourcePilotProtocolError),
+            ):
+                verify_bundle(bundle)
+
+    def test_a_missing_strength_artifact_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._copy(directory)
+            (bundle / STRENGTH_ARTIFACT_FILENAME).unlink()
+            with (
+                _matched_budget_constants(),
+                self.assertRaises(SourcePilotArtifactError),
+            ):
+                verify_bundle(bundle)
+
+    def test_a_checkpoint_from_another_source_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._copy(directory)
+            shutil.rmtree(bundle / CHECKPOINTS_DIRNAME / ARM_R.value)
+            foreign = training_module.train_arm(
+                ARM_R,
+                _tensors(_small_budget()),
+                source_document=_source_document(ARM_R),
+            )
+            artifact_module.save_checkpoint(
+                bundle / CHECKPOINTS_DIRNAME / ARM_R.value, foreign
+            )
+            with (
+                _matched_budget_constants(),
+                self.assertRaises(SourcePilotArtifactError),
+            ):
+                verify_bundle(bundle)
+
+    def test_a_result_that_records_other_checkpoints_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._copy(directory)
+            result = load_result(bundle / RESULT_FILENAME)
+            record = result["arms"][ARM_R.value]["checkpoint"]
+            record["checkpoint_identity"] = "f" * 64
+            record["policy_identity"] = "learned-source-pilot-r:" + "f" * 64
+            del result["result_identity"]
+            result["result_identity"] = result_identity(result)
+            (bundle / RESULT_FILENAME).unlink()
+            save_result(bundle / RESULT_FILENAME, result)
+            with (
+                _matched_budget_constants(),
+                self.assertRaises(SourcePilotArtifactError),
+            ):
+                verify_bundle(bundle)
+
+    def test_an_unexpected_bundle_entry_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._copy(directory)
+            (bundle / "scratch.json").write_text("{}", encoding="utf-8")
+            with (
+                _matched_budget_constants(),
+                self.assertRaises(SourcePilotArtifactError),
+            ):
+                verify_bundle(bundle)
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "torch is not installed")
+class EvaluationFailureDurabilityTests(unittest.TestCase):
+    """evaluation途中の失敗もdurableなSTOP / INVALIDとして残す。"""
+
+    def _run(self, destination: Path):
+        source = _gate_passing_source()
+        documents = _locked_source_documents(source)
+        budget = _small_budget()
+        tensors = _tensors(budget)
+
+        def _failing_evaluation(candidate, baseline, path, *, progress_callback=None):
+            raise SourcePilotProtocolError("simulated ABBB artifact corruption")
+
+        with mock.patch.multiple(
+            experiment_module,
+            build_row_budget=lambda _source: budget,
+            arm_y_source_document=lambda _source: documents[ARM_Y],
+            arm_r_source_document=lambda _source, _budget: documents[ARM_R],
+            retained_tensors=lambda _source: tensors,
+            materialized_tensors=lambda _budget: tensors,
+            run_evaluation=_failing_evaluation,
+        ):
+            experiment_module.run_source_pilot(
+                arm_y_source=object(),
+                arm_r_source=source,
+                destination=destination,
+                backend=BACKEND,
+                key=KEY,
+            )
+
+    def test_evaluation_failure_is_durable_and_not_rerunnable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            with self.assertRaises(SourcePilotProtocolError):
+                self._run(destination)
+            result = load_result(destination / RESULT_FILENAME)
+            self.assertEqual(result["outcome"], SourcePilotOutcome.STOP_INVALID.value)
+            self.assertIn("simulated ABBB artifact corruption", result["stop_reason"])
+            self.assertIsNone(result["strength"])
+            # checkpointとseed planは実際に書かれている。durableなSTOP record
+            # はそれらを含めてstrict-readできる。
+            self.assertTrue((destination / SEED_PLAN_FILENAME).is_file())
+            document = verify_bundle(destination)
+            self.assertIn("partial STOP / INVALID bundle", document["verified"])
+            self.assertIn("seed plan", document["verified"])
+            # 同じexperiment keyのdestinationへ都合よくrerunできない。
+            with self.assertRaises(FileExistsError):
+                self._run(destination)
 
 
 if __name__ == "__main__":

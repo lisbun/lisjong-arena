@@ -12,6 +12,13 @@ Gate 0 (exact materialization)
 
 失敗は近い値で代替せず、decision orderどおりのoutcomeへ落とす。result
 exposure後のseed extension / rerun / rescue pathをこのmoduleは持たない。
+
+authoritative executionが始まった後のterminal outcomeはすべてwrite-once
+result artifactとして残す。Gate 0 blocked / budget not matchableに加えて、
+training・evaluation途中のprotocol error、artifact corruption、I/O failureも
+`STOP / INVALID`としてdurableに記録する。同じretention keyでの"都合のよい
+rerun"は、destinationが既に存在することで`resolve_retention_target`と
+write-once artifact writerが拒否する。
 """
 
 import time
@@ -98,6 +105,39 @@ def _blocked_result(
     return document
 
 
+def persist_stop_invalid(
+    destination: str | Path,
+    *,
+    backend: str,
+    key: str,
+    stop_reason: str,
+    gate0: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """`STOP / INVALID`をwrite-once result artifactとして残す。
+
+    既にresultが存在する場合は上書きしない。先に書かれたterminal outcome
+    こそがそのbundleの正本であり、後続のhandlerがそれを書き換えない。
+    """
+    destination = Path(destination)
+    path = destination / RESULT_FILENAME
+    if path.exists():
+        return load_result(path)
+    destination.mkdir(parents=True, exist_ok=True)
+    return save_result(
+        path,
+        _blocked_result(
+            outcome=SourcePilotOutcome.STOP_INVALID,
+            retention={"backend": backend, "key": key},
+            gate0=gate0,
+            stop_reason=stop_reason,
+        ),
+    )
+
+
+def _stop_reason_of(error: BaseException) -> str:
+    return f"{type(error).__name__}: {error}"
+
+
 def run_source_pilot(
     *,
     arm_y_source,
@@ -107,7 +147,12 @@ def run_source_pilot(
     key: str,
     progress_callback=None,
 ) -> SourcePilotRun:
-    """Issue #211をdecision orderどおりに1回実行し、artifactを公開する。"""
+    """Issue #211をdecision orderどおりに1回実行し、artifactを公開する。
+
+    実行が始まった後の失敗は、例外を伝播させる前に`STOP / INVALID`を
+    durableなresult artifactとして残す。destinationが既に存在する場合は
+    何も書かず、先に公開されたbundleを保護する。
+    """
     verify_contract_identity()
     if not isinstance(arm_r_source, MaterializedSource):
         raise TypeError("arm_r_source must be a MaterializedSource")
@@ -121,6 +166,46 @@ def run_source_pilot(
         raise FileExistsError("source-pilot artifact destination already exists")
     destination.parent.mkdir(parents=True, exist_ok=True)
 
+    try:
+        return _run_once(
+            arm_y_source=arm_y_source,
+            arm_r_source=arm_r_source,
+            destination=destination,
+            retention=retention,
+            progress_callback=progress_callback,
+        )
+    except Exception as error:
+        try:
+            persist_stop_invalid(
+                destination,
+                backend=backend,
+                key=key,
+                stop_reason=_stop_reason_of(error),
+                gate0=_gate0_document(arm_r_source),
+            )
+        except Exception as secondary:  # pragma: no cover - storage level failure
+            error.add_note(
+                f"the STOP / INVALID record could not be persisted: {secondary}"
+            )
+        raise
+
+
+def _gate0_document(arm_r_source: MaterializedSource) -> dict[str, object] | None:
+    try:
+        return arm_r_source.report.to_document()
+    except Exception:  # pragma: no cover - defensive only
+        return None
+
+
+def _run_once(
+    *,
+    arm_y_source,
+    arm_r_source: MaterializedSource,
+    destination: Path,
+    retention: dict[str, object],
+    progress_callback=None,
+) -> SourcePilotRun:
+    """Gate 0からoutcome記録までを1回だけ実行する。"""
     gate0 = arm_r_source.report.to_document()
     if not arm_r_source.report.gate_passed:
         destination.mkdir(parents=True)
@@ -257,4 +342,9 @@ def plan_text() -> str:
     return canonical_json_text(plan_document())
 
 
-__all__ = ["SourcePilotRun", "plan_text", "run_source_pilot"]
+__all__ = [
+    "SourcePilotRun",
+    "persist_stop_invalid",
+    "plan_text",
+    "run_source_pilot",
+]
