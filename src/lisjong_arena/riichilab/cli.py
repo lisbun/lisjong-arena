@@ -6,13 +6,20 @@ layerとする。Policy契約、Session、Transportへ責務を持ち込まな�
 本moduleは、Issue #44でlisjongへ実装されたcontract(`lisjong.riichilab_client.cli`)
 をbehavior-preservingにArenaへcanonical migrationしたものである。引数形式、
 trace path優先順位はmigration元contractを維持する。
+
+ranked durable record acquisition(Issue #168)はranked CLIだけのoptionとして
+opt-inで組み立てる。validation CLIやcontinuous ranked CLIへranked-only optionを
+漏らさないため、`build_arg_parser()`の既定では`--record-dir`を追加しない。
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import uuid
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
+from pathlib import Path
 
 from lisjong_arena.riichilab.profile import (
     PROFILE_NAMES,
@@ -23,7 +30,9 @@ from lisjong_arena.riichilab.profile import (
 TRACE_PATH_ENV_VAR = "RIICHILAB_TRACE_PATH"
 
 
-def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
+def build_arg_parser(
+    *, prog: str, ranked_record: bool = False
+) -> argparse.ArgumentParser:
     """`--profile`を必須とするCLI parserを作る。
 
     profile未指定はargparseの標準fail-closed挙動(non-zero exit、usageを
@@ -53,7 +62,34 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
             f"{TRACE_PATH_ENV_VAR}環境変数、--traceより優先する"
         ),
     )
+    if ranked_record:
+        parser.add_argument(
+            "--record-dir",
+            default=None,
+            metavar="PATH",
+            help=(
+                "completeした1半荘をdurable ranked record bundleとして"
+                "このdirectory配下の新しいrecord directoryへ保存する"
+                "(diagnostic traceとは別のcompleted research raw source)"
+            ),
+        )
     return parser
+
+
+def resolve_ranked_record_path(record_dir_arg: str | None) -> Path | None:
+    """`--record-dir`配下に、この1半荘専用のrecord directory pathを決める。
+
+    `1 durable record = 1 RiichiLab ranked hanchan`を守るため、実行ごとに
+    まだ存在しないpathを選ぶ。既存recordへのsilent overwrite / appendは
+    行わない(実際の生成時にもdestinationの存在をfail closedで確認する)。
+
+    filenameへはsecret-freeなUTC timestampとUUID4だけを使い、credential値・
+    断片・machine usernameを含めない。
+    """
+    if not record_dir_arg:
+        return None
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return Path(record_dir_arg) / f"{timestamp}-{uuid.uuid4().hex}"
 
 
 def resolve_trace_path(
@@ -93,5 +129,6 @@ __all__ = [
     "TRACE_PATH_ENV_VAR",
     "build_arg_parser",
     "parse_args",
+    "resolve_ranked_record_path",
     "resolve_trace_path",
 ]

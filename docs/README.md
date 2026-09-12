@@ -15,6 +15,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 | [Policy strength evaluation policy](policy-strength-evaluation.md) | Policy比較の恒久的な評価規律 / measurement source-of-truth |
 | [Learned Policy input schema](learned-policy-input-schema.md) | current experiment-local player-safe input / tensor contract |
 | [Durable local game record](durable-local-game-record.md) | RiichiEnv local record schema / writer / loader / integrity / limitation |
+| [Durable ranked game record](durable-ranked-game-record.md) | RiichiLab ranked completed-hanchan raw record schema / loader / integrity / limitation |
 | [Automated Strength Evaluation](automated-strength-evaluation.md) | machine-readable locked evaluation orchestration contract |
 | [Claude Code workflow](claude-code-workflow.md) | repository development workflow |
 
@@ -26,6 +27,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 
 - [RiichiLab client runtime contract](riichilab-client.md)
 - [RiichiLab protocol bridge](riichilab-protocol-bridge.md)
+- [RiichiLab durable ranked game record](durable-ranked-game-record.md)
 
 ### RiichiLab research corpus
 

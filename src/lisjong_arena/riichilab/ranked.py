@@ -24,7 +24,11 @@ from dataclasses import dataclass
 from lisjong.policy_contract.policy import Policy
 from lisjong.policy_contract.seat import Seat
 
-from lisjong_arena.riichilab.cli import build_arg_parser, resolve_trace_path
+from lisjong_arena.riichilab.cli import (
+    build_arg_parser,
+    resolve_ranked_record_path,
+    resolve_trace_path,
+)
 from lisjong_arena.riichilab.errors import ProtocolError, RiichiLabClientError
 from lisjong_arena.riichilab.profile import (
     ProfileError,
@@ -100,8 +104,17 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
 
     接続からend_gameまでの1 ranked hanchanで終了する。requeue、複数game、
     retry、reconnectはここでは扱わない(後続Issue)。
+
+    `--record-dir`(Issue #168)を指定した場合だけ、completeした1半荘を
+    durable ranked recordとして保存する。durable acquisitionはこのhanchan
+    専用のfresh staging trace pathを使うため、diagnostic traceのpath解決
+    (`--trace` / `--trace-path` / `RIICHILAB_TRACE_PATH`)と同時には使わず、
+    両方が有効な場合はfail closedする。`--record-dir`を指定しない既存の
+    CLI behaviorは変わらない。
     """
-    parser = build_arg_parser(prog="python -m lisjong_arena.riichilab.ranked")
+    parser = build_arg_parser(
+        prog="python -m lisjong_arena.riichilab.ranked", ranked_record=True
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -114,14 +127,55 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     trace_path = resolve_trace_path(
         profile, trace_flag=args.trace, trace_path_arg=args.trace_path
     )
+    record_path = resolve_ranked_record_path(args.record_dir)
+    if record_path is not None and trace_path is not None:
+        print(
+            "--record-dir cannot be combined with diagnostic protocol tracing; "
+            "the durable record keeps its own protocol trace. Re-run without "
+            "--trace / --trace-path and without RIICHILAB_TRACE_PATH.",
+            file=sys.stderr,
+        )
+        return 2
+
     policy = profile.policy_factory()
     summary = build_runtime_summary(
         profile, mode="ranked", trace_path=trace_path, policy=policy
     )
     print(format_runtime_summary(summary))
+    print(f"record: {'on' if record_path is not None else 'off'}")
+    if record_path is not None:
+        print(f"record path: {record_path}")
 
+    record = None
     try:
-        result = asyncio.run(run_ranked_game(policy, token, trace_path=trace_path))
+        if record_path is None:
+            result = asyncio.run(run_ranked_game(policy, token, trace_path=trace_path))
+        else:
+            # record moduleは`RankedGameResult`をimportするため、module levelで
+            # importするとimport cycleになる。CLI entry pointでだけ解決する。
+            from lisjong_arena.riichilab.durable_ranked_game_record import (
+                DurableRankedGameRecordError,
+                acquire_ranked_game_record,
+            )
+
+            try:
+                record = asyncio.run(
+                    acquire_ranked_game_record(
+                        policy,
+                        token,
+                        destination=record_path,
+                        profile_identity=profile.name,
+                        policy_identity=type(policy).__name__,
+                    )
+                )
+            except (DurableRankedGameRecordError, OSError) as error:
+                print(
+                    "RiichiLab ranked durable record was not finalized: "
+                    f"{type(error).__name__}: {error}",
+                    file=sys.stderr,
+                )
+                return 1
+            result = record.result
     except RiichiLabClientError as error:
         print(
             f"RiichiLab ranked game failed: {type(error).__name__}: {error}",
@@ -138,6 +192,8 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         print("scores: unavailable")
     else:
         print("scores: " + ", ".join(str(score) for score in result.scores))
+    if record is not None:
+        print(f"record identity: {record.record_identity}")
     return 0
 
 

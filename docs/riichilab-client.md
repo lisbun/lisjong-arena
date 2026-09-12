@@ -289,6 +289,36 @@ trace path解決の優先順位は、canonical implementationである
 3. `--trace`指定時のprofile既定path
 4. 無効
 
+## protocol trace vs durable ranked record
+
+protocol traceはdiagnostic / wire-level evidenceであり、途中で失敗したsessionの
+partial traceが残ることもある。completed 1半荘をresearch raw sourceとして扱うには、
+別contractの[durable ranked game record](durable-ranked-game-record.md)を使う。
+
+```text
+protocol trace
+    diagnostic / wire-level evidence
+
+durable ranked record
+    completed one-hanchan research raw source
+
+training dataset
+    downstream consumer-specific artifact
+
+omniscient game log
+    提供しない
+```
+
+durable ranked recordはこのmoduleのprotocol loggerを再実装せず、同じ
+`JsonlProtocolTraceWriter`が書いたtraceをsource of truthとして使う。ただし
+`1 durable record = 1 ranked hanchan`を守るため、acquisitionはその半荘専用の
+fresh staging trace pathを使い、既存traceへappendしない。
+
+ranked CLIの`--record-dir`だけがdurable recordを作る。`--record-dir`を指定しない
+場合の`--trace` / `--trace-path` / `RIICHILAB_TRACE_PATH`の挙動は変わらない。
+両方が有効な場合は、diagnostic traceとcompleted research recordを混同しないため
+fail closedする。
+
 ## client error hierarchy
 
 ```text

@@ -29,16 +29,19 @@ from lisjong_arena.riichilab.errors import ProtocolError
 
 _VALIDATION_SEAT = Seat.SEAT_0
 
-_EVENT_TYPE_START_GAME = "start_game"
-_EVENT_TYPE_REQUEST_ACTION = "request_action"
-_EVENT_TYPE_ACTION_ACK = "action_ack"
-_EVENT_TYPE_VALIDATION_RESULT = "validation_result"
-_EVENT_TYPE_END_GAME = "end_game"
+# protocol vocabulary。session lifecycleの正本であると同時に、同じ
+# protocolを後からreadbackするconsumer(durable ranked record loader等)が
+# event名やack statusの集合を再定義しないための公開点でもある。
+EVENT_TYPE_START_GAME = "start_game"
+EVENT_TYPE_REQUEST_ACTION = "request_action"
+EVENT_TYPE_ACTION_ACK = "action_ack"
+EVENT_TYPE_VALIDATION_RESULT = "validation_result"
+EVENT_TYPE_END_GAME = "end_game"
 
-_KNOWN_ACK_STATUSES = frozenset(
+KNOWN_ACK_STATUSES = frozenset(
     {"accepted", "rejected", "unparseable", "stale", "defaulted"}
 )
-_FATAL_ACK_STATUSES = frozenset({"rejected", "unparseable"})
+FATAL_ACK_STATUSES = frozenset({"rejected", "unparseable"})
 _TIME_BUDGET_FIELDS = ("grace_ms", "bank_ms", "deadline_ms")
 
 
@@ -176,18 +179,18 @@ class _GameSession:
             raise ProtocolError("event must be a JSON object")
 
         event_type = event.get("type")
-        if event_type == _EVENT_TYPE_START_GAME:
+        if event_type == EVENT_TYPE_START_GAME:
             self._handle_start_game(event)
             return None
-        if event_type == _EVENT_TYPE_REQUEST_ACTION:
+        if event_type == EVENT_TYPE_REQUEST_ACTION:
             return self._handle_request_action(event)
-        if event_type == _EVENT_TYPE_ACTION_ACK:
+        if event_type == EVENT_TYPE_ACTION_ACK:
             self._handle_action_ack(event)
             return None
-        if event_type == _EVENT_TYPE_VALIDATION_RESULT:
+        if event_type == EVENT_TYPE_VALIDATION_RESULT:
             self._handle_validation_result(event)
             return None
-        if event_type == _EVENT_TYPE_END_GAME:
+        if event_type == EVENT_TYPE_END_GAME:
             self._handle_end_game(event)
             return None
         return None
@@ -260,7 +263,7 @@ class _GameSession:
         if isinstance(request_id, bool) or not isinstance(request_id, int):
             raise ProtocolError("action_ack is missing a valid integer request_id")
         status = event.get("status")
-        if not isinstance(status, str) or status not in _KNOWN_ACK_STATUSES:
+        if not isinstance(status, str) or status not in KNOWN_ACK_STATUSES:
             raise ProtocolError(
                 f"action_ack has an unknown or invalid status: {status!r}"
             )
@@ -270,7 +273,7 @@ class _GameSession:
             )
 
         self._ack_history.setdefault(request_id, []).append(status)
-        if status in _FATAL_ACK_STATUSES:
+        if status in FATAL_ACK_STATUSES:
             raise ProtocolError(f"action_ack reported a fatal status: {status!r}")
 
     def _handle_validation_result(self, event: Mapping) -> None:
@@ -302,7 +305,7 @@ class ValidationSession(_GameSession):
 
     @property
     def terminal_event_name(self) -> str:
-        return _EVENT_TYPE_VALIDATION_RESULT
+        return EVENT_TYPE_VALIDATION_RESULT
 
     @property
     def validation_result_received(self) -> bool:
@@ -351,7 +354,7 @@ class RankedSession(_GameSession):
 
     @property
     def terminal_event_name(self) -> str:
-        return _EVENT_TYPE_END_GAME
+        return EVENT_TYPE_END_GAME
 
     def _handle_end_game(self, event: Mapping) -> None:
         if self._adapter is None:
@@ -375,4 +378,15 @@ class RankedSession(_GameSession):
         super()._handle_end_game(event)
 
 
-__all__ = ["RankedSession", "SessionStatus", "ValidationSession"]
+__all__ = [
+    "EVENT_TYPE_ACTION_ACK",
+    "EVENT_TYPE_END_GAME",
+    "EVENT_TYPE_REQUEST_ACTION",
+    "EVENT_TYPE_START_GAME",
+    "EVENT_TYPE_VALIDATION_RESULT",
+    "FATAL_ACK_STATUSES",
+    "KNOWN_ACK_STATUSES",
+    "RankedSession",
+    "SessionStatus",
+    "ValidationSession",
+]
