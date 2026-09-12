@@ -139,10 +139,28 @@ python -m lisjong_arena.riichilab.validation --profile lisjong-dev
 python -m lisjong_arena.riichilab.continuous_ranked --profile lisjong-dev
 ```
 
+完走したranked 1半荘は、opt-inでArena-ownedの [durable ranked game record](docs/durable-ranked-game-record.md) として保存できます。
+
+```bash
+python -m lisjong_arena.riichilab.ranked \
+  --profile lisjong-dev \
+  --record-dir /durable/path/ranked-records
+```
+
+protocol traceとdurable ranked recordは別のものです。
+
+```text
+protocol trace         diagnostic / wire-level evidence
+durable ranked record  completed one-hanchan research raw source
+training dataset       downstream consumer-specific artifact
+omniscient game log    提供しない
+```
+
 詳細:
 
 - [RiichiLab client runtime contract](docs/riichilab-client.md)
 - [RiichiLab protocol bridge](docs/riichilab-protocol-bridge.md)
+- [RiichiLab durable ranked game record](docs/durable-ranked-game-record.md)
 - [RiichiLab bounded server-log corpus](docs/riichilab-corpus.md)
 - [RiichiLab downstream reconstruction qualification](docs/riichilab-downstream-qualification.md)
 

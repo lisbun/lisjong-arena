@@ -141,6 +141,43 @@ round result facts
     -> execution時点のobjective terminal truth
 ```
 
+### RiichiLab ranked durable raw record
+
+外部RiichiLab rankedでlisjong自身が完走した1半荘は、Arena-ownedの
+[durable ranked game record](durable-ranked-game-record.md)として保存できる。
+executionとobservationはArena責務であり、この記録もArenaが所有する。
+
+```text
+protocol trace
+    -> diagnostic / wire-level evidence
+
+durable ranked record
+    -> completed one-hanchan research raw source
+
+training dataset
+    -> downstream consumer-specific artifact
+
+omniscient game log
+    -> 提供しない
+```
+
+RiichiEnv local recordとRiichiLab ranked recordはschemaもdomain modelも共有しない。
+共通persistence helperが存在することを理由に、2つのexecution pathをproject-wide
+canonical `GameRecord`へ統合しない。
+
+```text
+durable local game record
+    -> standard RiichiEnv completed runのcross-process transport
+
+durable ranked game record
+    -> RiichiLab ranked completed hanchanのcross-process transport
+```
+
+ranked recordが持つのはserving時点でlisjong自身に見えていたplayer-safe stateだけで
+あり、相手の伏せ手・山・未来のツモのground truthは持たない。したがってHandBelief
+teacher labelの供給源としては扱わない。credential / Authorization情報はrecordへ
+流さない。
+
 ## Experiment-local Research / ML
 
 Arenaは、bounded research questionを検証するために必要なpurpose-specific ML / analysis implementationを所有できる。

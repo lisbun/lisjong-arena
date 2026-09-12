@@ -135,6 +135,20 @@ def _reject_duplicate_object_keys(
     return result
 
 
+def parse_json_text(serialized: str) -> object:
+    """JSON textを、非有限数とduplicate keyを拒否してparseする。
+
+    ``json.JSONDecodeError``はここでcatchせず、caller側のfail-closedな
+    error契約へそのまま伝える。1 file = 1 documentのartifactと、1 line =
+    1 documentのJSON Lines payloadが同じ厳格さでparseされるようにする。
+    """
+    return json.loads(
+        serialized,
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=_reject_duplicate_object_keys,
+    )
+
+
 def read_json_document(path: Path) -> object:
     """UTF-8 JSON fileを、非有限数とduplicate keyを拒否して読み込む。
 
@@ -145,11 +159,7 @@ def read_json_document(path: Path) -> object:
         serialized = path.read_text(encoding="utf-8")
     except UnicodeError as exc:
         raise ArtifactValidationError("artifact is not valid UTF-8") from exc
-    return json.loads(
-        serialized,
-        parse_constant=_reject_json_constant,
-        object_pairs_hook=_reject_duplicate_object_keys,
-    )
+    return parse_json_text(serialized)
 
 
 __all__ = [
@@ -164,6 +174,7 @@ __all__ = [
     "expect_optional_float",
     "expect_optional_int",
     "expect_str",
+    "parse_json_text",
     "read_json_document",
     "write_new_artifact_file",
 ]
