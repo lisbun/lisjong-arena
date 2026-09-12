@@ -60,25 +60,32 @@ Arena側へ新しい麻雀rules engineを実装せず、current dependencyであ
 `riichienv==0.4.10`のreplay APIをauthoritative seamとして使う。
 
 ```text
-MJAI jsonl events (player-visible public record)
-    -> RiichiEnv.apply_event()                 # rules / state transition authority
-    -> RiichiEnv.get_observations()            # 実際のdecision opportunity
-    -> Observation.legal_actions()             # exact legal action set
-    -> Observation.select_action_from_mjai()   # 観測teacher actionのlegality
+MJAI jsonl events
+    -> MjaiReplay / Kyoku.steps()              # decision / implicit Pass authority
+    -> RiichiEnv.apply_event() / get_observations()
+         # 同じprefixのpublic history / canonical legal snapshot
+    -> Observation.legal_actions() / select_action_from_mjai()
+         # observed teacher intentをexact candidateへ解決
     -> current Arena adapter
          SeatMaterializedState / RiichiEnvActionMappingSession / build_policy_input
     -> DecisionContext(PolicyInput, legal_actions)
     -> 8204 feature + 802 legal mask + canonical teacher action index
 ```
 
-### なぜ`MjaiReplay` / `Kyoku.steps()`を採用しないか
+### purpose-specific hybrid authority
 
-`riichienv.MjaiReplay.from_jsonl()` + `Kyoku.steps(seat=...)`も同じengineの
-replay pathであり、`(seat, Observation, Action)`を生成する。ただしそこで得られる
-`Observation`はseat-visible MJAI event channel（`Observation.events` /
-`new_events()`）を保持しない（実測では初期化時の別dealに由来するstale event
-だけが入る）。current `PolicyInput`は次の**履歴**を要求するため、event channelの
-ないobservationからはexactに構築できない。
+`Kyoku.steps()`は`(pid, Observation, Action)`でdecision opportunityと
+implicit Passを提示する。iteratorの`pid`をseat authorityとし、各stepを
+round・actor・teacher event ordinal・pre-decision event ordinalへ厳密に結合する。
+stepを1件でも消費できない場合、game全体をunsupportedにする。replayの
+Action objectはcanonical teacher actionとして使用しない。
+
+通常decisionの公開stateとlegal candidateは、同じprefixの
+`RiichiEnv.apply_event()` / `get_observations()`から得る。replay Observationは
+kan後の公開前doraを先取りし得て、Ponのconsumeが鳴いた3牌となり得る。
+そのため両APIのseat・round・score・hand・河・riichi等のpre-decision stateが
+一致することを検査し、特徴量へ入れる**履歴**はseat-visible event streamから
+構築する。
 
 ```text
 discardのglobal order / tsumogiri / called_by
@@ -87,10 +94,11 @@ riichi段階（NONE / DECLARED / ACCEPTED）
 live wall残数（84 - kyoku内tsumo event数）
 ```
 
-したがってGate 0は同じengineの`RiichiEnv.apply_event()`
-（riichienv自身が"Use this for replay parsing and training data generation"と
-記述するentry point）をmaterialization seamとして使い、`Observation.new_events()`
-が返すseat-projected event列をcurrent Arena adapterへ渡す。
+`Observation.new_events()`のseat-projected event列だけを既存の
+`SeatMaterializedState`へ渡す。槍槓responseのみ、`apply_event()`がdecisionを
+提示しないため、Kakan直後の`Kyoku.steps()` observationを使用する。
+multi-ronの2人目はstepに出ないため、同じ打牌直後に凍結した
+`apply_event()` response snapshotとexact Ron候補を使う。
 
 ### 0.4.10再検証と既知のreplay seam limitation
 
@@ -110,9 +118,18 @@ triggerだけを示すviewを渡す。PolicyInput用の全河・公開履歴は�
 | --- | --- | --- |
 | 1 | `apply_event()`が作るmeldは`Meld.from_who == -1`で、`PublicMeld.from_seat`を満たせない | chi / pon / daiminkanの`target`はpublic MJAI record自身が持つ公開事実なので、call eventからmeld provenanceをprojectし、engineのmeld snapshotとkind / 件数 / 順序が一致することをfail closedで確認する |
 | 2 | `apply_event()`は同じsemantic tileを1つのcanonical physical IDへaliasするため、`drawn_tile`がhandの既存copyと同一IDになり、tedashi / tsumogiriという公開上区別可能な2つのlegal discardが1つへ潰れる | engine自身が返した**slotごとの**legal discard action列とhand multisetから、一意に戻せる場合（`offered == held`）だけ戻す。drawn tile IDのslotがengine側で制限されていて一意に戻せない場合は、choice rowであれば`drawn_tile_discard_slots_restricted_under_collapsed_tile_identity`としてunresolvedにする |
-| 3 | 0.4.10の`turn_count` / `is_first_turn`はfixed-seed replayで進行したが、九種九牌の全call / round contextでのexact legalityは未確立 | `KYUSHU_KYUHAI`が現れるdecisionは引き続き`first_turn_dependent_legal_action_not_reconstructed_by_replay_seam`としてunresolvedにする |
-| 4 | `apply_event()` / `observe_event()`のいずれも、kakanに対する槍槓（chankan）のron response windowを再構成しない | recordにそのseatのactionがあるのにdecision opportunityが存在しない場合、observed teacher actionをsilentに捨てず、`observed_action_without_decision_opportunity`としてそのgame全体をunsupportedにする |
-| 5 | 別seatの過去の河と現在の打牌が同じreplay physical IDになる | MJAI公開打牌者とengineの河・`last_discard`を照合し、call-target mappingへ現在のtriggerだけを渡す。照合不能なら`call_target_provenance_mismatch`でunresolvedにする |
+| 3 | synthetic九種九牌のterminal recordでは`Kyoku.steps()`がstepを出さない | 同じprefixの`apply_event()`が提示した`KYUSHU_KYUHAI` legal candidateと`select_action_from_mjai()`でのみretainする。dealer / non-dealer初巡とeligibility終了後のabsenceを0.4.10で確認した |
+| 4 | `apply_event()`はkakanに対する槍槓response windowを提示しない | `Kyoku.steps()`の同じKakan prefixのRon / Pass stepがある場合だけそのObservationでmaterializeする。future result / doraをhistoryへ入れない |
+| 5 | `Kyoku.steps()`はmulti-ronの先頭winnerだけを出す | 2人目以降は同じpre-response prefixの`apply_event()` snapshotにexact Ronがある場合だけretainする。なければgame全体をunsupportedにする |
+| 6 | 別seatの過去の河と現在の打牌が同じreplay physical IDになる | MJAI公開打牌者とengineの河・`last_discard`を照合し、call-target mappingへ現在のtriggerだけを渡す。照合不能なら`call_target_provenance_mismatch`でunresolvedにする |
+
+Issue #233のArena-generated bounded sample（各mode seed 245・246）では、
+`4p-red-single`が2 game / live 130 / hybrid 130 / exact choice 115 /
+forced 15 / unresolved 0、`4p-red-half`が2 game / live 1,215 /
+hybrid 1,215 / exact choice 1,136 / forced 77 / unresolved 2だった。
+halfの2件はどちらもphysical copy slotが一意に解決できない打牌である。
+retainしたrowでは8204 feature、802 legal mask、teacher indexのlive比較に
+不一致がなかった。このsampleは実#170 Gate 0の成否を示すものではない。
 
 kan宣言と補充drawの間のような中間状態は、`RiichiEnv.needs_tsumo`と
 `Phase.WaitResponse`から判定してdecision opportunityへ計上しない
@@ -147,14 +164,14 @@ unresolvedと同様にsupervision populationの件数へ含めない。
 
 implicit Passをmaterializeするのは次の3条件がすべて成立する場合だけである。
 
-1. engineがそのseatへexact legal response opportunityを提示している
-2. そのopportunityのlegal actionsへ`PASS`が含まれる
-3. 同じtriggerに対して他のseatのcall / ronを1件も観測していない
+1. `Kyoku.steps()`がそのseat・prefixにPass stepを提示している
+2. 同じprefixのexact legal actionsへ`PASS`が含まれる
+3. 明示`none` eventへ既に結び付いていない
 
-他のseatがclaimしていた場合、そのseatがPassを選んだのかpriorityで上書き
-されたのかはpublic recordから決まらないため、
+他のseatがclaimしていてPass stepも存在しない場合、そのseatがPassを選んだのか
+priorityで上書きされたのかは決まらないため、
 `ambiguous_pass_after_competing_claim`としてunresolvedにする。明示`none`は
-explicit passとして扱う。
+stepとeventが一致したときだけexplicit passとして扱う。
 
 ### Gate 0 hard outcome
 
