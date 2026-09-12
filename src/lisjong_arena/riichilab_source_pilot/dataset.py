@@ -233,7 +233,7 @@ def materialize_local_corpus(
         seats, payload = verified[game_id]
         games.append(
             materialize_game(
-                parse_jsonl_gzip(payload),
+                list(parse_jsonl_gzip(payload)),
                 game_id=game_id,
                 target_seats=seats,
                 game_mode=SOURCE_GAME_MODE,

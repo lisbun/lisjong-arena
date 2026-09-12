@@ -4,6 +4,8 @@
 fixtureとArena自身のlocal RiichiEnv実行だけを使う。
 """
 
+import gzip
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -46,8 +48,13 @@ from lisjong_arena.learned_policy_input import (
     build_policy_input_feature,
     tensor_values,
 )
-from lisjong_arena.riichilab_corpus.models import CorpusError, RecentGamesSnapshot
+from lisjong_arena.riichilab_corpus.models import (
+    CorpusError,
+    Participation,
+    RecentGamesSnapshot,
+)
 from lisjong_arena.riichilab_corpus.persistence import ensure_outside_git_worktree
+from lisjong_arena.riichilab_corpus.validation import parse_jsonl_gzip
 from lisjong_arena.riichilab_source_pilot import __main__ as cli_module
 from lisjong_arena.riichilab_source_pilot import dataset as dataset_module
 from lisjong_arena.riichilab_source_pilot import (
@@ -1146,6 +1153,54 @@ class LocalCorpusOutputPathTests(unittest.TestCase):
             load_index.assert_called_once_with(Path(directory).resolve())
             arm_y.assert_not_called()
             run_pilot.assert_not_called()
+
+
+class LocalCorpusParserBoundaryTests(unittest.TestCase):
+    def test_real_parser_tuple_reaches_materializer_as_list(self):
+        game_id = "synthetic-game"
+        events = normal_discard_log()
+        payload = gzip.compress(
+            "\n".join(json.dumps(event) for event in events).encode("utf-8")
+        )
+        parsed = parse_jsonl_gzip(payload)
+        self.assertIsInstance(parsed, tuple)
+        self.assertEqual(parsed, tuple(events))
+        snapshot = RecentGamesSnapshot(
+            retrieved_at="2026-09-12T00:00:00Z",
+            source_apis=(),
+            target_bots=(),
+            participations=(Participation(game_id, 1, 0, "2026-09-12T00:00:00Z"),),
+            snapshot_identity="s" * 64,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                mock.patch.object(
+                    dataset_module, "load_cache_index", return_value={game_id: {}}
+                ),
+                mock.patch.object(
+                    dataset_module,
+                    "validate_manifest_file",
+                    return_value={
+                        "corpus_identity": dataset_module.ARM_R_CORPUS_IDENTITY,
+                        "manifest_sha256": dataset_module.ARM_R_MANIFEST_SHA256,
+                    },
+                ),
+                mock.patch.object(
+                    dataset_module,
+                    "_verify_every_cached_game",
+                    return_value={game_id: ({Seat(0): 1}, payload)},
+                ),
+                mock.patch.object(
+                    dataset_module,
+                    "materialize_game",
+                    wraps=materialization_module.materialize_game,
+                ) as materialize,
+            ):
+                source = dataset_module.materialize_local_corpus(snapshot, directory)
+        materialize.assert_called_once()
+        self.assertIsInstance(materialize.call_args.args[0], list)
+        self.assertEqual(materialize.call_args.args[0], list(parsed))
+        self.assertTrue(source.games[0].supported)
 
 
 class Gate0ReportTests(unittest.TestCase):
