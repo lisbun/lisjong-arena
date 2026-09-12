@@ -300,7 +300,7 @@ def provenance():
         },
         "runtime": {
             "python": platform.python_version(),
-            "torch": torch.__version__,
+            "torch": str(torch.__version__),
             "riichienv": importlib.metadata.version("riichienv"),
             "os": platform.platform(),
             "cpu": platform.processor() or platform.machine(),

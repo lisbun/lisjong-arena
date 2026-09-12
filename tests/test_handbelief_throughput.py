@@ -9,6 +9,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from _phase4_raw_corpus_fixtures import fixture_corpus
 
@@ -19,6 +20,7 @@ from lisjong_arena.handbelief_throughput import (
     load_result,
     make_result,
     profile,
+    provenance,
     save_result,
     validate_result,
 )
@@ -41,6 +43,27 @@ from lisjong_arena.stage3_optimization_saturation.retained import retained_value
 
 @unittest.skipUnless(importlib.util.find_spec("torch"), "requires PyTorch")
 class ThroughputTest(unittest.TestCase):
+    def test_live_runtime_provenance_uses_plain_json_strings(self):
+        from lisjong_arena.stage3_entry_gate.experiment import configure_torch_runtime
+
+        configure_torch_runtime()
+        with (
+            patch(
+                "lisjong_arena.handbelief_throughput.subprocess.check_output",
+                side_effect=["a" * 40, ""],
+            ),
+            patch(
+                "lisjong_arena.handbelief_throughput.platform.platform",
+                return_value="test OS",
+            ),
+            patch(
+                "lisjong_arena.handbelief_throughput.platform.processor",
+                return_value="test CPU",
+            ),
+        ):
+            source = provenance()
+        self.assertIs(type(source["runtime"]["torch"]), str)
+
     def _data(self, root):
         raw = save_raw_corpus(fixture_corpus(), root / "raw")
         dataset = build_phase5_belief_dataset(raw, FirstPartySplitPolicy.ACCEPTANCE)
