@@ -1,7 +1,7 @@
 """Gate 0 — RiichiLab MJAI record -> exact current `DecisionContext`。
 
 Issue #211のGate 0は、新しい麻雀rules engineをArenaへ実装せず、current
-dependencyである`riichienv==0.4.8`のreplay seamをauthorityとして使う。
+dependencyである`riichienv==0.4.10`のreplay seamをauthorityとして使う。
 
 ```text
 MJAI jsonl event列 (player-visible public record)
@@ -28,9 +28,8 @@ seamとして使い、`MjaiReplay`は採用しない。この判断はIssue #211
 
 ## 既知のreplay seam limitation
 
-RiichiEnv 0.4.8のMJAI replayは、public MJAI recordに存在しない情報を
-復元せず、live実行では維持しているstateの一部も維持しない。実測した4点を、
-推測補完ではなくcontractとして扱う。
+RiichiEnv 0.4.8で記録したMJAI replayの制約を0.4.10でも再検証した。
+public MJAI recordに存在しない情報は推測補完せず、以下をcontractとして扱う。
 
 1. **meld provenance** — `apply_event()`が作るmeldは`Meld.from_who == -1`で
    あり、`PublicMeld.from_seat`を満たせない。ただしchi / pon / daiminkanの
@@ -49,11 +48,10 @@ RiichiEnv 0.4.8のMJAI replayは、public MJAI recordに存在しない情報を
    制限されている場合）はheuristicで補完せず、rowを
    `drawn_tile_discard_slots_restricted_under_collapsed_tile_identity`として
    unresolvedにする。
-3. **first-turn state** — `apply_event()`は`is_first_turn` / `turn_count`を
-   更新しない（実測では常に`True` / `0`）。九種九牌は「誰も鳴いていない
-   最初の自摸巡」という条件に依存するため、legal action setへ
-   `KYUSHU_KYUHAI`が現れるdecisionはexactにならない。条件をArena側で
-   推測せず、rowを
+3. **first-turn state** — 0.4.10の`turn_count`と`is_first_turn`は
+   fixed-seed replayで進行した。ただし九種九牌の全response / call
+   contextでのexact legalityは確認できていないため、legal action setへ
+   `KYUSHU_KYUHAI`が現れるdecisionは引き続き推測せず、rowを
    `first_turn_dependent_legal_action_not_reconstructed_by_replay_seam`として
    unresolvedにする。
 4. **chankan response window** — `apply_event()`も`observe_event()`も、
@@ -62,6 +60,10 @@ RiichiEnv 0.4.8のMJAI replayは、public MJAI recordに存在しない情報を
    存在しない場合、観測済みteacher actionをsilentに捨てず、
    `observed_action_without_decision_opportunity`としてそのgame全体を
    unsupportedにする。
+5. **replay physical ID alias** — 0.4.10の`apply_event()`では別seatの
+   過去の河と直前打牌が同じIDになる。current action translatorの一意な
+   target判定を緩めず、公開MJAI打牌者とengine snapshotの一致を確認した
+   decision-local witnessだけをmappingへ渡す。PolicyInputには全河を渡す。
 
 kan宣言と補充drawの間のような中間状態は、`RiichiEnv.needs_tsumo`と
 `Phase.WaitResponse`から判定してdecision opportunityへ計上しない
@@ -105,7 +107,7 @@ from lisjong.policy_contract.action import (
 )
 from lisjong.policy_contract.decision_context import DecisionContext
 from lisjong.policy_contract.seat import Seat
-from riichienv import ActionType, MeldType, Phase, RiichiEnv
+from riichienv import ActionType, Meld, MeldType, Phase, RiichiEnv
 
 from lisjong_arena.learned_policy_input import (
     build_policy_input_feature,
@@ -210,6 +212,7 @@ class RowUnresolvedReason(Enum):
     )
     DISCARD_ACTIONS_EXCEED_HAND_SLOTS = "discard_actions_exceed_hand_slots"
     MELD_PROVENANCE_MISMATCH = "meld_provenance_mismatch"
+    CALL_TARGET_PROVENANCE_MISMATCH = "call_target_provenance_mismatch"
     AMBIGUOUS_PASS_AFTER_COMPETING_CLAIM = "ambiguous_pass_after_competing_claim"
     TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET = "teacher_action_not_in_exact_legal_set"
     TEACHER_ACTION_UNMAPPABLE = "teacher_action_unmappable"
@@ -355,16 +358,6 @@ class GameMaterialization:
 
 
 @dataclass(frozen=True, slots=True)
-class _ReplayMeld:
-    """`PublicMeld`構築に必要なfieldだけを持つ、provenance補正済みmeld view。"""
-
-    meld_type: object
-    tiles: tuple[int, ...]
-    from_who: int
-    called_tile: int | None
-
-
-@dataclass(frozen=True, slots=True)
 class _ReplayAction:
     """decision-local action mappingが読むfieldだけを持つaction view。"""
 
@@ -391,17 +384,19 @@ class _ReplayObservation:
         "_hand",
         "_drawn_tile",
         "_legal_actions",
+        "_trigger",
     )
 
     def __init__(
         self,
         raw,
         *,
-        melds: tuple[tuple[_ReplayMeld, ...], ...],
+        melds: list[list[Meld]],
         hand: tuple[int, ...],
         drawn_tile: int | None,
         legal_actions: tuple[_ReplayAction, ...],
         drawn_slot_ambiguous: bool,
+        trigger: tuple[str, int] | None,
     ) -> None:
         self.raw = raw
         self.player_id = raw.player_id
@@ -410,6 +405,7 @@ class _ReplayObservation:
         self._hand = hand
         self._drawn_tile = drawn_tile
         self._legal_actions = legal_actions
+        self._trigger = trigger
 
     @property
     def melds(self):
@@ -466,6 +462,51 @@ class _ReplayObservation:
     def legal_actions(self):
         return list(self._legal_actions)
 
+    def action_mapping_view(self):
+        """公開triggerのactorを使い、alias河からcall targetだけを投影する。
+
+        RiichiEnv replayでは異なる物理牌が同じIDへaliasされるため、過去の
+        河の末尾が複数seatで`last_discard`と一致し得る。mappingには現在の
+        公開打牌またはkakanだけを渡し、PolicyInputには全河を渡す。
+        """
+        if not any(
+            action.action_type
+            in (ActionType.CHI, ActionType.PON, ActionType.DAIMINKAN, ActionType.RON)
+            for action in self._legal_actions
+        ):
+            return self
+        if self._trigger is None:
+            raise _RowUnresolved(RowUnresolvedReason.CALL_TARGET_PROVENANCE_MISMATCH)
+        kind, source = self._trigger
+        if type(source) is not int or not 0 <= source < 4:
+            raise _RowUnresolved(RowUnresolvedReason.CALL_TARGET_PROVENANCE_MISMATCH)
+        discards: list[list[int]] = [[] for _ in range(4)]
+        melds: list[list[Meld]] = [[] for _ in range(4)]
+        if kind == "dahai":
+            source_discards = self.raw.discards[source]
+            if (
+                self.raw.last_discard is None
+                or not source_discards
+                or source_discards[-1] != self.raw.last_discard
+            ):
+                raise _RowUnresolved(
+                    RowUnresolvedReason.CALL_TARGET_PROVENANCE_MISMATCH
+                )
+            discards[source] = [source_discards[-1]]
+        elif kind == "kakan":
+            source_melds = self._melds[source]
+            if not any(
+                meld.meld_type == MeldType.Kakan and self.raw.last_discard in meld.tiles
+                for meld in source_melds
+            ):
+                raise _RowUnresolved(
+                    RowUnresolvedReason.CALL_TARGET_PROVENANCE_MISMATCH
+                )
+            melds[source] = source_melds
+        else:
+            raise _RowUnresolved(RowUnresolvedReason.CALL_TARGET_PROVENANCE_MISMATCH)
+        return _ActionMappingObservation(self, discards=discards, melds=melds)
+
     def new_events(self):
         """このviewはseat-visible eventをimplicitに提供しない。
 
@@ -477,6 +518,20 @@ class _ReplayObservation:
         raise MaterializationError(
             "replay observations must be synchronised with an explicit event batch"
         )
+
+
+class _ActionMappingObservation:
+    """canonical translatorへ渡す、現在の公開call triggerのwitness。"""
+
+    __slots__ = ("_base", "discards", "melds")
+
+    def __init__(self, base, *, discards, melds) -> None:
+        self._base = base
+        self.discards = discards
+        self.melds = melds
+
+    def __getattr__(self, name):
+        return getattr(self._base, name)
 
 
 def _copy_ids_for(tile_id: int) -> tuple[int, ...]:
@@ -630,28 +685,29 @@ class _MeldProvenance:
         # kakanは既存のPon meldをin-placeで置き換えるため、provenanceは
         # 元のPonのものがそのまま残る。
 
-    def melds_for(self, observation) -> tuple[tuple[_ReplayMeld, ...], ...]:
-        rows: list[tuple[_ReplayMeld, ...]] = []
+    def melds_for(self, observation) -> list[list[Meld]]:
+        rows: list[list[Meld]] = []
         for seat in range(4):
             engine_melds = list(observation.melds[seat])
             provenance = self._from_who[seat]
             if len(engine_melds) != len(provenance):
                 raise _RowUnresolved(RowUnresolvedReason.MELD_PROVENANCE_MISMATCH)
-            seat_melds: list[_ReplayMeld] = []
+            seat_melds: list[Meld] = []
             for meld, from_who in zip(engine_melds, provenance, strict=True):
                 is_concealed_kan = meld.meld_type == MeldType.Ankan
                 if is_concealed_kan != (from_who < 0):
                     raise _RowUnresolved(RowUnresolvedReason.MELD_PROVENANCE_MISMATCH)
                 seat_melds.append(
-                    _ReplayMeld(
+                    Meld(
                         meld_type=meld.meld_type,
-                        tiles=tuple(meld.tiles),
+                        tiles=list(meld.tiles),
+                        opened=meld.opened,
                         from_who=from_who,
                         called_tile=None if is_concealed_kan else meld.called_tile,
                     )
                 )
-            rows.append(tuple(seat_melds))
-        return tuple(rows)
+            rows.append(seat_melds)
+        return rows
 
 
 def _require_player_safe_event(event: dict, seat: int) -> None:
@@ -823,6 +879,7 @@ def _materialize_game(
     forced_rows = 0
     rounds = 0
     round_ordinal = -1
+    call_trigger: tuple[str, int] | None = None
 
     def emit(entry: _PendingDecision, mjai: dict | None) -> None:
         """1 decisionのrow化を1回だけ試す。
@@ -944,6 +1001,22 @@ def _materialize_game(
         if event_type == "start_kyoku":
             rounds += 1
             round_ordinal += 1
+            call_trigger = None
+        elif event_type in ("dahai", "kakan"):
+            actor = event.get("actor")
+            call_trigger = (event_type, actor) if type(actor) is int else None
+        elif event_type in (
+            "tsumo",
+            "reach",
+            "chi",
+            "pon",
+            "daiminkan",
+            "ankan",
+            "hora",
+            "ryukyoku",
+            "end_kyoku",
+        ):
+            call_trigger = None
         provenance.apply_event(event)
         try:
             env.apply_event(event)
@@ -1023,7 +1096,7 @@ def _materialize_game(
             else:
                 frozen_length = len(runtime.events)
                 try:
-                    view = _freeze_observation(observation, provenance)
+                    view = _freeze_observation(observation, provenance, call_trigger)
                 except _RowUnresolved as signal:
                     view = _UnmaterializableObservation(observation, signal.reason)
             pending[player_id] = _PendingDecision(
@@ -1072,14 +1145,13 @@ class _UnmaterializableObservation:
         return self.raw.legal_actions()
 
 
-def _freeze_observation(observation, provenance: _MeldProvenance) -> _ReplayObservation:
+def _freeze_observation(
+    observation, provenance: _MeldProvenance, trigger: tuple[str, int] | None
+) -> _ReplayObservation:
     legal_actions = tuple(observation.legal_actions())
     if any(action.action_type == ActionType.KYUSHU_KYUHAI for action in legal_actions):
-        # 実測: `RiichiEnv.apply_event()`によるreplayでは`is_first_turn`と
-        # `turn_count`が更新されない（常に`True` / `0`）。九種九牌は
-        # 「誰も鳴いていない最初の自摸巡」という条件に依存するため、この
-        # seamのlegal action setは九種九牌を含む局面でexactにならない。
-        # 条件をArena側で推測して補完せず、rowをunresolvedにする。
+        # 0.4.10 replayのcounter進行は実測したが、九種九牌の全call / round
+        # contextでのlegalityは未確立。exact性を主張せずunresolvedにする。
         raise _RowUnresolved(RowUnresolvedReason.FIRST_TURN_STATE_NOT_RECONSTRUCTED)
     melds = provenance.melds_for(observation)
     hand, drawn_tile, repaired, ambiguous = _repair_discard_identity(
@@ -1092,6 +1164,7 @@ def _freeze_observation(observation, provenance: _MeldProvenance) -> _ReplayObse
         drawn_tile=drawn_tile,
         legal_actions=repaired,
         drawn_slot_ambiguous=ambiguous,
+        trigger=trigger,
     )
 
 
@@ -1109,11 +1182,11 @@ def _build_row(
     if isinstance(view, _UnmaterializableObservation):
         raise _RowUnresolved(view.reason)
 
+    mapping_view = view.action_mapping_view()
     new_events = runtime.events[runtime.consumed : entry.frozen_event_length]
     runtime.consumed = entry.frozen_event_length
-
     try:
-        mapping = runtime.session.build(view)
+        mapping = runtime.session.build(mapping_view)
         policy_input = build_policy_input(
             runtime.tracker, view, new_events=list(new_events)
         )
@@ -1143,7 +1216,7 @@ def _build_row(
             raise _RowUnresolved(
                 RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET
             )
-        selected = _observed_internal_action(view, external, mjai, runtime.seat)
+        selected = _observed_internal_action(mapping_view, external, mjai, runtime.seat)
     if selected not in decision.legal_actions:
         raise _RowUnresolved(RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET)
 

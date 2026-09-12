@@ -57,7 +57,7 @@ planning APIもexecution APIもseed引数を持たないため、resultを見て
 ## Gate 0 — RiichiLab MJAI -> exact current `DecisionContext`
 
 Arena側へ新しい麻雀rules engineを実装せず、current dependencyである
-`riichienv==0.4.8`のreplay APIをauthoritative seamとして使う。
+`riichienv==0.4.10`のreplay APIをauthoritative seamとして使う。
 
 ```text
 MJAI jsonl events (player-visible public record)
@@ -92,7 +92,17 @@ live wall残数（84 - kyoku内tsumo event数）
 記述するentry point）をmaterialization seamとして使い、`Observation.new_events()`
 が返すseat-projected event列をcurrent Arena adapterへ渡す。
 
-### 既知のreplay seam limitation
+### 0.4.10再検証と既知のreplay seam limitation
+
+0.4.10上で`apply_event()` / `get_observations()`のdecision、
+`Observation.legal_actions()` / `select_action_from_mjai()`とbase64
+serialize / deserializeを実行で確認した。syntheticのChi / Pon /
+Daiminkan / Kakan / Ron、post-call discard、round進行に加え、Arenaが
+生成したfixed-seed 245・246のpublic-format logをcurrent adapterと照合した。
+`last_discard`は牌IDだが、replayは別seatの過去の物理牌を同じIDへaliasし得る。
+公開MJAIの直前打牌者とengineの直近河を照合し、call mappingへは現在の
+triggerだけを示すviewを渡す。PolicyInput用の全河・公開履歴は保持する。
+物理copy IDやmeldの出所を候補順・任意の牌IDから推測しない。
 
 いずれも推測補完せず、contractとして扱う。`reason code`付きで計上する。
 
@@ -100,8 +110,9 @@ live wall残数（84 - kyoku内tsumo event数）
 | --- | --- | --- |
 | 1 | `apply_event()`が作るmeldは`Meld.from_who == -1`で、`PublicMeld.from_seat`を満たせない | chi / pon / daiminkanの`target`はpublic MJAI record自身が持つ公開事実なので、call eventからmeld provenanceをprojectし、engineのmeld snapshotとkind / 件数 / 順序が一致することをfail closedで確認する |
 | 2 | `apply_event()`は同じsemantic tileを1つのcanonical physical IDへaliasするため、`drawn_tile`がhandの既存copyと同一IDになり、tedashi / tsumogiriという公開上区別可能な2つのlegal discardが1つへ潰れる | engine自身が返した**slotごとの**legal discard action列とhand multisetから、一意に戻せる場合（`offered == held`）だけ戻す。drawn tile IDのslotがengine側で制限されていて一意に戻せない場合は、choice rowであれば`drawn_tile_discard_slots_restricted_under_collapsed_tile_identity`としてunresolvedにする |
-| 3 | `apply_event()`は`is_first_turn` / `turn_count`を更新しない（常に`True` / `0`） | 九種九牌は「誰も鳴いていない最初の自摸巡」条件に依存するため、legal action setに`KYUSHU_KYUHAI`が現れるdecisionは`first_turn_dependent_legal_action_not_reconstructed_by_replay_seam`としてunresolvedにする |
+| 3 | 0.4.10の`turn_count` / `is_first_turn`はfixed-seed replayで進行したが、九種九牌の全call / round contextでのexact legalityは未確立 | `KYUSHU_KYUHAI`が現れるdecisionは引き続き`first_turn_dependent_legal_action_not_reconstructed_by_replay_seam`としてunresolvedにする |
 | 4 | `apply_event()` / `observe_event()`のいずれも、kakanに対する槍槓（chankan）のron response windowを再構成しない | recordにそのseatのactionがあるのにdecision opportunityが存在しない場合、observed teacher actionをsilentに捨てず、`observed_action_without_decision_opportunity`としてそのgame全体をunsupportedにする |
+| 5 | 別seatの過去の河と現在の打牌が同じreplay physical IDになる | MJAI公開打牌者とengineの河・`last_discard`を照合し、call-target mappingへ現在のtriggerだけを渡す。照合不能なら`call_target_provenance_mismatch`でunresolvedにする |
 
 kan宣言と補充drawの間のような中間状態は、`RiichiEnv.needs_tsumo`と
 `Phase.WaitResponse`から判定してdecision opportunityへ計上しない

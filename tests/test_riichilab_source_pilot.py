@@ -33,6 +33,7 @@ from lisjong.action_vocabulary import (
 )
 from lisjong.policy_contract.decision_context import DecisionContext
 from lisjong.policy_contract.seat import Seat
+from riichienv import ActionType, RiichiEnv
 
 from lisjong_arena.learned_policy_input import (
     build_policy_input_feature,
@@ -390,6 +391,33 @@ class MaterializationCoverageTests(unittest.TestCase):
                 self.assertIn(
                     family, [row.teacher_action_family for row in result.rows]
                 )
+
+    def test_replay_alias_collision_keeps_exact_public_call_target(self):
+        """0.4.10 replayの同一ID重複でも公開打牌者でcallを帰属させる。"""
+        log = kakan_log(with_chankan_ron=False)
+        env = RiichiEnv(game_mode=GAME_MODE)
+        saw_alias_collision = False
+        for event in log:
+            env.apply_event(event)
+            for player_id, observation in env.get_observations().items():
+                if observation.last_discard is None or not any(
+                    action.action_type in (ActionType.CHI, ActionType.PON)
+                    for action in observation.legal_actions()
+                ):
+                    continue
+                matching_opponents = [
+                    seat
+                    for seat, discards in enumerate(observation.discards)
+                    if seat != player_id
+                    and discards
+                    and discards[-1] == observation.last_discard
+                ]
+                saw_alias_collision |= len(matching_opponents) > 1
+
+        self.assertTrue(saw_alias_collision)
+        result = materialize(log)
+        self.assertTrue(result.supported, result.unsupported_reason)
+        self.assertEqual(result.unresolved_reasons, ())
 
     def test_post_call_discard_is_its_own_decision_kind(self):
         result = materialize(chi_log())
