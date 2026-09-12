@@ -28,6 +28,7 @@ from _riichilab_source_pilot_fixtures import (
     tsumo_win_log,
     unknown_event_log,
 )
+from _source_pilot_strength_fixtures import save_strength_artifact
 from lisjong.action_vocabulary import (
     build_legal_action_mask,
     decode_action,
@@ -51,7 +52,10 @@ from lisjong_arena.riichilab_source_pilot import protocol as protocol_module
 from lisjong_arena.riichilab_source_pilot.artifact import (
     RESULT_FILENAME,
     SEED_PLAN_FILENAME,
+    STRENGTH_ARTIFACT_FILENAME,
     load_result,
+    result_identity,
+    save_result,
     seed_plan_document,
     validate_result,
     validate_seed_plan,
@@ -1105,6 +1109,8 @@ class CounterConsistencyTests(unittest.TestCase):
 
 BACKEND = "local-directory"
 KEY = "riichilab-source-pilot-211/non-ml-test"
+FOREIGN_CANDIDATE = "learned-source-pilot-r:" + "a" * 64
+FOREIGN_BASELINE = "learned-source-pilot-y:" + "b" * 64
 
 
 class TerminalOutcomeDurabilityTests(unittest.TestCase):
@@ -1249,6 +1255,89 @@ class BundleCrossBindingTests(unittest.TestCase):
             empty.mkdir()
             with self.assertRaises(SourcePilotArtifactError):
                 verify_bundle(empty)
+
+    def _rehashed(self, bundle: Path, directory: str, mutate) -> Path:
+        """resultをmutateし、result identityを再計算して別bundleへ保存する。"""
+        result = load_result(bundle / RESULT_FILENAME)
+        mutate(result)
+        del result["result_identity"]
+        result["result_identity"] = result_identity(result)
+        reissued = Path(directory) / "reissued"
+        reissued.mkdir()
+        save_result(reissued / RESULT_FILENAME, result)
+        return reissued
+
+    def test_a_blocked_outcome_must_match_the_decision_order(self):
+        """Gate 0 reportと矛盾するblocked outcomeを受け付けない。"""
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._blocked_bundle(directory)
+            self.assertEqual(
+                load_result(bundle / RESULT_FILENAME)["outcome"],
+                SourcePilotOutcome.SOURCE_MATERIALIZATION_BLOCKED.value,
+            )
+
+            def _pass_the_gate(result):
+                result["gate0"]["gate_passed"] = True
+
+            reissued = self._rehashed(bundle, directory, _pass_the_gate)
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(reissued)
+
+    def test_a_budget_outcome_requires_a_passed_gate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            run_source_pilot(
+                arm_y_source=None,
+                arm_r_source=_source(
+                    [_synthetic_game(f"g{index}", 10) for index in range(3)]
+                ),
+                destination=destination,
+                backend=BACKEND,
+                key=KEY,
+            )
+            self.assertEqual(
+                load_result(destination / RESULT_FILENAME)["outcome"],
+                SourcePilotOutcome.DATA_BUDGET_NOT_MATCHABLE.value,
+            )
+
+            def _fail_the_gate(result):
+                result["gate0"]["gate_passed"] = False
+
+            reissued = self._rehashed(destination, directory, _fail_the_gate)
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(reissued)
+
+    def test_a_blocked_outcome_must_not_carry_post_gate_blocks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = self._blocked_bundle(directory)
+
+            def _claim_a_budget(result):
+                result["budget"] = {"train_rows": 9116, "validation_rows": 2555}
+
+            reissued = self._rehashed(bundle, directory, _claim_a_budget)
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(reissued)
+
+    def test_a_strength_artifact_without_a_seed_plan_fails_closed(self):
+        """STOP bundleでも実行順序（seed plan -> strength artifact）を固定する。"""
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            persist_stop_invalid(
+                destination,
+                backend=BACKEND,
+                key=KEY,
+                stop_reason="simulated interruption",
+            )
+            self.assertIn(
+                "partial STOP / INVALID bundle", verify_bundle(destination)["verified"]
+            )
+            save_strength_artifact(
+                destination / STRENGTH_ARTIFACT_FILENAME,
+                FOREIGN_CANDIDATE,
+                FOREIGN_BASELINE,
+            )
+            with self.assertRaises(SourcePilotArtifactError):
+                verify_bundle(destination)
 
     def test_a_non_directory_bundle_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:

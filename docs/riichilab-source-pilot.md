@@ -312,9 +312,32 @@ result.outcome                 == classify_outcome(...)の再計算結果
 ```
 
 自己整合hashであることでは足りない。locked valueそのものと一致しなければ、
-そのfileは別実験の成果物として扱う。comparison前に停止したoutcomeのbundleは
-result 1 fileだけを許し、checkpoint / seed plan / strength artifactを同梱した
-状態をfail closedにする。
+そのfileは別実験の成果物として扱う。
+
+comparison前に停止したoutcomeのbundleはresult 1 fileだけを許し、
+checkpoint / seed plan / strength artifactを同梱した状態をfail closedにする。
+さらにdecision orderを再計算して照合する。
+
+```text
+SOURCE MATERIALIZATION BLOCKED  <-> gate0.gate_passed == false
+DATA BUDGET NOT MATCHABLE       <-> gate0.gate_passed == true
+budget / arms / strength        == null
+```
+
+self-consistentに再hashされていても、記録されたoutcomeとGate 0 reportが
+矛盾するresultは受け付けない。
+
+`STOP / INVALID`は途中で止まった実行痕跡を許すが、実行順序を前提として固定する。
+
+```text
+checkpoints -> seed plan -> strength artifact
+
+seed plan exists        -> 両armのcheckpointが存在し、policy identityがbindする
+strength artifact exists -> seed planが存在し、candidate / baselineが一致する
+```
+
+artifact自身が宣言したidentityをexpected valueとして使わない。したがって、
+単体としてvalidな別比較のstrength artifactをSTOP bundleへ入れてもfail closedする。
 
 ### Terminal outcomeのdurability
 

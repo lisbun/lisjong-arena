@@ -25,6 +25,16 @@ result.strength    == 再集計したcanonical summary document
 result.outcome     == classify_outcome(...)の再計算結果
 ```
 
+comparison前に停止したoutcome（`SOURCE MATERIALIZATION BLOCKED` /
+`DATA BUDGET NOT MATCHABLE`）もdecision orderを再計算して照合する。Gate 0
+reportと記録されたoutcomeが矛盾しているresultは、self-consistentに再hash
+されていても受け付けない。
+
+`STOP / INVALID`は途中で止まった実行痕跡を許すが、実行順序
+（checkpoints -> seed plan -> strength artifact）は前提として固定する。
+後段のartifactが存在するなら前段も存在し、identityがbindしていなければ
+ならない。
+
 どれか1つでも一致しなければfail closedする。近い値での代替、片側fallback、
 欠損fileの黙認は行わない。
 """
@@ -200,6 +210,43 @@ def _verify_result_shape(result: dict[str, object]) -> SourcePilotOutcome:
     return outcome
 
 
+def _verify_blocked_decision_order(
+    result: dict[str, object], outcome: SourcePilotOutcome
+) -> None:
+    """comparison前に停止したresultも、decision orderを再計算して照合する。
+
+    `SOURCE MATERIALIZATION BLOCKED`と`DATA BUDGET NOT MATCHABLE`はGate 0の
+    成否で決まる。self-consistentに再hashしたresultでも、記録されたoutcomeと
+    Gate 0 reportが矛盾していれば受け付けない。
+    """
+    gate0 = result.get("gate0")
+    _require(
+        type(gate0) is dict,
+        "a result that stopped before training must carry its Gate 0 report",
+    )
+    gate_passed = gate0.get("gate_passed")
+    _require(
+        type(gate_passed) is bool,
+        "the Gate 0 report does not carry a boolean hard outcome",
+    )
+    for name in ("budget", "arms", "strength"):
+        _require(
+            result.get(name) is None,
+            f"a result that stopped before training must not carry {name}",
+        )
+    recomputed = classify_outcome(
+        protocol_valid=True,
+        gate0_passed=gate_passed,
+        budget_matched=False,
+        interval_lower=None,
+        interval_upper=None,
+    )
+    _require(
+        recomputed is outcome,
+        "the recorded outcome is not the outcome the decision order produces",
+    )
+
+
 def _verify_budget(result: dict[str, object], arm_r: LoadedCheckpoint) -> None:
     budget = result.get("budget")
     _require(type(budget) is dict, "a completed result must carry a budget block")
@@ -295,10 +342,7 @@ def verify_bundle(path: str | Path) -> dict[str, object]:
             "a result that stopped before training must not retain checkpoints, "
             "a seed plan or a strength artifact",
         )
-        _require(
-            result.get("arms") is None and result.get("strength") is None,
-            "a result that stopped before training must not carry arms or strength",
-        )
+        _verify_blocked_decision_order(result, outcome)
         document["verified"] = "result-only terminal outcome"
         return document
 
@@ -398,23 +442,39 @@ def _verify_partial_bundle(
             _verify_checkpoint_source(checkpoint, arm)
             checkpoints[arm] = checkpoint
         verified.append(f"{len(checkpoints)} checkpoint(s)")
+
+    # 実行順序はcheckpoint -> seed plan -> strength artifactで固定されている。
+    # 途中で止まったbundleでも、後段のartifactが存在するなら前段も存在し、
+    # identityがbindしていなければならない。
+    plan: dict[str, object] | None = None
     if SEED_PLAN_FILENAME in entries:
+        _require(
+            set(checkpoints) == {ARM_Y, ARM_R},
+            "a seed plan is written after both arm checkpoints, so a bundle that "
+            "retains one cannot be missing a checkpoint",
+        )
         plan = load_seed_plan(bundle / SEED_PLAN_FILENAME)
         for arm, role in ((ARM_R, "candidate_identity"), (ARM_Y, "baseline_identity")):
-            if arm in checkpoints:
-                _require(
-                    plan[role] == checkpoints[arm].policy_identity,
-                    f"the seed plan {role} is not the retained {arm.value} policy",
-                )
+            _require(
+                plan[role] == checkpoints[arm].policy_identity,
+                f"the seed plan {role} is not the retained {arm.value} policy",
+            )
         verified.append("seed plan")
+
     if STRENGTH_ARTIFACT_FILENAME in entries:
         # artifactが存在する場合もSTOP / INVALIDはstrength claimを持たない。
-        # protocol条件だけを確認し、resultへ昇格させない。
+        # ただしどの比較のartifactなのかはlockedなseed planへbindさせる。
+        # artifact自身が宣言したidentityをexpected valueにしない。
+        _require(
+            plan is not None,
+            "a strength artifact is written after the locked seed plan, so a "
+            "bundle that retains one cannot be missing the seed plan",
+        )
         artifact = load_single_round_artifact(bundle / STRENGTH_ARTIFACT_FILENAME)
         verify_strength_artifact(
             artifact,
-            candidate_identity=artifact.plan.candidate_identity,
-            baseline_identity=artifact.plan.baseline_identity,
+            candidate_identity=plan["candidate_identity"],
+            baseline_identity=plan["baseline_identity"],
         )
         verified.append("strength artifact")
     return "partial STOP / INVALID bundle: " + ", ".join(verified)

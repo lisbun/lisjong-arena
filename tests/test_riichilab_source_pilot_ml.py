@@ -20,15 +20,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 from _riichilab_source_pilot_fixtures import generated_game_log
-from _single_round_artifact_fixtures import game_results, save
+from _source_pilot_strength_fixtures import save_strength_artifact
 from lisjong.policy_contract.decision_context import DecisionContext
 from lisjong.policy_contract.seat import Seat
 
-from lisjong_arena.model import (
-    PolicySpec,
-    SingleRoundEvaluationPlan,
-    SingleRoundEvaluationResult,
-)
 from lisjong_arena.riichilab_source_pilot import artifact as artifact_module
 from lisjong_arena.riichilab_source_pilot import bundle as bundle_module
 from lisjong_arena.riichilab_source_pilot import dataset as dataset_module
@@ -86,7 +81,6 @@ from lisjong_arena.riichilab_source_pilot.serving import (
 from lisjong_arena.single_round_artifact import load_single_round_artifact
 from lisjong_arena.single_round_evaluation import (
     ROTATION_COUNT,
-    aggregate_candidate_metrics,
 )
 
 TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
@@ -633,34 +627,10 @@ def _locked_source_documents(source) -> dict:
     }
 
 
-def _no_policy():  # pragma: no cover - gameをplayしないためのplaceholder
-    raise AssertionError("the bundle test never plays a game")
-
-
-def _save_strength_artifact(
-    path: Path, candidate_identity: str, baseline_identity: str
-) -> None:
-    """400 gameをplayせずlocked populationのstrength artifactを保存する。"""
-    plan = SingleRoundEvaluationPlan(
-        candidate=PolicySpec(identity=candidate_identity, factory=_no_policy),
-        baseline=PolicySpec(identity=baseline_identity, factory=_no_policy),
-        seeds=EVALUATION_SEEDS,
-    )
-    results = game_results(EVALUATION_SEEDS)
-    save(
-        SingleRoundEvaluationResult(
-            plan=plan,
-            game_results=results,
-            candidate_metrics=aggregate_candidate_metrics(candidate_identity, results),
-        ),
-        path,
-    )
-
-
 def _fake_run_evaluation(candidate, baseline, artifact_path, *, progress_callback=None):
     """ABBB実行だけを差し替える。artifactのschemaと検証pathは本物を通す。"""
     path = Path(artifact_path)
-    _save_strength_artifact(path, candidate.identity, baseline.identity)
+    save_strength_artifact(path, candidate.identity, baseline.identity)
     artifact = load_single_round_artifact(path)
     summary = verify_strength_artifact(
         artifact,
@@ -777,7 +747,7 @@ class BundleStrictReadbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             bundle = self._copy(directory)
             (bundle / STRENGTH_ARTIFACT_FILENAME).unlink()
-            _save_strength_artifact(
+            save_strength_artifact(
                 bundle / STRENGTH_ARTIFACT_FILENAME,
                 FOREIGN_CANDIDATE,
                 FOREIGN_BASELINE,
@@ -873,6 +843,23 @@ class EvaluationFailureDurabilityTests(unittest.TestCase):
                 backend=BACKEND,
                 key=KEY,
             )
+
+    def test_a_foreign_strength_artifact_in_a_stop_bundle_fails_closed(self):
+        """STOP bundleでもstrength artifactをlocked seed planへbindする。"""
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            with self.assertRaises(SourcePilotProtocolError):
+                self._run(destination)
+            # checkpointとseed planは本物、strength artifactだけ別比較のもの。
+            # 単体としてvalidなartifactでもbundleのevidenceにはならない。
+            self.assertTrue((destination / SEED_PLAN_FILENAME).is_file())
+            save_strength_artifact(
+                destination / STRENGTH_ARTIFACT_FILENAME,
+                FOREIGN_CANDIDATE,
+                FOREIGN_BASELINE,
+            )
+            with self.assertRaises(SourcePilotProtocolError):
+                verify_bundle(destination)
 
     def test_evaluation_failure_is_durable_and_not_rerunnable(self):
         with tempfile.TemporaryDirectory() as directory:
