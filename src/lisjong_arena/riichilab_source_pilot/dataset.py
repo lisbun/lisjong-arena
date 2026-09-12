@@ -194,7 +194,7 @@ def materialize_local_corpus(
     """
     if not isinstance(snapshot, RecentGamesSnapshot):
         raise TypeError("snapshot must be a RecentGamesSnapshot")
-    output = ensure_outside_git_worktree(output_dir)
+    output = ensure_outside_git_worktree(Path(output_dir))
 
     try:
         entries = load_cache_index(output)

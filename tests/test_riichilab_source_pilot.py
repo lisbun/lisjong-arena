@@ -46,6 +46,9 @@ from lisjong_arena.learned_policy_input import (
     build_policy_input_feature,
     tensor_values,
 )
+from lisjong_arena.riichilab_corpus.models import CorpusError, RecentGamesSnapshot
+from lisjong_arena.riichilab_corpus.persistence import ensure_outside_git_worktree
+from lisjong_arena.riichilab_source_pilot import __main__ as cli_module
 from lisjong_arena.riichilab_source_pilot import dataset as dataset_module
 from lisjong_arena.riichilab_source_pilot import (
     materialization as materialization_module,
@@ -1037,6 +1040,112 @@ def _source(games, *, identity: str = "c" * 64):
         snapshot_identity="s" * 64,
         target_seat_counts={game.game_id: 1 for game in games},
     )
+
+
+class LocalCorpusOutputPathTests(unittest.TestCase):
+    def setUp(self):
+        self.snapshot = RecentGamesSnapshot(
+            retrieved_at="2026-09-12T00:00:00Z",
+            source_apis=(),
+            target_bots=(),
+            participations=(),
+            snapshot_identity="s" * 64,
+        )
+
+    def test_shared_boundary_accepts_string_and_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for output_dir in (directory, Path(directory)):
+                with self.subTest(type=type(output_dir).__name__):
+                    with (
+                        mock.patch.object(
+                            dataset_module,
+                            "ensure_outside_git_worktree",
+                            wraps=ensure_outside_git_worktree,
+                        ) as ensure,
+                        mock.patch.object(
+                            dataset_module,
+                            "load_cache_index",
+                            side_effect=CorpusError("synthetic cache stop"),
+                        ) as load_index,
+                    ):
+                        with self.assertRaisesRegex(
+                            dataset_module.SourceIdentityError,
+                            "local cache index is invalid",
+                        ):
+                            dataset_module.materialize_local_corpus(
+                                self.snapshot, output_dir
+                            )
+                    ensure.assert_called_once_with(Path(directory))
+                    load_index.assert_called_once_with(Path(directory).resolve())
+
+    def test_materialize_cli_passes_argparse_string_to_shared_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                mock.patch.object(
+                    cli_module, "_load_snapshot", return_value=self.snapshot
+                ),
+                mock.patch.object(
+                    dataset_module,
+                    "load_cache_index",
+                    side_effect=CorpusError("synthetic cache stop"),
+                ) as load_index,
+                mock.patch.object(cli_module, "_emit") as emit,
+            ):
+                result = cli_module.main(
+                    [
+                        "materialize",
+                        "--snapshot",
+                        "synthetic.json",
+                        "--output-dir",
+                        directory,
+                    ]
+                )
+            self.assertEqual(result, 2)
+            load_index.assert_called_once_with(Path(directory).resolve())
+            self.assertFalse(emit.call_args.args[0]["authoritative"])
+
+    def test_run_cli_reaches_the_same_shared_boundary_without_running(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                mock.patch.object(
+                    cli_module, "resolve_retention_target", return_value=object()
+                ),
+                mock.patch.object(
+                    cli_module, "_load_snapshot", return_value=self.snapshot
+                ),
+                mock.patch.object(
+                    dataset_module,
+                    "load_cache_index",
+                    side_effect=CorpusError("synthetic cache stop"),
+                ) as load_index,
+                mock.patch.object(
+                    cli_module, "_stopped", return_value={"synthetic": True}
+                ),
+                mock.patch.object(cli_module, "load_retained_arm_y_source") as arm_y,
+                mock.patch.object(cli_module, "run_source_pilot") as run_pilot,
+                mock.patch.object(cli_module, "_emit"),
+            ):
+                result = cli_module.main(
+                    [
+                        "run",
+                        "--snapshot",
+                        "synthetic.json",
+                        "--output-dir",
+                        directory,
+                        "--arm-y-dataset",
+                        "unused",
+                        "--retention-backend",
+                        "unused",
+                        "--retention-root",
+                        "unused",
+                        "--retention-key",
+                        "unused",
+                    ]
+                )
+            self.assertEqual(result, 2)
+            load_index.assert_called_once_with(Path(directory).resolve())
+            arm_y.assert_not_called()
+            run_pilot.assert_not_called()
 
 
 class Gate0ReportTests(unittest.TestCase):
