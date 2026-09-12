@@ -14,6 +14,7 @@ otherwise a specific unresolved reason blocks Gate 0.
 """
 
 import json
+import re
 import sys
 import tempfile
 from array import array
@@ -97,6 +98,120 @@ STATE_EVENT_TYPES = frozenset(
         "end_game",
     }
 )
+
+_MJAI_TILE = re.compile(r"(?:[1-9][mps]|5[mps]r|[ESWNPFC])")
+_ACTOR_EVENT_TYPES = ACTION_EVENT_TYPES - {"ryukyoku"} | {
+    "tsumo",
+    "reach_accepted",
+}
+_TARGET_EVENT_TYPES = frozenset({"chi", "pon", "daiminkan", "hora"})
+
+
+def _require_mjai_seat(event: dict, field: str) -> None:
+    value = event.get(field)
+    if type(value) is not int or not 0 <= value < 4:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+
+def _require_mjai_tile(value: object) -> None:
+    if type(value) is not str or _MJAI_TILE.fullmatch(value) is None:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+
+def _require_mjai_tiles(event: dict, field: str, *, count: int | None = None) -> None:
+    tiles = event.get(field)
+    if type(tiles) is not list or (count is not None and len(tiles) != count):
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+    for tile in tiles:
+        _require_mjai_tile(tile)
+
+
+def _require_mjai_scores(event: dict, field: str) -> None:
+    scores = event.get(field)
+    if (
+        type(scores) is not list
+        or len(scores) != 4
+        or any(
+            type(score) is not int or not -(2**31) <= score < 2**31 for score in scores
+        )
+    ):
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+
+def _validate_replay_event(event: object) -> None:
+    """Validate the bounded MJAI shape before either RiichiEnv replay seam sees it."""
+    if type(event) is not dict:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+    event_type = event.get("type")
+    if type(event_type) is not str:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+    if event_type not in ACTION_EVENT_TYPES | STATE_EVENT_TYPES:
+        raise _GameUnsupported(GameUnsupportedReason.UNRECOGNIZED_EVENT_TYPE)
+
+    if event_type in _ACTOR_EVENT_TYPES or (
+        "actor" in event and not (event_type == "ryukyoku" and event["actor"] is None)
+    ):
+        _require_mjai_seat(event, "actor")
+    if event_type in _TARGET_EVENT_TYPES or "target" in event:
+        _require_mjai_seat(event, "target")
+
+    if event_type == "start_kyoku":
+        if event.get("bakaze") not in ("E", "S", "W", "N"):
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for field, lower, upper in (
+            ("kyoku", 1, 4),
+            ("honba", 0, 255),
+        ):
+            value = event.get(field)
+            if type(value) is not int or not lower <= value <= upper:
+                raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        stake_fields = {"kyotaku", "kyoutaku"} & event.keys()
+        if len(stake_fields) != 1:
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        stake = event[next(iter(stake_fields))]
+        if type(stake) is not int or not 0 <= stake <= 255:
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        _require_mjai_seat(event, "oya")
+        _require_mjai_scores(event, "scores")
+        _require_mjai_tile(event.get("dora_marker"))
+        tehais = event.get("tehais")
+        if type(tehais) is not list or len(tehais) != 4:
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for hand in tehais:
+            if type(hand) is not list:
+                raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+            for tile in hand:
+                _require_mjai_tile(tile)
+    elif event_type in {"tsumo", "dahai", "chi", "pon", "daiminkan", "kakan"}:
+        _require_mjai_tile(event.get("pai"))
+    elif event_type == "dora":
+        _require_mjai_tile(event.get("dora_marker"))
+    elif event_type == "hora" and "pai" in event:
+        _require_mjai_tile(event["pai"])
+
+    if event_type == "dahai" and type(event.get("tsumogiri")) is not bool:
+        raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+
+    if event_type in {"chi", "pon", "daiminkan", "ankan"}:
+        count = {"chi": 2, "pon": 2, "daiminkan": 3, "ankan": 4}[event_type]
+        _require_mjai_tiles(event, "consumed", count=count)
+    if event_type == "kakan" and "consumed" in event:
+        _require_mjai_tiles(event, "consumed")
+    if event_type == "ankan" and "pai" in event:
+        _require_mjai_tile(event["pai"])
+    if event_type == "hora":
+        if {"ura_markers", "uradora_markers"} <= event.keys():
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for field in ("ura_markers", "uradora_markers"):
+            if field in event:
+                _require_mjai_tiles(event, field)
+    if event_type in {"hora", "ryukyoku"}:
+        if {"delta", "deltas"} <= event.keys():
+            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        for field in ("scores", "delta", "deltas"):
+            if field in event:
+                _require_mjai_scores(event, field)
+
 
 _CALL_EVENT_KINDS = {
     "chi": MeldType.Chi,
@@ -1083,19 +1198,7 @@ def _materialize_game(
     game_mode: str,
 ) -> GameMaterialization:
     for event in events:
-        if type(event) is not dict:
-            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
-        event_type = event.get("type")
-        if type(event_type) is not str:
-            raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
-        if event_type not in ACTION_EVENT_TYPES | STATE_EVENT_TYPES:
-            raise _GameUnsupported(GameUnsupportedReason.UNRECOGNIZED_EVENT_TYPE)
-        if event_type in ACTION_EVENT_TYPES and event_type != "ryukyoku":
-            if type(event.get("actor")) is not int or not 0 <= event["actor"] < 4:
-                raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
-        if event_type == "ryukyoku" and event.get("actor") is not None:
-            if type(event["actor"]) is not int or not 0 <= event["actor"] < 4:
-                raise _GameUnsupported(GameUnsupportedReason.MALFORMED_EVENT)
+        _validate_replay_event(event)
     replay_by_prefix, replay_by_teacher = _replay_decisions(events)
     env = RiichiEnv(game_mode=game_mode)
     provenance = _MeldProvenance()

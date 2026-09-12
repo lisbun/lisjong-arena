@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from _riichilab_source_pilot_fixtures import (
+    ankan_log,
     chi_log,
     daiminkan_log,
     explicit_pass_log,
@@ -634,6 +635,86 @@ class MaterializationCoverageTests(unittest.TestCase):
         result = materialize(log)
         self.assertFalse(result.supported)
         self.assertIs(result.unsupported_reason, GameUnsupportedReason.MALFORMED_EVENT)
+
+    def test_malformed_mjai_is_rejected_before_either_replay_seam(self):
+        cases = []
+
+        log = normal_discard_log()
+        log[2]["pai"] = "INVALID"
+        cases.append(("invalid draw tile", log))
+
+        log = normal_discard_log()
+        log[3]["pai"] = "1mgarbage"
+        cases.append(("valid tile prefix", log))
+
+        log = normal_discard_log()
+        log[2]["actor"] = 4
+        cases.append(("invalid state actor", log))
+
+        log = pon_log()
+        next(event for event in log if event["type"] == "pon")["target"] = 4
+        cases.append(("invalid call target", log))
+
+        log = pon_log()
+        next(event for event in log if event["type"] == "pon")["consumed"] = ["E"]
+        cases.append(("short pon consumed", log))
+
+        log = normal_discard_log()
+        log[1]["scores"].pop()
+        cases.append(("short start scores", log))
+
+        log = normal_discard_log()
+        log[1]["tehais"].pop()
+        cases.append(("short start hands", log))
+
+        log = normal_discard_log()
+        log[1]["tehais"][0][0] = "INVALID"
+        cases.append(("invalid initial hand tile", log))
+
+        log = normal_discard_log()
+        log[1]["dora_marker"] = "1mgarbage"
+        cases.append(("invalid first dora", log))
+
+        log = normal_discard_log()
+        log.insert(4, {"type": "dora", "dora_marker": "INVALID"})
+        cases.append(("invalid later dora", log))
+
+        log = chi_log()
+        next(event for event in log if event["type"] == "chi")["consumed"] = ["1m"]
+        cases.append(("short chi consumed", log))
+
+        log = daiminkan_log()
+        next(event for event in log if event["type"] == "daiminkan")["consumed"] = [
+            "E",
+            "E",
+        ]
+        cases.append(("short daiminkan consumed", log))
+
+        log = ankan_log()
+        next(event for event in log if event["type"] == "ankan")["consumed"].pop()
+        cases.append(("short ankan consumed", log))
+
+        log = ron_log()
+        next(event for event in log if event["type"] == "hora")["pai"] = "INVALID"
+        cases.append(("invalid winning tile", log))
+
+        log = normal_discard_log()
+        log[3]["tsumogiri"] = "false"
+        cases.append(("invalid discard shape", log))
+
+        for name, malformed in cases:
+            with self.subTest(name=name):
+                with mock.patch.object(
+                    materialization_module,
+                    "_replay_decisions",
+                    side_effect=AssertionError("invalid input reached MjaiReplay"),
+                ):
+                    result = materialize(malformed)
+                self.assertFalse(result.supported)
+                self.assertIs(
+                    result.unsupported_reason, GameUnsupportedReason.MALFORMED_EVENT
+                )
+                self.assertEqual(result.rows, ())
 
     def test_chankan_ron_uses_replay_response_before_future_result(self):
         result = materialize(kakan_log(with_chankan_ron=True))
