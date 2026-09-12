@@ -26,6 +26,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 ### RiichiLab runtime
 
 - [RiichiLab client runtime contract](riichilab-client.md)
+- [RiichiLab development profile](riichilab-dev-profile.md)
 - [RiichiLab protocol bridge](riichilab-protocol-bridge.md)
 - [RiichiLab durable ranked game record](durable-ranked-game-record.md)
 
