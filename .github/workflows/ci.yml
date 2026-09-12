@@ -61,5 +61,16 @@ jobs:
       - name: Verify locked CPU PyTorch
         run: python -c "import torch; assert torch.__version__ == '2.13.0+cpu'; assert not torch.cuda.is_available()"
 
-      - name: Run full test suite with ML dependency
-        run: python -m unittest discover -s tests -v --durations 30
+      - name: Run test modules with ML dependency in isolated interpreters
+        shell: bash
+        run: |
+          shopt -s nullglob
+          test_files=(tests/test*.py)
+          ((${#test_files[@]} > 0))
+          for test_file in "${test_files[@]}"; do
+            python -m unittest discover \
+              -s tests \
+              -p "$(basename "$test_file")" \
+              -v \
+              --durations 30
+          done
