@@ -90,6 +90,15 @@ BLOCKED_OUTCOMES = frozenset(
 )
 
 
+# outcomeごとに要求するfile集合が違うため、3分割がexhaustiveであることを
+# import時に固定する。outcomeが増えたときに黙って「完全なbundle」扱いへ
+# 落ちないようにする。
+if COMPLETED_OUTCOMES | BLOCKED_OUTCOMES | {SourcePilotOutcome.STOP_INVALID} != set(
+    SourcePilotOutcome
+):
+    raise RuntimeError("the bundle outcome partition is not exhaustive")
+
+
 def _require(condition: object, message: str) -> None:
     if not condition:
         raise SourcePilotArtifactError(message)
@@ -297,6 +306,10 @@ def verify_bundle(path: str | Path) -> dict[str, object]:
         document["verified"] = _verify_partial_bundle(bundle, entries, result)
         return document
 
+    _require(
+        outcome in COMPLETED_OUTCOMES,
+        "the recorded outcome does not belong to a completed comparison",
+    )
     checkpoints = load_bundle_checkpoints(bundle)
     _verify_budget(result, checkpoints[ARM_R])
     _verify_arms(result, checkpoints)
