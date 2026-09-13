@@ -280,6 +280,178 @@ def riichi_stick_log() -> list[dict]:
     ]
 
 
+#: 111mのankan候補 + 234p/456p/789pの3面子、9s tanki待ち。111mはtanki待ち
+#: (9s)と無関係なのでriichi後のankanが合法になる。
+_RIICHI_ANKAN_HAND = [
+    "1m",
+    "1m",
+    "1m",
+    "2p",
+    "3p",
+    "4p",
+    "4p",
+    "5p",
+    "6p",
+    "7p",
+    "8p",
+    "9p",
+    "9s",
+]
+
+#: 123m/456m/789m/123pの4面子 + 5s tanki待ち。
+_RIICHI_TSUMO_TANKI_HAND = [
+    "1m",
+    "2m",
+    "3m",
+    "4m",
+    "5m",
+    "6m",
+    "7m",
+    "8m",
+    "9m",
+    "1p",
+    "2p",
+    "3p",
+    "5s",
+]
+
+#: 9s tanki待ち。Track B fixtureのdiscarder seat（seat 1）が最初から9sを
+#: 1枚保持しており、riichi中のtarget seat（seat 0）へron機会を2回提示する。
+_RIICHI_RON_TANKI_HAND = [
+    "1m",
+    "2m",
+    "3m",
+    "4m",
+    "5m",
+    "6m",
+    "7m",
+    "8m",
+    "9m",
+    "1p",
+    "2p",
+    "3p",
+    "9s",
+]
+_RIICHI_RON_DISCARDER_HAND = [
+    "2p",
+    "3p",
+    "4p",
+    "6p",
+    "7p",
+    "8p",
+    "1s",
+    "2s",
+    "4s",
+    "6s",
+    "7s",
+    "8s",
+    "9s",
+]
+
+
+def riichi_duplicate_tile_ankan_log() -> list[dict]:
+    """riichi中に4枚目の1mを自摸し、Ankanとforced tsumogiriが両方legalなlog。
+
+    自摸した1mはhand中の既存3枚と同じsemantic tileであり、MJAI textには
+    copy識別子がないため、replay側でのphysical ID再構成はambiguousになる
+    （`RowUnresolvedReason.DRAWN_TILE_SLOTS_RESTRICTED`）。RiichiEnv 0.4.10は
+    riichi_declared中のDiscard legal actionを常に`drawn_tile`からだけ構築
+    するため、残った1件のdiscard candidateはambiguousではなくtsumogiriで
+    確定している。
+    """
+    return [
+        start_game(),
+        start_kyoku([_RIICHI_ANKAN_HAND, NEUTRAL_1, NEUTRAL_2, NEUTRAL_3]),
+        tsumo(0, "9p"),
+        reach(0),
+        dahai(0, "9p", tsumogiri=True),
+        reach_accepted(0),
+        tsumo(1, "E"),
+        dahai(1, "E", tsumogiri=True),
+        tsumo(2, "E"),
+        dahai(2, "E", tsumogiri=True),
+        tsumo(3, "E"),
+        dahai(3, "E", tsumogiri=True),
+        tsumo(0, "1m"),
+        ankan(0, ["1m", "1m", "1m", "1m"]),
+        dora("1s"),
+        tsumo(0, "S"),
+        dahai(0, "S", tsumogiri=True),
+        RYUKYOKU,
+        *END_EVENTS,
+    ]
+
+
+def riichi_duplicate_tile_tsumo_log() -> list[dict]:
+    """riichi中に待ち牌の2枚目を自摸してtsumo和了する、Ankan版と対の
+    duplicate-tile fixture。第2のlegal actionがTsumoである点だけが異なる。
+    """
+    return [
+        start_game(),
+        start_kyoku([_RIICHI_TSUMO_TANKI_HAND, NEUTRAL_1, NEUTRAL_2, NEUTRAL_3]),
+        tsumo(0, "9p"),
+        reach(0),
+        dahai(0, "9p", tsumogiri=True),
+        reach_accepted(0),
+        tsumo(1, "E"),
+        dahai(1, "E", tsumogiri=True),
+        tsumo(2, "E"),
+        dahai(2, "E", tsumogiri=True),
+        tsumo(3, "E"),
+        dahai(3, "E", tsumogiri=True),
+        tsumo(0, "5s"),
+        hora(0, 0, "5s", tsumo_win=True),
+        *END_EVENTS,
+    ]
+
+
+def riichi_stale_ron_offer_log() -> list[dict]:
+    """riichi中にRonを2回見送るlog（同じ局で同じ待ち牌が2回捨てられる）。
+
+    1回目の見送りはKyoku.steps()がPass stepとして記録し、その
+    observationがRonを含むriichi中のPassであることから、seat 0はその局の
+    以後permanent riichi furitenになる（RiichiEnv 0.4.10の
+    `GameState::_get_claim_actions_for_player`がriichi_declared &&
+    missed_agari_riichiで判定する条件と同じ）。
+
+    `RiichiEnv.apply_event()`駆動のforward stateはこのfuriten遷移を
+    raw MJAI streamから再現しないため、2回目の見送りでもRonをlegalとして
+    提示し続ける。Kyoku.steps()はこの2回目をpermanent furiten済みとして
+    正しく無視するため、対応するreplay authorityがexact prefixに存在しない
+    （`GameUnsupportedReason.REPLAY_DECISION_ALIGNMENT_FAILED`という
+    fail-closed症状を引き起こしていた）。
+    """
+    return [
+        start_game(),
+        start_kyoku(
+            [
+                _RIICHI_RON_TANKI_HAND,
+                _RIICHI_RON_DISCARDER_HAND,
+                NEUTRAL_2,
+                NEUTRAL_3,
+            ]
+        ),
+        tsumo(0, "9p"),
+        reach(0),
+        dahai(0, "9p", tsumogiri=True),
+        reach_accepted(0),
+        tsumo(1, "5p"),
+        dahai(1, "9s", tsumogiri=False),
+        tsumo(2, "E"),
+        dahai(2, "E", tsumogiri=True),
+        tsumo(3, "E"),
+        dahai(3, "E", tsumogiri=True),
+        tsumo(0, "E"),
+        dahai(0, "E", tsumogiri=True),
+        tsumo(1, "9s"),
+        dahai(1, "9s", tsumogiri=True),
+        tsumo(2, "S"),
+        dahai(2, "S", tsumogiri=True),
+        RYUKYOKU,
+        *END_EVENTS,
+    ]
+
+
 _CHI_HAND_0 = [
     "1p",
     "1m",
