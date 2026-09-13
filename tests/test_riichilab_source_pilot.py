@@ -25,7 +25,10 @@ from _riichilab_source_pilot_fixtures import (
     normal_discard_log,
     pon_log,
     red_five_log,
+    riichi_duplicate_tile_ankan_log,
+    riichi_duplicate_tile_tsumo_log,
     riichi_log,
+    riichi_stale_ron_offer_log,
     riichi_stick_log,
     ron_log,
     tile_counts,
@@ -39,6 +42,7 @@ from lisjong.action_vocabulary import (
     encode_action,
     resolve_legal_action,
 )
+from lisjong.policy_contract.action import AnkanAction, DiscardAction, TsumoAction
 from lisjong.policy_contract.decision_context import DecisionContext
 from lisjong.policy_contract.seat import Seat
 from riichienv import ActionType, RiichiEnv
@@ -47,6 +51,12 @@ from lisjong_arena._artifact_io import canonical_json_text
 from lisjong_arena.learned_policy_input import (
     build_policy_input_feature,
     tensor_values,
+)
+from lisjong_arena.riichienv.adapter import (
+    RiichiEnvActionMappingSession,
+    SeatMaterializedState,
+    build_decision,
+    tile_from_mjai,
 )
 from lisjong_arena.riichilab_corpus.models import (
     CorpusError,
@@ -119,6 +129,17 @@ from lisjong_arena.riichilab_source_pilot.protocol import (
 GAME_MODE = "4p-red-single"
 ALL_SEATS = {Seat(index): index for index in range(4)}
 
+
+class _FakeRawObservation:
+    """`_repair_discard_identity`が読む4 fieldだけを持つ最小限のtest double。"""
+
+    def __init__(self, *, hand, drawn_tile, player_id, riichi_declared):
+        self.hand = hand
+        self.drawn_tile = drawn_tile
+        self.player_id = player_id
+        self.riichi_declared = riichi_declared
+
+
 _GENERATED_CACHE: dict[tuple[int, str], tuple] = {}
 
 
@@ -137,6 +158,44 @@ def materialize(log, *, seats=None, game_id="fixture"):
         target_seats=ALL_SEATS if seats is None else seats,
         game_mode=GAME_MODE,
     )
+
+
+def live_legal_mask_at_second_action(log, *, seat: Seat, action_type: ActionType):
+    """productionのlive-play adapter（`build_decision`）だけを使い、
+    materializationのalias repairを一切経由しないlegal action maskを
+    独立に構築する。
+
+    `log`を最初からfresh `RiichiEnv`へ`apply_event()`で再生し、`seat`が
+    `action_type`をlegal_actionsへ持つ最初のdecisionで
+    `build_decision()`（`LocalGameRunner`が実際のlive対局で使うのと同じ
+    関数）を呼ぶ。materialization moduleの`_repair_discard_identity`や
+    replay-decision authorityには一切触れないため、materialized rowの
+    legal maskと比較すればMJAI replayの物理ID collapseを経由しない
+    独立した確認になる。
+    """
+    env = RiichiEnv(game_mode=GAME_MODE)
+    tracker = SeatMaterializedState(seat)
+    mapping_session = RiichiEnvActionMappingSession(seat)
+    seat_events: list[str] = []
+    consumed = 0
+    for event in log:
+        env.apply_event(event)
+        observation = env.get_observations().get(int(seat))
+        if observation is None:
+            continue
+        seat_events.extend(observation.new_events())
+        if not observation.legal_actions():
+            continue
+        new_events = seat_events[consumed:]
+        consumed = len(seat_events)
+        decision = build_decision(
+            tracker, observation, mapping_session, new_events=new_events
+        )
+        if any(
+            action.action_type == action_type for action in observation.legal_actions()
+        ):
+            return build_legal_action_mask(decision.context)
+    raise AssertionError(f"seat {seat} never had {action_type} among its legal actions")
 
 
 class LockedProtocolTests(unittest.TestCase):
@@ -420,6 +479,152 @@ class MaterializationCoverageTests(unittest.TestCase):
             (RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET.value, 1),
             result.unresolved_reasons,
         )
+
+    def test_riichi_duplicate_drawn_tile_ankan_choice_is_exact_tsumogiri(self):
+        """riichi中に4枚目の同種牌を自摸したAnkan choice rowはunresolvedにしない。
+
+        drawn tileと同じsemantic tileが既に3枚hand中にあり、MJAI replayの
+        physical ID再構成は本来ambiguousになる
+        (`RowUnresolvedReason.DRAWN_TILE_SLOTS_RESTRICTED`)。RiichiEnv 0.4.10は
+        riichi_declared中のDiscard legal actionを常に`drawn_tile`だけから
+        構築するため、残り1件のdiscard candidateはtsumogiriで確定している。
+        """
+        log = riichi_duplicate_tile_ankan_log()
+        result = materialize(log)
+        self.assertTrue(result.supported, result.unsupported_reason)
+        self.assertEqual(result.unresolved_reasons, ())
+        ankan_rows = [
+            row
+            for row in result.rows
+            if row.teacher_action_family == "ankan" and row.is_riichi_declared
+        ]
+        self.assertEqual(len(ankan_rows), 1)
+        row = ankan_rows[0]
+        self.assertEqual(row.legal_action_count, 2)
+
+        actions = self._decode_legal_actions(row)
+        discards = [a for a in actions if isinstance(a, DiscardAction)]
+        second_actions = [a for a in actions if isinstance(a, AnkanAction)]
+        self.assertEqual(len(discards), 1)
+        self.assertEqual(len(second_actions), 1)
+        self.assertTrue(discards[0].tsumogiri)
+        # 自摸した4枚目の"1m"がsemantic drawn tileであり、discard candidateは
+        # exactにそれと一致する（他のcopyへtedashiで逃げる余地はない）。
+        self.assertEqual(discards[0].tile, tile_from_mjai("1m"))
+
+        live_mask = live_legal_mask_at_second_action(
+            log, seat=Seat(0), action_type=ActionType.ANKAN
+        )
+        self.assertEqual(live_mask, row.legal_mask)
+
+    def test_riichi_duplicate_drawn_tile_tsumo_choice_is_exact_tsumogiri(self):
+        """同じduplicate-tile alias patternの、第2 actionがTsumoである版。"""
+        log = riichi_duplicate_tile_tsumo_log()
+        result = materialize(log)
+        self.assertTrue(result.supported, result.unsupported_reason)
+        self.assertEqual(result.unresolved_reasons, ())
+        tsumo_rows = [
+            row
+            for row in result.rows
+            if row.teacher_action_family == "tsumo" and row.is_riichi_declared
+        ]
+        self.assertEqual(len(tsumo_rows), 1)
+        row = tsumo_rows[0]
+        self.assertEqual(row.legal_action_count, 2)
+
+        actions = self._decode_legal_actions(row)
+        discards = [a for a in actions if isinstance(a, DiscardAction)]
+        second_actions = [a for a in actions if isinstance(a, TsumoAction)]
+        self.assertEqual(len(discards), 1)
+        self.assertEqual(len(second_actions), 1)
+        self.assertTrue(discards[0].tsumogiri)
+        # tanki待ちの2枚目の"5s"を自摸しており、discard candidateはexactに
+        # その自摸牌と一致する。
+        self.assertEqual(discards[0].tile, tile_from_mjai("5s"))
+
+        live_mask = live_legal_mask_at_second_action(
+            log, seat=Seat(0), action_type=ActionType.TSUMO
+        )
+        self.assertEqual(live_mask, row.legal_mask)
+
+    def _decode_legal_actions(self, row: MaterializedRow):
+        actor = Seat(row.actor_seat)
+        return [
+            decode_action(index, actor=actor)
+            for index, bit in enumerate(row.legal_mask)
+            if bit
+        ]
+
+    def test_unrelated_physical_alias_ambiguity_still_fails_closed(self):
+        """riichi修正はriichi_declaredの場合だけに限定される。
+
+        RiichiEnv 0.4.10のriichi以外のDiscard legal action生成は常に
+        hand配列の各slotを直接反復するため（`legal_actions.rs`）、
+        drawn tile と同じsemantic tileが複数枚あればoffered_countは必ず
+        物理slot数と一致し、この`_repair_discard_identity`のambiguous
+        分岐(offered_countが1件だけ提示される場合)はriichi_declared以外
+        では到達しない。したがって既存fixtureで非riichiの反例を作れず、
+        `_repair_discard_identity`自体をriichi_declared=Falseで直接
+        呼び出し、既存のfail-closed経路がそのまま残っていることを確認する。
+        """
+        hand = [0, 0, 4, 8]  # 同じidへcollapseされた2枚の"1m" + 2m + 3m
+        legal_actions = (
+            materialization_module._ReplayAction(
+                action_type=ActionType.DISCARD,
+                actor=0,
+                tile=0,
+                consume_tiles=(),
+            ),
+        )
+        non_riichi_raw = _FakeRawObservation(
+            hand=hand,
+            drawn_tile=0,
+            player_id=0,
+            riichi_declared=[False, False, False, False],
+        )
+        _, _, _, ambiguous = materialization_module._repair_discard_identity(
+            non_riichi_raw, legal_actions
+        )
+        self.assertTrue(ambiguous)
+
+        riichi_raw = _FakeRawObservation(
+            hand=hand,
+            drawn_tile=0,
+            player_id=0,
+            riichi_declared=[True, False, False, False],
+        )
+        _, _, _, riichi_ambiguous = materialization_module._repair_discard_identity(
+            riichi_raw, legal_actions
+        )
+        self.assertFalse(riichi_ambiguous)
+
+    def test_riichi_stale_ron_offer_after_permanent_furiten_is_exact_forced_pass(self):
+        """riichi中にRonを2回見送っても、2回目はexact forced Pass rowになる。
+
+        1回目の見送りはKyoku.steps()がRon付きのriichi Pass observationとして
+        記録し、seat 0はその局で以後permanent riichi furitenになる。
+        `RiichiEnv.apply_event()`駆動のforward stateはこの遷移を独立に再現
+        しないため、2回目の見送りでも(誤って)Ronをlegalとして提示し続ける。
+        Kyoku.steps()自身の記録済みPass observationだけを根拠に、この既知の
+        stale Ron提示だけを取り除き、gameをfail closedにしない。
+        """
+        result = materialize(riichi_stale_ron_offer_log())
+        self.assertTrue(result.supported, result.unsupported_reason)
+        self.assertEqual(result.unresolved_reasons, ())
+        pass_choice_rows = [
+            row
+            for row in result.rows
+            if row.actor_seat == 0
+            and row.teacher_action_family == "pass"
+            and row.is_riichi_declared
+        ]
+        # 1回目の見送りはRon/Passの本物のchoice rowとしてexact materializeされる。
+        self.assertEqual(len(pass_choice_rows), 1)
+        self.assertEqual(pass_choice_rows[0].legal_action_count, 2)
+        # 2回目の見送り(stale Ron提示)はforced row(legal actionが1つ)として
+        # 消費され、REPLAY_DECISION_ALIGNMENT_FAILEDでgame全体をfail closed
+        # にしない。
+        self.assertEqual(result.forced_rows, 2)
 
     def test_call_families_are_materialized(self):
         for name, log, family in (

@@ -660,6 +660,15 @@ def _repair_discard_identity(raw, legal_actions) -> tuple:
     tsumogiriなのかがalias済みIDからは決まらない。semantic legal actionの
     **件数**はどちらでも同じなので、callerはまずchoice row判定を行い、
     retain対象になる場合だけunresolvedとして扱う。
+
+    ただし`raw.riichi_declared[raw.player_id]`がTrueの間は例外である。
+    RiichiEnv 0.4.10の`GameStateLegalActions::_get_legal_actions_internal`
+    (riichienv-core/src/state/legal_actions.rs)は、riichi宣言中のDiscard
+    legal actionを常に`self.drawn_tile`一つだけから構築する
+    （"Post-riichi: only tsumogiri is allowed."）。したがってdiscard
+    candidateがちょうど1件でdrawn tileと同じsemantic tileであるとき、その
+    candidateは物理IDのaliasに関わらずtsumogiriで確定しており、slotの
+    出所はambiguousではない。
     """
     hand = list(raw.hand)
     drawn = raw.drawn_tile
@@ -695,7 +704,8 @@ def _repair_discard_identity(raw, legal_actions) -> tuple:
             # unresolvedとして扱う。
             if offered_count != 1:
                 raise _RowUnresolved(RowUnresolvedReason.DRAWN_TILE_SLOTS_RESTRICTED)
-            ambiguous = True
+            if not raw.riichi_declared[raw.player_id]:
+                ambiguous = True
             remaining[tile_id] = [drawn_repaired]
             continue
         # drawn tile以外はすべてtedashiであり、どのcopyを割り当てても
@@ -1190,6 +1200,66 @@ def materialize_game(
         )
 
 
+def _confirmed_permanent_riichi_furiten(
+    replay_by_prefix: dict[tuple[int, int, int], _ReplayDecision],
+) -> dict[tuple[int, int], int]:
+    """riichi中にRonを辞退したseatについて、その局でRonが以後legalで
+    なくなる最初のprefix event indexを`(round_ordinal, seat) -> prefix`で返す。
+
+    根拠は`Kyoku.steps()`自身が記録したPass decisionのobservationだけである
+    （そのdecisionのlegal_actionsがRonを含み、かつriichi_declaredが既にTrue
+    だった場合だけ計上する）。RiichiEnv 0.4.10の`GameState`では、`Kyoku.
+    steps()`側の`KyokuStepIterator::_collect_pass_observations`
+    (riichienv-core/src/replay/mod.rs)がこのPassを検出した時点で内部
+    `missed_agari_riichi`をtrueにする一方、`RiichiEnv.apply_event()`駆動の
+    forward stateは同じPassをraw MJAI streamから再現しないため、この
+    flagを更新しない。両者は`GameStateLegalActions::_get_claim_actions_for_
+    player`が共有する同じ条件（riichi_declared && missed_agari_riichi ->
+    furiten）を参照するため、forward側は同じ局の以後のRon claimを誤って
+    legalとして提示し続けることがある。timingやabsenceからの推測ではなく、
+    Kyoku.steps()自身が記録した具体的なPass observationだけを根拠にする。
+    """
+    confirmed: dict[tuple[int, int], int] = {}
+    for (round_ordinal, seat, prefix), decision in replay_by_prefix.items():
+        if decision.action_type != ActionType.PASS:
+            continue
+        observation = decision.observation
+        if not observation.riichi_declared[seat]:
+            continue
+        if not any(
+            action.action_type == ActionType.RON
+            for action in observation.legal_actions()
+        ):
+            continue
+        key = (round_ordinal, seat)
+        existing = confirmed.get(key)
+        if existing is None or prefix < existing:
+            confirmed[key] = prefix
+    return confirmed
+
+
+def _stale_riichi_ron_offer(
+    riichi_furiten_confirmed_from: dict[tuple[int, int], int],
+    *,
+    round_ordinal: int,
+    seat: int,
+    event_index: int,
+    raw_observation,
+) -> bool:
+    """このdecisionのRon提示が、上記forward-state furiten追跡漏れによる
+    既知のstale artifactだと確認できるか判定する。
+    """
+    threshold = riichi_furiten_confirmed_from.get((round_ordinal, seat))
+    if threshold is None or event_index <= threshold:
+        return False
+    if not raw_observation.riichi_declared[seat]:
+        return False
+    return any(
+        action.action_type == ActionType.RON
+        for action in raw_observation.legal_actions()
+    )
+
+
 def _materialize_game(
     events: list[dict],
     *,
@@ -1200,6 +1270,9 @@ def _materialize_game(
     for event in events:
         _validate_replay_event(event)
     replay_by_prefix, replay_by_teacher = _replay_decisions(events)
+    riichi_furiten_confirmed_from = _confirmed_permanent_riichi_furiten(
+        replay_by_prefix
+    )
     env = RiichiEnv(game_mode=game_mode)
     provenance = _MeldProvenance()
     runtimes = {int(seat): _SeatRuntime(seat) for seat in target_seats}
@@ -1241,7 +1314,14 @@ def _materialize_game(
             (entry.round_ordinal, entry.seat, entry.prefix_event_index)
         )
         if mjai is None:
-            if (
+            stale_ron = authority is None and _stale_riichi_ron_offer(
+                riichi_furiten_confirmed_from,
+                round_ordinal=entry.round_ordinal,
+                seat=entry.seat,
+                event_index=entry.prefix_event_index,
+                raw_observation=entry.observation.raw,
+            )
+            if not stale_ron and (
                 authority is None
                 or authority.action_type != ActionType.PASS
                 or authority.teacher_event_index is not None
@@ -1535,7 +1615,19 @@ def _materialize_game(
                     # opportunity and implicit Pass. Its per-step snapshot can
                     # already contain a future kan dora indicator, and its Pon
                     # candidate contains the called tile as a third consume.
-                    view = _freeze_observation(observation, provenance, call_trigger)
+                    stale_ron = _stale_riichi_ron_offer(
+                        riichi_furiten_confirmed_from,
+                        round_ordinal=round_ordinal,
+                        seat=player_id,
+                        event_index=event_index,
+                        raw_observation=observation,
+                    )
+                    view = _freeze_observation(
+                        observation,
+                        provenance,
+                        call_trigger,
+                        exclude_stale_riichi_ron=stale_ron,
+                    )
                 except _RowUnresolved as signal:
                     view = _UnmaterializableObservation(observation, signal.reason)
             pending[player_id] = _PendingDecision(
@@ -1588,9 +1680,20 @@ class _UnmaterializableObservation:
 
 
 def _freeze_observation(
-    observation, provenance: _MeldProvenance, trigger: tuple[str, int] | None
+    observation,
+    provenance: _MeldProvenance,
+    trigger: tuple[str, int] | None,
+    *,
+    exclude_stale_riichi_ron: bool = False,
 ) -> _ReplayObservation:
     legal_actions = tuple(observation.legal_actions())
+    if exclude_stale_riichi_ron:
+        # `_stale_riichi_ron_offer()`がforward-state furiten追跡漏れの既知
+        # artifactだと確認済みのRonだけを取り除く。他のlegal actionsは
+        # engineの値をそのまま使う。
+        legal_actions = tuple(
+            action for action in legal_actions if action.action_type != ActionType.RON
+        )
     melds = provenance.melds_for(observation)
     hand, drawn_tile, repaired, ambiguous = _repair_discard_identity(
         observation, legal_actions
