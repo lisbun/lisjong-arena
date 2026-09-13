@@ -6,6 +6,63 @@ experiment-local harnessである。実験の目的・acceptance criteria・結�
 親roadmap [lisjong-project #45](https://github.com/lisbun/lisjong-project/issues/45)
 を正本とし、本書は**再利用するtechnical semantics**だけを記述する。
 
+## Completion record — 2026-09-13
+
+Issue #211のauthoritative runはclean merged `main`で完了し、bundle-level strict
+readbackまで成立した。final outcomeは次である。
+
+```text
+Arena revision
+14fc12b67d701b8d5ee29900b485ba8bc308b76b
+
+Gate 0
+games processed / replayable / unsupported  112 / 112 / 0
+decision opportunities                     19,874
+eligible / forced / unresolved              18,992 / 882 / 0
+explicit / implicit Pass                    16,102 / 2,890
+leakage failures                            0
+gate passed                                 true
+
+matched budget
+TRAIN rows / arm                            9,116
+VALIDATION rows / arm                       2,555
+Arm R TRAIN / VALIDATION games              97 / 15
+
+Arm R checkpoint
+702bdbd35636adf29ec5964b82095dca8a50b48ac2f30c48d9dc2a8bc3dc6707
+
+Arm Y checkpoint
+ecb31fc6954095041423fcfc312d0b07f952ce550f5b05f5e94238bcce7bb45e
+
+evaluation
+4p-red-single / seeds 23000..23099
+100 seed blocks / 4 rotations / 400 games
+mean seed-block delta  +170.83333333333334
+95% interval           [-79.80057282428317, +421.46723949094985]
+
+final outcome
+SOURCE PILOT INCONCLUSIVE
+
+result identity
+ed444633a4c370da6bbffd868e6352f3b01bfe1e00706fedd895c82b1bec20a1
+
+seed-plan identity
+cbded0564dee81c66413f36f8a5401a1316334da71f1c9e7dcb669641190507a
+
+verify
+complete comparison bundle
+```
+
+`SOURCE PILOT INCONCLUSIVE`はsource equivalenceを意味しない。point estimateは
+Arm R側がpositiveだったが、predeclared 95% intervalが0を跨いだため、どちらの
+source strategyもsuperiorとは判定しない。result exposure後のseed extension、
+別rangeでのrerun、hanchan escalation、row-budget変更、source rebalancingは
+#211では行わない。
+
+このcompletion recordはaggregate / identityだけを記録する。raw #170 record、
+materialized row、feature tensor、legal mask、trained weight bytesは引き続きlocal
+retentionだけに置き、Gitへcommitしない。
+
 ```text
 intervention   data source strategy（1軸）
 
@@ -117,11 +174,12 @@ triggerだけを示すviewを渡す。PolicyInput用の全河・公開履歴は�
 | # | limitation | 扱い |
 | --- | --- | --- |
 | 1 | `apply_event()`が作るmeldは`Meld.from_who == -1`で、`PublicMeld.from_seat`を満たせない | chi / pon / daiminkanの`target`はpublic MJAI record自身が持つ公開事実なので、call eventからmeld provenanceをprojectし、engineのmeld snapshotとkind / 件数 / 順序が一致することをfail closedで確認する |
-| 2 | `apply_event()`は同じsemantic tileを1つのcanonical physical IDへaliasするため、`drawn_tile`がhandの既存copyと同一IDになり、tedashi / tsumogiriという公開上区別可能な2つのlegal discardが1つへ潰れる | engine自身が返した**slotごとの**legal discard action列とhand multisetから、一意に戻せる場合（`offered == held`）だけ戻す。drawn tile IDのslotがengine側で制限されていて一意に戻せない場合は、choice rowであれば`drawn_tile_discard_slots_restricted_under_collapsed_tile_identity`としてunresolvedにする |
+| 2 | `apply_event()`は同じsemantic tileを1つのcanonical physical IDへaliasするため、`drawn_tile`がhandの既存copyと同一IDになり、tedashi / tsumogiriという公開上区別可能な2つのlegal discardが1つへ潰れる | engine自身が返した**slotごとの**legal discard action列とhand multisetから、一意に戻せる場合（`offered == held`）だけ戻す。drawn tile IDのslotがengine側で制限されている場合、通常はchoice rowを`drawn_tile_discard_slots_restricted_under_collapsed_tile_identity`としてunresolvedにする。ただしcurrent seatがriichi中で、engineがdrawn tileと同じsemantic tileのDiscardをexactly 1件だけ提示する場合は、RiichiEnv 0.4.10 `legal_actions.rs`がpost-riichi Discardを`drawn_tile`だけから生成するauthorityにより、そのcandidateをexact tsumogiriとして復元する。teacher choiceからlegal setを逆推定しない |
 | 3 | synthetic九種九牌のterminal recordでは`Kyoku.steps()`がstepを出さない | 同じprefixの`apply_event()`が提示した`KYUSHU_KYUHAI` legal candidateと`select_action_from_mjai()`でのみretainする。dealer / non-dealer初巡とeligibility終了後のabsenceを0.4.10で確認した |
 | 4 | `apply_event()`はkakanに対する槍槓response windowを提示しない | `Kyoku.steps()`の同じKakan prefixのRon / Pass stepがある場合だけそのObservationでmaterializeする。future result / doraをhistoryへ入れない |
 | 5 | `Kyoku.steps()`はmulti-ronの先頭winnerだけを出す | 2人目以降は同じpre-response prefixの`apply_event()` snapshotにexact Ronがある場合だけretainする。なければgame全体をunsupportedにする |
 | 6 | 別seatの過去の河と現在の打牌が同じreplay physical IDになる | MJAI公開打牌者とengineの河・`last_discard`を照合し、call-target mappingへ現在のtriggerだけを渡す。照合不能なら`call_target_provenance_mismatch`でunresolvedにする |
+| 7 | `Kyoku.steps()`のreplay simulationはriichi中にRonを辞退したPassで`missed_agari_riichi`を更新するが、raw MJAIを`apply_event()`でforwardするstateは同じinferenceを再現せず、同局の後続discardで既にillegalなRonを提示し得る | `Kyoku.steps()`自身が記録したPass observationがRonをlegalに含み、かつそのseatが既にriichi中だった場合だけ、そのprefix以後をpermanent riichi furitenとして記録する。後続の`apply_event()` observationに残るRonはこのexact replay authorityに基づくstale offerとして除外する。timing / absence / teacher choiceからfuritenを推測しない |
 
 Issue #233のArena-generated bounded sample（各mode seed 245・246）では、
 `4p-red-single`が2 game / live 130 / hybrid 130 / exact choice 115 /
@@ -130,6 +188,9 @@ hybrid 1,215 / exact choice 1,136 / forced 77 / unresolved 2だった。
 halfの2件はどちらもphysical copy slotが一意に解決できない打牌である。
 retainしたrowでは8204 feature、802 legal mask、teacher indexのlive比較に
 不一致がなかった。このsampleは実#170 Gate 0の成否を示すものではない。
+これは#248より前のbounded sampleであり、current implementationは上表#2の
+post-riichi exact repairだけを追加している。riichi authorityで証明できない
+physical-copy ambiguityは引き続きfail closedする。
 
 kan宣言と補充drawの間のような中間状態は、`RiichiEnv.needs_tsumo`と
 `Phase.WaitResponse`から判定してdecision opportunityへ計上しない
@@ -220,7 +281,7 @@ canonical game order = sha256(domain | corpus_identity | game_id) 昇順
 ```
 
 - partition単位はraw gameであり、同じraw gameが両partitionへ跨がらない。
-  shared game（複数target seat）もpartitionを跨がない
+  shared game（複数target seat）もpartitionを跨がらない
 - canonical orderはsource identityへbindしたhashだけから決まる。row数、label、
   model loss、downstream score、bot strength、action rarity、validation resultを
   selection criterionに使わない
@@ -428,10 +489,15 @@ public trained-weight distribution                                 unresolved
 - GitHub commentはaggregate metric / identityだけを載せ、raw MJAI recordや
   concealed-hand recordを載せない
 
-## Operator flow (post-merge only)
+## Historical operator flow (post-merge; #211 completed)
 
-以下はPR merge後にoperatorがlocalで実行する。本PR / CIではlive commandを
-実行せず、実corpusにも触れない。
+以下は#211で使用したoperator flowのtechnical semanticsを残すためのhistorical
+recordである。**authoritative `run`は既に完了しているため、同じlocked seeds
+`23000..23099`や同じlogical runを再実行しない。** `plan` / `materialize`も
+新しいscientific evidenceを得る目的で繰り返さない。
+
+local pathやdeclared retention backend identityはoperator環境の詳細であり、
+project-wide canonical pathではない。以下のpathは使用例である。
 
 ```powershell
 $root = "C:\private-research\riichilab-corpus"
@@ -459,7 +525,9 @@ exit codeは`2`、`gate0.gate_passed`は`false`、`observed_outcome`は
 #211 / #45へ報告する。Issue #211のoutcomeとして記録できるのは`run`が残した
 write-once result artifactだけである。
 
-Gate 0が成立した場合だけ、two-arm pilotを1回実行する。
+Gate 0が成立した場合だけ、two-arm pilotを1回実行する、というのがlocked
+protocolだった。次のcommandはhistorical exampleであり、#211 completion後の
+再実行手順ではない。
 
 ```powershell
 python -m lisjong_arena.riichilab_source_pilot run `
