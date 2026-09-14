@@ -60,6 +60,7 @@ from .protocol import (
     CLASSIFICATION_RULE_ID,
     COMPARATOR_IDENTITY,
     INCONCLUSIVE_LABEL,
+    MAX_STEPS,
     NEGATIVE_LABEL,
     PARENT_IDENTITY,
     PHASE_B_GAMES_PER_ARM,
@@ -227,6 +228,11 @@ def _require_arm_artifact(
         require_phase_b_population(artifact.plan.seeds)
     except ProgressionProtocolError as exc:
         raise PairedResultError(f"{arm} arm artifact: {exc}") from exc
+    if artifact.plan.max_steps != MAX_STEPS:
+        raise PairedResultError(
+            f"{arm} arm artifact max_steps is {artifact.plan.max_steps!r}, not the "
+            f"locked {MAX_STEPS!r}"
+        )
     if len(artifact.game_results) != PHASE_B_GAMES_PER_ARM:
         raise PairedResultError(
             f"{arm} arm artifact must contain exactly {PHASE_B_GAMES_PER_ARM} games, "

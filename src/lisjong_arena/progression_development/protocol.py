@@ -72,6 +72,22 @@ ROTATION_COUNT = SINGLE_ROUND_ROTATION_COUNT
 FORMAL_TEST = False
 """本Issueはdevelopment screenであり、formal holdout testではない。"""
 
+MAX_STEPS = 10_000
+"""1 gameのstep上限。protocol invariantであり、phaseごとに変えられない。
+
+``SingleRoundArtifactPlan``が記録するreproducibility条件の1つなので、Phase A
+とPhase Bで別の値を使えると同じlockの下で条件が変わってしまう。CLIからも
+指定できないようにし、protocol document経由でlock / record / resultへbindする。
+"""
+
+EXECUTION_BRANCH = "main"
+"""real executionを許すlong-lived branch。callerが選べるoptionではない。
+
+Issue #252はreviewed merged mainからの実行だけを許す。branchをcallerが
+変えられると、PR branchをexecution targetにしたlockでreal executionへ
+進めてしまう。
+"""
+
 PHASE_A_SEEDS: tuple[int, ...] = tuple(range(647, 651))
 """Phase A technical feasibility population(647..650)。strength evidenceではない。"""
 
@@ -380,9 +396,11 @@ def protocol_document() -> dict[str, object]:
     """lock / resultへ埋め込むprotocol条件のplain document。"""
     return {
         "classification_rule_id": CLASSIFICATION_RULE_ID,
+        "execution_branch": EXECUTION_BRANCH,
         "feasibility_wall_clock_limit_hours": FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
         "formal_test": FORMAL_TEST,
         "game_mode": GAME_MODE,
+        "max_steps": MAX_STEPS,
         "phase_a_game_count": PHASE_A_GAME_COUNT,
         "phase_a_seeds": list(PHASE_A_SEEDS),
         "phase_b_games_per_arm": PHASE_B_GAMES_PER_ARM,
@@ -402,10 +420,12 @@ __all__ = [
     "CLASSIFICATION_RULE_ID",
     "COMPARATOR_IDENTITY",
     "COMPARATOR_SEMANTICS",
+    "EXECUTION_BRANCH",
     "FEASIBILITY_WALL_CLOCK_LIMIT_HOURS",
     "FORMAL_TEST",
     "GAME_MODE",
     "INCONCLUSIVE_LABEL",
+    "MAX_STEPS",
     "INFEASIBLE_LABEL",
     "NEGATIVE_LABEL",
     "PARENT_CLASS_NAME",

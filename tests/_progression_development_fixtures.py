@@ -14,6 +14,8 @@ from unittest import mock
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
 from lisjong.policy_contract import Seat
 
+from lisjong_arena._artifact_io import canonical_json_text
+from lisjong_arena._execution_safety import ExecutionSafetyError
 from lisjong_arena.model import (
     PolicySpec,
     SingleRoundEvaluationPlan,
@@ -34,6 +36,9 @@ from lisjong_arena.single_round_evaluation import aggregate_candidate_metrics
 ARENA_REVISION = "1" * 40
 LISJONG_REVISION = "2" * 40
 LISJONG_ENGINE_REVISION = "3" * 40
+
+LOGICAL_CPU_COUNT = 8
+"""testが使う仮想machineのlogical CPU数(sweepは1, 4, 8になる)。"""
 
 FocalScore = Callable[[int, int], int]
 """``(seed, rotation) -> focal seat final score``。"""
@@ -191,22 +196,37 @@ def locked_environment(
     *,
     head: str = ARENA_REVISION,
     execution_provenance: SingleRoundExecutionProvenance | None = None,
+    merged: bool = True,
 ) -> Iterator[None]:
     """lock生成とlock consumeの両方で使う決定的なexecution target環境。
 
     実際のGit HEADやinstall metadataへ依存させず、`_execution_safety`が
     返すはずの値をそのまま差し替える。realなclean merged-main判定そのものは
     `_execution_safety`側のtestが所有する。
+
+    ``merged=False``はHEADが``main``へ未mergeの状況(PR branch)を表し、
+    `require_merged_arena_revision()`が送出するのと同じ例外を返す。
     """
     resolved = provenance() if execution_provenance is None else execution_provenance
+    merged_mock = (
+        mock.patch.object(
+            lock_module, "require_merged_arena_revision", return_value=head
+        )
+        if merged
+        else mock.patch.object(
+            lock_module,
+            "require_merged_arena_revision",
+            side_effect=ExecutionSafetyError(
+                f"Arena revision {head} is not contained in main"
+            ),
+        )
+    )
     with (
         mock.patch.object(
             lock_module, "collect_execution_provenance", return_value=resolved
         ),
         mock.patch.object(lock_module, "require_clean_arena_head", return_value=head),
-        mock.patch.object(
-            lock_module, "require_merged_arena_revision", return_value=head
-        ),
+        merged_mock,
     ):
         yield
 
@@ -227,11 +247,22 @@ def write_lock(
     *,
     head: str = ARENA_REVISION,
     execution_provenance: SingleRoundExecutionProvenance | None = None,
+    logical_cpu_count: int = LOGICAL_CPU_COUNT,
 ) -> dict[str, object]:
     """有効なpre-execution lockを生成して保存する。"""
     with locked_environment(head=head, execution_provenance=execution_provenance):
-        document = lock_module.build_lock_document(dict(destinations))
+        document = lock_module.build_lock_document(
+            dict(destinations), logical_cpu_count=logical_cpu_count
+        )
         lock_module.save_lock_document(document, path)
+    return document
+
+
+def reseal_lock(document: dict[str, object], path: Path) -> dict[str, object]:
+    """lockを書き換えたうえでlock identityを再計算して保存する。"""
+    payload = {name: item for name, item in document.items() if name != "lock_identity"}
+    document["lock_identity"] = lock_module.document_identity(payload)
+    path.write_text(canonical_json_text(document), encoding="utf-8")
     return document
 
 

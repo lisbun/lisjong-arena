@@ -10,20 +10,23 @@ lock生成は現行Arenaのone-shot execution lock disciplineをthin reuseし、
 ```text
 worktree clean
 HEAD == collected provenance revision
-HEAD is contained in the merged long-lived branch (default: main)
+HEAD が EXECUTION_BRANCH ("main") へmerge済み
 artifact destinationsが未作成 / write-once
 ```
 
-を満たさない限りfail closedする。したがってPR branch(未mergeのHEAD)からは
-real lockを作れず、real scientific executionも開始できない。
+を満たさない限りfail closedする。branchはcallerが選べるoptionではない。
+``require_live_execution_target()``は実行時にも同じmerged-main containmentを
+再確認するため、lockをPR HEADへresealしてlive環境を合わせても、main未mergeなら
+real executionは開始できない。
 
 ## lockが束ねるもの
 
 `result_exposed = false`、Arena / lisjong / lisjong-engine revision、runtime
 version、P / C / T exact identity、#170 adaptive semanticsであることと#171
-clairvoyant semanticsが無いこと、Phase A / Phase B population、worker sweep、
-8時間のfeasibility閾値、paired primary statisticとclassification rule、
-artifact destinations、no-rescue boundaryである。
+clairvoyant semanticsが無いこと、Phase A / Phase B population、
+``max_steps``を含むprotocol条件、worker sweepと lock時点で解決した
+resolved worker sweep / logical CPU数、8時間のfeasibility閾値、paired primary
+statisticとclassification rule、artifact destinations、no-rescue boundaryである。
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from lisjong_arena._artifact_io import (
     ArtifactValidationError,
     canonical_json_text,
     expect_bool,
+    expect_int,
     expect_object,
     expect_str,
     read_json_document,
@@ -58,6 +62,7 @@ from lisjong_arena.single_round_artifact import (
 from .protocol import (
     CANDIDATE_IDENTITY,
     COMPARATOR_IDENTITY,
+    EXECUTION_BRANCH,
     FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
     PARENT_IDENTITY,
     PHASE_A_GAME_COUNT,
@@ -66,11 +71,13 @@ from .protocol import (
     PHASE_B_SEEDS,
     PHASE_B_TOTAL_GAMES,
     WORKER_SWEEP,
+    ProgressionProtocolError,
     document_identity,
     protocol_document,
     require_disjoint_populations,
     require_exact_candidate_semantics,
     require_exact_comparator,
+    supported_worker_sweep,
 )
 
 LOCK_VERSION = 1
@@ -153,16 +160,22 @@ def _classification_document() -> dict[str, object]:
 def build_lock_document(
     destinations: dict[str, str | Path],
     *,
-    branch: str = "main",
+    logical_cpu_count: int,
 ) -> dict[str, object]:
     """reviewed merged main上でだけ成立するlock documentを組み立てる。
 
-    clean worktree、merged revision containment、write-once destinationsの
-    いずれかが崩れていればfail closedする。PR branchからreal lockは作れない。
+    clean worktree、``main``へのmerged revision containment、write-once
+    destinationsのいずれかが崩れていればfail closedする。PR branchからreal
+    lockは作れない。branchはcallerが選べるoptionではなく``EXECUTION_BRANCH``
+    固定である。
+
+    ``logical_cpu_count``から解決したworker sweepもここで確定して記録する。
+    Phase Aはこのlocked resolved sweep以外を実行しない。
     """
     require_disjoint_populations()
     candidate_binding = require_exact_candidate_semantics().to_document()
     comparator_binding = require_exact_comparator()
+    resolved_sweep = supported_worker_sweep(logical_cpu_count)
     try:
         provenance = collect_execution_provenance()
         head = require_clean_arena_head()
@@ -170,7 +183,7 @@ def build_lock_document(
             raise ProgressionLockError(
                 "Arena HEAD differs from the collected execution provenance"
             )
-        require_merged_arena_revision(head, branch=branch)
+        require_merged_arena_revision(head, branch=EXECUTION_BRANCH)
         require_new_artifact_destinations(
             destinations, required_names=REQUIRED_DESTINATIONS
         )
@@ -185,7 +198,7 @@ def build_lock_document(
         "classification": _classification_document(),
         "comparator_binding": comparator_binding,
         "execution_target": {
-            "branch": branch,
+            "branch": EXECUTION_BRANCH,
             "revision": head,
             "target_type": EXECUTION_TARGET_TYPE,
         },
@@ -194,7 +207,9 @@ def build_lock_document(
         "parent_identity": PARENT_IDENTITY,
         "phase_a": {
             "game_count": PHASE_A_GAME_COUNT,
+            "logical_cpu_count": logical_cpu_count,
             "ordered_seeds": list(PHASE_A_SEEDS),
+            "resolved_worker_sweep": list(resolved_sweep),
             "role": "TECHNICAL FEASIBILITY ONLY",
             "wall_clock_limit_hours": FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
             "worker_sweep": list(WORKER_SWEEP),
@@ -287,7 +302,9 @@ def parse_lock_document(value: object) -> dict[str, object]:
         document["phase_a"],
         {
             "game_count",
+            "logical_cpu_count",
             "ordered_seeds",
+            "resolved_worker_sweep",
             "role",
             "wall_clock_limit_hours",
             "worker_sweep",
@@ -301,6 +318,18 @@ def parse_lock_document(value: object) -> dict[str, object]:
         phase_a["wall_clock_limit_hours"],
         FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
         "feasibility wall-clock bound",
+    )
+    locked_cpu_count = expect_int(
+        phase_a["logical_cpu_count"], "phase_a.logical_cpu_count"
+    )
+    try:
+        expected_sweep = supported_worker_sweep(locked_cpu_count)
+    except ProgressionProtocolError as exc:
+        raise ProgressionLockError(str(exc)) from exc
+    _require_equal(
+        phase_a["resolved_worker_sweep"],
+        list(expected_sweep),
+        "resolved worker sweep",
     )
 
     phase_b = expect_object(
@@ -344,6 +373,11 @@ def parse_lock_document(value: object) -> dict[str, object]:
     _require_equal(
         execution_target["target_type"], EXECUTION_TARGET_TYPE, "execution target type"
     )
+    if execution_target["branch"] != EXECUTION_BRANCH:
+        raise ProgressionLockError(
+            f"lock execution branch must be {EXECUTION_BRANCH!r}; Issue #252 only "
+            "allows execution from reviewed merged main"
+        )
 
     provenance = parse_execution_provenance(document["provenance"])
     if provenance.lisjong_arena_revision != execution_target["revision"]:
@@ -403,14 +437,32 @@ def require_locked_destination(
     return given
 
 
+def locked_worker_sweep(document: dict[str, object]) -> tuple[int, ...]:
+    """lock生成時に確定したresolved worker sweepを返す。"""
+    return tuple(document["phase_a"]["resolved_worker_sweep"])  # type: ignore[index]
+
+
+def locked_logical_cpu_count(document: dict[str, object]) -> int:
+    """lock生成時に記録した実行機のlogical CPU数を返す。"""
+    return int(document["phase_a"]["logical_cpu_count"])  # type: ignore[index]
+
+
 def require_live_execution_target(
     document: dict[str, object],
 ) -> SingleRoundExecutionProvenance:
     """live実行環境がlocked execution targetとexact一致することを要求する。
 
-    game 1より前にここでfail closedするため、未mergeのPR branch(HEADが
-    locked revisionと異なる)や、lock生成後にrevisionがdriftした環境からは
-    real executionを開始できない。
+    game 1より前に
+
+    ```text
+    clean worktree
+    HEAD == locked revision
+    HEAD が main へmerge済み
+    live provenance == locked provenance
+    ```
+
+    をすべて確認する。HEADがmainへmergeされていなければ、lockをPR HEADへ
+    resealしてlive環境をそれに合わせても、real executionは開始できない。
     """
     try:
         head = require_clean_arena_head()
@@ -422,6 +474,13 @@ def require_live_execution_target(
             f"live Arena HEAD {head} is not the locked execution target "
             f"{locked_revision}"
         )
+    try:
+        require_merged_arena_revision(head, branch=EXECUTION_BRANCH)
+    except ExecutionSafetyError as exc:
+        raise ProgressionLockError(
+            f"locked execution target {head} is not contained in "
+            f"{EXECUTION_BRANCH}; Issue #252 only runs from reviewed merged main"
+        ) from exc
     live = collect_execution_provenance()
     if execution_provenance_to_dict(live) != document["provenance"]:
         raise ProgressionLockError(
@@ -439,6 +498,8 @@ __all__ = [
     "load_lock_document",
     "locked_destination",
     "locked_execution_revision",
+    "locked_logical_cpu_count",
+    "locked_worker_sweep",
     "parse_lock_document",
     "require_live_execution_target",
     "require_locked_destination",

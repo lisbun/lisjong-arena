@@ -39,7 +39,7 @@ def _lock(arguments: argparse.Namespace) -> int:
             "parent_artifact": arguments.parent_artifact,
             "paired_result": arguments.paired_result,
         },
-        branch=arguments.branch,
+        logical_cpu_count=_logical_cpu_count(),
     )
     path = save_lock_document(document, arguments.out)
     print(f"lock_identity={document['lock_identity']}")
@@ -52,7 +52,6 @@ def _phase_a(arguments: argparse.Namespace) -> int:
         lock_path=arguments.lock,
         destination=arguments.out,
         logical_cpu_count=_logical_cpu_count(),
-        max_steps=arguments.max_steps,
     )
     print(f"record_identity={record.record_identity}")
     print(f"record_written={arguments.out}")
@@ -77,7 +76,6 @@ def _phase_b(arguments: argparse.Namespace) -> int:
         candidate_artifact_path=arguments.candidate_artifact,
         parent_artifact_path=arguments.parent_artifact,
         paired_result_path=arguments.paired_result,
-        max_steps=arguments.max_steps,
     )
     summary = outcome.paired_result["primary_summary"]
     print(f"worker_count={outcome.worker_count}")
@@ -100,7 +98,6 @@ def _parser() -> argparse.ArgumentParser:
     lock_parser.add_argument("--candidate-artifact", type=Path, required=True)
     lock_parser.add_argument("--parent-artifact", type=Path, required=True)
     lock_parser.add_argument("--paired-result", type=Path, required=True)
-    lock_parser.add_argument("--branch", default="main")
     lock_parser.set_defaults(handler=_lock)
 
     phase_a_parser = subparsers.add_parser(
@@ -108,7 +105,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     phase_a_parser.add_argument("--lock", type=Path, required=True)
     phase_a_parser.add_argument("--out", type=Path, required=True)
-    phase_a_parser.add_argument("--max-steps", type=int, default=10_000)
     phase_a_parser.set_defaults(handler=_phase_a)
 
     phase_b_parser = subparsers.add_parser(
@@ -119,7 +115,6 @@ def _parser() -> argparse.ArgumentParser:
     phase_b_parser.add_argument("--candidate-artifact", type=Path, required=True)
     phase_b_parser.add_argument("--parent-artifact", type=Path, required=True)
     phase_b_parser.add_argument("--paired-result", type=Path, required=True)
-    phase_b_parser.add_argument("--max-steps", type=int, default=10_000)
     phase_b_parser.set_defaults(handler=_phase_b)
     return parser
 

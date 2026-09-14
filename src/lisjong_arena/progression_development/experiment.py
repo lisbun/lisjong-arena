@@ -58,6 +58,7 @@ from .paired import (
     verify_paired_result,
 )
 from .protocol import (
+    MAX_STEPS,
     PHASE_B_GAMES_PER_ARM,
     PHASE_B_SEEDS,
     candidate_spec,
@@ -83,18 +84,18 @@ class PhaseBOutcome:
         return dict(self.paired_result["classification"])  # type: ignore[arg-type]
 
 
-def build_arm_plan(*, candidate_arm: bool, max_steps: int) -> SingleRoundEvaluationPlan:
+def build_arm_plan(*, candidate_arm: bool) -> SingleRoundEvaluationPlan:
     """1 armぶんのlocked planを作る。
 
-    candidate armは``P vs T x3``、parent armは``C vs T x3``であり、seedsと
-    rotation shapeは両armで同一である。
+    candidate armは``P vs T x3``、parent armは``C vs T x3``であり、seeds、
+    rotation shape、``max_steps``は両armで同一のprotocol constantである。
     """
     seeds = require_phase_b_population(PHASE_B_SEEDS)
     return SingleRoundEvaluationPlan(
         candidate=candidate_spec() if candidate_arm else parent_spec(),
         baseline=comparator_spec(),
         seeds=seeds,
-        max_steps=max_steps,
+        max_steps=MAX_STEPS,
     )
 
 
@@ -130,7 +131,6 @@ def run_phase_b_development(
     candidate_artifact_path: str | Path,
     parent_artifact_path: str | Path,
     paired_result_path: str | Path,
-    max_steps: int = 10_000,
     execute: Callable[..., SingleRoundEvaluationResult] = default_execute,
 ) -> PhaseBOutcome:
     """lockとgate済みfeasibility recordの下で2 armを実行する。
@@ -173,14 +173,14 @@ def run_phase_b_development(
     )
 
     candidate_artifact = _run_arm(
-        build_arm_plan(candidate_arm=True, max_steps=max_steps),
+        build_arm_plan(candidate_arm=True),
         worker_count=worker_count,
         destination=Path(candidate_artifact_path),
         execute=execute,
         expected_provenance=record.provenance,
     )
     parent_artifact = _run_arm(
-        build_arm_plan(candidate_arm=False, max_steps=max_steps),
+        build_arm_plan(candidate_arm=False),
         worker_count=worker_count,
         destination=Path(parent_artifact_path),
         execute=execute,

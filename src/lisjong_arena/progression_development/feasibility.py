@@ -71,12 +71,15 @@ from lisjong_arena.single_round_evaluation import (
 
 from .lock import (
     load_lock_document,
+    locked_logical_cpu_count,
+    locked_worker_sweep,
     require_live_execution_target,
     require_locked_destination,
 )
 from .protocol import (
     FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
     INFEASIBLE_LABEL,
+    MAX_STEPS,
     PARENT_IDENTITY,
     PHASE_A_GAME_COUNT,
     PHASE_A_SEEDS,
@@ -566,13 +569,38 @@ def evaluate_feasibility_gate(
     )
 
 
+def _require_locked_sweep(
+    lock_document: dict[str, object], logical_cpu_count: int
+) -> tuple[int, ...]:
+    """live machineがlockと同じresolved sweepを与えることを要求する。
+
+    lockは生成時のlogical CPU数と、そこから解決したsweepを記録している。
+    別のmachineで走らせるとactual sweepがlockと食い違うため、game 1より前に
+    ここでfail closedする。custom sweepでlocked seedsを消費してから
+    readbackで気付く順序にはしない。
+    """
+    locked_cpu_count = locked_logical_cpu_count(lock_document)
+    if logical_cpu_count != locked_cpu_count:
+        raise FeasibilityError(
+            f"live machine reports {logical_cpu_count} logical CPUs but the lock "
+            f"was built for {locked_cpu_count}"
+        )
+    sweep = locked_worker_sweep(lock_document)
+    if sweep != supported_worker_sweep(logical_cpu_count):
+        raise FeasibilityError(
+            "locked resolved worker sweep does not match the sweep this machine "
+            "resolves"
+        )
+    if not sweep or sweep[0] != 1:
+        raise FeasibilityError("the worker sweep must start with serial execution")
+    return sweep
+
+
 def run_phase_a_feasibility(
     *,
     lock_path: str | Path,
     destination: str | Path,
     logical_cpu_count: int,
-    worker_counts: Sequence[int] | None = None,
-    max_steps: int = 10_000,
     execute: Callable[..., SingleRoundEvaluationResult] = default_execute,
     clock: Callable[[], float] = time.perf_counter,
 ) -> FeasibilityRecord:
@@ -582,8 +610,13 @@ def run_phase_a_feasibility(
     rotation shapeを使う。technical gameのscoreはrecordへ残さない。
 
     game 1より前に、pre-execution lockのstrict read、live execution target
-    (clean HEAD / provenance)との照合、locked destinationとの一致、write-once
-    preflightをすべて済ませる。いずれかが崩れていればrunnerを1度も呼ばない。
+    (clean HEAD / merged main containment / provenance)との照合、locked
+    destinationとの一致、live machineがlocked resolved sweepと同じsweepを
+    解決すること、write-once preflightをすべて済ませる。いずれかが崩れて
+    いればrunnerを1度も呼ばない。
+
+    worker sweepはlockが確定した``resolved_worker_sweep``だけを実行する。
+    ``max_steps``もprotocol constantであり、callerは指定できない。
     """
     require_exact_candidate_semantics()
     seeds = require_phase_a_population(PHASE_A_SEEDS)
@@ -597,20 +630,13 @@ def run_phase_a_feasibility(
     require_new_artifact_destinations(
         {"feasibility_record": output}, required_names=("feasibility_record",)
     )
-
-    sweep = (
-        supported_worker_sweep(logical_cpu_count)
-        if worker_counts is None
-        else tuple(worker_counts)
-    )
-    if not sweep or sweep[0] != 1:
-        raise FeasibilityError("the worker sweep must start with serial execution")
+    sweep = _require_locked_sweep(lock_document, logical_cpu_count)
 
     plan = SingleRoundEvaluationPlan(
         candidate=candidate_spec(),
         baseline=comparator_spec(),
         seeds=seeds,
-        max_steps=max_steps,
+        max_steps=MAX_STEPS,
     )
 
     measurements: list[WorkerMeasurement] = []

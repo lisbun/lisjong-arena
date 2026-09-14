@@ -72,6 +72,7 @@ from lisjong_arena.progression_development.protocol import (
     FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
     INCONCLUSIVE_LABEL,
     INFEASIBLE_LABEL,
+    MAX_STEPS,
     NEGATIVE_LABEL,
     PARENT_IDENTITY,
     PHASE_A_GAME_COUNT,
@@ -548,6 +549,84 @@ class PhaseALockGateTests(unittest.TestCase):
             destinations["feasibility_record"].write_text("{}", encoding="utf-8")
             execute, _ = self._attempt(base)
         self.assertEqual(execute.calls, [])
+
+    def test_an_unmerged_execution_target_runs_no_game(self):
+        """PR HEADへlockをresealしてlive環境を合わせても、main未mergeなら走らない。
+
+        lockをPR HEAD向けに作り直し、``lock_identity``まで再計算し、live clean
+        HEADとprovenanceもそのPR HEADへ合わせても、``main``へ含まれていなければ
+        game 1に到達しない。
+        """
+        pr_head = "a" * 40
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            lock_path = base / "lock.json"
+            pr_provenance = provenance()
+            object.__setattr__(pr_provenance, "lisjong_arena_revision", pr_head)
+            # lock自体はPR HEADを指し、identityも整合している。
+            write_lock(
+                lock_path,
+                destinations,
+                head=pr_head,
+                execution_provenance=pr_provenance,
+            )
+            execute = recording_execute(constant_focal_score(30_000))
+            counter = iter(float(value) for value in range(0, 100_000))
+            with locked_environment(
+                head=pr_head, execution_provenance=pr_provenance, merged=False
+            ):
+                with self.assertRaises(ProgressionLockError) as raised:
+                    run_phase_a_feasibility(
+                        lock_path=lock_path,
+                        destination=destinations["feasibility_record"],
+                        logical_cpu_count=8,
+                        execute=execute,
+                        clock=lambda: next(counter),
+                    )
+        self.assertEqual(execute.calls, [])
+        self.assertIn("merged main", str(raised.exception))
+
+    def test_a_machine_with_a_different_sweep_runs_no_game(self):
+        """lockが確定したresolved sweepと違うmachineでは走らせない。"""
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            lock_path = base / "lock.json"
+            write_lock(lock_path, destinations, logical_cpu_count=8)
+            execute = recording_execute(constant_focal_score(30_000))
+            counter = iter(float(value) for value in range(0, 100_000))
+            with locked_environment():
+                with self.assertRaises(FeasibilityError) as raised:
+                    run_phase_a_feasibility(
+                        lock_path=lock_path,
+                        destination=destinations["feasibility_record"],
+                        logical_cpu_count=16,
+                        execute=execute,
+                        clock=lambda: next(counter),
+                    )
+        self.assertEqual(execute.calls, [])
+        self.assertIn("logical CPUs", str(raised.exception))
+
+    def test_the_locked_resolved_sweep_is_the_executed_sweep(self):
+        """4 CPU machine向けlockでは (1, 4) だけを実行する。"""
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            lock_path = base / "lock.json"
+            document = write_lock(lock_path, destinations, logical_cpu_count=4)
+            self.assertEqual(document["phase_a"]["resolved_worker_sweep"], [1, 4])
+            execute = recording_execute(constant_focal_score(30_000))
+            counter = iter(float(value) for value in range(0, 100_000))
+            with locked_environment():
+                run_phase_a_feasibility(
+                    lock_path=lock_path,
+                    destination=destinations["feasibility_record"],
+                    logical_cpu_count=4,
+                    execute=execute,
+                    clock=lambda: next(counter),
+                )
+        self.assertEqual(execute.calls, [1, 4])
 
     def test_a_tampered_lock_runs_no_game(self):
         with TemporaryDirectory() as directory:
@@ -1416,9 +1495,56 @@ class PhaseBGateIntegrationTests(unittest.TestCase):
                 f"{callable_object.__name__} must not accept a caller-chosen population",
             )
 
+    def test_arm_plans_use_the_locked_max_steps(self):
+        """``max_steps``はprotocol constantであり、phaseごとに変えられない。"""
+        candidate_plan = experiment.build_arm_plan(candidate_arm=True)
+        parent_plan = experiment.build_arm_plan(candidate_arm=False)
+        self.assertEqual(candidate_plan.max_steps, MAX_STEPS)
+        self.assertEqual(parent_plan.max_steps, MAX_STEPS)
+        self.assertEqual(protocol_module.protocol_document()["max_steps"], MAX_STEPS)
+
+    def test_no_entry_point_accepts_a_caller_chosen_max_steps(self):
+        import inspect
+
+        for callable_object in (
+            experiment.build_arm_plan,
+            experiment.run_phase_b_development,
+            run_phase_a_feasibility,
+        ):
+            self.assertNotIn(
+                "max_steps",
+                set(inspect.signature(callable_object).parameters),
+                f"{callable_object.__name__} must not accept a caller-chosen max_steps",
+            )
+
+    def test_an_arm_artifact_with_a_different_max_steps_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            candidate_path = base / "candidate.json"
+            parent_path = base / "parent.json"
+            save_arm_artifact(
+                evaluation_result(
+                    arm_plan(candidate_spec(), PHASE_B_SEEDS, max_steps=9_000),
+                    constant_focal_score(31_000),
+                ),
+                candidate_path,
+            )
+            save_arm_artifact(
+                evaluation_result(
+                    arm_plan(parent_spec(), PHASE_B_SEEDS),
+                    constant_focal_score(30_000),
+                ),
+                parent_path,
+            )
+            with self.assertRaises(PairedResultError) as raised:
+                derive_paired_deltas(
+                    load_arm_artifact(candidate_path), load_arm_artifact(parent_path)
+                )
+        self.assertIn("max_steps", str(raised.exception))
+
     def test_arm_plans_share_seeds_and_rotation_shape(self):
-        candidate_plan = experiment.build_arm_plan(candidate_arm=True, max_steps=10_000)
-        parent_plan = experiment.build_arm_plan(candidate_arm=False, max_steps=10_000)
+        candidate_plan = experiment.build_arm_plan(candidate_arm=True)
+        parent_plan = experiment.build_arm_plan(candidate_arm=False)
         self.assertEqual(candidate_plan.seeds, parent_plan.seeds)
         self.assertEqual(candidate_plan.seeds, PHASE_B_SEEDS)
         self.assertEqual(candidate_plan.candidate.identity, CANDIDATE_IDENTITY)
@@ -1447,7 +1573,8 @@ class LockTests(unittest.TestCase):
                     "candidate_artifact": directory / "candidate.json",
                     "parent_artifact": directory / "parent.json",
                     "paired_result": directory / "paired.json",
-                }
+                },
+                logical_cpu_count=8,
             )
 
     def test_lock_binds_the_required_conditions(self):
@@ -1544,6 +1671,43 @@ class LockTests(unittest.TestCase):
                 with self.assertRaises(lock.ProgressionLockError):
                     lock.parse_lock_document(self._resealed(document))
 
+    def test_the_lock_binds_max_steps_and_the_resolved_sweep(self):
+        with TemporaryDirectory() as directory:
+            document = self._document(Path(directory))
+        self.assertEqual(document["protocol"]["max_steps"], MAX_STEPS)
+        self.assertEqual(document["protocol"]["execution_branch"], "main")
+        self.assertEqual(document["phase_a"]["logical_cpu_count"], 8)
+        self.assertEqual(document["phase_a"]["resolved_worker_sweep"], [1, 4, 8])
+        self.assertEqual(document["execution_target"]["branch"], "main")
+
+    def test_a_non_main_execution_branch_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            document = self._document(Path(directory))
+        document["execution_target"]["branch"] = "issue-252-branch"
+        with self.assertRaises(lock.ProgressionLockError) as raised:
+            lock.parse_lock_document(self._resealed(document))
+        self.assertIn("reviewed merged main", str(raised.exception))
+
+    def test_a_resealed_resolved_sweep_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            document = self._document(Path(directory))
+        document["phase_a"]["resolved_worker_sweep"] = [1, 2, 3]
+        with self.assertRaises(lock.ProgressionLockError):
+            lock.parse_lock_document(self._resealed(document))
+
+    def test_a_resealed_max_steps_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            document = self._document(Path(directory))
+        document["protocol"]["max_steps"] = 50
+        with self.assertRaises(lock.ProgressionLockError):
+            lock.parse_lock_document(self._resealed(document))
+
+    def test_lock_generation_takes_no_caller_chosen_branch(self):
+        import inspect
+
+        parameters = set(inspect.signature(lock.build_lock_document).parameters)
+        self.assertNotIn("branch", parameters)
+
     def test_a_provenance_that_contradicts_the_execution_target_is_rejected(self):
         with TemporaryDirectory() as directory:
             document = self._document(Path(directory))
@@ -1580,7 +1744,8 @@ class LockTests(unittest.TestCase):
                             "candidate_artifact": base / "candidate.json",
                             "parent_artifact": base / "parent.json",
                             "paired_result": base / "paired.json",
-                        }
+                        },
+                        logical_cpu_count=8,
                     )
 
     def test_unmerged_revision_blocks_lock_generation(self):
@@ -1608,7 +1773,8 @@ class LockTests(unittest.TestCase):
                             "candidate_artifact": base / "candidate.json",
                             "parent_artifact": base / "parent.json",
                             "paired_result": base / "paired.json",
-                        }
+                        },
+                        logical_cpu_count=8,
                     )
 
 

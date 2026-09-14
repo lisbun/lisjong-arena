@@ -159,7 +159,7 @@ pre-execution lockは `build_lock_document()` が生成し、
 ```text
 worktree clean
 HEAD == collected provenance revision
-HEAD が merged long-lived branch に含まれる
+HEAD が main に含まれる（EXECUTION_BRANCH 固定、callerは選べない）
 artifact destinations が未作成
 ```
 
@@ -172,17 +172,40 @@ artifact destinations が未作成
 ```text
 lockをstrict read（locked contractへ再bind）
 live clean HEAD == locked execution target revision
+live HEAD が main へmerge済み（実行時にも再確認する）
 live execution provenance == locked provenance
 出力先 == lock済みdestination
 出力先が未作成（write-once）
 ```
 
+`main` containmentはlock生成時だけでなく**実行時にも**再確認する。したがってPR
+HEADを指すlockを作り直して `lock_identity` まで再計算し、live HEAD / provenance
+をそれへ合わせても、`main` 未mergeであればgame 1に到達しない。
+
 Phase Bはさらに、game 1より前にPhase A feasibility recordのprovenanceがlive
 provenanceと一致することも要求する。revision driftは400局を走らせてwrite-once
 artifactを消費した後ではなく、開始前にfail closedする。
 
-結果としてPR branch（HEADがlocked revisionと異なる）からは、real lockもreal
-Phase A / Phase Bも開始できない。
+結果としてPR branchからは、real lockもreal Phase A / Phase Bも開始できない。
+
+## 実行条件はlockが確定する
+
+`max_steps` と worker sweep も、実行時にcallerが選べないようlockへbindする。
+
+```text
+MAX_STEPS = 10_000
+    protocol constant。protocol document経由でlock / feasibility record /
+    paired resultへ入り、Phase A planとPhase B P/C planの両方で使う。
+    arm artifactのmax_stepsが違えばpaired derivationがfail closedする。
+    CLIに --max-steps はない。
+
+worker sweep
+    lock生成時に logical_cpu_count と、そこから解決した
+    resolved_worker_sweep を確定して記録する。Phase Aはこのlocked resolved
+    sweepだけを実行し、live machineが同じsweepを解決しなければgame 1より前に
+    fail closedする。custom sweepでlocked seedsを消費してからreadbackで
+    気付く順序にはしない。
+```
 
 ## strict readbackはsemantic値を再導出する
 
@@ -235,6 +258,9 @@ python -m lisjong_arena.progression_development phase-b \
 
 `--lock` は両phaseで必須である。`phase-a` はgateを通らなければ非zeroで終了し、
 `phase-b` はlockとgate済みrecordの両方が揃わなければrunnerを1度も呼ばない。
+
+branch、`max_steps`、worker sweepを変えるCLI optionは存在しない。いずれも
+protocol constantまたはlockが確定した値であり、実行時に選び直せない。
 
 ## no-rescue boundary
 
