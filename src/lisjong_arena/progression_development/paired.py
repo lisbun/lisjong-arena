@@ -501,8 +501,44 @@ def parse_paired_result(value: object) -> dict[str, object]:
         raise PairedResultError(
             "stored classification does not match the pre-registered rule"
         )
+    expected_candidate = require_exact_candidate_semantics().to_document()
+    if (
+        expect_object(
+            document["candidate_binding"], set(expected_candidate), "candidate_binding"
+        )
+        != expected_candidate
+    ):
+        raise PairedResultError(
+            "paired result candidate binding is not the locked #170 generation"
+        )
+    expected_comparator = require_exact_comparator()
+    if (
+        expect_object(
+            document["comparator_binding"],
+            set(expected_comparator),
+            "comparator_binding",
+        )
+        != expected_comparator
+    ):
+        raise PairedResultError(
+            "paired result comparator binding is not the locked passive T"
+        )
+    expected_diagnostics = progression_diagnostics_availability()
+    if (
+        expect_object(
+            document["progression_diagnostics"],
+            set(expected_diagnostics),
+            "progression_diagnostics",
+        )
+        != expected_diagnostics
+    ):
+        raise PairedResultError(
+            "paired result diagnostics availability does not match the current seam"
+        )
     expect_str(document["result_identity"], "result_identity")
-    expect_int(document["worker_count"], "worker_count")
+    worker_count = expect_int(document["worker_count"], "worker_count")
+    if worker_count <= 0:
+        raise PairedResultError("paired result worker count must be positive")
     for arm in ("candidate", "parent"):
         arm_document = expect_object(
             expect_object(document["arms"], {"candidate", "parent"}, "arms")[arm],
@@ -521,11 +557,79 @@ def parse_paired_result(value: object) -> dict[str, object]:
 
 
 def load_paired_result(path: str | Path) -> dict[str, object]:
-    """保存済みpaired resultをstrict readbackで読み戻す。"""
+    """保存済みpaired resultをstrict readbackで読み戻す(self-consistencyのみ)。
+
+    raw evidenceとの突き合わせまで行う最終verificationは
+    ``verify_paired_result()``を使う。
+    """
     try:
         return parse_paired_result(read_json_document(Path(path)))
     except ArtifactValidationError as exc:
         raise PairedResultError(str(exc)) from exc
+
+
+def verify_paired_result(
+    path: str | Path,
+    *,
+    candidate_artifact_path: str | Path,
+    parent_artifact_path: str | Path,
+) -> dict[str, object]:
+    """paired resultを保存済みarm artifactのraw evidenceまで遡って検証する。
+
+    self-consistency(``parse_paired_result()``)だけでは、documentを書き換えた
+    うえで``result_identity``まで再計算したresultを弾けない。ここでは
+
+    ```text
+    P / C arm artifactをstrict read
+    -> artifact digest / plan identity照合
+    -> raw game resultsから100個のD_sを再導出
+    -> primary summaryを再導出
+    -> classificationを再導出
+    -> stored paired result全体と一致
+    ```
+
+    まで確認する。raw evidenceと違うresultはidentityが揃っていても拒否する。
+    """
+    document = load_paired_result(path)
+    candidate_artifact = load_arm_artifact(candidate_artifact_path)
+    parent_artifact = load_arm_artifact(parent_artifact_path)
+
+    arms = document["arms"]
+    for name, artifact, artifact_path in (
+        ("candidate", candidate_artifact, candidate_artifact_path),
+        ("parent", parent_artifact, parent_artifact_path),
+    ):
+        stored = arms[name]  # type: ignore[index]
+        rederived = _arm_document(artifact, artifact_path)
+        if stored != rederived:
+            raise PairedResultError(
+                f"stored {name} arm block does not match the arm artifact on disk"
+            )
+
+    deltas = derive_paired_deltas(candidate_artifact, parent_artifact)
+    if [item.to_document() for item in deltas] != document["paired_deltas"]:
+        raise PairedResultError(
+            "stored paired deltas do not match the arm artifacts' raw game results"
+        )
+    summary = summarize_paired_deltas(deltas)
+    if summary.to_document() != document["primary_summary"]:
+        raise PairedResultError(
+            "stored primary summary does not match the re-derived paired evidence"
+        )
+    if classify_paired_summary(summary) != document["classification"]:
+        raise PairedResultError(
+            "stored classification does not match the re-derived paired evidence"
+        )
+    if candidate_artifact.provenance != parent_artifact.provenance:
+        raise PairedResultError("both arms must share the same execution provenance")
+    if (
+        execution_provenance_to_dict(candidate_artifact.provenance)
+        != (document["provenance"])
+    ):
+        raise PairedResultError(
+            "stored provenance does not match the arm artifacts' provenance"
+        )
+    return document
 
 
 def load_arm_artifact(path: str | Path) -> SingleRoundStrengthArtifact:
@@ -550,4 +654,5 @@ __all__ = [
     "parse_paired_result",
     "save_paired_result",
     "summarize_paired_deltas",
+    "verify_paired_result",
 ]

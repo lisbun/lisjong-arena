@@ -45,12 +45,17 @@ from .feasibility import (
     load_feasibility_record,
     require_passed_gate,
 )
+from .lock import (
+    load_lock_document,
+    require_live_execution_target,
+    require_locked_destination,
+)
 from .paired import (
     PairedResultError,
     build_paired_result,
     load_arm_artifact,
-    load_paired_result,
     save_paired_result,
+    verify_paired_result,
 )
 from .protocol import (
     PHASE_B_GAMES_PER_ARM,
@@ -120,6 +125,7 @@ def _run_arm(
 
 def run_phase_b_development(
     *,
+    lock_path: str | Path,
     feasibility_record_path: str | Path,
     candidate_artifact_path: str | Path,
     parent_artifact_path: str | Path,
@@ -127,19 +133,39 @@ def run_phase_b_development(
     max_steps: int = 10_000,
     execute: Callable[..., SingleRoundEvaluationResult] = default_execute,
 ) -> PhaseBOutcome:
-    """gate済みfeasibility recordの下で2 armを実行し、paired resultを残す。
+    """lockとgate済みfeasibility recordの下で2 armを実行する。
 
-    worker数はPhase A recordのselected worker settingだけから決まる。gateが
-    通っていないrecordではPhase Bを開始しない。
+    worker数はPhase A recordのselected worker settingだけから決まる。
+
+    game 1より前に、lockのstrict read、live execution target(clean HEAD /
+    provenance)との照合、Phase A recordのprovenanceとの照合、locked
+    destinationとの一致、write-once preflightをすべて済ませる。いずれかが
+    崩れていればevaluatorを1度も呼ばない。400局を走らせてwrite-once
+    artifactを消費した後に失敗させない。
     """
-    record = load_feasibility_record(feasibility_record_path)
-    worker_count = require_passed_gate(record)
     require_exact_candidate_semantics()
 
+    # --- game 1より前のlock / provenance gate ------------------------------
+    lock_document = load_lock_document(lock_path)
+    live_provenance = require_live_execution_target(lock_document)
+
+    record_path = require_locked_destination(
+        lock_document, "feasibility_record", feasibility_record_path
+    )
+    record = load_feasibility_record(record_path)
+    worker_count = require_passed_gate(record)
+    if record.provenance != live_provenance:
+        raise PairedResultError(
+            "Phase A feasibility provenance differs from the live locked provenance"
+        )
+
     destinations: dict[str, str | Path] = {
-        "candidate_artifact": Path(candidate_artifact_path),
-        "parent_artifact": Path(parent_artifact_path),
-        "paired_result": Path(paired_result_path),
+        name: require_locked_destination(lock_document, name, path)
+        for name, path in (
+            ("candidate_artifact", candidate_artifact_path),
+            ("parent_artifact", parent_artifact_path),
+            ("paired_result", paired_result_path),
+        )
     }
     require_new_artifact_destinations(
         destinations,
@@ -169,7 +195,13 @@ def run_phase_b_development(
         worker_count=worker_count,
     )
     save_paired_result(document, paired_result_path)
-    verified = load_paired_result(paired_result_path)
+    # 最終verificationはself-consistencyだけでなく、保存済みarm artifactの
+    # raw evidenceからpaired値・summary・classificationを再導出して突き合わせる。
+    verified = verify_paired_result(
+        paired_result_path,
+        candidate_artifact_path=candidate_artifact_path,
+        parent_artifact_path=parent_artifact_path,
+    )
     return PhaseBOutcome(
         worker_count=worker_count,
         candidate_artifact_path=Path(candidate_artifact_path),

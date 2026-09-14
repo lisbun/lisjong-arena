@@ -61,7 +61,6 @@ from lisjong_arena.model import (
 )
 from lisjong_arena.single_round_artifact import (
     SingleRoundExecutionProvenance,
-    collect_execution_provenance,
     execution_provenance_to_dict,
     parse_execution_provenance,
 )
@@ -70,6 +69,11 @@ from lisjong_arena.single_round_evaluation import (
     run_single_round_evaluation_parallel,
 )
 
+from .lock import (
+    load_lock_document,
+    require_live_execution_target,
+    require_locked_destination,
+)
 from .protocol import (
     FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
     INFEASIBLE_LABEL,
@@ -564,20 +568,36 @@ def evaluate_feasibility_gate(
 
 def run_phase_a_feasibility(
     *,
+    lock_path: str | Path,
+    destination: str | Path,
     logical_cpu_count: int,
     worker_counts: Sequence[int] | None = None,
     max_steps: int = 10_000,
     execute: Callable[..., SingleRoundEvaluationResult] = default_execute,
     clock: Callable[[], float] = time.perf_counter,
-    provenance: SingleRoundExecutionProvenance | None = None,
 ) -> FeasibilityRecord:
-    """locked technical populationでworker sweepを実行しgateを判定する。
+    """lock済みexecution targetでworker sweepを実行しgateを判定する。
 
     実行するplanは``candidate P vs passive T x3``であり、Phase Bと同じ
     rotation shapeを使う。technical gameのscoreはrecordへ残さない。
+
+    game 1より前に、pre-execution lockのstrict read、live execution target
+    (clean HEAD / provenance)との照合、locked destinationとの一致、write-once
+    preflightをすべて済ませる。いずれかが崩れていればrunnerを1度も呼ばない。
     """
     require_exact_candidate_semantics()
     seeds = require_phase_a_population(PHASE_A_SEEDS)
+
+    # --- game 1より前のlock gate ------------------------------------------
+    lock_document = load_lock_document(lock_path)
+    provenance = require_live_execution_target(lock_document)
+    output = require_locked_destination(
+        lock_document, "feasibility_record", destination
+    )
+    require_new_artifact_destinations(
+        {"feasibility_record": output}, required_names=("feasibility_record",)
+    )
+
     sweep = (
         supported_worker_sweep(logical_cpu_count)
         if worker_counts is None
@@ -617,15 +637,18 @@ def run_phase_a_feasibility(
                 per_game_elapsed = summarize_per_game_elapsed(elapsed)
 
     gate = evaluate_feasibility_gate(measurements)
-    collected = collect_execution_provenance() if provenance is None else provenance
-    return build_feasibility_record(
+    # provenanceはlock gateの時点(game 1より前)で固定したものを使う。sweep後に
+    # 収集し直すと、実行中のrevision driftを記録側で追認してしまう。
+    record = build_feasibility_record(
         ordered_seeds=seeds,
-        provenance=collected,
+        provenance=provenance,
         machine=collect_machine_profile(logical_cpu_count),
         measurements=tuple(measurements),
         per_game_elapsed=per_game_elapsed,
         gate=gate,
     )
+    save_feasibility_record(record, output)
+    return load_feasibility_record(output)
 
 
 def build_feasibility_record(
@@ -787,11 +810,42 @@ def _parse_gate(value: object) -> FeasibilityGate:
     )
 
 
+def _require_measurement_contract(
+    measurements: tuple[WorkerMeasurement, ...], machine: MachineProfile
+) -> None:
+    """measurementsが記録済みmachineのlocked sweep contractと整合するか確認する。"""
+    if not measurements:
+        raise FeasibilityError("a feasibility record must contain worker measurements")
+    observed = tuple(item.worker_count for item in measurements)
+    expected = supported_worker_sweep(machine.logical_cpu_count)
+    if observed != expected:
+        raise FeasibilityError(
+            f"worker measurements {observed} are not the locked sweep {expected} "
+            "for the recorded machine"
+        )
+    for item in measurements:
+        if item.execution_failed:
+            if item.raw_results_digest is not None or item.games_completed != 0:
+                raise FeasibilityError(
+                    "a failed worker measurement must carry no completed games "
+                    "and no raw result digest"
+                )
+            continue
+        if item.raw_results_digest is None:
+            raise FeasibilityError(
+                "a completed worker measurement must carry a raw result digest"
+            )
+
+
 def parse_feasibility_record(value: object) -> FeasibilityRecord:
-    """strict readbackでfeasibility recordを復元する。
+    """strict readbackでfeasibility recordを復元し、semantic値を再導出する。
 
     bool / floatをintとして受理しない``_artifact_io``のstrict helperだけを
-    使い、key集合の過不足も受理しない。
+    使い、key集合の過不足も受理しない。さらにcontent hash一致だけを根拠に
+    せず、candidate / comparator / parent binding、diagnostics availability、
+    measurementsのsweep contract、``FeasibilityGate``そのものをこのrevisionの
+    contractから再導出して突き合わせる。stored ``gate_passed``はauthorityに
+    しない。
     """
     document = expect_object(value, _RECORD_FIELDS, "feasibility record")
     version = expect_int(document["record_version"], "record_version")
@@ -817,33 +871,74 @@ def parse_feasibility_record(value: object) -> FeasibilityRecord:
             expect_list(document["measurements"], "measurements")
         )
     )
+    expected_candidate = require_exact_candidate_semantics().to_document()
     candidate_binding = expect_object(
-        document["candidate_binding"],
-        set(require_exact_candidate_semantics().to_document()),
-        "candidate_binding",
+        document["candidate_binding"], set(expected_candidate), "candidate_binding"
     )
+    if candidate_binding != expected_candidate:
+        raise FeasibilityError(
+            "feasibility record candidate binding is not the locked #170 generation"
+        )
+    expected_comparator = require_exact_comparator()
     comparator_binding = expect_object(
-        document["comparator_binding"],
-        set(require_exact_comparator()),
-        "comparator_binding",
+        document["comparator_binding"], set(expected_comparator), "comparator_binding"
     )
+    if comparator_binding != expected_comparator:
+        raise FeasibilityError(
+            "feasibility record comparator binding is not the locked passive T"
+        )
+    parent_identity = expect_str(document["parent_identity"], "parent_identity")
+    if parent_identity != PARENT_IDENTITY:
+        raise FeasibilityError("feasibility record parent identity is not the locked C")
+    expected_diagnostics = progression_diagnostics_availability()
+    diagnostics = expect_object(
+        document["progression_diagnostics"],
+        set(expected_diagnostics),
+        "progression_diagnostics",
+    )
+    if diagnostics != expected_diagnostics:
+        raise FeasibilityError(
+            "feasibility record progression diagnostics availability does not match "
+            "the current stable seam"
+        )
+
+    machine = _parse_machine(document["machine"])
+    _require_measurement_contract(measurements, machine)
+
+    gate = _parse_gate(document["gate"])
+    rederived_gate = evaluate_feasibility_gate(
+        measurements, wall_clock_limit_hours=gate.wall_clock_limit_hours
+    )
+    if gate.wall_clock_limit_hours != FEASIBILITY_WALL_CLOCK_LIMIT_HOURS:
+        raise FeasibilityError(
+            "feasibility record does not use the pre-registered wall-clock bound"
+        )
+    if gate != rederived_gate:
+        # stored gate_passed / selected worker をauthorityにしない。
+        raise FeasibilityError(
+            "stored feasibility gate does not match the gate re-derived from the "
+            "recorded worker measurements"
+        )
+    if gate.gate_passed and gate.selected_worker_count != (
+        select_fastest_valid_worker_count(measurements)
+    ):
+        raise FeasibilityError(
+            "stored selected worker count is not the fastest valid setting"
+        )
+
     record = FeasibilityRecord(
         record_version=version,
         protocol=protocol,
         ordered_seeds=seeds,
         candidate_binding=candidate_binding,
-        parent_identity=expect_str(document["parent_identity"], "parent_identity"),
+        parent_identity=parent_identity,
         comparator_binding=comparator_binding,
         provenance=parse_execution_provenance(document["provenance"]),
-        machine=_parse_machine(document["machine"]),
+        machine=machine,
         measurements=measurements,
         per_game_elapsed=_parse_per_game_elapsed(document["per_game_elapsed"]),
-        progression_diagnostics=expect_object(
-            document["progression_diagnostics"],
-            set(progression_diagnostics_availability()),
-            "progression_diagnostics",
-        ),
-        gate=_parse_gate(document["gate"]),
+        progression_diagnostics=diagnostics,
+        gate=gate,
         record_identity=expect_str(document["record_identity"], "record_identity"),
     )
     payload = {

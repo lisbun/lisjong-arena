@@ -12,16 +12,21 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from _progression_development_fixtures import (
+    ARENA_REVISION,
     arm_plan,
     constant_focal_score,
     evaluation_result,
     game_results,
+    lock_destinations,
+    locked_environment,
     provenance,
     recording_execute,
     save_arm_artifact,
     seed_offset_focal_score,
+    write_lock,
 )
 
+from lisjong_arena._artifact_io import canonical_json_text
 from lisjong_arena.learned_policy_offline_q.p1_gate_b_comparator import (
     PassiveTsumogiriPolicy,
 )
@@ -44,6 +49,7 @@ from lisjong_arena.progression_development.feasibility import (
     select_fastest_valid_worker_count,
     summarize_per_game_elapsed,
 )
+from lisjong_arena.progression_development.lock import ProgressionLockError
 from lisjong_arena.progression_development.paired import (
     PairedResultError,
     PairedSeedDelta,
@@ -56,6 +62,7 @@ from lisjong_arena.progression_development.paired import (
     parse_paired_result,
     save_paired_result,
     summarize_paired_deltas,
+    verify_paired_result,
 )
 from lisjong_arena.progression_development.protocol import (
     CANDIDATE_CLASS_NAME,
@@ -381,12 +388,19 @@ class PhaseAExecutionTests(unittest.TestCase):
 
     def _run(self, execute, *, logical_cpu_count: int = 8):
         counter = iter(float(value) for value in range(0, 100_000))
-        return run_phase_a_feasibility(
-            logical_cpu_count=logical_cpu_count,
-            execute=execute,
-            clock=lambda: next(counter),
-            provenance=provenance(),
-        )
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            lock_path = base / "lock.json"
+            write_lock(lock_path, destinations)
+            with locked_environment():
+                return run_phase_a_feasibility(
+                    lock_path=lock_path,
+                    destination=destinations["feasibility_record"],
+                    logical_cpu_count=logical_cpu_count,
+                    execute=execute,
+                    clock=lambda: next(counter),
+                )
 
     def test_sweep_runs_the_locked_population_at_each_worker_setting(self):
         execute = recording_execute(constant_focal_score(30_000))
@@ -440,6 +454,116 @@ class PhaseAExecutionTests(unittest.TestCase):
         self.assertEqual(record.machine.logical_cpu_count, 8)
         self.assertFalse(record.progression_diagnostics["available"])
         self.assertEqual(record.parent_identity, PARENT_IDENTITY)
+
+    def test_record_is_written_to_the_locked_destination(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            lock_path = base / "lock.json"
+            write_lock(lock_path, destinations)
+            counter = iter(float(value) for value in range(0, 100_000))
+            with locked_environment():
+                record = run_phase_a_feasibility(
+                    lock_path=lock_path,
+                    destination=destinations["feasibility_record"],
+                    logical_cpu_count=8,
+                    execute=recording_execute(constant_focal_score(30_000)),
+                    clock=lambda: next(counter),
+                )
+            self.assertTrue(destinations["feasibility_record"].exists())
+            reloaded = load_feasibility_record(destinations["feasibility_record"])
+        self.assertEqual(reloaded.record_identity, record.record_identity)
+
+
+class PhaseALockGateTests(unittest.TestCase):
+    """Phase Aはlockをconsumeして初めてreal executionへ進める。"""
+
+    def _attempt(
+        self,
+        base: Path,
+        *,
+        lock_path: Path | None = None,
+        destination: Path | None = None,
+        live_head: str = ARENA_REVISION,
+        live_provenance=None,
+    ):
+        """runner呼び出し回数を観測しながらPhase Aを試行する。"""
+        destinations = lock_destinations(base)
+        actual_lock = base / "lock.json" if lock_path is None else lock_path
+        if not actual_lock.exists() and lock_path is None:
+            write_lock(actual_lock, destinations)
+        execute = recording_execute(constant_focal_score(30_000))
+        counter = iter(float(value) for value in range(0, 100_000))
+        with locked_environment(head=live_head, execution_provenance=live_provenance):
+            with self.assertRaises(Exception) as raised:
+                run_phase_a_feasibility(
+                    lock_path=actual_lock,
+                    destination=(
+                        destinations["feasibility_record"]
+                        if destination is None
+                        else destination
+                    ),
+                    logical_cpu_count=8,
+                    execute=execute,
+                    clock=lambda: next(counter),
+                )
+        return execute, raised.exception
+
+    def test_a_missing_lock_runs_no_game(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            execute, _ = self._attempt(base, lock_path=base / "absent.json")
+        self.assertEqual(execute.calls, [])
+
+    def test_an_unlocked_destination_runs_no_game(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            execute, error = self._attempt(base, destination=base / "elsewhere.json")
+        self.assertEqual(execute.calls, [])
+        self.assertIsInstance(error, ProgressionLockError)
+
+    def test_a_different_live_execution_target_runs_no_game(self):
+        """未mergeのPR branch(HEADがlocked revisionと異なる)では開始できない。"""
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            execute, error = self._attempt(base, live_head="f" * 40)
+        self.assertEqual(execute.calls, [])
+        self.assertIsInstance(error, ProgressionLockError)
+        self.assertIn("locked execution target", str(error))
+
+    def test_drifted_live_provenance_runs_no_game(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            execute, error = self._attempt(
+                base, live_provenance=provenance(lisjong_revision="9" * 40)
+            )
+        self.assertEqual(execute.calls, [])
+        self.assertIsInstance(error, ProgressionLockError)
+
+    def test_an_existing_record_destination_runs_no_game(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            write_lock(base / "lock.json", destinations)
+            destinations["feasibility_record"].write_text("{}", encoding="utf-8")
+            execute, _ = self._attempt(base)
+        self.assertEqual(execute.calls, [])
+
+    def test_a_tampered_lock_runs_no_game(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            document = write_lock(base / "lock.json", destinations)
+            document["phase_b"]["ordered_seeds"] = list(range(1, 101))
+            payload = {
+                name: item for name, item in document.items() if name != "lock_identity"
+            }
+            document["lock_identity"] = protocol_module.document_identity(payload)
+            tampered = base / "tampered-lock.json"
+            tampered.write_text(canonical_json_text(document), encoding="utf-8")
+            execute, error = self._attempt(base, lock_path=tampered)
+        self.assertEqual(execute.calls, [])
+        self.assertIsInstance(error, ProgressionLockError)
 
 
 class PerGameElapsedTests(unittest.TestCase):
@@ -527,6 +651,73 @@ class FeasibilityRecordPersistenceTests(unittest.TestCase):
         del document["machine"]
         with self.assertRaises(Exception):
             parse_feasibility_record(document)
+
+    def _resealed(self, document: dict) -> dict:
+        """documentを書き換えたうえでrecord identityを再計算する。"""
+        payload = {
+            name: item for name, item in document.items() if name != "record_identity"
+        }
+        document["record_identity"] = protocol_module.document_identity(payload)
+        return document
+
+    def test_a_resealed_passing_gate_is_rejected(self):
+        """stored gate_passedをauthorityにしない。
+
+        計測がgateを通っていないrecordのgateだけを書き換え、identityまで
+        再計算しても、measurementsから再導出したgateと違えば拒否する。
+        """
+        measurements = slow_measurements()
+        record = self._record(measurements)
+        self.assertFalse(record.gate.gate_passed)
+        document = record.to_document()
+        document["gate"]["gate_passed"] = True
+        document["gate"]["label"] = None
+        document["gate"]["failure_reasons"] = []
+        document["gate"]["selected_worker_count"] = 8
+        document["gate"]["projected_phase_b_arm_wall_clock_hours"] = 1.0
+        document["gate"]["projected_phase_b_arm_cpu_hours"] = 8.0
+        with self.assertRaises(FeasibilityError) as raised:
+            parse_feasibility_record(self._resealed(document))
+        self.assertIn("re-derived", str(raised.exception))
+
+    def test_a_resealed_faster_worker_choice_is_rejected(self):
+        document = self._record().to_document()
+        document["gate"]["selected_worker_count"] = 4
+        with self.assertRaises(FeasibilityError):
+            parse_feasibility_record(self._resealed(document))
+
+    def test_measurements_must_match_the_recorded_machine_sweep(self):
+        document = self._record().to_document()
+        document["measurements"] = document["measurements"][:2]
+        with self.assertRaises(FeasibilityError) as raised:
+            parse_feasibility_record(self._resealed(document))
+        self.assertIn("locked sweep", str(raised.exception))
+
+    def test_a_resealed_wrong_parent_identity_is_rejected(self):
+        document = self._record().to_document()
+        document["parent_identity"] = "two-step"
+        with self.assertRaises(FeasibilityError):
+            parse_feasibility_record(self._resealed(document))
+
+    def test_a_resealed_candidate_binding_is_rejected(self):
+        document = self._record().to_document()
+        document["candidate_binding"]["clairvoyant_semantics_present"] = True
+        with self.assertRaises(FeasibilityError):
+            parse_feasibility_record(self._resealed(document))
+
+    def test_a_resealed_diagnostics_claim_is_rejected(self):
+        """unavailableな診断を「available」と書き換えたrecordを受理しない。"""
+        document = self._record().to_document()
+        document["progression_diagnostics"]["available"] = True
+        document["progression_diagnostics"]["activation_rate"] = 0.82
+        with self.assertRaises(FeasibilityError):
+            parse_feasibility_record(self._resealed(document))
+
+    def test_a_resealed_wall_clock_bound_is_rejected(self):
+        document = self._record().to_document()
+        document["gate"]["wall_clock_limit_hours"] = 100.0
+        with self.assertRaises(FeasibilityError):
+            parse_feasibility_record(self._resealed(document))
 
 
 class PassedGateTests(unittest.TestCase):
@@ -919,6 +1110,100 @@ class PairedResultDocumentTests(unittest.TestCase):
         with self.assertRaises(Exception):
             parse_paired_result(document)
 
+    def test_full_verification_accepts_a_faithful_result(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            document, candidate_path, parent_path = self._build(base)
+            path = base / "paired.json"
+            save_paired_result(document, path)
+            verified = verify_paired_result(
+                path,
+                candidate_artifact_path=candidate_path,
+                parent_artifact_path=parent_path,
+            )
+        self.assertEqual(verified["result_identity"], document["result_identity"])
+
+    def test_a_resealed_result_that_contradicts_raw_evidence_is_rejected(self):
+        """documentを整合的に書き換えidentityまで再計算しても拒否する。
+
+        deltas / summary / classification / result identityをすべて自己整合
+        させても、arm artifactのraw game resultsから再導出した値と違えば
+        final verificationはfail closedする。
+        """
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            document, candidate_path, parent_path = self._build(base)
+
+            # 全D_sへ +5000 を足し、summary / classification / identityを
+            # その値へ自己整合させる。
+            shifted = []
+            for item in document["paired_deltas"]:
+                entry = dict(item)
+                entry["candidate_mean"] = entry["candidate_mean"] + 5_000.0
+                entry["delta"] = entry["candidate_mean"] - entry["parent_mean"]
+                shifted.append(entry)
+            document["paired_deltas"] = shifted
+            deltas = tuple(
+                PairedSeedDelta(
+                    seed=item["seed"],
+                    candidate_mean=item["candidate_mean"],
+                    parent_mean=item["parent_mean"],
+                    delta=item["delta"],
+                )
+                for item in shifted
+            )
+            summary = summarize_paired_deltas(deltas)
+            document["primary_summary"] = summary.to_document()
+            document["classification"] = classify_paired_summary(summary)
+            payload = {
+                name: item
+                for name, item in document.items()
+                if name != "result_identity"
+            }
+            document["result_identity"] = protocol_module.document_identity(payload)
+
+            # self-consistencyだけのreadbackは通る。
+            parse_paired_result(document)
+
+            path = base / "resealed.json"
+            path.write_text(canonical_json_text(document), encoding="utf-8")
+            with self.assertRaises(PairedResultError) as raised:
+                verify_paired_result(
+                    path,
+                    candidate_artifact_path=candidate_path,
+                    parent_artifact_path=parent_path,
+                )
+        self.assertIn("raw game results", str(raised.exception))
+
+    def test_a_tampered_arm_artifact_is_rejected_by_full_verification(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            document, candidate_path, parent_path = self._build(base)
+            path = base / "paired.json"
+            save_paired_result(document, path)
+            artifact = json.loads(candidate_path.read_text(encoding="utf-8"))
+            artifact["game_results"][0]["scores"][0] += 1
+            candidate_path.write_text(json.dumps(artifact), encoding="utf-8")
+            with self.assertRaises(Exception):
+                verify_paired_result(
+                    path,
+                    candidate_artifact_path=candidate_path,
+                    parent_artifact_path=parent_path,
+                )
+
+    def test_a_swapped_arm_artifact_is_rejected_by_full_verification(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            document, candidate_path, parent_path = self._build(base)
+            path = base / "paired.json"
+            save_paired_result(document, path)
+            with self.assertRaises(PairedResultError):
+                verify_paired_result(
+                    path,
+                    candidate_artifact_path=parent_path,
+                    parent_artifact_path=candidate_path,
+                )
+
     def test_mismatched_arm_provenance_is_rejected(self):
         with TemporaryDirectory() as directory:
             base = Path(directory)
@@ -949,15 +1234,24 @@ class PairedResultDocumentTests(unittest.TestCase):
                 )
 
 
-class PhaseBGateIntegrationTests(unittest.TestCase):
-    """Phase BはPhase A gateをstrict-readしない限り実行できない。"""
+def slow_measurements() -> tuple[WorkerMeasurement, ...]:
+    """sweep contractは満たすが、projectionが8hを超える計測。"""
+    return (
+        measurement(1, seconds=2.0 * 3600.0),
+        measurement(4, seconds=1.5 * 3600.0),
+        measurement(8, seconds=1.2 * 3600.0),
+    )
 
-    def _feasibility_path(self, directory: Path, *, passing: bool) -> Path:
-        measurements = (
-            passing_measurements()
-            if passing
-            else (measurement(1, seconds=2.0 * 3600.0),)
-        )
+
+class PhaseBGateIntegrationTests(unittest.TestCase):
+    """Phase Bはlockとgate済みrecordの両方をstrict-readして初めて実行できる。"""
+
+    def _prepare(self, directory: Path, *, passing: bool = True):
+        """lockとfeasibility recordを用意し、destinationsを返す。"""
+        destinations = lock_destinations(directory)
+        lock_path = directory / "lock.json"
+        write_lock(lock_path, destinations)
+        measurements = passing_measurements() if passing else slow_measurements()
         record = build_feasibility_record(
             ordered_seeds=PHASE_A_SEEDS,
             provenance=provenance(),
@@ -966,75 +1260,146 @@ class PhaseBGateIntegrationTests(unittest.TestCase):
             per_game_elapsed=None,
             gate=evaluate_feasibility_gate(measurements),
         )
-        path = directory / "feasibility.json"
-        save_feasibility_record(record, path)
-        return path
+        save_feasibility_record(record, destinations["feasibility_record"])
+        return lock_path, destinations
+
+    def _run(self, lock_path, destinations, execute, *, live_provenance=None):
+        with locked_environment(execution_provenance=live_provenance):
+            with mock.patch(
+                "lisjong_arena.single_round_artifact.collect_execution_provenance",
+                return_value=provenance()
+                if live_provenance is None
+                else live_provenance,
+            ):
+                return experiment.run_phase_b_development(
+                    lock_path=lock_path,
+                    feasibility_record_path=destinations["feasibility_record"],
+                    candidate_artifact_path=destinations["candidate_artifact"],
+                    parent_artifact_path=destinations["parent_artifact"],
+                    paired_result_path=destinations["paired_result"],
+                    execute=execute,
+                )
 
     def test_failed_gate_blocks_phase_b_execution(self):
         with TemporaryDirectory() as directory:
             base = Path(directory)
-            record_path = self._feasibility_path(base, passing=False)
+            lock_path, destinations = self._prepare(base, passing=False)
             execute = recording_execute(constant_focal_score(30_000))
             with self.assertRaises(FeasibilityError):
-                experiment.run_phase_b_development(
-                    feasibility_record_path=record_path,
-                    candidate_artifact_path=base / "candidate.json",
-                    parent_artifact_path=base / "parent.json",
-                    paired_result_path=base / "paired.json",
-                    execute=execute,
-                )
+                self._run(lock_path, destinations, execute)
             self.assertEqual(execute.calls, [])
-            self.assertFalse((base / "candidate.json").exists())
+            self.assertFalse(destinations["candidate_artifact"].exists())
 
     def test_missing_record_blocks_phase_b_execution(self):
         with TemporaryDirectory() as directory:
             base = Path(directory)
+            destinations = lock_destinations(base)
+            lock_path = base / "lock.json"
+            write_lock(lock_path, destinations)
+            execute = recording_execute(constant_focal_score(30_000))
             with self.assertRaises(Exception):
-                experiment.run_phase_b_development(
-                    feasibility_record_path=base / "absent.json",
-                    candidate_artifact_path=base / "candidate.json",
-                    parent_artifact_path=base / "parent.json",
-                    paired_result_path=base / "paired.json",
-                    execute=recording_execute(constant_focal_score(30_000)),
+                self._run(lock_path, destinations, execute)
+            self.assertEqual(execute.calls, [])
+
+    def test_missing_lock_blocks_phase_b_execution(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            _, destinations = self._prepare(base)
+            execute = recording_execute(constant_focal_score(30_000))
+            with self.assertRaises(Exception):
+                self._run(base / "absent.json", destinations, execute)
+            self.assertEqual(execute.calls, [])
+
+    def test_unlocked_destination_blocks_phase_b_execution(self):
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            lock_path, destinations = self._prepare(base)
+            elsewhere = dict(destinations)
+            elsewhere["paired_result"] = base / "elsewhere.json"
+            execute = recording_execute(constant_focal_score(30_000))
+            with self.assertRaises(ProgressionLockError):
+                self._run(lock_path, elsewhere, execute)
+            self.assertEqual(execute.calls, [])
+
+    def test_a_different_live_execution_target_blocks_phase_b(self):
+        """未mergeのPR branchからはPhase Bを開始できない。"""
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            lock_path, destinations = self._prepare(base)
+            execute = recording_execute(constant_focal_score(30_000))
+            with locked_environment(head="f" * 40):
+                with self.assertRaises(ProgressionLockError):
+                    experiment.run_phase_b_development(
+                        lock_path=lock_path,
+                        feasibility_record_path=destinations["feasibility_record"],
+                        candidate_artifact_path=destinations["candidate_artifact"],
+                        parent_artifact_path=destinations["parent_artifact"],
+                        paired_result_path=destinations["paired_result"],
+                        execute=execute,
+                    )
+            self.assertEqual(execute.calls, [])
+
+    def test_drifted_live_provenance_blocks_phase_b_before_game_one(self):
+        """revision driftは400局を走らせる前にfail closedする。"""
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            lock_path, destinations = self._prepare(base)
+            execute = recording_execute(constant_focal_score(30_000))
+            with self.assertRaises(ProgressionLockError):
+                self._run(
+                    lock_path,
+                    destinations,
+                    execute,
+                    live_provenance=provenance(lisjong_revision="9" * 40),
                 )
+            self.assertEqual(execute.calls, [])
+            self.assertFalse(destinations["candidate_artifact"].exists())
+            self.assertFalse(destinations["paired_result"].exists())
+
+    def test_phase_a_provenance_mismatch_blocks_phase_b_before_game_one(self):
+        """Phase A recordのprovenanceがliveと違えばrunnerを呼ばない。"""
+        with TemporaryDirectory() as directory:
+            base = Path(directory)
+            destinations = lock_destinations(base)
+            lock_path = base / "lock.json"
+            write_lock(lock_path, destinations)
+            measurements = passing_measurements()
+            record = build_feasibility_record(
+                ordered_seeds=PHASE_A_SEEDS,
+                provenance=provenance(lisjong_revision="8" * 40),
+                machine=collect_machine_profile(8),
+                measurements=measurements,
+                per_game_elapsed=None,
+                gate=evaluate_feasibility_gate(measurements),
+            )
+            save_feasibility_record(record, destinations["feasibility_record"])
+            execute = recording_execute(constant_focal_score(30_000))
+            with self.assertRaises(PairedResultError):
+                self._run(lock_path, destinations, execute)
+            self.assertEqual(execute.calls, [])
+            self.assertFalse(destinations["candidate_artifact"].exists())
 
     def test_passed_gate_runs_both_arms_with_the_selected_worker_count(self):
         with TemporaryDirectory() as directory:
             base = Path(directory)
-            record_path = self._feasibility_path(base, passing=True)
+            lock_path, destinations = self._prepare(base)
             execute = recording_execute(constant_focal_score(30_000))
-            with mock.patch(
-                "lisjong_arena.single_round_artifact.collect_execution_provenance",
-                return_value=provenance(),
-            ):
-                outcome = experiment.run_phase_b_development(
-                    feasibility_record_path=record_path,
-                    candidate_artifact_path=base / "candidate.json",
-                    parent_artifact_path=base / "parent.json",
-                    paired_result_path=base / "paired.json",
-                    execute=execute,
-                )
+            outcome = self._run(lock_path, destinations, execute)
             self.assertEqual(execute.calls, [8, 8])
             self.assertEqual(outcome.worker_count, 8)
             self.assertEqual(outcome.classification["label"], INCONCLUSIVE_LABEL)
             self.assertEqual(len(outcome.paired_result["paired_deltas"]), 100)
-            self.assertTrue((base / "candidate.json").exists())
-            self.assertTrue((base / "parent.json").exists())
+            self.assertTrue(destinations["candidate_artifact"].exists())
+            self.assertTrue(destinations["parent_artifact"].exists())
 
     def test_existing_artifact_destination_blocks_phase_b(self):
         with TemporaryDirectory() as directory:
             base = Path(directory)
-            record_path = self._feasibility_path(base, passing=True)
-            (base / "candidate.json").write_text("{}", encoding="utf-8")
+            lock_path, destinations = self._prepare(base)
+            destinations["candidate_artifact"].write_text("{}", encoding="utf-8")
             execute = recording_execute(constant_focal_score(30_000))
             with self.assertRaises(Exception):
-                experiment.run_phase_b_development(
-                    feasibility_record_path=record_path,
-                    candidate_artifact_path=base / "candidate.json",
-                    parent_artifact_path=base / "parent.json",
-                    paired_result_path=base / "paired.json",
-                    execute=execute,
-                )
+                self._run(lock_path, destinations, execute)
             self.assertEqual(execute.calls, [])
 
     def test_no_entry_point_accepts_a_custom_or_extended_population(self):
@@ -1050,26 +1415,6 @@ class PhaseBGateIntegrationTests(unittest.TestCase):
                 parameters & {"seeds", "ordered_seeds", "extra_seeds", "population"},
                 f"{callable_object.__name__} must not accept a caller-chosen population",
             )
-
-    def test_arm_provenance_must_match_the_gated_record(self):
-        """Phase Aと違うlisjong revisionでdevelopment armを走らせない。"""
-        with TemporaryDirectory() as directory:
-            base = Path(directory)
-            record_path = self._feasibility_path(base, passing=True)
-            execute = recording_execute(constant_focal_score(30_000))
-            with mock.patch(
-                "lisjong_arena.single_round_artifact.collect_execution_provenance",
-                return_value=provenance(lisjong_revision="9" * 40),
-            ):
-                with self.assertRaises(PairedResultError):
-                    experiment.run_phase_b_development(
-                        feasibility_record_path=record_path,
-                        candidate_artifact_path=base / "candidate.json",
-                        parent_artifact_path=base / "parent.json",
-                        paired_result_path=base / "paired.json",
-                        execute=execute,
-                    )
-            self.assertFalse((base / "paired.json").exists())
 
     def test_arm_plans_share_seeds_and_rotation_shape(self):
         candidate_plan = experiment.build_arm_plan(candidate_arm=True, max_steps=10_000)
@@ -1146,6 +1491,65 @@ class LockTests(unittest.TestCase):
         document["phase_b"]["ordered_seeds"] = list(range(1, 101))
         with self.assertRaises(lock.ProgressionLockError):
             lock.parse_lock_document(document)
+
+    def _resealed(self, document: dict) -> dict:
+        payload = {
+            name: item for name, item in document.items() if name != "lock_identity"
+        }
+        document["lock_identity"] = protocol_module.document_identity(payload)
+        return document
+
+    def test_resealed_locks_are_rebound_to_the_locked_contract(self):
+        """identityを再計算しても、locked contractと違うlockは拒否する。"""
+        cases = {
+            "phase A population": lambda doc: doc["phase_a"].__setitem__(
+                "ordered_seeds", [1, 2, 3, 4]
+            ),
+            "phase B population": lambda doc: doc["phase_b"].__setitem__(
+                "ordered_seeds", list(range(1, 101))
+            ),
+            "phase B games per arm": lambda doc: doc["phase_b"].__setitem__(
+                "games_per_arm", 40
+            ),
+            "wall clock bound": lambda doc: doc["phase_a"].__setitem__(
+                "wall_clock_limit_hours", 100.0
+            ),
+            "worker sweep": lambda doc: doc["phase_a"].__setitem__(
+                "worker_sweep", [1, 2]
+            ),
+            "classification rule": lambda doc: doc["classification"].__setitem__(
+                "rule", "always SIGNAL"
+            ),
+            "no rescue boundary": lambda doc: doc.__setitem__("no_rescue_boundary", []),
+            "parent identity": lambda doc: doc.__setitem__(
+                "parent_identity", "two-step"
+            ),
+            "candidate binding": lambda doc: doc["candidate_binding"].__setitem__(
+                "clairvoyant_semantics_present", True
+            ),
+            "comparator binding": lambda doc: doc["comparator_binding"].__setitem__(
+                "identity", "other-comparator"
+            ),
+            "execution target type": lambda doc: doc["execution_target"].__setitem__(
+                "target_type", "anything-goes"
+            ),
+            "protocol block": lambda doc: doc["protocol"].__setitem__(
+                "formal_test", True
+            ),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(field=name), TemporaryDirectory() as directory:
+                document = self._document(Path(directory))
+                mutate(document)
+                with self.assertRaises(lock.ProgressionLockError):
+                    lock.parse_lock_document(self._resealed(document))
+
+    def test_a_provenance_that_contradicts_the_execution_target_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            document = self._document(Path(directory))
+        document["execution_target"]["revision"] = "e" * 40
+        with self.assertRaises(lock.ProgressionLockError):
+            lock.parse_lock_document(self._resealed(document))
 
     def test_exposed_result_flag_is_rejected(self):
         with TemporaryDirectory() as directory:

@@ -47,6 +47,8 @@ from .lock import (
     ProgressionLockError,
     build_lock_document,
     load_lock_document,
+    require_live_execution_target,
+    require_locked_destination,
     save_lock_document,
 )
 from .paired import (
@@ -59,6 +61,7 @@ from .paired import (
     load_paired_result,
     save_paired_result,
     summarize_paired_deltas,
+    verify_paired_result,
 )
 from .protocol import (
     CANDIDATE_IDENTITY,
@@ -117,6 +120,8 @@ __all__ = [
     "require_exact_candidate_semantics",
     "require_exact_comparator",
     "require_gate_before_phase_b",
+    "require_live_execution_target",
+    "require_locked_destination",
     "require_passed_gate",
     "run_phase_a_feasibility",
     "run_phase_b_development",
@@ -125,4 +130,5 @@ __all__ = [
     "save_paired_result",
     "select_fastest_valid_worker_count",
     "summarize_paired_deltas",
+    "verify_paired_result",
 ]

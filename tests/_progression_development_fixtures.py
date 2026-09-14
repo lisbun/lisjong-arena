@@ -6,7 +6,8 @@ seedごとに指定できるため、paired ``D_s``をtest側でexactに予測�
 provenanceはinstall metadata / Git HEADへ依存させず固定値をstubする。
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -19,6 +20,7 @@ from lisjong_arena.model import (
     SingleRoundEvaluationResult,
     SingleRoundGameResult,
 )
+from lisjong_arena.progression_development import lock as lock_module
 from lisjong_arena.progression_development.protocol import (
     ROTATION_COUNT,
     comparator_spec,
@@ -182,6 +184,55 @@ def recording_execute(
     execute.calls = calls  # type: ignore[attr-defined]
     execute.seconds_by_worker = seconds_by_worker or {}  # type: ignore[attr-defined]
     return execute
+
+
+@contextmanager
+def locked_environment(
+    *,
+    head: str = ARENA_REVISION,
+    execution_provenance: SingleRoundExecutionProvenance | None = None,
+) -> Iterator[None]:
+    """lock生成とlock consumeの両方で使う決定的なexecution target環境。
+
+    実際のGit HEADやinstall metadataへ依存させず、`_execution_safety`が
+    返すはずの値をそのまま差し替える。realなclean merged-main判定そのものは
+    `_execution_safety`側のtestが所有する。
+    """
+    resolved = provenance() if execution_provenance is None else execution_provenance
+    with (
+        mock.patch.object(
+            lock_module, "collect_execution_provenance", return_value=resolved
+        ),
+        mock.patch.object(lock_module, "require_clean_arena_head", return_value=head),
+        mock.patch.object(
+            lock_module, "require_merged_arena_revision", return_value=head
+        ),
+    ):
+        yield
+
+
+def lock_destinations(directory: Path) -> dict[str, Path]:
+    """lockが束ねる4つのwrite-once destination。"""
+    return {
+        "feasibility_record": directory / "feasibility.json",
+        "candidate_artifact": directory / "candidate.json",
+        "parent_artifact": directory / "parent.json",
+        "paired_result": directory / "paired.json",
+    }
+
+
+def write_lock(
+    path: Path,
+    destinations: Mapping[str, Path],
+    *,
+    head: str = ARENA_REVISION,
+    execution_provenance: SingleRoundExecutionProvenance | None = None,
+) -> dict[str, object]:
+    """有効なpre-execution lockを生成して保存する。"""
+    with locked_environment(head=head, execution_provenance=execution_provenance):
+        document = lock_module.build_lock_document(dict(destinations))
+        lock_module.save_lock_document(document, path)
+    return document
 
 
 def scripted_clock(seconds_by_call: list[float]) -> Callable[[], float]:

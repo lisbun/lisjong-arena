@@ -163,8 +163,53 @@ HEAD が merged long-lived branch に含まれる
 artifact destinations が未作成
 ```
 
-を満たさない限りfail closedする。したがってPR branchからreal lockもreal scientific
-executionも開始できない。
+を満たさない限りfail closedする。
+
+さらに **lockは生成するだけでなく、実行側がconsumeして初めてscientific execution
+が成立する。** `phase-a` / `phase-b` はどちらも `--lock` を必須とし、**game 1より前**
+に次をすべて満たさなければrunnerを1度も呼ばない。
+
+```text
+lockをstrict read（locked contractへ再bind）
+live clean HEAD == locked execution target revision
+live execution provenance == locked provenance
+出力先 == lock済みdestination
+出力先が未作成（write-once）
+```
+
+Phase Bはさらに、game 1より前にPhase A feasibility recordのprovenanceがlive
+provenanceと一致することも要求する。revision driftは400局を走らせてwrite-once
+artifactを消費した後ではなく、開始前にfail closedする。
+
+結果としてPR branch（HEADがlocked revisionと異なる）からは、real lockもreal
+Phase A / Phase Bも開始できない。
+
+## strict readbackはsemantic値を再導出する
+
+content-addressed identityの一致だけを根拠にしない。documentを書き換えたうえで
+identityまで再計算しても、locked semanticsと違えば拒否する。
+
+```text
+feasibility record
+    candidate / comparator / parent binding、diagnostics availabilityを再bind
+    measurementsが記録済みmachineのsweep contractと整合するか確認
+    FeasibilityGate自体をmeasurementsから再導出して突き合わせ
+    （stored gate_passed / selected workerをauthorityにしない）
+
+lock
+    candidate / comparator / parent binding、protocol、Phase A / Phase B
+    population、classification rule、no-rescue boundary、execution target、
+    provenance、artifact destinationsをcontractへ再bind
+
+paired result（verify_paired_result）
+    P / C arm artifactをstrict read
+    -> artifact digest / plan identity照合
+    -> raw game resultsから100個のD_sを再導出
+    -> primary summary / classificationを再導出
+    -> stored paired result全体と一致
+```
+
+`run_phase_b_development()` の最終verificationもこのfull validatorを使う。
 
 ## Operator CLI
 
@@ -176,17 +221,20 @@ python -m lisjong_arena.progression_development lock \
   --parent-artifact C.json \
   --paired-result PAIRED.json
 
-python -m lisjong_arena.progression_development phase-a --out FEASIBILITY.json
+python -m lisjong_arena.progression_development phase-a \
+  --lock LOCK.json \
+  --out FEASIBILITY.json
 
 python -m lisjong_arena.progression_development phase-b \
+  --lock LOCK.json \
   --feasibility-record FEASIBILITY.json \
   --candidate-artifact P.json \
   --parent-artifact C.json \
   --paired-result PAIRED.json
 ```
 
-`phase-a` はgateを通らなければ非zeroで終了し、`phase-b` はgate済みrecordでなければ
-実行しない。
+`--lock` は両phaseで必須である。`phase-a` はgateを通らなければ非zeroで終了し、
+`phase-b` はlockとgate済みrecordの両方が揃わなければrunnerを1度も呼ばない。
 
 ## no-rescue boundary
 
