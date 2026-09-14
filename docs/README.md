@@ -37,6 +37,10 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [RiichiLab downstream reconstruction qualification](riichilab-downstream-qualification.md)
 - [RiichiLab source pilot](riichilab-source-pilot.md)
 
+### Bounded evaluation contracts pending execution
+
+- [Progression development evaluation](progression-development-evaluation.md) — Issue #252のfeasibility gate + paired passive-x3 development screen（real executionはmerge後のoperator作業）
+
 これらはconcreteなexecution / acquisition surfaceのcontractを記録する。**現在どの研究を優先するか**はactive GitHub Issueを正本とし、reusable contract自体が変わらない限りoperator文書へcurrent priorityを転記しない。
 
 ## 3. Historical bounded research evidence
