@@ -58,9 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     head = require_clean_arena_head()
     require_merged_arena_revision(head, branch="main")
-    require_new_artifact_destinations(
-        {"result": args.out}, required_names=("result",)
-    )
+    require_new_artifact_destinations({"result": args.out}, required_names=("result",))
 
     # Strict-read before game 1.  The same source object is used by the
     # trajectory gate and Phase 2 sampled-game identity checks.
@@ -90,9 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         parent_artifact_path=args.parent_artifact,
     )
     save_artifact(artifact, args.out)
-    verified = load_artifact(
-        args.out, parent_artifact_path=args.parent_artifact
-    )
+    verified = load_artifact(args.out, parent_artifact_path=args.parent_artifact)
 
     print(
         json.dumps(

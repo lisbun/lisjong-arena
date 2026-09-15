@@ -176,7 +176,9 @@ class Phase1DecisionRecord:
         if self.legal_discard_count < 2:
             raise ValueError("Phase1DecisionRecord requires a choice discard")
         if not 1 <= self.baseline_eligible_discard_count <= self.legal_discard_count:
-            raise ValueError("baseline eligible count must be within legal discard count")
+            raise ValueError(
+                "baseline eligible count must be within legal discard count"
+            )
         if type(self.selected_action_repr) is not str or not self.selected_action_repr:
             raise ValueError("selected_action_repr must be a non-empty str")
         for name in ("full_completion_all_zero", "eligible_completion_all_zero"):
@@ -219,7 +221,9 @@ class Phase1GameDiagnostics:
         if self.discard_decision_count != (
             self.choice_discard_decision_count + self.forced_discard_decision_count
         ):
-            raise ValueError("choice and forced discards must partition discard decisions")
+            raise ValueError(
+                "choice and forced discards must partition discard decisions"
+            )
         if self.discard_decision_count > self.focal_decision_count:
             raise ValueError("discard decisions cannot exceed focal decisions")
         object.__setattr__(self, "records", records)
@@ -524,7 +528,9 @@ def metric_value(
     try:
         return getattr(record, fields[(metric, universe)])
     except KeyError as exc:
-        raise ValueError(f"unsupported metric/universe: {metric!r}/{universe!r}") from exc
+        raise ValueError(
+            f"unsupported metric/universe: {metric!r}/{universe!r}"
+        ) from exc
 
 
 def aggregate_phase1(games: tuple[Phase1GameDiagnostics, ...]) -> Phase1Aggregate:
@@ -635,7 +641,9 @@ def _validate_plan(plan: SingleRoundEvaluationPlan) -> None:
             f"baseline must be {COMPARATOR_IDENTITY!r}"
         )
     if plan.seeds != PHASE_B_SEEDS:
-        raise OffensiveEfficiencyDiagnosticError("plan must use exact #252 Phase B seeds")
+        raise OffensiveEfficiencyDiagnosticError(
+            "plan must use exact #252 Phase B seeds"
+        )
     if plan.max_steps != MAX_STEPS:
         raise OffensiveEfficiencyDiagnosticError("plan max_steps differs from #252")
 
@@ -673,7 +681,9 @@ class _Phase1GameJobOutcome(GameJobOutcome):
 
 def _run_phase1_game_job(job: _Phase1GameJob) -> _Phase1GameJobOutcome:
     try:
-        policies = _create_policies(job.assignment, seed=job.seed, rotation=job.rotation)
+        policies = _create_policies(
+            job.assignment, seed=job.seed, rotation=job.rotation
+        )
         result, diagnostic = _run_phase1_single_game(
             policies,
             seed=job.seed,
@@ -687,8 +697,7 @@ def _run_phase1_game_job(job: _Phase1GameJob) -> _Phase1GameJobOutcome:
             rotation=job.rotation,
             result=None,
             error_text=(
-                "offensive-efficiency Phase 1 game failed:\n"
-                f"{traceback.format_exc()}"
+                f"offensive-efficiency Phase 1 game failed:\n{traceback.format_exc()}"
             ),
             diagnostic=None,
         )
@@ -814,7 +823,9 @@ def require_trajectory_identity(
         )
     replay = phase1.evaluation_result.game_results
     if len(replay) != PHASE_B_GAMES_PER_ARM:
-        raise OffensiveEfficiencyDiagnosticError("replay must contain exactly 400 games")
+        raise OffensiveEfficiencyDiagnosticError(
+            "replay must contain exactly 400 games"
+        )
     if replay != historical_parent.game_results:
         for current, historical in zip(
             replay, historical_parent.game_results, strict=True
@@ -908,7 +919,9 @@ def _terminal_universe_result(
         )
     best_mass = min(candidate.terminal_shanten_mass for candidate in candidates)
     best = tuple(
-        candidate for candidate in candidates if candidate.terminal_shanten_mass == best_mass
+        candidate
+        for candidate in candidates
+        if candidate.terminal_shanten_mass == best_mass
     )
     return TerminalUniverseResult(
         selected_terminal_shanten_mass=summary.selected_terminal_shanten_mass,
@@ -983,7 +996,10 @@ class _Phase2Recorder:
             "full_completion_all_zero",
             "eligible_completion_all_zero",
         )
-        if any(getattr(current, name) != getattr(target, name) for name in comparable_fields):
+        if any(
+            getattr(current, name) != getattr(target, name)
+            for name in comparable_fields
+        ):
             raise OffensiveEfficiencyDiagnosticError(
                 "Phase 2 replay target differs from Phase 1 decision metadata"
             )
@@ -1034,7 +1050,9 @@ class _Phase2GameJobOutcome(GameJobOutcome):
 
 def _run_phase2_game_job(job: _Phase2GameJob) -> _Phase2GameJobOutcome:
     try:
-        policies = _create_policies(job.assignment, seed=job.seed, rotation=job.rotation)
+        policies = _create_policies(
+            job.assignment, seed=job.seed, rotation=job.rotation
+        )
         recorder = _Phase2Recorder(job.targets)
         wrapped = dict(policies)
         wrapped[job.candidate_seat] = _ObservedPhase2Policy(
@@ -1053,8 +1071,7 @@ def _run_phase2_game_job(job: _Phase2GameJob) -> _Phase2GameJobOutcome:
             rotation=job.rotation,
             result=None,
             error_text=(
-                "offensive-efficiency Phase 2 game failed:\n"
-                f"{traceback.format_exc()}"
+                f"offensive-efficiency Phase 2 game failed:\n{traceback.format_exc()}"
             ),
             records=None,
         )
@@ -1087,7 +1104,9 @@ def run_phase2_parallel(
             "Phase 2 samples differ from the deterministic selection rule"
         )
     by_identity = {record.identity: record for record in phase1_records}
-    targets_by_game: dict[tuple[int, int], list[Phase1DecisionRecord]] = defaultdict(list)
+    targets_by_game: dict[tuple[int, int], list[Phase1DecisionRecord]] = defaultdict(
+        list
+    )
     for sample in samples:
         try:
             target = by_identity[sample.identity]
@@ -1159,7 +1178,9 @@ def _phase2_universe_aggregate(
 ) -> Phase2UniverseAggregate:
     values: list[TerminalUniverseResult] = []
     for record in records:
-        result = record.full_legal if universe == "FULL_LEGAL" else record.baseline_eligible
+        result = (
+            record.full_legal if universe == "FULL_LEGAL" else record.baseline_eligible
+        )
         if result is not None:
             values.append(result)
     regrets = sorted(item.expected_regret for item in values)

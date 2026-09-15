@@ -78,7 +78,9 @@ _TILE_2M = Tile(TileType(TileCategory.MANZU, 2))
 
 
 def _player() -> PlayerPublicState:
-    return PlayerPublicState(score=25000, discards=(), melds=(), riichi=RiichiState.NONE)
+    return PlayerPublicState(
+        score=25000, discards=(), melds=(), riichi=RiichiState.NONE
+    )
 
 
 def _policy_input(*, drawn: bool = True) -> PolicyInput:
@@ -147,7 +149,8 @@ def _record(
 
 
 def _game_diagnostics(
-    records_by_game: dict[tuple[int, int], tuple[Phase1DecisionRecord, ...]] | None = None,
+    records_by_game: dict[tuple[int, int], tuple[Phase1DecisionRecord, ...]]
+    | None = None,
 ) -> tuple[Phase1GameDiagnostics, ...]:
     records_by_game = records_by_game or {}
     games = []
@@ -170,7 +173,9 @@ def _game_diagnostics(
     return tuple(games)
 
 
-def _phase1_result(*, focal_score: int = 25000, with_record: bool = False) -> Phase1EvaluationResult:
+def _phase1_result(
+    *, focal_score: int = 25000, with_record: bool = False
+) -> Phase1EvaluationResult:
     plan = build_phase1_plan()
     evaluation = evaluation_result(plan, constant_focal_score(focal_score))
     records_by_game = {}
@@ -208,7 +213,9 @@ def _phase2_record(sample: Phase2Sample) -> Phase2DecisionRecord:
         selected_is_best=True,
         best_action_reprs=("DiscardAction(a)", "DiscardAction(b)"),
     )
-    return Phase2DecisionRecord(sample=sample, full_legal=full, baseline_eligible=eligible)
+    return Phase2DecisionRecord(
+        sample=sample, full_legal=full, baseline_eligible=eligible
+    )
 
 
 class LockedPopulationTest(unittest.TestCase):
@@ -263,7 +270,9 @@ class DecisionPopulationTest(unittest.TestCase):
         self.assertEqual(snapshot.forced_discard_decision_count, 1)
         self.assertEqual(snapshot.records, ())
 
-    def test_choice_discard_calls_172_once_with_r5_disabled_and_transports_values(self) -> None:
+    def test_choice_discard_calls_172_once_with_r5_disabled_and_transports_values(
+        self,
+    ) -> None:
         action = _discard(_TILE_1M)
         other = _discard(_TILE_2M)
         decision = DecisionContext(input=_policy_input(), legal_actions=(action, other))
@@ -318,7 +327,9 @@ class Phase1AggregationTest(unittest.TestCase):
         second = _record(seed=652, full_ukeire=4, eligible_ukeire=0)
         games = _game_diagnostics({(651, 0): (first,), (652, 0): (second,)})
         aggregate = aggregate_phase1(games)
-        summaries = {(item.metric, item.universe): item for item in aggregate.metric_summaries}
+        summaries = {
+            (item.metric, item.universe): item for item in aggregate.metric_summaries
+        }
         full = summaries[("R2_UKEIRE", "FULL_LEGAL")].distribution
         eligible = summaries[("R2_UKEIRE", "BASELINE_ELIGIBLE")].distribution
         self.assertEqual(full.applicable_count, 1)
@@ -363,7 +374,9 @@ class Phase2SamplingTest(unittest.TestCase):
                     index += 1
         samples = select_phase2_samples(tuple(reversed(records)))
         self.assertEqual(len(samples), PHASE2_SAMPLE_LIMIT)
-        self.assertEqual(len({sample.identity for sample in samples}), PHASE2_SAMPLE_LIMIT)
+        self.assertEqual(
+            len({sample.identity for sample in samples}), PHASE2_SAMPLE_LIMIT
+        )
         self.assertEqual(
             tuple((sample.shanten_bucket, sample.open_hand) for sample in samples[:8]),
             (
@@ -423,7 +436,9 @@ class ArtifactRoundTripTest(unittest.TestCase):
         self.assertEqual(loaded.phase1_aggregate, artifact.phase1_aggregate)
         self.assertEqual(loaded.clusters, artifact.clusters)
         self.assertEqual(loaded.phase2_samples, artifact.phase2_samples)
-        self.assertEqual(loaded.phase2_aggregate, aggregate_phase2(loaded.phase2_records))
+        self.assertEqual(
+            loaded.phase2_aggregate, aggregate_phase2(loaded.phase2_records)
+        )
 
     def test_resealed_tampered_aggregate_is_rejected_by_rederivation(self) -> None:
         with TemporaryDirectory() as directory_text:
@@ -431,7 +446,11 @@ class ArtifactRoundTripTest(unittest.TestCase):
             parent_path, result_path, _ = self._write_valid(directory)
             document = json.loads(result_path.read_text(encoding="utf-8"))
             document["phase1"]["aggregate"]["choice_discard_decision_count"] += 1
-            payload = {key: value for key, value in document.items() if key != "result_identity"}
+            payload = {
+                key: value
+                for key, value in document.items()
+                if key != "result_identity"
+            }
             document["result_identity"] = document_identity(payload)
             result_path.write_text(canonical_json_text(document), encoding="utf-8")
             with self.assertRaises(OffensiveEfficiencyArtifactError):
@@ -443,7 +462,11 @@ class ArtifactRoundTripTest(unittest.TestCase):
             parent_path, result_path, _ = self._write_valid(directory)
             document = json.loads(result_path.read_text(encoding="utf-8"))
             document["source"]["parent_artifact_digest"] = "0" * 64
-            payload = {key: value for key, value in document.items() if key != "result_identity"}
+            payload = {
+                key: value
+                for key, value in document.items()
+                if key != "result_identity"
+            }
             document["result_identity"] = document_identity(payload)
             result_path.write_text(canonical_json_text(document), encoding="utf-8")
             with self.assertRaises(OffensiveEfficiencyArtifactError):

@@ -98,11 +98,16 @@ class OffensiveEfficiencyArtifact:
     result_identity: str
 
     def __post_init__(self) -> None:
-        if type(self.source_parent_artifact_digest) is not str or len(
-            self.source_parent_artifact_digest
-        ) != 64:
-            raise ValueError("source parent artifact digest must be a sha256 hex string")
-        if not isinstance(self.source_parent_provenance, SingleRoundExecutionProvenance):
+        if (
+            type(self.source_parent_artifact_digest) is not str
+            or len(self.source_parent_artifact_digest) != 64
+        ):
+            raise ValueError(
+                "source parent artifact digest must be a sha256 hex string"
+            )
+        if not isinstance(
+            self.source_parent_provenance, SingleRoundExecutionProvenance
+        ):
             raise TypeError("source_parent_provenance must be execution provenance")
         if not isinstance(self.provenance, SingleRoundExecutionProvenance):
             raise TypeError("provenance must be execution provenance")
@@ -138,9 +143,7 @@ def _identity_to_dict(value: DecisionIdentity) -> dict[str, object]:
 
 
 def _parse_identity(value: object, context: str) -> DecisionIdentity:
-    raw = expect_object(
-        value, {"decision_ordinal", "rotation", "seed"}, context
-    )
+    raw = expect_object(value, {"decision_ordinal", "rotation", "seed"}, context)
     return DecisionIdentity(
         seed=expect_int(raw["seed"], f"{context}.seed"),
         rotation=expect_int(raw["rotation"], f"{context}.rotation"),
@@ -205,12 +208,22 @@ def _parse_phase1_record(value: object, context: str) -> Phase1DecisionRecord:
     }
     raw = expect_object(value, expected, context)
     try:
-        branch = OffensiveEfficiencyBranch[expect_str(raw["branch"], f"{context}.branch")]
-        decision_kind = DecisionKind(expect_str(raw["decision_kind"], f"{context}.decision_kind"))
-        turn_bucket = TurnBucket(expect_str(raw["turn_bucket"], f"{context}.turn_bucket"))
-        candidate_seat = Seat(expect_int(raw["candidate_seat"], f"{context}.candidate_seat"))
+        branch = OffensiveEfficiencyBranch[
+            expect_str(raw["branch"], f"{context}.branch")
+        ]
+        decision_kind = DecisionKind(
+            expect_str(raw["decision_kind"], f"{context}.decision_kind")
+        )
+        turn_bucket = TurnBucket(
+            expect_str(raw["turn_bucket"], f"{context}.turn_bucket")
+        )
+        candidate_seat = Seat(
+            expect_int(raw["candidate_seat"], f"{context}.candidate_seat")
+        )
     except (KeyError, ValueError) as exc:
-        raise OffensiveEfficiencyArtifactError(f"{context} contains an invalid enum") from exc
+        raise OffensiveEfficiencyArtifactError(
+            f"{context} contains an invalid enum"
+        ) from exc
     return Phase1DecisionRecord(
         identity=_parse_identity(raw["identity"], f"{context}.identity"),
         candidate_seat=candidate_seat,
@@ -219,26 +232,51 @@ def _parse_phase1_record(value: object, context: str) -> Phase1DecisionRecord:
         self_riichi=expect_bool(raw["self_riichi"], f"{context}.self_riichi"),
         turn_bucket=turn_bucket,
         branch=branch,
-        legal_discard_count=expect_int(raw["legal_discard_count"], f"{context}.legal_discard_count"),
+        legal_discard_count=expect_int(
+            raw["legal_discard_count"], f"{context}.legal_discard_count"
+        ),
         baseline_eligible_discard_count=expect_int(
             raw["baseline_eligible_discard_count"],
             f"{context}.baseline_eligible_discard_count",
         ),
-        selected_action_repr=expect_str(raw["selected_action_repr"], f"{context}.selected_action_repr"),
+        selected_action_repr=expect_str(
+            raw["selected_action_repr"], f"{context}.selected_action_repr"
+        ),
         selected_post_discard_shanten=expect_int(
             raw["selected_post_discard_shanten"],
             f"{context}.selected_post_discard_shanten",
         ),
-        full_shanten_regret=expect_int(raw["full_shanten_regret"], f"{context}.full_shanten_regret"),
-        eligible_shanten_regret=expect_int(raw["eligible_shanten_regret"], f"{context}.eligible_shanten_regret"),
-        full_ukeire_regret=expect_optional_int(raw["full_ukeire_regret"], f"{context}.full_ukeire_regret"),
-        eligible_ukeire_regret=expect_optional_int(raw["eligible_ukeire_regret"], f"{context}.eligible_ukeire_regret"),
-        full_second_step_regret=expect_optional_int(raw["full_second_step_regret"], f"{context}.full_second_step_regret"),
-        eligible_second_step_regret=expect_optional_int(raw["eligible_second_step_regret"], f"{context}.eligible_second_step_regret"),
-        full_completion_regret=expect_int(raw["full_completion_regret"], f"{context}.full_completion_regret"),
-        eligible_completion_regret=expect_int(raw["eligible_completion_regret"], f"{context}.eligible_completion_regret"),
-        full_completion_all_zero=expect_bool(raw["full_completion_all_zero"], f"{context}.full_completion_all_zero"),
-        eligible_completion_all_zero=expect_bool(raw["eligible_completion_all_zero"], f"{context}.eligible_completion_all_zero"),
+        full_shanten_regret=expect_int(
+            raw["full_shanten_regret"], f"{context}.full_shanten_regret"
+        ),
+        eligible_shanten_regret=expect_int(
+            raw["eligible_shanten_regret"], f"{context}.eligible_shanten_regret"
+        ),
+        full_ukeire_regret=expect_optional_int(
+            raw["full_ukeire_regret"], f"{context}.full_ukeire_regret"
+        ),
+        eligible_ukeire_regret=expect_optional_int(
+            raw["eligible_ukeire_regret"], f"{context}.eligible_ukeire_regret"
+        ),
+        full_second_step_regret=expect_optional_int(
+            raw["full_second_step_regret"], f"{context}.full_second_step_regret"
+        ),
+        eligible_second_step_regret=expect_optional_int(
+            raw["eligible_second_step_regret"], f"{context}.eligible_second_step_regret"
+        ),
+        full_completion_regret=expect_int(
+            raw["full_completion_regret"], f"{context}.full_completion_regret"
+        ),
+        eligible_completion_regret=expect_int(
+            raw["eligible_completion_regret"], f"{context}.eligible_completion_regret"
+        ),
+        full_completion_all_zero=expect_bool(
+            raw["full_completion_all_zero"], f"{context}.full_completion_all_zero"
+        ),
+        eligible_completion_all_zero=expect_bool(
+            raw["eligible_completion_all_zero"],
+            f"{context}.eligible_completion_all_zero",
+        ),
     )
 
 
@@ -273,14 +311,28 @@ def _parse_phase1_game(value: object, context: str) -> Phase1GameDiagnostics:
     return Phase1GameDiagnostics(
         seed=expect_int(raw["seed"], f"{context}.seed"),
         rotation=expect_int(raw["rotation"], f"{context}.rotation"),
-        candidate_seat=Seat(expect_int(raw["candidate_seat"], f"{context}.candidate_seat")),
-        focal_decision_count=expect_int(raw["focal_decision_count"], f"{context}.focal_decision_count"),
-        discard_decision_count=expect_int(raw["discard_decision_count"], f"{context}.discard_decision_count"),
-        choice_discard_decision_count=expect_int(raw["choice_discard_decision_count"], f"{context}.choice_discard_decision_count"),
-        forced_discard_decision_count=expect_int(raw["forced_discard_decision_count"], f"{context}.forced_discard_decision_count"),
+        candidate_seat=Seat(
+            expect_int(raw["candidate_seat"], f"{context}.candidate_seat")
+        ),
+        focal_decision_count=expect_int(
+            raw["focal_decision_count"], f"{context}.focal_decision_count"
+        ),
+        discard_decision_count=expect_int(
+            raw["discard_decision_count"], f"{context}.discard_decision_count"
+        ),
+        choice_discard_decision_count=expect_int(
+            raw["choice_discard_decision_count"],
+            f"{context}.choice_discard_decision_count",
+        ),
+        forced_discard_decision_count=expect_int(
+            raw["forced_discard_decision_count"],
+            f"{context}.forced_discard_decision_count",
+        ),
         records=tuple(
             _parse_phase1_record(item, f"{context}.records[{index}]")
-            for index, item in enumerate(expect_list(raw["records"], f"{context}.records"))
+            for index, item in enumerate(
+                expect_list(raw["records"], f"{context}.records")
+            )
         ),
     )
 
@@ -300,13 +352,25 @@ def _distribution_to_dict(value: DistributionSummary) -> dict[str, object]:
 def _parse_distribution(value: object, context: str) -> DistributionSummary:
     raw = expect_object(
         value,
-        {"applicable_count", "maximum", "mean", "median", "nonzero_count", "nonzero_incidence", "p90"},
+        {
+            "applicable_count",
+            "maximum",
+            "mean",
+            "median",
+            "nonzero_count",
+            "nonzero_incidence",
+            "p90",
+        },
         context,
     )
     return DistributionSummary(
-        applicable_count=expect_int(raw["applicable_count"], f"{context}.applicable_count"),
+        applicable_count=expect_int(
+            raw["applicable_count"], f"{context}.applicable_count"
+        ),
         nonzero_count=expect_int(raw["nonzero_count"], f"{context}.nonzero_count"),
-        nonzero_incidence=expect_float(raw["nonzero_incidence"], f"{context}.nonzero_incidence"),
+        nonzero_incidence=expect_float(
+            raw["nonzero_incidence"], f"{context}.nonzero_incidence"
+        ),
         mean=expect_optional_float(raw["mean"], f"{context}.mean"),
         median=expect_optional_float(raw["median"], f"{context}.median"),
         p90=expect_optional_int(raw["p90"], f"{context}.p90"),
@@ -394,15 +458,26 @@ def _parse_terminal(value: object, context: str) -> TerminalUniverseResult | Non
         context,
     )
     return TerminalUniverseResult(
-        selected_terminal_shanten_mass=expect_int(raw["selected_terminal_shanten_mass"], f"{context}.selected_terminal_shanten_mass"),
-        best_terminal_shanten_mass=expect_int(raw["best_terminal_shanten_mass"], f"{context}.best_terminal_shanten_mass"),
+        selected_terminal_shanten_mass=expect_int(
+            raw["selected_terminal_shanten_mass"],
+            f"{context}.selected_terminal_shanten_mass",
+        ),
+        best_terminal_shanten_mass=expect_int(
+            raw["best_terminal_shanten_mass"], f"{context}.best_terminal_shanten_mass"
+        ),
         regret_mass=expect_int(raw["regret_mass"], f"{context}.regret_mass"),
-        sequence_denominator=expect_int(raw["sequence_denominator"], f"{context}.sequence_denominator"),
+        sequence_denominator=expect_int(
+            raw["sequence_denominator"], f"{context}.sequence_denominator"
+        ),
         best_tie_count=expect_int(raw["best_tie_count"], f"{context}.best_tie_count"),
-        selected_is_best=expect_bool(raw["selected_is_best"], f"{context}.selected_is_best"),
+        selected_is_best=expect_bool(
+            raw["selected_is_best"], f"{context}.selected_is_best"
+        ),
         best_action_reprs=tuple(
             expect_str(item, f"{context}.best_action_reprs[{index}]")
-            for index, item in enumerate(expect_list(raw["best_action_reprs"], f"{context}.best_action_reprs"))
+            for index, item in enumerate(
+                expect_list(raw["best_action_reprs"], f"{context}.best_action_reprs")
+            )
         ),
     )
 
@@ -420,7 +495,9 @@ def _parse_phase2_record(value: object, context: str) -> Phase2DecisionRecord:
     return Phase2DecisionRecord(
         sample=_parse_sample(raw["sample"], f"{context}.sample"),
         full_legal=_parse_terminal(raw["full_legal"], f"{context}.full_legal"),
-        baseline_eligible=_parse_terminal(raw["baseline_eligible"], f"{context}.baseline_eligible"),
+        baseline_eligible=_parse_terminal(
+            raw["baseline_eligible"], f"{context}.baseline_eligible"
+        ),
     )
 
 
@@ -503,7 +580,9 @@ def build_artifact(
             "Phase 2 records do not match the deterministic sample"
         )
     phase2_aggregate = aggregate_phase2(phase2_records)
-    current_provenance = collect_execution_provenance() if provenance is None else provenance
+    current_provenance = (
+        collect_execution_provenance() if provenance is None else provenance
+    )
     digest = artifact_file_digest(parent_path)
     payload = _payload(
         source_parent_artifact_digest=digest,
@@ -546,13 +625,17 @@ def artifact_to_document(artifact: OffensiveEfficiencyArtifact) -> dict[str, Any
     document = dict(payload)
     document["result_identity"] = document_identity(payload)
     if document["result_identity"] != artifact.result_identity:
-        raise OffensiveEfficiencyArtifactError("artifact result identity is inconsistent")
+        raise OffensiveEfficiencyArtifactError(
+            "artifact result identity is inconsistent"
+        )
     return document
 
 
 def save_artifact(artifact: OffensiveEfficiencyArtifact, path: str | Path) -> Path:
     destination = Path(path)
-    write_new_artifact_file(destination, canonical_json_text(artifact_to_document(artifact)))
+    write_new_artifact_file(
+        destination, canonical_json_text(artifact_to_document(artifact))
+    )
     return destination
 
 
@@ -573,29 +656,53 @@ def _parse_phase1_aggregate(value: object, context: str) -> Phase1Aggregate:
     )
     branches = tuple(
         (
-            expect_str(expect_list(item, f"{context}.branch_counts[{index}]")[0], f"{context}.branch_counts[{index}][0]"),
-            expect_int(expect_list(item, f"{context}.branch_counts[{index}]")[1], f"{context}.branch_counts[{index}][1]"),
+            expect_str(
+                expect_list(item, f"{context}.branch_counts[{index}]")[0],
+                f"{context}.branch_counts[{index}][0]",
+            ),
+            expect_int(
+                expect_list(item, f"{context}.branch_counts[{index}]")[1],
+                f"{context}.branch_counts[{index}][1]",
+            ),
         )
-        for index, item in enumerate(expect_list(raw["branch_counts"], f"{context}.branch_counts"))
+        for index, item in enumerate(
+            expect_list(raw["branch_counts"], f"{context}.branch_counts")
+        )
     )
     metrics = []
-    for index, item in enumerate(expect_list(raw["metric_summaries"], f"{context}.metric_summaries")):
+    for index, item in enumerate(
+        expect_list(raw["metric_summaries"], f"{context}.metric_summaries")
+    ):
         item_context = f"{context}.metric_summaries[{index}]"
         obj = expect_object(item, {"distribution", "metric", "universe"}, item_context)
         metrics.append(
             MetricSummary(
                 metric=expect_str(obj["metric"], f"{item_context}.metric"),
                 universe=expect_str(obj["universe"], f"{item_context}.universe"),
-                distribution=_parse_distribution(obj["distribution"], f"{item_context}.distribution"),
+                distribution=_parse_distribution(
+                    obj["distribution"], f"{item_context}.distribution"
+                ),
             )
         )
     return Phase1Aggregate(
         game_count=expect_int(raw["game_count"], f"{context}.game_count"),
-        discard_decision_count=expect_int(raw["discard_decision_count"], f"{context}.discard_decision_count"),
-        choice_discard_decision_count=expect_int(raw["choice_discard_decision_count"], f"{context}.choice_discard_decision_count"),
-        forced_discard_decision_count=expect_int(raw["forced_discard_decision_count"], f"{context}.forced_discard_decision_count"),
-        normal_turn_choice_count=expect_int(raw["normal_turn_choice_count"], f"{context}.normal_turn_choice_count"),
-        post_call_choice_count=expect_int(raw["post_call_choice_count"], f"{context}.post_call_choice_count"),
+        discard_decision_count=expect_int(
+            raw["discard_decision_count"], f"{context}.discard_decision_count"
+        ),
+        choice_discard_decision_count=expect_int(
+            raw["choice_discard_decision_count"],
+            f"{context}.choice_discard_decision_count",
+        ),
+        forced_discard_decision_count=expect_int(
+            raw["forced_discard_decision_count"],
+            f"{context}.forced_discard_decision_count",
+        ),
+        normal_turn_choice_count=expect_int(
+            raw["normal_turn_choice_count"], f"{context}.normal_turn_choice_count"
+        ),
+        post_call_choice_count=expect_int(
+            raw["post_call_choice_count"], f"{context}.post_call_choice_count"
+        ),
         branch_counts=branches,
         metric_summaries=tuple(metrics),
     )
@@ -607,7 +714,15 @@ def _parse_clusters(value: object, context: str) -> tuple[ClusterSummary, ...]:
         item_context = f"{context}[{index}]"
         raw = expect_object(
             item,
-            {"dimension", "distribution", "metric", "population_count", "population_share", "universe", "value"},
+            {
+                "dimension",
+                "distribution",
+                "metric",
+                "population_count",
+                "population_share",
+                "universe",
+                "value",
+            },
             item_context,
         )
         clusters.append(
@@ -616,9 +731,15 @@ def _parse_clusters(value: object, context: str) -> tuple[ClusterSummary, ...]:
                 universe=expect_str(raw["universe"], f"{item_context}.universe"),
                 dimension=expect_str(raw["dimension"], f"{item_context}.dimension"),
                 value=expect_str(raw["value"], f"{item_context}.value"),
-                population_count=expect_int(raw["population_count"], f"{item_context}.population_count"),
-                population_share=expect_float(raw["population_share"], f"{item_context}.population_share"),
-                distribution=_parse_distribution(raw["distribution"], f"{item_context}.distribution"),
+                population_count=expect_int(
+                    raw["population_count"], f"{item_context}.population_count"
+                ),
+                population_share=expect_float(
+                    raw["population_share"], f"{item_context}.population_share"
+                ),
+                distribution=_parse_distribution(
+                    raw["distribution"], f"{item_context}.distribution"
+                ),
             )
         )
     return tuple(clusters)
@@ -627,7 +748,9 @@ def _parse_clusters(value: object, context: str) -> tuple[ClusterSummary, ...]:
 def _parse_phase2_aggregate(value: object, context: str) -> Phase2Aggregate:
     raw = expect_object(value, {"sample_count", "universe_summaries"}, context)
     summaries = []
-    for index, item in enumerate(expect_list(raw["universe_summaries"], f"{context}.universe_summaries")):
+    for index, item in enumerate(
+        expect_list(raw["universe_summaries"], f"{context}.universe_summaries")
+    ):
         item_context = f"{context}.universe_summaries[{index}]"
         obj = expect_object(
             item,
@@ -647,14 +770,31 @@ def _parse_phase2_aggregate(value: object, context: str) -> Phase2Aggregate:
         summaries.append(
             Phase2UniverseAggregate(
                 universe=expect_str(obj["universe"], f"{item_context}.universe"),
-                applicable_count=expect_int(obj["applicable_count"], f"{item_context}.applicable_count"),
-                selected_best_count=expect_int(obj["selected_best_count"], f"{item_context}.selected_best_count"),
-                nonzero_count=expect_int(obj["nonzero_count"], f"{item_context}.nonzero_count"),
-                nonzero_incidence=expect_float(obj["nonzero_incidence"], f"{item_context}.nonzero_incidence"),
-                mean_expected_regret=expect_optional_float(obj["mean_expected_regret"], f"{item_context}.mean_expected_regret"),
-                median_expected_regret=expect_optional_float(obj["median_expected_regret"], f"{item_context}.median_expected_regret"),
-                p90_expected_regret=expect_optional_float(obj["p90_expected_regret"], f"{item_context}.p90_expected_regret"),
-                max_expected_regret=expect_optional_float(obj["max_expected_regret"], f"{item_context}.max_expected_regret"),
+                applicable_count=expect_int(
+                    obj["applicable_count"], f"{item_context}.applicable_count"
+                ),
+                selected_best_count=expect_int(
+                    obj["selected_best_count"], f"{item_context}.selected_best_count"
+                ),
+                nonzero_count=expect_int(
+                    obj["nonzero_count"], f"{item_context}.nonzero_count"
+                ),
+                nonzero_incidence=expect_float(
+                    obj["nonzero_incidence"], f"{item_context}.nonzero_incidence"
+                ),
+                mean_expected_regret=expect_optional_float(
+                    obj["mean_expected_regret"], f"{item_context}.mean_expected_regret"
+                ),
+                median_expected_regret=expect_optional_float(
+                    obj["median_expected_regret"],
+                    f"{item_context}.median_expected_regret",
+                ),
+                p90_expected_regret=expect_optional_float(
+                    obj["p90_expected_regret"], f"{item_context}.p90_expected_regret"
+                ),
+                max_expected_regret=expect_optional_float(
+                    obj["max_expected_regret"], f"{item_context}.max_expected_regret"
+                ),
             )
         )
     return Phase2Aggregate(
@@ -681,14 +821,21 @@ def load_artifact(
         },
         "artifact",
     )
-    if expect_int(raw_document["artifact_version"], "artifact_version") != ARTIFACT_VERSION:
+    if (
+        expect_int(raw_document["artifact_version"], "artifact_version")
+        != ARTIFACT_VERSION
+    ):
         raise OffensiveEfficiencyArtifactError("unsupported artifact version")
     if expect_str(raw_document["protocol_id"], "protocol_id") != PROTOCOL_ID:
         raise OffensiveEfficiencyArtifactError("unsupported protocol id")
-    if not expect_bool(raw_document["trajectory_identity_passed"], "trajectory_identity_passed"):
+    if not expect_bool(
+        raw_document["trajectory_identity_passed"], "trajectory_identity_passed"
+    ):
         raise OffensiveEfficiencyArtifactError("trajectory identity must have passed")
     stored_identity = expect_str(raw_document["result_identity"], "result_identity")
-    payload = {key: value for key, value in raw_document.items() if key != "result_identity"}
+    payload = {
+        key: value for key, value in raw_document.items() if key != "result_identity"
+    }
     if document_identity(payload) != stored_identity:
         raise OffensiveEfficiencyArtifactError("result identity is inconsistent")
 
@@ -709,9 +856,17 @@ def load_artifact(
     )
     if expect_int(source["source_issue"], "source.source_issue") != 252:
         raise OffensiveEfficiencyArtifactError("source issue must be #252")
-    if expect_str(source["parent_identity"], "source.parent_identity") != PARENT_IDENTITY:
+    if (
+        expect_str(source["parent_identity"], "source.parent_identity")
+        != PARENT_IDENTITY
+    ):
         raise OffensiveEfficiencyArtifactError("source parent identity is invalid")
-    if expect_str(source["passive_comparator_identity"], "source.passive_comparator_identity") != COMPARATOR_IDENTITY:
+    if (
+        expect_str(
+            source["passive_comparator_identity"], "source.passive_comparator_identity"
+        )
+        != COMPARATOR_IDENTITY
+    ):
         raise OffensiveEfficiencyArtifactError("source comparator identity is invalid")
     if expect_int(source["game_count"], "source.game_count") != PHASE_B_GAMES_PER_ARM:
         raise OffensiveEfficiencyArtifactError("source game count is invalid")
@@ -721,14 +876,18 @@ def load_artifact(
         raise OffensiveEfficiencyArtifactError("source max_steps is invalid")
     seeds = tuple(
         expect_int(item, f"source.ordered_seeds[{index}]")
-        for index, item in enumerate(expect_list(source["ordered_seeds"], "source.ordered_seeds"))
+        for index, item in enumerate(
+            expect_list(source["ordered_seeds"], "source.ordered_seeds")
+        )
     )
     if seeds != PHASE_B_SEEDS:
         raise OffensiveEfficiencyArtifactError("source ordered seeds are invalid")
 
     parent_path = Path(parent_artifact_path)
     parent = load_arm_artifact(parent_path)
-    digest = expect_str(source["parent_artifact_digest"], "source.parent_artifact_digest")
+    digest = expect_str(
+        source["parent_artifact_digest"], "source.parent_artifact_digest"
+    )
     if artifact_file_digest(parent_path) != digest:
         raise OffensiveEfficiencyArtifactError("bound parent artifact digest differs")
     if (
@@ -738,7 +897,9 @@ def load_artifact(
         or parent.plan.max_steps != MAX_STEPS
         or len(parent.game_results) != PHASE_B_GAMES_PER_ARM
     ):
-        raise OffensiveEfficiencyArtifactError("bound parent artifact is not exact #252 C")
+        raise OffensiveEfficiencyArtifactError(
+            "bound parent artifact is not exact #252 C"
+        )
     source_parent_provenance = parse_execution_provenance(source["parent_provenance"])
     if source_parent_provenance != parent.provenance:
         raise OffensiveEfficiencyArtifactError("source parent provenance differs")
@@ -764,17 +925,23 @@ def load_artifact(
     if stored_clusters != canonical_clusters:
         raise OffensiveEfficiencyArtifactError("cluster summaries are not canonical")
 
-    phase2_raw = expect_object(raw_document["phase2"], {"aggregate", "records", "samples"}, "phase2")
+    phase2_raw = expect_object(
+        raw_document["phase2"], {"aggregate", "records", "samples"}, "phase2"
+    )
     samples = tuple(
         _parse_sample(item, f"phase2.samples[{index}]")
-        for index, item in enumerate(expect_list(phase2_raw["samples"], "phase2.samples"))
+        for index, item in enumerate(
+            expect_list(phase2_raw["samples"], "phase2.samples")
+        )
     )
     canonical_samples = select_phase2_samples(records)
     if samples != canonical_samples:
         raise OffensiveEfficiencyArtifactError("Phase 2 sample is not canonical")
     phase2_records = tuple(
         _parse_phase2_record(item, f"phase2.records[{index}]")
-        for index, item in enumerate(expect_list(phase2_raw["records"], "phase2.records"))
+        for index, item in enumerate(
+            expect_list(phase2_raw["records"], "phase2.records")
+        )
     )
     if tuple(record.sample for record in phase2_records) != samples:
         raise OffensiveEfficiencyArtifactError("Phase 2 records do not match samples")
