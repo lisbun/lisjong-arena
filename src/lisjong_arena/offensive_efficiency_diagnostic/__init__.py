@@ -1,13 +1,13 @@
 """Issue #256 purpose-specific offensive-efficiency diagnostics."""
 
 from .analysis import (
+    PHASE2_SAMPLE_LIMIT,
     ClusterSummary,
     DecisionIdentity,
     DecisionKind,
     DistributionSummary,
     MetricSummary,
     OffensiveEfficiencyDiagnosticError,
-    PHASE2_SAMPLE_LIMIT,
     Phase1Aggregate,
     Phase1DecisionRecord,
     Phase1EvaluationResult,

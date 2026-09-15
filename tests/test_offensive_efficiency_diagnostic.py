@@ -36,10 +36,10 @@ from lisjong.policy_contract.wind import Wind
 import lisjong_arena.offensive_efficiency_diagnostic.analysis as analysis_module
 from lisjong_arena._artifact_io import canonical_json_text
 from lisjong_arena.offensive_efficiency_diagnostic.analysis import (
+    PHASE2_SAMPLE_LIMIT,
     DecisionIdentity,
     DecisionKind,
     OffensiveEfficiencyDiagnosticError,
-    PHASE2_SAMPLE_LIMIT,
     Phase1DecisionRecord,
     Phase1EvaluationResult,
     Phase1GameDiagnostics,

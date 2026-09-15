@@ -11,7 +11,7 @@ import math
 from dataclasses import dataclass
 from statistics import median
 
-from .analysis import Phase2DecisionRecord, TerminalUniverseResult, UNIVERSES
+from .analysis import UNIVERSES, Phase2DecisionRecord, TerminalUniverseResult
 
 
 @dataclass(frozen=True, slots=True)
