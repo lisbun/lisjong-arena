@@ -54,6 +54,114 @@ Arena may own experiment-local ML
 Arena owns stable AI semantics
 ```
 
+## Module placement and shared infrastructure
+
+Arenaは当面**単一repositoryのまま**維持する。Execution / Observation、Evaluation、Experiment-local Researchを別repositoryへ分割せず、module placementとdependency directionで責務を運用する。
+
+内部コードは、新規変更のplacement判断では次の5 categoryで考える。
+
+```text
+1. Execution / Observation
+2. Evaluation
+3. Experiment-local Research
+4. Shared Arena Infrastructure
+5. Historical Experiment
+```
+
+`Shared Arena Infrastructure`は第4のproduct responsibilityではない。複数のArena responsibilityまたは無関係な複数experimentで実際に再利用され、かつ特定protocolの意味を持たないlow-level supportだけを置く。
+
+`Historical Experiment`はpreservation classificationである。過去のPhase / Stage / Issue packageがretained experiment identity、frozen protocol、dataset / feature / checkpoint contractを表す場合、見た目のdependency graphを整えるためだけに移動・改名しない。
+
+### Placement rules
+
+| Category | New code belongs here when | Representative current families |
+| --- | --- | --- |
+| Execution / Observation | concrete environmentを実行・観測し、objective evidenceを取得・transportする | local / external runners、RiichiEnv / RiichiLab integration、`game_trace.py`、durable execution records |
+| Evaluation | candidate / Policyを再現可能な条件で比較し、seed / rotation / metric / artifactを所有する | `comparison.py`、strength / benchmark evaluation paths、evaluation artifact semantics |
+| Experiment-local Research | bounded research question固有のdataset / feature / trainer / model / checkpoint / diagnosticを実装する | `phase*` / `stage*` experiment families、purpose-specific learned-policy / HandBelief research packages |
+| Shared Arena Infrastructure | responsibility-neutralで、concreteな複数consumerに既に必要なlow-level primitive | `runtime_measurement.py`、`_artifact_io.py`、`_execution_safety.py`、`_parallel_execution.py`のlow-level primitives |
+| Historical Experiment | exact historical compositionを維持すること自体がreproducibility requirementである | retained Phase / Stage packagesとそのfrozen cross-phase composition |
+
+この表はcurrent treeをすべてrename / relocateする指示ではない。物理配置とresponsibilityが歴史的理由で混在している場合は、new codeのownerだけを明確にし、既存packageはboundedな理由なしに動かさない。
+
+### Shared-infrastructure promotion rule
+
+共通化は次をすべて満たす場合のbounded decisionとする。
+
+```text
+concrete repeated use
++ stable responsibility-neutral semantics
++ historical protocol identityに依存しない
++ extractionによるbehavior / artifact semanticsの変更がない
+```
+
+単に2つのhistorical experimentが同じhelperをimportしているだけではpromotion理由にならない。逆に、process/runtime measurementのようにexperiment identityと無関係な能力が無関係な複数experimentから再利用されている場合は、neutral Arena-owned moduleへ抽出してよい。
+
+generic `utils.py`、generic trainer / dataset / backend framework、dependency-injection layer等を、将来のreuseを推測して先行導入しない。
+
+### Dependency direction for new code
+
+新規または新たにstable/shared化するcodeは、原則として次の方向を守る。
+
+```text
+Shared Arena Infrastructure
+    ^            ^            ^
+    |            |            |
+Execution     Research     Evaluation
+    ^            |            |
+    +------------+------------+
+       explicit consumer relationships
+```
+
+- Shared Arena Infrastructureはhistorical Phase / Stage packageへ依存しない。
+- Execution / Observationはtraining objective、research hypothesis、AABB / ABBB semantics、strength statisticsへ依存しない。
+- core Evaluationは特定experimentのtrainer / checkpoint内部実装へ依存しない。
+- Experiment-local Researchはobjective execution evidence、stable Arena helper、`lisjong`-owned stable semanticsをconsumeできる。
+- stable AI / domain semanticsのcanonical ownerは引き続き`lisjong`である。
+- **new stable/shared codeはhelper再利用だけを理由にhistorical experiment packageをimportしない。**
+
+historical cross-phase dependencyは、このruleへの違反という理由だけでrewriteしない。exact experiment identityやfrozen compositionを維持するA-type dependencyとしてgrandfatherし、変更には独立したbounded justificationを要求する。
+
+### Cross-phase dependency classification
+
+notable cross-phase importは、変更前に次へ分類する。
+
+```text
+A. historical identity / protocol dependency
+   -> KEEP / FREEZE
+
+B. responsibility-neutral reusable infrastructure
+   -> EXTRACT when bounded and justified
+
+C. stable AI/domain semantics
+   -> canonical owner is lisjong
+
+D. truly dead / superseded code
+   -> separate evidence-backed cleanup only
+```
+
+具体的に、Phase 8やStage 3のresearchがPhase 6のfeature / tensor / model / exact protocol semanticsをconsumeする依存はAとして残してよい。これはhistorical research compositionであり、Phase番号をcrossすること自体はdefectではない。
+
+一方、historicalに`phase6_snapshot.training._peak_process_ram_bytes`へ置かれていたpeak-process-RAM measurementは、experiment semanticsを持たず複数の無関係なexperimentから利用されるBである。canonical implementationは`lisjong_arena.runtime_measurement.peak_process_ram_bytes`が所有し、Phase 6の旧private pathはhistorical compatibility wrapperとしてのみ残せる。新規consumerはneutral ownerを利用する。
+
+### Repository split reconsideration
+
+current decisionは次である。
+
+```text
+NO repository split now
+```
+
+splitは、例えば次のpressureが複数同時に具体化した場合だけ再検討する。
+
+- ExecutionがArena workflow外から独立consume / versioningされる
+- Evaluationが独立consumerを持つstable reusable APIになる
+- Research dependency / release cadenceが他責務とmaterially独立する
+- CI / dependency isolationを単一repositoryで合理的に管理できなくなる
+- 一責務に明確に独立したdistribution / lifecycle contractが成立する
+
+将来検討する場合も、機械的な三分割ではなく、まずboundedな`Arena vs Research`等のseamを評価する。
+
 ## Execution / Observation
 
 concrete environmentでlisjongを実行し、objective execution informationを取得する。
@@ -514,6 +622,7 @@ positive experimentをproduction Policy promotionと同義にしない。
 | experiment-local feature / tensor schema | Arena Research | lisjong-arena |
 | experiment-local dataset / training harness | Arena Research | lisjong-arena |
 | experiment-local model / checkpoint / diagnostic | Arena Research | lisjong-arena |
+| responsibility-neutral low-level helper | Arena Shared Infrastructure | lisjong-arena |
 | AABB / ABBB / other comparison protocol | Arena Evaluation | lisjong-arena |
 | evaluation metric / artifact / provenance | Arena Evaluation | lisjong-arena |
 | external benchmark orchestration | Arena Evaluation | lisjong-arena |
