@@ -41,6 +41,9 @@ from lisjong_arena.riichilab.cli import (
     resolve_ranked_record_path,
     resolve_trace_path,
 )
+from lisjong_arena.riichilab.durable_ranked_game_record import (
+    DurableRankedGameRecordError,
+)
 from lisjong_arena.riichilab.errors import RiichiLabClientError, TransportError
 from lisjong_arena.riichilab.profile import (
     ProfileError,
@@ -320,6 +323,22 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
                 max_completed_games=args.games,
             )
         )
+    except DurableRankedGameRecordError as error:
+        print(
+            "RiichiLab continuous ranked durable record was not finalized: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 1
+    except OSError as error:
+        if args.record_dir is None:
+            raise
+        print(
+            "RiichiLab continuous ranked durable record was not finalized: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 1
     except RiichiLabClientError as error:
         print(
             "RiichiLab continuous ranked runner failed: "
