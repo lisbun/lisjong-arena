@@ -10,6 +10,7 @@ from lisjong_arena.phase5_belief_dataset.measurements import (
     evaluate_expected_count_predictions,
 )
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
+from lisjong_arena.runtime_measurement import peak_process_ram_bytes
 
 from .evaluation import (
     CandidateEvaluation,
@@ -94,9 +95,7 @@ class TrainingResult:
 
 
 def _peak_process_ram_bytes() -> int | None:
-    from lisjong_arena.phase6_snapshot.training import _peak_process_ram_bytes as peak
-
-    return peak()
+    return peak_process_ram_bytes()
 
 
 def _partition_sequences(
