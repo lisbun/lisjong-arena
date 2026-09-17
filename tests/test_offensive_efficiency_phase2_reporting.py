@@ -87,8 +87,8 @@ class Phase2BreakdownTest(unittest.TestCase):
         self.assertEqual(full_shanten_one.applicable_count, 2)
         self.assertEqual(full_shanten_one.nonzero_count, 2)
         self.assertEqual(full_shanten_one.nonzero_incidence, 1.0)
-        self.assertEqual(full_shanten_one.mean_expected_regret, 0.15)
-        self.assertEqual(full_shanten_one.max_expected_regret, 0.2)
+        self.assertAlmostEqual(full_shanten_one.mean_expected_regret, 0.15)
+        self.assertAlmostEqual(full_shanten_one.max_expected_regret, 0.2)
 
         eligible_closed = next(
             item
