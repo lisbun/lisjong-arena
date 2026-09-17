@@ -100,13 +100,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # `pyproject.toml`のcurrent lisjong pinをそのまま固定する。Arena #219で
         # MechanismRiichiDefenseYakuhaiCallPolicyを含むrevisionへ、Arena #252で
         # exact #169/#170 progression generationへ、Arena #256でlisjong #172の
-        # supported offensive-efficiency diagnostic seamを含むrevisionへ更新した。
+        # supported offensive-efficiency diagnostic seamを含むrevisionへ、Arena #263で
+        # lisjong #174 targeted honor-release generationを含むrevisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "b06b83fb9b3acbe3fc2acb601d364e17e11aba80",
+            "f29d129c67e5232d06563c6e457754377734ed14",
         )
 
 
