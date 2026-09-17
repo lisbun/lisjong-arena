@@ -181,21 +181,27 @@ class RecordedDecision:
     selected_action: object
 
 
-def iter_recorded_decisions(
-    recording: GameRecording,
+def iter_inspection_decisions(
+    inspection: LocalGameInspection,
+    *,
+    expected_decision_count: int,
 ) -> Iterator[RecordedDecision]:
-    """1 hanchanのteacher decisionをcanonical順で返す。
+    """1 hanchanのinspectionからteacher decisionをcanonical順で返す。
 
     canonical順は`step_ordinal`昇順、step内は`actor_seat`昇順で固定する。
     `DecisionContext`は記録された`PolicyInput`と、`execute_policy_with_trace()`
     がPolicyへ提示したのと同じ`legal_actions`から再構成する。
     `DecisionTrace.analysis`は読まない。
+
+    Stage 2のlocked seed populationに属さない実行（`lisbun/lisjong-arena #258`
+    のtechnical smokeなど）も同じcanonical順序契約を共有するため、split解決を
+    伴う`GameRecording`からこの走査だけを分離している。
     """
-    if not isinstance(recording, GameRecording):
-        raise TypeError("recording must be a GameRecording")
+    if not isinstance(inspection, LocalGameInspection):
+        raise TypeError("inspection must be a LocalGameInspection")
 
     decision_ordinal = 0
-    for step in recording.inspection.step_observations:
+    for step in inspection.step_observations:
         previous_seat = -1
         for observation in step.seat_decisions:
             actor_seat = int(observation.seat)
@@ -217,10 +223,22 @@ def iter_recorded_decisions(
             )
             decision_ordinal += 1
 
-    if decision_ordinal != recording.result.decisions:
+    if decision_ordinal != expected_decision_count:
         raise Stage2RecordingError(
             "recorded decision count does not match the executed decision count"
         )
+
+
+def iter_recorded_decisions(
+    recording: GameRecording,
+) -> Iterator[RecordedDecision]:
+    """1 hanchanのteacher decisionをcanonical順で返す。"""
+    if not isinstance(recording, GameRecording):
+        raise TypeError("recording must be a GameRecording")
+    return iter_inspection_decisions(
+        recording.inspection,
+        expected_decision_count=recording.result.decisions,
+    )
 
 
 def encode_teacher_action(decision: RecordedDecision) -> int:
@@ -313,6 +331,7 @@ __all__ = [
     "build_decision_rows",
     "build_teacher_population",
     "encode_teacher_action",
+    "iter_inspection_decisions",
     "iter_recorded_decisions",
     "record_teacher_game",
     "round_count",

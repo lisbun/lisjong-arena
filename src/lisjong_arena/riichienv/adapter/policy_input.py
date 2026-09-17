@@ -42,7 +42,13 @@ _MELD_KIND_BY_RIICHIENV_TYPE_NAME = {
 }
 
 
-def _build_public_meld(meld: object) -> PublicMeld:
+def build_public_meld(meld: object) -> PublicMeld:
+    """RiichiEnvのmeld valueをlisjong `PublicMeld`へ変換する。
+
+    `Observation.melds`と`RiichiEnv.melds`は同じmeld valueを返すため、
+    player-safe `PolicyInput`構築とArena-localなexecution observationの両方が
+    同じ変換を使う。conversionを複製しないためにpublicにしている。
+    """
     kind = _MELD_KIND_BY_RIICHIENV_TYPE_NAME.get(str(meld.meld_type))
     if kind is None:
         raise AdapterSyncError(f"unrecognized RiichiEnv meld_type: {meld.meld_type!r}")
@@ -150,9 +156,7 @@ def build_policy_input(
                 f"{seat_index} but the current Observation does not"
             )
 
-        melds = tuple(
-            _build_public_meld(meld) for meld in observation.melds[seat_index]
-        )
+        melds = tuple(build_public_meld(meld) for meld in observation.melds[seat_index])
 
         players.append(
             PlayerPublicState(

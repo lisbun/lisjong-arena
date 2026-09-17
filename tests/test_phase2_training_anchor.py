@@ -54,6 +54,9 @@ from lisjong_arena.lisjong_engine.domain_conversion import (
 )
 from lisjong_arena.lisjong_engine.policy_input import build_policy_input
 from lisjong_arena.phase2_training_anchor import player_safe_anchor as anchor_module
+from lisjong_arena.phase2_training_anchor import (
+    training_labels as training_labels_module,
+)
 from lisjong_arena.phase2_training_anchor.extraction import (
     Phase2AnchorRecorder,
     extract_phase2_game,
@@ -1185,6 +1188,34 @@ class RonLegalAuxiliaryDeferralTest(unittest.TestCase):
         self.assertIn("furiten", source)
         # context-freeな34-vectorを実装していないこと。
         self.assertNotIn("def build_ron_legal", source)
+
+
+class BackendNeutralReuseTest(unittest.TestCase):
+    """engine非依存のstructural-wait contractが1実装のままであることを固定する。
+
+    `lisbun/lisjong-arena #258`のRiichiEnv pathは同じvalue contractを再利用する。
+    `training_labels`がそれらを再exportし続けることで、import siteを変えずに
+    semanticsの二重定義を避ける。
+    """
+
+    def test_training_labels_reexports_the_backend_neutral_contract(self):
+        from lisjong_arena.phase2_training_anchor import structural_wait
+
+        for name in (
+            "OpponentIdentity",
+            "OpponentStructuralWait",
+            "StructuralWaitUnavailableReason",
+            "structural_wait_for_hand",
+        ):
+            self.assertIs(
+                getattr(training_labels_module, name), getattr(structural_wait, name)
+            )
+
+    def test_the_backend_neutral_module_does_not_import_the_engine(self):
+        from lisjong_arena.phase2_training_anchor import structural_wait
+
+        source = inspect.getsource(structural_wait)
+        self.assertNotIn("lisjong_engine", source)
 
 
 if __name__ == "__main__":

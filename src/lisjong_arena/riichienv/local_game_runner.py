@@ -13,6 +13,11 @@ Issue #207で、inspection compositionへ完了した各局のauthoritative roun
 factを追加した。captureそのものは``lisjong_arena.riichienv.round_result``が
 担当し、runnerはRiichiEnvのevent batchとそのGameTrace sequenceを渡すだけである。
 
+Issue #258で、1 decision pointのpre-action状態をprivilegedに観測する
+opt-inな``DecisionPointObserver`` seamを追加した。observerを渡さない既定path
+のbehaviorは変わらず、observerはPolicyへも``PolicyInput``へも``GameTrace``へも
+接続されない（training-only labelの生成にだけ使う）。
+
 Issue #31でArena-local canonical implementationへ移行済みである。GameTraceは
 Issue #43でArena-local canonical implementation(``lisjong_arena.game_trace``)
 へ移行済みである。RiichiEnv Adapterは Issue #39でArena-local canonical
@@ -23,6 +28,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import Protocol
 
 from lisjong.policy_contract import (
     DecisionTrace,
@@ -367,6 +373,24 @@ class LocalGameInspectionRecorder:
         return self._snapshot
 
 
+class DecisionPointObserver(Protocol):
+    """``env.step()``直前のpre-action decision pointを観測するopt-in seam。
+
+    ``LocalGameRunner``はこのcallbackへ、そのstepでActionを求められている
+    seatと、環境が保持する全seatのpre-action stateをそのまま渡す。runnerは
+    渡した値の意味を解釈せず、Policy / ``PolicyInput`` / ``GameTrace``へも
+    接続しない。privileged stateをどう扱うかはcaller側の責務である。
+    """
+
+    def on_decision_point(
+        self,
+        *,
+        step_ordinal: int,
+        env: RiichiEnv,
+        pending_player_ids: tuple[int, ...],
+    ) -> None: ...
+
+
 class _DecisionTraceCapture:
     """execute_policy_with_trace()のdecision-local notificationを一時保持する。"""
 
@@ -426,6 +450,7 @@ class LocalGameRunner:
     """
 
     __slots__ = (
+        "_decision_point_observer",
         "_env",
         "_game_mode",
         "_inspection_recorder",
@@ -447,6 +472,7 @@ class LocalGameRunner:
         max_steps: int | None = None,
         trace_sink: GameTraceSink | None = None,
         inspection_recorder: LocalGameInspectionRecorder | None = None,
+        decision_point_observer: DecisionPointObserver | None = None,
     ) -> None:
         if type(seed) is not int:
             raise TypeError("seed must be an int")
@@ -468,6 +494,10 @@ class LocalGameRunner:
             raise ValueError(
                 "trace_sink and inspection_recorder must not both be configured"
             )
+        if decision_point_observer is not None and not hasattr(
+            decision_point_observer, "on_decision_point"
+        ):
+            raise TypeError("decision_point_observer must provide on_decision_point()")
 
         self._seed = seed
         self._game_mode = game_mode
@@ -479,6 +509,7 @@ class LocalGameRunner:
         self._trace_sink = (
             inspection_recorder if inspection_recorder is not None else trace_sink
         )
+        self._decision_point_observer = decision_point_observer
         self._round_stats = RoundStatsCollector()
         self._round_results = (
             None if inspection_recorder is None else RoundResultCollector()
@@ -576,7 +607,7 @@ class LocalGameRunner:
                     separators=(",", ":"),
                     allow_nan=False,
                 )
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 raise LocalGameRunnerError(
                     "RiichiEnv.mjai_log entry is not JSON serializable"
                 ) from None
@@ -616,6 +647,12 @@ class LocalGameRunner:
                 )
 
             event_sequence_start = next_event_sequence
+            if self._decision_point_observer is not None:
+                self._decision_point_observer.on_decision_point(
+                    step_ordinal=steps,
+                    env=self._env,
+                    pending_player_ids=tuple(sorted(observations)),
+                )
             if self._inspection_recorder is None:
                 actions = self._build_actions(observations)
                 seat_decisions = None
@@ -657,6 +694,7 @@ class LocalGameRunner:
 
 
 __all__ = [
+    "DecisionPointObserver",
     "LocalGameResult",
     "LocalGameInspection",
     "LocalGameInspectionLifecycleError",
