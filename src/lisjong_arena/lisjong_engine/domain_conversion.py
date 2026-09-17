@@ -76,7 +76,7 @@ _RIICHI_STATE_BY_ENGINE_STATUS = {
 def _lookup(table: dict, value: object, field_name: str):
     try:
         converted = table[value]
-    except (KeyError, TypeError):
+    except KeyError, TypeError:
         raise UnsupportedEngineValueError(
             f"unsupported lisjong-engine {field_name}: {value!r}"
         ) from None

@@ -94,7 +94,7 @@ def _normalize_action(
         )
     try:
         actor = Seat(action.actor)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise MortalDecisionComparisonError(
             "RiichiEnv Action actor is invalid"
         ) from None

@@ -344,7 +344,7 @@ def map_observed_action(
             )
     except MjaiReplayError as error:
         return _unsupported(error.reason)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         # lisjong canonical action契約に反するfield組み合わせ（例: chiの
         # targetが上家でない、consumedが同一牌種でない）はexact mapping不能
         # として計数する。推測で別のactionへ丸めない。

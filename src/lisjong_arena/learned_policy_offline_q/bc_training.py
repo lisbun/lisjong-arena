@@ -154,7 +154,7 @@ def peak_process_ram_bytes() -> int | None:
         return None
     try:
         usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return int(usage) if platform.system() == "Darwin" else int(usage) * 1024
 

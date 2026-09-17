@@ -339,7 +339,7 @@ def _safe_seat_round_stats(scores: object) -> tuple:
         end_scores = tuple(int(score) for score in scores)
         if len(end_scores) != 4:
             raise ValueError
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         end_scores = (25_000, 25_000, 25_000, 25_000)
     return neutral_seat_round_stats_tuple(end_scores)
 

@@ -607,7 +607,7 @@ class LocalGameRunner:
                     separators=(",", ":"),
                     allow_nan=False,
                 )
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 raise LocalGameRunnerError(
                     "RiichiEnv.mjai_log entry is not JSON serializable"
                 ) from None
