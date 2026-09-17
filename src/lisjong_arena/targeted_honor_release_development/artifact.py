@@ -225,9 +225,7 @@ def _parse_record(value: object, context: str) -> DecisionRecord:
         ),
         hva_decisive_stage=decisive,
         r5_activated=expect_bool(raw["r5_activated"], f"{context}.r5_activated"),
-        r5_best_count=expect_int(
-            raw["r5_best_count"], f"{context}.r5_best_count"
-        ),
+        r5_best_count=expect_int(raw["r5_best_count"], f"{context}.r5_best_count"),
         sequence_denominator=expect_optional_int(
             raw["sequence_denominator"], f"{context}.sequence_denominator"
         ),
@@ -318,9 +316,7 @@ def _aggregate_to_dict(value: DiagnosticAggregate) -> dict[str, object]:
     return {
         "action_change_count": value.action_change_count,
         "activation_stage_counts": _pairs_to_json(value.activation_stage_counts),
-        "analyzed_decision_runtime": _numeric_to_dict(
-            value.analyzed_decision_runtime
-        ),
+        "analyzed_decision_runtime": _numeric_to_dict(value.analyzed_decision_runtime),
         "branch_counts": _pairs_to_json(value.branch_counts),
         "candidate_runtime_per_game_seconds": value.candidate_runtime_per_game_seconds,
         "candidate_runtime_total_seconds": value.candidate_runtime_total_seconds,
@@ -330,9 +326,7 @@ def _aggregate_to_dict(value: DiagnosticAggregate) -> dict[str, object]:
         "honor_target_candidate_counts": _pairs_to_json(
             value.honor_target_candidate_counts
         ),
-        "hva_decisive_stage_counts": _pairs_to_json(
-            value.hva_decisive_stage_counts
-        ),
+        "hva_decisive_stage_counts": _pairs_to_json(value.hva_decisive_stage_counts),
         "open_count": value.open_count,
         "parent_retained_value_counts": _pairs_to_json(
             value.parent_retained_value_counts
@@ -342,9 +336,7 @@ def _aggregate_to_dict(value: DiagnosticAggregate) -> dict[str, object]:
         "projected_h_arm_wall_clock_hours": value.projected_h_arm_wall_clock_hours,
         "r5_activated_runtime": _numeric_to_dict(value.r5_activated_runtime),
         "r5_activation_count": value.r5_activation_count,
-        "r5_best_count_distribution": _pairs_to_json(
-            value.r5_best_count_distribution
-        ),
+        "r5_best_count_distribution": _pairs_to_json(value.r5_best_count_distribution),
         "replay_game_runtime": _numeric_to_dict(value.replay_game_runtime),
         "replay_wall_clock_seconds": value.replay_wall_clock_seconds,
         "target_candidate_counts": _pairs_to_json(value.target_candidate_counts),
@@ -421,13 +413,19 @@ def parse_artifact(
     value: object, *, parent_artifact_path: str | Path
 ) -> dict[str, object]:
     raw = expect_object(value, _TOP_FIELDS, "artifact")
-    if expect_int(raw["artifact_version"], "artifact.artifact_version") != ARTIFACT_VERSION:
+    if (
+        expect_int(raw["artifact_version"], "artifact.artifact_version")
+        != ARTIFACT_VERSION
+    ):
         raise TargetedHonorReleaseArtifactError("unsupported artifact version")
     if expect_str(raw["protocol_id"], "artifact.protocol_id") != PROTOCOL_ID:
         raise TargetedHonorReleaseArtifactError("artifact protocol identity drifted")
-    if expect_bool(
-        raw["trajectory_identity_passed"], "artifact.trajectory_identity_passed"
-    ) is not True:
+    if (
+        expect_bool(
+            raw["trajectory_identity_passed"], "artifact.trajectory_identity_passed"
+        )
+        is not True
+    ):
         raise TargetedHonorReleaseArtifactError(
             "accepted artifact requires trajectory identity success"
         )
@@ -447,13 +445,10 @@ def parse_artifact(
     )
     parent_path = Path(parent_artifact_path)
     parent = load_arm_artifact(parent_path)
-    if (
-        expect_str(
-            source["parent_artifact_digest"],
-            "artifact.source.parent_artifact_digest",
-        )
-        != artifact_file_digest(parent_path)
-    ):
+    if expect_str(
+        source["parent_artifact_digest"],
+        "artifact.source.parent_artifact_digest",
+    ) != artifact_file_digest(parent_path):
         raise TargetedHonorReleaseArtifactError("source parent artifact digest differs")
     if (
         parse_execution_provenance(source["parent_artifact_provenance"])
@@ -474,9 +469,7 @@ def parse_artifact(
     replay_wall = expect_float(
         raw["replay_wall_clock_seconds"], "artifact.replay_wall_clock_seconds"
     )
-    aggregate = aggregate_diagnostics(
-        games, replay_wall_clock_seconds=replay_wall
-    )
+    aggregate = aggregate_diagnostics(games, replay_wall_clock_seconds=replay_wall)
     expected_summary = _aggregate_to_dict(aggregate)
     if raw["summary"] != expected_summary:
         raise TargetedHonorReleaseArtifactError(
