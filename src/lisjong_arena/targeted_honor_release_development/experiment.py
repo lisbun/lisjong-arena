@@ -183,9 +183,7 @@ def run_phase_b(
     require_exact_candidate_semantics()
     lock = load_lock_document(lock_path)
     live = require_live_execution_target(lock)
-    _require_phase_a_gate(
-        lock, diagnostic_artifact_path=diagnostic_artifact_path
-    )
+    _require_phase_a_gate(lock, diagnostic_artifact_path=diagnostic_artifact_path)
     seeds = locked_phase_b_seeds(lock)
     worker_count = locked_max_workers(lock)
 
