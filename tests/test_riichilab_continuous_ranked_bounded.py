@@ -51,7 +51,9 @@ async def _no_sleep(_delay: float) -> None:
 
 
 class BoundedCompletedGamesTest(unittest.TestCase):
-    def test_target_stops_after_exact_completed_count_without_extra_policy(self) -> None:
+    def test_target_stops_after_exact_completed_count_without_extra_policy(
+        self,
+    ) -> None:
         calls: list[object] = []
         created: list[object] = []
 
@@ -164,14 +166,18 @@ class DurableAcquisitionTest(unittest.TestCase):
 
         self.assertEqual(len(destinations), 2)
         self.assertEqual(len(set(destinations)), 2)
-        self.assertTrue(all(path.parent == Path("record-root") for path in destinations))
+        self.assertTrue(
+            all(path.parent == Path("record-root") for path in destinations)
+        )
         self.assertEqual(policies, created)
         self.assertEqual(len(created), 2)
         self.assertEqual(summary.completed_games, 2)
         self.assertTrue(summary.records_enabled)
         self.assertEqual(summary.stopped_reason, "target_completed_games_reached")
 
-    def test_transport_failure_during_acquisition_retries_without_counting(self) -> None:
+    def test_transport_failure_during_acquisition_retries_without_counting(
+        self,
+    ) -> None:
         attempts = 0
         destinations: list[Path] = []
         delays: list[float] = []
