@@ -25,7 +25,7 @@ def _seat_mapping(values: Sequence[str], option: str) -> dict[Seat, str]:
         try:
             seat_text, item = value.split("=", 1)
             seat = Seat(int(seat_text))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             raise DurableLocalGameRecordError(
                 f"{option} expects SEAT=VALUE with SEAT 0..3"
             ) from None

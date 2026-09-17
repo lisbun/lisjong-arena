@@ -48,14 +48,14 @@ def peak_process_ram_bytes() -> int | None:
             ):
                 return None
             return int(counters.PeakWorkingSetSize)
-        except AttributeError, OSError:
+        except (AttributeError, OSError):
             return None
     try:
         import resource
 
         usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         return int(usage if platform.system() == "Darwin" else usage * 1024)
-    except ImportError, OSError:
+    except (ImportError, OSError):
         return None
 
 
