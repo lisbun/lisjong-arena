@@ -62,6 +62,7 @@ from .protocol import (
     INFEASIBLE_LABEL,
     MAX_STEPS,
     OPPORTUNITY_NOT_OBSERVED_LABEL,
+    COMPARATOR_IDENTITY,
     PARENT_IDENTITY,
     PHASE_A_GAME_COUNT,
     PHASE_A_SEEDS,
@@ -589,7 +590,7 @@ def aggregate_diagnostics(
             tuple(game.game_wall_clock_seconds for game in games)
         ),
         replay_wall_clock_seconds=float(replay_wall_clock_seconds),
-        projected_h_arm_wall_clock_hours=candidate_total / 3600.0,
+        projected_h_arm_wall_clock_hours=float(replay_wall_clock_seconds) / 3600.0,
     )
 
 
@@ -645,6 +646,10 @@ def require_trajectory_identity(
     if plan.candidate_identity != PARENT_IDENTITY:
         raise TargetedHonorReleaseDiagnosticError(
             "historical source artifact is not the #252 parent arm"
+        )
+    if plan.baseline_identity != COMPARATOR_IDENTITY:
+        raise TargetedHonorReleaseDiagnosticError(
+            "historical source artifact does not use the #252 passive comparator"
         )
     if plan.seeds != PHASE_A_SEEDS or plan.max_steps != MAX_STEPS:
         raise TargetedHonorReleaseDiagnosticError(
