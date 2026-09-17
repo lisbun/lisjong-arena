@@ -5,11 +5,13 @@ retained rowへhidden truthを付けてよいのは、retained rowとprivileged 
 
 ```text
 same dataset identity        strict readbackしたmanifestのdataset_identity
-same provenance / revision   bound Arena / lisjong / engine / RiichiEnv / Python
+same source-semantic         lisjong / lisjong-engine / RiichiEnv / Python /
+  provenance                 execution environment（`SOURCE_SEMANTIC_PROVENANCE_FIELDS`）
 same decision identity       (seed, step_ordinal, decision_ordinal)
 same acting seat             actor_seat
+same round identity          round_wind / hand_number / honba / round_ordinal
 same PolicyInput semantics   byte-identical 8204 float32 feature row
-same legal-action context    byte-identical 802 legal mask
+same legal-action context    byte-identical 802 legal mask + legal_action_count
 same teacher action          behavior action index
 same logical decision state  privileged snapshotがpublic own-hand / meld /
                              riichi stateを再現する（`require_same_decision_state`）
@@ -18,6 +20,26 @@ same logical decision state  privileged snapshotがpublic own-hand / meld /
 1つでも一致しなければ`RETAINED AUGMENTATION NOT QUALIFIED`であり、heuristic
 replay fillingで埋めない。retained rowを黙って再生成して「retained dataset」と
 呼ぶこともしない。
+
+## instrumentation provenanceを一致必須にしない理由
+
+#258のobserver / qualification implementationは、retained corpusを生成した
+historical Arena revisionには存在しない。したがって
+`lisjong_arena_revision == <historical>`を満たしながらこのqualificationを
+実行することは論理的に不可能であり、それを一致必須にすると、exact row
+alignmentを一度も実証しないままinstrumentation revisionが違うという理由
+だけでretained routeが恒久的にNOT QUALIFIEDになる。
+
+そこでArena revisionはinstrumentation provenanceとして両側を記録し、
+一致は要求しない。代わりに上記のexact alignmentが、instrumentationを含む
+replayでもretained public row semanticsを再現したことを実証する。
+
+hidden stateのexactnessを決めるsource-semantic dependency（teacher / Policy
+semanticsを持つlisjong、rulesを持つlisjong-engine、dealとstate表現を持つ
+RiichiEnv、interpreter）は引き続き完全一致を要求してfail closedする。
+current dependency driftを無視してQUALIFIEDにはしない。operatorは
+historical execution environmentを再現する必要がある
+（`docs/stage-a0-tenpai-label-feasibility.md`を参照）。
 
 exposure boundary: このpathはTRAIN-side seedしか実行・参照しない。
 protected TEST（271..276）とVALIDATION（265..270）のrow featureは読まず、
@@ -32,14 +54,17 @@ from lisjong_arena.learned_policy_offline_q.artifact import (
     load_dataset,
     provenance_document,
 )
+from lisjong_arena.learned_policy_stage2.recording import RoundOrdinals
 
 from .emission import emit_decision
 from .errors import StageA0ProtocolError
 from .execution import observed_decisions_for_seed
 from .protocol import (
     EXCLUDED_QUALIFICATION_SEEDS,
+    INSTRUMENTATION_PROVENANCE_FIELDS,
     RETAINED_DATASET_IDENTITY,
     RETAINED_TRAIN_SEEDS,
+    SOURCE_SEMANTIC_PROVENANCE_FIELDS,
     Split,
     require_qualification_seed,
 )
@@ -62,6 +87,7 @@ class RetainedQualification:
     examined_seeds: tuple[int, ...]
     examined_row_count: int
     aligned_row_count: int
+    instrumentation_provenance: dict | None
     rejection_reason: str | None
     rejection_detail: str | None
     cells: tuple
@@ -97,6 +123,7 @@ class RetainedQualification:
             "examined_seeds": list(self.examined_seeds),
             "examined_row_count": self.examined_row_count,
             "aligned_row_count": self.aligned_row_count,
+            "instrumentation_provenance": self.instrumentation_provenance,
             "rejection_reason": self.rejection_reason,
             "rejection_detail": self.rejection_detail,
         }
@@ -110,6 +137,7 @@ def _rejected(
     examined_seeds: tuple[int, ...] = (),
     examined_row_count: int = 0,
     aligned_row_count: int = 0,
+    instrumentation_provenance: dict | None = None,
 ) -> RetainedQualification:
     return RetainedQualification(
         outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED,
@@ -117,24 +145,63 @@ def _rejected(
         examined_seeds=examined_seeds,
         examined_row_count=examined_row_count,
         aligned_row_count=aligned_row_count,
+        instrumentation_provenance=instrumentation_provenance,
         rejection_reason=reason,
         rejection_detail=detail,
         cells=(),
     )
 
 
-def compare_provenance(
+def _require_classified_provenance(provenance: dict, context: str) -> None:
+    """provenance documentが既知のfield集合そのものであることを確認する。
+
+    未分類のfieldをsilentに無視すると、後からprovenance schemaが増えたときに
+    source-semantic driftを見逃す。過不足はfail closedにする。
+    """
+    known = set(SOURCE_SEMANTIC_PROVENANCE_FIELDS) | set(
+        INSTRUMENTATION_PROVENANCE_FIELDS
+    )
+    actual = set(provenance)
+    if actual != known:
+        missing = sorted(known - actual)
+        unknown = sorted(actual - known)
+        raise StageA0ProtocolError(
+            f"{context} provenance fields are not the classified set; "
+            f"missing={missing!r} unclassified={unknown!r}"
+        )
+
+
+def compare_source_semantic_provenance(
     manifest_provenance: dict, current_provenance: dict
 ) -> tuple[str, ...]:
-    """retained provenanceと現在のbound provenanceの相違fieldを返す。"""
-    fields = set(manifest_provenance) | set(current_provenance)
+    """hidden-state exactnessに必要なprovenance fieldの相違だけを返す。
+
+    instrumentation provenance（Arena revision）はここに含めない。
+    """
     return tuple(
         sorted(
             name
-            for name in fields
-            if manifest_provenance.get(name) != current_provenance.get(name)
+            for name in SOURCE_SEMANTIC_PROVENANCE_FIELDS
+            if manifest_provenance[name] != current_provenance[name]
         )
     )
+
+
+def instrumentation_provenance_delta(
+    manifest_provenance: dict, current_provenance: dict
+) -> dict[str, object]:
+    """retained側と現在のinstrumentation provenanceを両方記録する。
+
+    一致は要求しないが、どのArena revisionがreplayを実行したかは必ず残す。
+    """
+    return {
+        name: {
+            "retained": manifest_provenance[name],
+            "qualification": current_provenance[name],
+            "matches": manifest_provenance[name] == current_provenance[name],
+        }
+        for name in INSTRUMENTATION_PROVENANCE_FIELDS
+    }
 
 
 def _train_row_indices(dataset: LoadedOfflineQDataset, seeds) -> dict[int, list[int]]:
@@ -198,13 +265,22 @@ def qualify_retained_augmentation(
     manifest_provenance = dataset.manifest["provenance"]
     if current_provenance is None:
         current_provenance = provenance_document()
-    differing = compare_provenance(manifest_provenance, current_provenance)
+    _require_classified_provenance(manifest_provenance, "retained corpus")
+    _require_classified_provenance(current_provenance, "qualification run")
+    instrumentation = instrumentation_provenance_delta(
+        manifest_provenance, current_provenance
+    )
+    differing = compare_source_semantic_provenance(
+        manifest_provenance, current_provenance
+    )
     if differing:
         return _rejected(
             "provenance-revision-mismatch",
-            "the retained corpus is bound to a different execution revision; "
-            f"differing provenance fields: {list(differing)!r}",
+            "the retained corpus was executed under different source semantics; "
+            "reproduce the historical execution environment before qualifying. "
+            f"differing source-semantic provenance fields: {list(differing)!r}",
             dataset_identity=identity,
+            instrumentation_provenance=instrumentation,
         )
 
     grouped = _train_row_indices(dataset, seeds)
@@ -222,9 +298,12 @@ def qualify_retained_augmentation(
                 examined_seeds=seeds,
                 examined_row_count=examined_row_count,
                 aligned_row_count=aligned_row_count,
+                instrumentation_provenance=instrumentation,
             )
 
+        rounds = RoundOrdinals()
         emissions = {}
+        round_ordinals = {}
         for decision in observed_decision_source(seed):
             try:
                 emission = emit_decision(
@@ -238,60 +317,82 @@ def qualify_retained_augmentation(
                     examined_seeds=seeds,
                     examined_row_count=examined_row_count,
                     aligned_row_count=aligned_row_count,
+                    instrumentation_provenance=instrumentation,
                 )
-            emissions[
+            key = (
+                decision.step_ordinal,
+                decision.decision_ordinal,
+                int(decision.actor_seat),
+            )
+            emissions[key] = emission
+            # `round_ordinal`はretained artifactが保持するderived valueなので、
+            # 同じcontiguous grouping ruleでre-executionからも導出して比較する。
+            round_state = decision.context.input.round
+            round_ordinals[key] = rounds.resolve(
                 (
-                    decision.step_ordinal,
-                    decision.decision_ordinal,
-                    int(decision.actor_seat),
+                    round_state.round_wind.value,
+                    round_state.hand_number,
+                    round_state.honba,
                 )
-            ] = emission
+            )
 
         for index in indices:
             row = dataset.rows[index]
             key = (row.step_ordinal, row.decision_ordinal, row.actor_seat)
             emission = emissions.get(key)
-            if emission is None:
+
+            def reject(reason: str, detail: str) -> RetainedQualification:
                 return _rejected(
-                    "decision-identity-mismatch",
-                    f"seed {seed} row {index} has no re-executed decision at {key!r}",
+                    reason,
+                    f"seed {seed} row {index}: {detail}",
                     dataset_identity=identity,
                     examined_seeds=seeds,
                     examined_row_count=examined_row_count,
                     aligned_row_count=aligned_row_count,
+                    instrumentation_provenance=instrumentation,
                 )
+
+            if emission is None:
+                return reject(
+                    "decision-identity-mismatch",
+                    f"no re-executed decision at {key!r}",
+                )
+            for name, retained_value, replayed_value in (
+                ("round_wind", row.round_wind, emission.row.round_wind),
+                ("hand_number", row.hand_number, emission.row.hand_number),
+                ("honba", row.honba, emission.row.honba),
+                ("round_ordinal", row.round_ordinal, round_ordinals[key]),
+            ):
+                if retained_value != replayed_value:
+                    return reject(
+                        "round-identity-mismatch",
+                        f"{name} differs: retained {retained_value!r} != "
+                        f"replayed {replayed_value!r}",
+                    )
             if (
                 array("f", dataset.feature_row(index)).tobytes()
                 != emission.row.feature_bytes()
             ):
-                return _rejected(
+                return reject(
                     "feature-row-mismatch",
-                    f"seed {seed} row {index} feature bytes differ from the "
-                    "re-executed decision",
-                    dataset_identity=identity,
-                    examined_seeds=seeds,
-                    examined_row_count=examined_row_count,
-                    aligned_row_count=aligned_row_count,
+                    "feature bytes differ from the re-executed decision",
                 )
             if dataset.legal_mask_row(index) != emission.row.legal_mask:
-                return _rejected(
+                return reject(
                     "legal-mask-mismatch",
-                    f"seed {seed} row {index} legal mask differs from the "
-                    "re-executed decision",
-                    dataset_identity=identity,
-                    examined_seeds=seeds,
-                    examined_row_count=examined_row_count,
-                    aligned_row_count=aligned_row_count,
+                    "legal mask differs from the re-executed decision",
+                )
+            if row.legal_action_count != emission.row.legal_action_count:
+                return reject(
+                    "legal-mask-mismatch",
+                    f"legal_action_count differs: retained "
+                    f"{row.legal_action_count} != replayed "
+                    f"{emission.row.legal_action_count}",
                 )
             if row.behavior_action_index != emission.row.teacher_action_index:
-                return _rejected(
+                return reject(
                     "teacher-action-mismatch",
-                    f"seed {seed} row {index} behavior action differs from the "
-                    "re-executed decision",
-                    dataset_identity=identity,
-                    examined_seeds=seeds,
-                    examined_row_count=examined_row_count,
-                    aligned_row_count=aligned_row_count,
+                    "behavior action differs from the re-executed decision",
                 )
             aligned_row_count += 1
             cells.extend(emission.cells)
@@ -302,6 +403,7 @@ def qualify_retained_augmentation(
         examined_seeds=seeds,
         examined_row_count=examined_row_count,
         aligned_row_count=aligned_row_count,
+        instrumentation_provenance=instrumentation,
         rejection_reason=None,
         rejection_detail=None,
         cells=tuple(cells),
@@ -312,6 +414,7 @@ __all__ = [
     "RETAINED_AUGMENTATION_NOT_QUALIFIED",
     "RETAINED_AUGMENTATION_QUALIFIED",
     "RetainedQualification",
-    "compare_provenance",
+    "compare_source_semantic_provenance",
+    "instrumentation_provenance_delta",
     "qualify_retained_augmentation",
 ]

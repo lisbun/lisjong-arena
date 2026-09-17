@@ -21,6 +21,10 @@ class StageA0SidecarError(StageA0Error):
     """privileged sidecarのschema / identity / readback違反。"""
 
 
+class StageA0ReportError(StageA0Error):
+    """feasibility reportのschema / identity / evidence chain違反。"""
+
+
 class StageA0LabelError(StageA0Error):
     """canonical label pathのunexpected invariant violation。"""
 
@@ -30,5 +34,6 @@ __all__ = [
     "StageA0Error",
     "StageA0LabelError",
     "StageA0ProtocolError",
+    "StageA0ReportError",
     "StageA0SidecarError",
 ]

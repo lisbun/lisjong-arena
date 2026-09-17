@@ -140,11 +140,15 @@ class RowEncodeCost:
     feature_encode_seconds: float
 
 
-class _RoundOrdinals:
+class RoundOrdinals:
     """player-safeなround identityを、出現順の0-based ordinalへ写す。
 
     `(round_wind, hand_number, honba)`は1 hanchan内で一意に進むため、既出の
     組へ戻った場合はfail closedする（生成順の破損を黙って通さない）。
+
+    同じcontiguous grouping ruleは`lisbun/lisjong-arena #140`のmacro-transition
+    rowが持つ`round_ordinal`と、`#258`がretained rowに対してそれをre-execution
+    から再導出するalignment checkでも共有する。
     """
 
     __slots__ = ("_ordinals", "_current")
@@ -263,7 +267,7 @@ def build_decision_rows(
     feature encodeのみのaccumulated wall-clockを1件だけappendする（rowそのもの
     には測定値を入れない）。
     """
-    rounds = _RoundOrdinals()
+    rounds = RoundOrdinals()
     encode_seconds = 0.0
     decision_count = 0
 
@@ -311,7 +315,7 @@ def build_decision_rows(
 
 def round_count(recording: GameRecording) -> int:
     """1 hanchanのplayer-safe round identityの数を数える。"""
-    rounds = _RoundOrdinals()
+    rounds = RoundOrdinals()
     for decision in iter_recorded_decisions(recording):
         round_state = decision.context.input.round
         rounds.resolve(
@@ -327,6 +331,7 @@ def round_count(recording: GameRecording) -> int:
 __all__ = [
     "GameRecording",
     "RecordedDecision",
+    "RoundOrdinals",
     "RowEncodeCost",
     "build_decision_rows",
     "build_teacher_population",

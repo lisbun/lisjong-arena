@@ -61,6 +61,7 @@ from lisjong_arena.stage_a0_tenpai_feasibility.emission import (
 from lisjong_arena.stage_a0_tenpai_feasibility.errors import (
     StageA0AlignmentError,
     StageA0ProtocolError,
+    StageA0ReportError,
     StageA0SidecarError,
 )
 from lisjong_arena.stage_a0_tenpai_feasibility.fresh import (
@@ -69,13 +70,20 @@ from lisjong_arena.stage_a0_tenpai_feasibility.fresh import (
 )
 from lisjong_arena.stage_a0_tenpai_feasibility.labels import TargetAvailability
 from lisjong_arena.stage_a0_tenpai_feasibility.report import (
+    REPORT_SCHEMA_VERSION,
+    RETAINED_AUGMENTATION_NOT_QUALIFIED,
     FeasibilityReport,
+    LoadedFeasibilityReport,
     QualificationCheck,
     build_checks,
+    load_feasibility_report,
+    report_identity,
+    require_retained_not_qualified,
 )
 from lisjong_arena.stage_a0_tenpai_feasibility.retained import (
-    RETAINED_AUGMENTATION_NOT_QUALIFIED,
     RETAINED_AUGMENTATION_QUALIFIED,
+    compare_source_semantic_provenance,
+    instrumentation_provenance_delta,
     qualify_retained_augmentation,
 )
 from lisjong_arena.stage_a0_tenpai_feasibility.sidecar import (
@@ -732,6 +740,7 @@ class RetainedAugmentationTest(unittest.TestCase):
                     emit_decision(decision, source_identity="pending", seed=seed),
                 ),
             )
+        self.emissions = emissions
         self.dataset_path = Path(self.directory.name) / "retained"
         self.dataset = build_retained_dataset(self.dataset_path, emissions)
 
@@ -870,13 +879,132 @@ class RetainedAugmentationTest(unittest.TestCase):
         self.assertEqual(result.rejection_reason, "same-state-co-emission-failed")
         self.assertEqual(result.cells, ())
 
-    def test_a_provenance_revision_mismatch_is_rejected(self):
+    def test_instrumentation_revision_drift_still_allows_qualification(self):
+        """#258 の instrumentation は historical Arena revision には存在しない。
+
+        source semantics が一致し全 row が exact に align するなら、Arena
+        revision が違うだけで retained route を落としてはいけない。
+        """
         drifted = dict(RETAINED_PROVENANCE)
         drifted["lisjong_arena_revision"] = "9" * 40
+        drifted["lisjong_arena_version"] = "0.2.0"
         result = self._qualify(current_provenance=drifted)
+        self.assertEqual(result.outcome, RETAINED_AUGMENTATION_QUALIFIED)
+        self.assertEqual(result.aligned_row_count, len(self.seeds))
+        recorded = result.instrumentation_provenance
+        self.assertFalse(recorded["lisjong_arena_revision"]["matches"])
+        self.assertEqual(
+            recorded["lisjong_arena_revision"]["retained"],
+            RETAINED_PROVENANCE["lisjong_arena_revision"],
+        )
+        self.assertEqual(recorded["lisjong_arena_revision"]["qualification"], "9" * 40)
+
+    def test_a_teacher_source_semantic_revision_mismatch_is_rejected(self):
+        for field in ("lisjong_revision", "lisjong_version"):
+            with self.subTest(field=field):
+                drifted = dict(RETAINED_PROVENANCE)
+                drifted[field] = "9" * 40
+                result = self._qualify(current_provenance=drifted)
+                self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
+                self.assertEqual(
+                    result.rejection_reason, "provenance-revision-mismatch"
+                )
+                self.assertIn(field, result.rejection_detail)
+
+    def test_an_execution_provenance_mismatch_is_rejected(self):
+        """hidden-state exactness に必要な dependency の drift は reject する。"""
+        for field in (
+            "riichienv_version",
+            "lisjong_engine_revision",
+            "lisjong_engine_version",
+            "python_version",
+            "execution_environment",
+        ):
+            with self.subTest(field=field):
+                drifted = dict(RETAINED_PROVENANCE)
+                drifted[field] = "drifted"
+                result = self._qualify(current_provenance=drifted)
+                self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
+                self.assertEqual(
+                    result.rejection_reason, "provenance-revision-mismatch"
+                )
+                self.assertIn(field, result.rejection_detail)
+                self.assertEqual(result.cells, ())
+
+    def test_an_unclassified_provenance_field_fails_closed(self):
+        extended = dict(RETAINED_PROVENANCE)
+        extended["future_field"] = "value"
+        with self.assertRaises(StageA0ProtocolError):
+            self._qualify(current_provenance=extended)
+        reduced = dict(RETAINED_PROVENANCE)
+        del reduced["python_version"]
+        with self.assertRaises(StageA0ProtocolError):
+            self._qualify(current_provenance=reduced)
+
+    def test_the_provenance_split_covers_every_recorded_field(self):
+        self.assertEqual(
+            set(protocol.SOURCE_SEMANTIC_PROVENANCE_FIELDS)
+            | set(protocol.INSTRUMENTATION_PROVENANCE_FIELDS),
+            set(RETAINED_PROVENANCE),
+        )
+        self.assertNotIn(
+            "lisjong_arena_revision", protocol.SOURCE_SEMANTIC_PROVENANCE_FIELDS
+        )
+        self.assertIn("lisjong_revision", protocol.SOURCE_SEMANTIC_PROVENANCE_FIELDS)
+        self.assertIn("riichienv_version", protocol.SOURCE_SEMANTIC_PROVENANCE_FIELDS)
+        self.assertEqual(
+            compare_source_semantic_provenance(
+                RETAINED_PROVENANCE, RETAINED_PROVENANCE
+            ),
+            (),
+        )
+        delta = instrumentation_provenance_delta(
+            RETAINED_PROVENANCE, RETAINED_PROVENANCE
+        )
+        self.assertTrue(all(entry["matches"] for entry in delta.values()))
+
+    def test_a_round_identity_mismatch_is_rejected(self):
+        """artifact が保持する derived round identity も明示比較する。"""
+        for field, value in (
+            ("round_wind", "south"),
+            ("hand_number", 2),
+            ("honba", 1),
+            ("round_ordinal", 5),
+        ):
+            with self.subTest(field=field):
+                directory = TemporaryDirectory()
+                self.addCleanup(directory.cleanup)
+                path = Path(directory.name) / "retained"
+                dataset = build_retained_dataset(
+                    path, self.emissions, row_overrides={field: value}
+                )
+                result = qualify_retained_augmentation(
+                    path,
+                    seeds=self.seeds,
+                    expected_dataset_identity=dataset.identity,
+                    observed_decision_source=self._source,
+                    current_provenance=RETAINED_PROVENANCE,
+                )
+                self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
+                self.assertEqual(result.rejection_reason, "round-identity-mismatch")
+                self.assertIn(field, result.rejection_detail)
+
+    def test_a_legal_action_count_mismatch_is_rejected(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "retained"
+        dataset = build_retained_dataset(
+            path, self.emissions, legal_action_count_drift=True
+        )
+        result = qualify_retained_augmentation(
+            path,
+            seeds=self.seeds,
+            expected_dataset_identity=dataset.identity,
+            observed_decision_source=self._source,
+            current_provenance=RETAINED_PROVENANCE,
+        )
         self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
-        self.assertEqual(result.rejection_reason, "provenance-revision-mismatch")
-        self.assertIn("lisjong_arena_revision", result.rejection_detail)
+        self.assertEqual(result.rejection_reason, "legal-mask-mismatch")
 
     def test_a_dataset_identity_mismatch_is_rejected(self):
         result = self._qualify(expected_dataset_identity="0" * 64)
@@ -980,9 +1108,11 @@ class FeasibilityReportTest(unittest.TestCase):
         cells = self._cells()
         arguments = {
             "provenance": FIXTURE_PROVENANCE,
+            "instrumentation_provenance": None,
             "source_paths_examined": ("fixture",),
             "retained_corpus_identity": None,
             "retained_outcome": None,
+            "retained_evidence": None,
             "smoke_population_identity": protocol.SMOKE_POPULATION_IDENTITY,
             "fresh_outcome": None,
             "sidecar_identity": None,
@@ -1062,6 +1192,384 @@ class FeasibilityReportTest(unittest.TestCase):
             self.assertTrue(path.is_file())
             with self.assertRaises(Exception):
                 self._report().write(path)
+
+
+class FeasibilityReportStrictReaderTest(unittest.TestCase):
+    """fresh fallback を authorize できる retained evidence を絞る。"""
+
+    def _cells(self):
+        plan = uniform_plan(TENPAI_HAND, actor_seat=Seat.SEAT_0)
+        return emit_decision(
+            observed_decision(plan, actor_seat=Seat.SEAT_0),
+            source_identity="fixture",
+            seed=751,
+        ).cells
+
+    def _retained_report(self, *, outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED, **over):
+        cells = self._cells()
+        arguments = {
+            "provenance": FIXTURE_PROVENANCE,
+            "instrumentation_provenance": None,
+            "source_paths_examined": ("fixture",),
+            "retained_corpus_identity": "a" * 64,
+            "retained_outcome": {"outcome": outcome},
+            "retained_evidence": None,
+            "smoke_population_identity": None,
+            "fresh_outcome": None,
+            "sidecar_identity": None,
+            "row_count": 1,
+            "cell_count": len(cells),
+            "availability_counts": availability_counts(cells),
+            "checks": build_checks(cells, deterministic_recomputation=None),
+            "hard_outcome": None,
+            "pending_reason": "retained route measured; fresh fallback required",
+            "recommended_route": None,
+        }
+        arguments.update(over)
+        return FeasibilityReport(**arguments)
+
+    def _write(self, report, directory, name="report.json"):
+        path = Path(directory) / name
+        report.write(path)
+        return path
+
+    def test_a_written_report_round_trips_through_the_strict_reader(self):
+        with TemporaryDirectory() as directory:
+            path = self._write(self._retained_report(), directory)
+            loaded = load_feasibility_report(path)
+            self.assertIsInstance(loaded, LoadedFeasibilityReport)
+            self.assertEqual(
+                loaded.document["report_schema_version"], REPORT_SCHEMA_VERSION
+            )
+            self.assertEqual(
+                loaded.retained_outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED
+            )
+            self.assertEqual(loaded.retained_corpus_identity, "a" * 64)
+            self.assertEqual(loaded.identity, report_identity(loaded.document))
+
+    def test_a_not_qualified_retained_report_authorizes_the_fallback(self):
+        with TemporaryDirectory() as directory:
+            path = self._write(self._retained_report(), directory)
+            evidence = require_retained_not_qualified(load_feasibility_report(path))
+            self.assertEqual(
+                evidence["retained_outcome"], RETAINED_AUGMENTATION_NOT_QUALIFIED
+            )
+            self.assertEqual(evidence["retained_corpus_identity"], "a" * 64)
+            self.assertEqual(len(evidence["report_identity"]), 64)
+
+    def test_a_qualified_retained_report_never_authorizes_the_fallback(self):
+        with TemporaryDirectory() as directory:
+            path = self._write(
+                self._retained_report(
+                    outcome=RETAINED_AUGMENTATION_QUALIFIED,
+                    hard_outcome=RETAINED_AUGMENTATION_QUALIFIED,
+                    pending_reason=None,
+                    recommended_route="retained-augmentation",
+                ),
+                directory,
+            )
+            with self.assertRaises(StageA0ReportError):
+                require_retained_not_qualified(load_feasibility_report(path))
+
+    def test_a_report_without_a_measured_retained_route_is_refused(self):
+        with TemporaryDirectory() as directory:
+            path = self._write(
+                self._retained_report(
+                    retained_outcome=None, retained_corpus_identity=None
+                ),
+                directory,
+            )
+            with self.assertRaises(StageA0ReportError):
+                require_retained_not_qualified(load_feasibility_report(path))
+
+    def test_a_tampered_report_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            path = self._write(self._retained_report(), directory)
+            document = json.loads(path.read_text("utf-8"))
+            document["routes"]["retained_augmentation"]["outcome"] = (
+                RETAINED_AUGMENTATION_QUALIFIED
+            )
+            path.write_text(canonical_json_text(document), encoding="utf-8")
+            with self.assertRaises(StageA0ReportError):
+                load_feasibility_report(path)
+
+    def test_a_foreign_protocol_or_issue_is_rejected(self):
+        for pointer, value in (
+            (("protocol", "protocol_id"), "arena-some-other-protocol-v1"),
+            (("protocol", "issue"), "lisbun/lisjong-arena#255"),
+            (("report_schema_version",), "arena-stage-a0-report-v0"),
+        ):
+            with self.subTest(pointer=pointer):
+                with TemporaryDirectory() as directory:
+                    path = self._write(self._retained_report(), directory)
+                    document = json.loads(path.read_text("utf-8"))
+                    target = document
+                    for key in pointer[:-1]:
+                        target = target[key]
+                    target[pointer[-1]] = value
+                    document.pop("report_identity")
+                    document["report_identity"] = report_identity(document)
+                    path.write_text(canonical_json_text(document), encoding="utf-8")
+                    with self.assertRaises(StageA0ReportError):
+                        load_feasibility_report(path)
+
+    def test_a_malformed_or_unrelated_document_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            broken = Path(directory) / "broken.json"
+            broken.write_text("{ not json", encoding="utf-8")
+            with self.assertRaises(StageA0ReportError):
+                load_feasibility_report(broken)
+            unrelated = Path(directory) / "unrelated.json"
+            unrelated.write_text('{"hello":"world"}', encoding="utf-8")
+            with self.assertRaises(StageA0ReportError):
+                load_feasibility_report(unrelated)
+            missing = Path(directory) / "missing.json"
+            with self.assertRaises(StageA0ReportError):
+                load_feasibility_report(missing)
+
+    def test_a_non_canonical_byte_layout_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            path = self._write(self._retained_report(), directory)
+            document = json.loads(path.read_text("utf-8"))
+            path.write_text(json.dumps(document, indent=4), encoding="utf-8")
+            with self.assertRaises(StageA0ReportError):
+                load_feasibility_report(path)
+
+    def test_a_fresh_qualified_outcome_requires_retained_evidence(self):
+        cells = self._cells()
+        with self.assertRaises(StageA0ProtocolError):
+            FeasibilityReport(
+                provenance=FIXTURE_PROVENANCE,
+                instrumentation_provenance=None,
+                source_paths_examined=("fixture",),
+                retained_corpus_identity=None,
+                retained_outcome=None,
+                retained_evidence=None,
+                smoke_population_identity=protocol.SMOKE_POPULATION_IDENTITY,
+                fresh_outcome={"outcome": FRESH_LIVE_LABEL_PATH_QUALIFIED},
+                sidecar_identity=None,
+                row_count=1,
+                cell_count=len(cells),
+                availability_counts=availability_counts(cells),
+                checks=build_checks(cells, deterministic_recomputation=None),
+                hard_outcome=FRESH_LIVE_LABEL_PATH_QUALIFIED,
+                pending_reason=None,
+                recommended_route="fresh-live-label",
+            )
+
+    def test_the_evidence_chain_is_recorded_in_the_fresh_report(self):
+        cells = self._cells()
+        evidence = {
+            "report_identity": "b" * 64,
+            "retained_corpus_identity": "a" * 64,
+            "retained_outcome": RETAINED_AUGMENTATION_NOT_QUALIFIED,
+        }
+        report = FeasibilityReport(
+            provenance=FIXTURE_PROVENANCE,
+            instrumentation_provenance=None,
+            source_paths_examined=("fixture",),
+            retained_corpus_identity="a" * 64,
+            retained_outcome={"outcome": RETAINED_AUGMENTATION_NOT_QUALIFIED},
+            retained_evidence=evidence,
+            smoke_population_identity=protocol.SMOKE_POPULATION_IDENTITY,
+            fresh_outcome={"outcome": FRESH_LIVE_LABEL_PATH_QUALIFIED},
+            sidecar_identity=None,
+            row_count=1,
+            cell_count=len(cells),
+            availability_counts=availability_counts(cells),
+            checks=build_checks(cells, deterministic_recomputation=None),
+            hard_outcome=FRESH_LIVE_LABEL_PATH_QUALIFIED,
+            pending_reason=None,
+            recommended_route="fresh-live-label",
+        )
+        document = report.to_document()
+        self.assertEqual(document["sources"]["retained_evidence"], evidence)
+        with TemporaryDirectory() as directory:
+            path = self._write(report, directory)
+            self.assertEqual(
+                load_feasibility_report(path).document["sources"]["retained_evidence"],
+                evidence,
+            )
+
+
+class FreshCommandEvidenceGateTest(unittest.TestCase):
+    """CLI の fresh handler が validated retained evidence 以外を受けない。"""
+
+    def _run(self, directory, retained_report):
+        from lisjong_arena.stage_a0_tenpai_feasibility import __main__ as cli
+
+        def source(seed):
+            actor_seat = Seat(seed % 4)
+            plan = uniform_plan(TENPAI_HAND, actor_seat=actor_seat)
+            return (observed_decision(plan, actor_seat=actor_seat),)
+
+        original_provenance = cli.provenance_document
+        original_qualify = cli.qualify_fresh_live_label
+        cli.provenance_document = lambda: dict(FIXTURE_PROVENANCE)
+        cli.qualify_fresh_live_label = lambda **kwargs: original_qualify(
+            observed_decision_source=source, **kwargs
+        )
+        self.addCleanup(setattr, cli, "provenance_document", original_provenance)
+        self.addCleanup(setattr, cli, "qualify_fresh_live_label", original_qualify)
+
+        arguments = ["fresh-smoke", "--sidecar", str(Path(directory) / "sidecar")]
+        if retained_report is not None:
+            arguments += ["--retained-report", str(retained_report)]
+        arguments += ["--report", str(Path(directory) / "fresh-report.json")]
+        cli.main(arguments)
+        return load_feasibility_report(Path(directory) / "fresh-report.json")
+
+    def _retained_report(self, directory, *, outcome, **over):
+        cells = emit_decision(
+            observed_decision(
+                uniform_plan(TENPAI_HAND, actor_seat=Seat.SEAT_0),
+                actor_seat=Seat.SEAT_0,
+            ),
+            source_identity="fixture",
+            seed=751,
+        ).cells
+        arguments = {
+            "provenance": FIXTURE_PROVENANCE,
+            "instrumentation_provenance": None,
+            "source_paths_examined": ("fixture",),
+            "retained_corpus_identity": "a" * 64,
+            "retained_outcome": {"outcome": outcome},
+            "retained_evidence": None,
+            "smoke_population_identity": None,
+            "fresh_outcome": None,
+            "sidecar_identity": None,
+            "row_count": 1,
+            "cell_count": len(cells),
+            "availability_counts": availability_counts(cells),
+            "checks": build_checks(cells, deterministic_recomputation=None),
+            "hard_outcome": None,
+            "pending_reason": "retained route measured",
+            "recommended_route": None,
+        }
+        arguments.update(over)
+        path = Path(directory) / "retained-report.json"
+        FeasibilityReport(**arguments).write(path)
+        return path
+
+    def test_without_retained_evidence_the_fresh_run_stays_pending(self):
+        with TemporaryDirectory() as directory:
+            report = self._run(directory, None)
+            self.assertIsNone(report.hard_outcome)
+            self.assertIsNotNone(report.document["outcome"]["pending_reason"])
+            self.assertIsNone(report.document["sources"]["retained_evidence"])
+
+    def test_a_not_qualified_retained_report_yields_the_fresh_outcome(self):
+        with TemporaryDirectory() as directory:
+            retained = self._retained_report(
+                directory, outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED
+            )
+            report = self._run(directory, retained)
+            self.assertEqual(report.hard_outcome, FRESH_LIVE_LABEL_PATH_QUALIFIED)
+            evidence = report.document["sources"]["retained_evidence"]
+            self.assertEqual(
+                evidence["retained_outcome"], RETAINED_AUGMENTATION_NOT_QUALIFIED
+            )
+            self.assertEqual(evidence["retained_corpus_identity"], "a" * 64)
+
+    def test_a_qualified_retained_report_cannot_authorize_the_fresh_outcome(self):
+        with TemporaryDirectory() as directory:
+            retained = self._retained_report(
+                directory,
+                outcome=RETAINED_AUGMENTATION_QUALIFIED,
+                hard_outcome=RETAINED_AUGMENTATION_QUALIFIED,
+                pending_reason=None,
+                recommended_route="retained-augmentation",
+            )
+            with self.assertRaises(StageA0ReportError):
+                self._run(directory, retained)
+
+    def test_a_tampered_retained_report_cannot_authorize_the_fresh_outcome(self):
+        with TemporaryDirectory() as directory:
+            retained = self._retained_report(
+                directory, outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED
+            )
+            document = json.loads(retained.read_text("utf-8"))
+            document["counts"]["row_count"] = 999
+            retained.write_text(canonical_json_text(document), encoding="utf-8")
+            with self.assertRaises(StageA0ReportError):
+                self._run(directory, retained)
+
+
+class FailClosedContractTest(unittest.TestCase):
+    """`OTHER_FAIL_CLOSED` の契約を実装と一致させる。"""
+
+    def _identity(self):
+        return labels.opponent_identity(Seat.SEAT_0, 1, Seat.SEAT_0)
+
+    def _build(self):
+        return labels.build_opponent_target(
+            self._identity(),
+            seat_resolved=True,
+            public_riichi=RiichiState.NONE,
+            privileged_riichi_declared=False,
+            concealed_tiles=tiles(TENPAI_HAND),
+            melds=(),
+        )
+
+    def test_a_canonical_builder_value_error_is_countable_and_blocking(self):
+        def failing(identity, concealed_tiles, own_melds):
+            raise ValueError("canonical contract drifted")
+
+        original = labels.structural_wait_for_hand
+        labels.structural_wait_for_hand = failing
+        self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
+        target = self._build()
+        self.assertIs(target.availability, TargetAvailability.OTHER_FAIL_CLOSED)
+        self.assertIsNone(target.tenpai)
+        self.assertIsNone(target.wait_mask)
+        check = build_checks((), deterministic_recomputation=None)
+        self.assertTrue({entry.name for entry in check} >= {"fail_closed"})
+
+    def test_a_non_value_error_is_a_route_level_hard_failure(self):
+        def failing(identity, concealed_tiles, own_melds):
+            raise RuntimeError("programming error")
+
+        original = labels.structural_wait_for_hand
+        labels.structural_wait_for_hand = failing
+        self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
+        with self.assertRaises(RuntimeError):
+            self._build()
+
+    def test_a_non_zero_fail_closed_count_blocks_qualification(self):
+        plan = uniform_plan(TENPAI_HAND, actor_seat=Seat.SEAT_0)
+        cells = emit_decision(
+            observed_decision(plan, actor_seat=Seat.SEAT_0),
+            source_identity="fixture",
+            seed=751,
+        ).cells
+
+        def failing(identity, concealed_tiles, own_melds):
+            raise ValueError("canonical contract drifted")
+
+        original = labels.structural_wait_for_hand
+        labels.structural_wait_for_hand = failing
+        self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
+        failed = emit_decision(
+            observed_decision(plan, actor_seat=Seat.SEAT_0),
+            source_identity="fixture",
+            seed=751,
+        ).cells
+        self.assertTrue(
+            all(
+                cell.availability is TargetAvailability.OTHER_FAIL_CLOSED
+                for cell in failed
+            )
+        )
+        checks = {
+            entry.name: entry
+            for entry in build_checks(failed, deterministic_recomputation=None)
+        }
+        self.assertFalse(checks["fail_closed"].qualified)
+        healthy = {
+            entry.name: entry
+            for entry in build_checks(cells, deterministic_recomputation=None)
+        }
+        self.assertTrue(healthy["fail_closed"].qualified)
 
 
 class CanonicalSemanticsTest(unittest.TestCase):

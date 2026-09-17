@@ -21,6 +21,7 @@ import inspect
 from lisjong.belief import exact_wait_ground_truth
 
 from lisjong_arena.learned_policy_offline_q import protocol as offline_q
+from lisjong_arena.learned_policy_offline_q.artifact import PROVENANCE_FIELDS
 
 from .errors import StageA0ProtocolError
 
@@ -46,6 +47,58 @@ TEACHER_SOURCE_REVISION = offline_q.TEACHER_SOURCE_REVISION
 Split = offline_q.Split
 action_family_of = offline_q.action_family
 verify_contract_identity = offline_q.verify_contract_identity
+
+# --- Provenance identity classes ------------------------------------------
+#
+# retained corpusのexact augmentationでは、2種類のprovenanceを区別する。
+#
+# source-semantic provenance
+#     retained rowのpublic semanticsとhidden stateのexactnessを決める
+#     dependency identityであり、operatorがhistorical execution environmentを
+#     再現すれば一致させられる。1 fieldでも一致しなければfail closedする。
+#
+# instrumentation provenance
+#     #258のobserver / qualification implementationを持つArena revisionである。
+#     このcodeはretained corpusを生成したhistorical Arena revisionには存在
+#     しないため、qualificationを実行しながらそのrevisionを名乗ることは
+#     論理的に不可能である。したがって一致は要求せず、両側を記録したうえで、
+#     retained public rowのexact alignment
+#     （decision identity / actor seat / round identity / feature bytes /
+#     legal mask bytes / teacher action / same-state binding）が、
+#     instrumentationを含むreplayでも同じpublic row semanticsを再現したことを
+#     実証する。
+#
+# feature schema fingerprintとaction vocabulary fingerprintは
+# `load_dataset()`がinstalled contractに対して既にfail closedで検証しており、
+# ここで重複検証しない。
+
+SOURCE_SEMANTIC_PROVENANCE_FIELDS = (
+    "execution_environment",
+    "lisjong_version",
+    "lisjong_revision",
+    "lisjong_engine_version",
+    "lisjong_engine_revision",
+    "riichienv_version",
+    "python_version",
+)
+INSTRUMENTATION_PROVENANCE_FIELDS = (
+    "lisjong_arena_version",
+    "lisjong_arena_revision",
+)
+
+if set(SOURCE_SEMANTIC_PROVENANCE_FIELDS).intersection(
+    INSTRUMENTATION_PROVENANCE_FIELDS
+):
+    raise RuntimeError("a provenance field cannot be both source and instrumentation")
+if set(SOURCE_SEMANTIC_PROVENANCE_FIELDS) | set(
+    INSTRUMENTATION_PROVENANCE_FIELDS
+) != set(PROVENANCE_FIELDS):
+    raise RuntimeError(
+        "every retained provenance field must be classified as either "
+        "source-semantic or instrumentation; an unclassified field must fail "
+        "closed instead of being silently ignored"
+    )
+
 
 RETAINED_DATASET_IDENTITY = (
     "69094c1b82f2aaedfed57cb3021b90d44642c3978a2368d4d1e2d927c5a7b2f4"
@@ -166,6 +219,7 @@ def require_smoke_seed(seed: int) -> int:
 
 __all__ = [
     "CANONICAL_WAIT_BUILDER",
+    "INSTRUMENTATION_PROVENANCE_FIELDS",
     "CANONICAL_WAIT_ENTRY_POINT",
     "EXCLUDED_QUALIFICATION_SEEDS",
     "FEATURE_DIMENSION",
@@ -183,6 +237,7 @@ __all__ = [
     "SMOKE_POPULATION_LIMITATIONS",
     "SMOKE_POPULATION_ROLE",
     "SMOKE_SEEDS",
+    "SOURCE_SEMANTIC_PROVENANCE_FIELDS",
     "TEACHER_IDENTITY",
     "TEACHER_POLICY_CLASS",
     "TEACHER_POPULATION",

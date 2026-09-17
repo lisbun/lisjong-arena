@@ -214,7 +214,13 @@ FIXTURE_PROVENANCE = {
 }
 
 
-def build_retained_dataset(destination, emissions_by_seed):
+def build_retained_dataset(
+    destination,
+    emissions_by_seed,
+    *,
+    row_overrides=None,
+    legal_action_count_drift=False,
+):
     """合成retained flat-BC corpusを、locked seed populationを満たす形で書き出す。
 
     TRAIN-side seedのrowは与えたemissionのexact bytesから作る。VALIDATION /
@@ -258,18 +264,28 @@ def build_retained_dataset(destination, emissions_by_seed):
         )
 
     def aligned_row(seed, split, emission, decision):
+        overrides = {} if row_overrides is None else dict(row_overrides)
+        legal_mask = emission.row.legal_mask
+        if legal_action_count_drift:
+            # `legal_action_count` は mask から導出されるので、count だけを
+            # ずらすには mask 側を 1 action 分ずらす。
+            extra = next(index for index, legal in enumerate(legal_mask) if not legal)
+            legal_mask = tuple(
+                True if index == extra else legal
+                for index, legal in enumerate(legal_mask)
+            )
         return MacroTransitionRow(
             seed=seed,
             split=split,
-            round_ordinal=0,
-            round_wind=emission.row.round_wind,
-            hand_number=emission.row.hand_number,
-            honba=emission.row.honba,
+            round_ordinal=overrides.get("round_ordinal", 0),
+            round_wind=overrides.get("round_wind", emission.row.round_wind),
+            hand_number=overrides.get("hand_number", emission.row.hand_number),
+            honba=overrides.get("honba", emission.row.honba),
             actor_seat=emission.row.identity.actor_seat,
             step_ordinal=decision.step_ordinal,
             decision_ordinal=decision.decision_ordinal,
             feature_values=emission.row.feature_values,
-            legal_mask=emission.row.legal_mask,
+            legal_mask=legal_mask,
             behavior_action_index=emission.row.teacher_action_index,
             behavior_action_family=emission.row.teacher_action_family,
             reward=0.0,

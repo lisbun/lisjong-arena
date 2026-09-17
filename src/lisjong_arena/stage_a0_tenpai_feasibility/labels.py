@@ -71,7 +71,21 @@ class TargetAvailability(Enum):
     MELD_STATE_UNAVAILABLE = "MELD_STATE_UNAVAILABLE"
     SEAT_MAPPING_UNRESOLVED = "SEAT_MAPPING_UNRESOLVED"
     INVALID_PHYSICAL_INVENTORY = "INVALID_PHYSICAL_INVENTORY"
+
     OTHER_FAIL_CLOSED = "OTHER_FAIL_CLOSED"
+    """prechecksを通過したあとのcanonical builder `ValueError`だけに割り当てる。
+
+    structural 13-equivalentとphysical inventoryのprechecksを通過した入力は、
+    canonical builderの文書化されたfail-closed条件をすべて満たしている。それ
+    でも`ValueError`が返るのは、Arena側のprecheck modelとcanonical semanticsが
+    乖離したことを意味するunexpected caseであり、negative labelへ丸めずここで
+    countableに残す。`check_fail_closed()`はこのcountが0でなければ
+    qualificationを通さない。
+
+    programming error / infrastructure errorなど`ValueError`以外の例外は
+    cell-level reasonにせず、route-level hard failureとしてそのまま伝播させる。
+    部分的なcell集合を正常な結果として返さないためである。
+    """
 
     @property
     def is_available(self) -> bool:
@@ -208,9 +222,12 @@ def build_opponent_target(
 
     評価順は`CLASSIFICATION_ORDER`で固定する。riichi exclusionはStage A0の
     target eligibility条件そのものなので、privileged handを読むより先に判定
-    する。structural / physical prechecksを通過したあとのcanonical builder
-    failureはunexpectedであり、silentにmaskせず`OTHER_FAIL_CLOSED`として
-    countableな形で残す（qualificationはこのcountが0でなければ通さない）。
+    する。
+
+    prechecksを通過したあとのcanonical builder `ValueError`は
+    `OTHER_FAIL_CLOSED`としてcountableに残す（qualificationはこのcountが0で
+    なければ通さない）。それ以外の例外型はcell-level reasonにせず、
+    route-level hard failureとして伝播させる。
     """
     if not isinstance(identity, OpponentIdentity):
         raise TypeError("identity must be an OpponentIdentity")

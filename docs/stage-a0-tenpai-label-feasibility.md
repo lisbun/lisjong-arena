@@ -114,9 +114,10 @@ AVAILABLE
 - `AVAILABLE`以外はmaskedであり、`wait_mask` / `T`をいずれも持たない。
   **unavailableをT = 0へ丸めることはしない**
 - `INVALID_PHYSICAL_INVENTORY`のstateはsilentに修復しない
-- `OTHER_FAIL_CLOSED`はprechecks通過後のcanonical builder failureという
-  unexpected caseだけに割り当てる。countableであり、1件でもあればqualificationを
-  通さない
+- `OTHER_FAIL_CLOSED`はprechecks通過後のcanonical builder `ValueError` だけに
+  割り当てる。countableであり、1件でもあればqualificationを通さない。
+  `ValueError`以外の例外（programming error / infrastructure error）は
+  cell-level reasonにせず、route-level hard failureとして伝播させる
 - `RIICHI_EXCLUDED`はStage A0 primary targetの対象外という意味であり、
   negative labelではない
 
@@ -176,18 +177,71 @@ fail closedする。
 
 ```text
 same dataset identity        strict readback した manifest の dataset_identity
-same provenance / revision   bound Arena / lisjong / engine / RiichiEnv / Python
+same source-semantic         SOURCE_SEMANTIC_PROVENANCE_FIELDS の完全一致
+  provenance
 same decision identity       (seed, step_ordinal, decision_ordinal)
 same acting seat             actor_seat
+same round identity          round_wind / hand_number / honba / round_ordinal
 same PolicyInput semantics   byte-identical 8204 float32 feature row
-same legal-action context    byte-identical 802 legal mask
+same legal-action context    byte-identical 802 legal mask + legal_action_count
 same teacher action          behavior action index
 same logical decision state  same-state binding（上記）が成立する
 ```
 
+`round_ordinal` は artifact が保持するderived valueなので、re-executionからも
+`RoundOrdinals` の同じcontiguous grouping ruleで再導出して比較する。
+
 1つでも一致しなければ `RETAINED AUGMENTATION NOT QUALIFIED` とし、heuristic
 replay fillingで埋めない。retained rowを黙って再生成して「retained dataset」と
 呼ぶこともしない。
+
+### 2種類のprovenanceを区別する
+
+| class | fields | 扱い |
+| --- | --- | --- |
+| source-semantic | `execution_environment`, `lisjong_version`, `lisjong_revision`, `lisjong_engine_version`, `lisjong_engine_revision`, `riichienv_version`, `python_version` | **完全一致を要求**。1 fieldでも違えば `provenance-revision-mismatch` でfail closed |
+| instrumentation | `lisjong_arena_version`, `lisjong_arena_revision` | 一致を**要求しない**。両側を記録し、exact row alignmentで正当化する |
+
+source-semantic provenanceは、retained rowのpublic semanticsとhidden stateの
+exactnessを決めるdependency identityであり、operatorがhistorical execution
+environmentを再現すれば一致させられる。current dependency driftを無視して
+QUALIFIEDにはしない。
+
+instrumentation provenance（Arena revision）を一致必須にできないのは、#258の
+observer / qualification implementationがretained corpusを生成した
+historical Arena revisionには存在しないためである。それを一致必須にすると、
+exact row alignmentを一度も実証しないまま、instrumentation revisionが違うと
+いう理由だけでretained routeが恒久的にNOT QUALIFIEDになる。代わりに、
+decision identity / actor seat / round identity / feature bytes / legal mask
+bytes / teacher action / same-state bindingのexact alignmentが、
+instrumentationを含むreplayでも同じpublic row semanticsを再現したことを実証
+する。両側のArena revisionはqualification resultとfeasibility artifactへ
+記録する。
+
+provenance documentのfield集合は`SOURCE_SEMANTIC_PROVENANCE_FIELDS`と
+`INSTRUMENTATION_PROVENANCE_FIELDS`の和と一致しなければならない。未分類の
+fieldはsilentに無視せずfail closedする。
+
+feature schema fingerprintとaction vocabulary fingerprintは `load_dataset()`
+がinstalled contractに対して既にfail closedで検証しており、重複検証しない。
+
+### operatorに必要な追加step
+
+retained corpus `69094c1b…` のrecorded source-semantic provenanceは、現在の
+Arena pinとは一致しない。したがってretained routeを実測するには、historical
+execution environmentを再現したうえでqualification CLIを実行する必要がある。
+
+```text
+lisjong          a0666d24e66179a45fd6e231a3cbd489b492d162
+lisjong-engine   8735e89e1aea000ab59368d0368d476787827741
+RiichiEnv        0.4.8
+Python           retained manifest の python_version
+execution env    retained manifest の execution_environment
+```
+
+Arena自身は#258 instrumentationを含むcurrent revisionのままでよい（それが
+instrumentation provenanceである）。再現できないdependencyがある場合は、
+`provenance-revision-mismatch` としてfail closedし続ける。
 
 exposure boundary: このpathはTRAIN-side seed（245..264）しか実行・参照しない。
 VALIDATION（265..270）とprotected TEST（271..276）のfeature rowは読まず、その
@@ -222,6 +276,37 @@ role        DEVELOPMENT-ONLY TECHNICAL SMOKE
 `100..750`はrepository内の既存populationが取得済みであり、`751..752`はその直後の
 fresh contiguous rangeである。label prevalenceやmodel behaviorを見て選んでいない。
 scientific evidenceへ再利用しない。full Stage A0 corpusは生成しない。
+
+## Feasibility report / evidence chain
+
+feasibility reportはversioned artifactであり、`report_identity`（自身を除いた
+canonical JSONのsha256）を持つ。`load_feasibility_report()`がstrict readerで
+あり、次をfail closedで検証する。
+
+```text
+exact report schema version
+protocol id == #258 protocol
+issue identity == lisbun/lisjong-arena#258
+expected field set / JSON types
+availability counts が全reason codeを網羅し cell count と一致する
+hard_outcome / pending_reason の exactly-one invariant
+hard outcome enum / retained route outcome enum
+retained corpus identity（sha256 digest）
+canonical JSON bytes と report_identity の整合
+```
+
+違反は `StageA0ReportError` としてfail closedする。
+
+fresh fallbackは、この strict readerを通し、かつ retained routeが明示的に
+`RETAINED AUGMENTATION NOT QUALIFIED` であるreportからしか
+`FRESH LIVE-LABEL PATH QUALIFIED` を作れない。stale / malformed / unrelated /
+tampered / 既にhard outcomeを持つreportはfail closedし、fresh fallbackとして
+扱わない。retained reportを渡さずにfresh smokeを実行した場合は、
+hard outcomeを作らず `pending_reason` のままにする。
+
+final fresh reportには、入力したretained qualification reportの
+`report_identity` / retained corpus identity / retained outcomeを
+`sources.retained_evidence` として記録し、evidence chainを追跡可能にする。
 
 ## Hard outcomes
 

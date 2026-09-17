@@ -34,6 +34,8 @@ from .report import (
     FeasibilityReport,
     QualificationCheck,
     build_checks,
+    load_feasibility_report,
+    require_retained_not_qualified,
 )
 from .retained import qualify_retained_augmentation
 from .sidecar import (
@@ -104,9 +106,11 @@ def _run_retained(arguments) -> int:
 
     report = FeasibilityReport(
         provenance=provenance,
+        instrumentation_provenance=qualification.instrumentation_provenance,
         source_paths_examined=(str(arguments.dataset),),
         retained_corpus_identity=qualification.dataset_identity,
         retained_outcome=qualification.to_document(),
+        retained_evidence=None,
         smoke_population_identity=None,
         fresh_outcome=None,
         sidecar_identity=None if sidecar is None else sidecar.identity,
@@ -125,15 +129,15 @@ def _run_fresh(arguments) -> int:
     provenance = provenance_document()
     retained_outcome = None
     retained_identity = None
+    retained_evidence = None
     if arguments.retained_report is not None:
-        document = json.loads(Path(arguments.retained_report).read_text("utf-8"))
-        retained_outcome = document["routes"]["retained_augmentation"]
-        retained_identity = document["sources"]["retained_corpus_identity"]
-        if document["outcome"]["hard_outcome"] == RETAINED_AUGMENTATION_QUALIFIED:
-            raise SystemExit(
-                "retained augmentation is already QUALIFIED; the fresh "
-                "live-label path is only a fallback"
-            )
+        # stale / malformed / unrelated / tampered な report が fresh fallback を
+        # authorize しないよう、strict reader を通したうえで retained route が
+        # 明示的に NOT QUALIFIED であることだけを受け入れる。
+        retained_report = load_feasibility_report(arguments.retained_report)
+        retained_evidence = require_retained_not_qualified(retained_report)
+        retained_outcome = retained_report.document["routes"]["retained_augmentation"]
+        retained_identity = retained_report.retained_corpus_identity
 
     qualification = qualify_fresh_live_label(seeds=SMOKE_SEEDS)
     cells = qualification.cells
@@ -151,7 +155,7 @@ def _run_fresh(arguments) -> int:
 
     checks = build_checks(cells, deterministic_recomputation=recomputation)
     qualified = qualification.is_qualified and all(check.qualified for check in checks)
-    if qualified and retained_outcome is not None:
+    if qualified and retained_evidence is not None:
         hard_outcome = FRESH_LIVE_LABEL_PATH_QUALIFIED
         pending = None
         recommended = "fresh-live-label"
@@ -163,7 +167,7 @@ def _run_fresh(arguments) -> int:
             "operator-local retained corpus; #258 cannot select a final route yet"
         )
         recommended = None
-    elif retained_outcome is not None:
+    elif retained_evidence is not None:
         hard_outcome = TENPAI_LABEL_PATH_BLOCKED
         pending = None
         recommended = None
@@ -177,9 +181,11 @@ def _run_fresh(arguments) -> int:
 
     report = FeasibilityReport(
         provenance=provenance,
+        instrumentation_provenance=None,
         source_paths_examined=("lisjong_arena.riichienv.local_game_runner",),
         retained_corpus_identity=retained_identity,
         retained_outcome=retained_outcome,
+        retained_evidence=retained_evidence,
         smoke_population_identity=SMOKE_POPULATION_IDENTITY,
         fresh_outcome=qualification.to_document(),
         sidecar_identity=None if sidecar is None else sidecar.identity,
