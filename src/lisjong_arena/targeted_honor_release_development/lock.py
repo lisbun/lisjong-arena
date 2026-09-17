@@ -281,15 +281,23 @@ def parse_lock_document(value: object) -> dict[str, object]:
         )
     )
     expected_protocol = protocol_document(seeds)
-    if raw["protocol"] != expected_protocol:
+    if canonical_json_text(raw["protocol"]) != canonical_json_text(expected_protocol):
         raise TargetedHonorReleaseLockError("lock protocol block drifted")
-    if raw["candidate_binding"] != require_exact_candidate_semantics().to_document():
+    if canonical_json_text(raw["candidate_binding"]) != canonical_json_text(
+        require_exact_candidate_semantics().to_document()
+    ):
         raise TargetedHonorReleaseLockError("lock candidate binding drifted")
-    if raw["comparator_binding"] != require_exact_comparator():
+    if canonical_json_text(raw["comparator_binding"]) != canonical_json_text(
+        require_exact_comparator()
+    ):
         raise TargetedHonorReleaseLockError("lock comparator binding drifted")
-    if raw["classification"] != _classification_document():
+    if canonical_json_text(raw["classification"]) != canonical_json_text(
+        _classification_document()
+    ):
         raise TargetedHonorReleaseLockError("lock classification block drifted")
-    if raw["no_rescue_boundary"] != list(NO_RESCUE_BOUNDARY):
+    if canonical_json_text(raw["no_rescue_boundary"]) != canonical_json_text(
+        list(NO_RESCUE_BOUNDARY)
+    ):
         raise TargetedHonorReleaseLockError("lock no-rescue boundary drifted")
 
     phase_a = expect_object(
@@ -304,17 +312,40 @@ def parse_lock_document(value: object) -> dict[str, object]:
         },
         "lock.phase_a",
     )
-    if phase_a != {
-        "game_count": PHASE_A_GAME_COUNT,
-        "max_workers": expect_int(phase_a["max_workers"], "lock.phase_a.max_workers"),
-        "ordered_seeds": list(PHASE_A_SEEDS),
-        "role": "DIAGNOSTIC REUSE ONLY",
-        "trajectory_identity_required": True,
-        "wall_clock_limit_hours": FEASIBILITY_WALL_CLOCK_LIMIT_HOURS,
-    }:
-        raise TargetedHonorReleaseLockError("lock Phase-A block drifted")
-    if expect_int(phase_a["max_workers"], "lock.phase_a.max_workers") <= 0:
+    max_workers = expect_int(phase_a["max_workers"], "lock.phase_a.max_workers")
+    if max_workers <= 0:
         raise TargetedHonorReleaseLockError("lock max_workers must be positive")
+    if expect_int(phase_a["game_count"], "lock.phase_a.game_count") != PHASE_A_GAME_COUNT:
+        raise TargetedHonorReleaseLockError("lock Phase-A game count drifted")
+    if phase_a["ordered_seeds"] != list(PHASE_A_SEEDS):
+        raise TargetedHonorReleaseLockError("lock Phase-A seed population drifted")
+    if expect_str(phase_a["role"], "lock.phase_a.role") != "DIAGNOSTIC REUSE ONLY":
+        raise TargetedHonorReleaseLockError("lock Phase-A role drifted")
+    if (
+        expect_bool(
+            phase_a["trajectory_identity_required"],
+            "lock.phase_a.trajectory_identity_required",
+        )
+        is not True
+    ):
+        raise TargetedHonorReleaseLockError("trajectory identity must be required")
+    if (
+        expect_float(
+            phase_a["wall_clock_limit_hours"],
+            "lock.phase_a.wall_clock_limit_hours",
+        )
+        != FEASIBILITY_WALL_CLOCK_LIMIT_HOURS
+    ):
+        raise TargetedHonorReleaseLockError("lock Phase-A runtime bound drifted")
+
+    if expect_int(phase_b["games_per_arm"], "lock.phase_b.games_per_arm") != PHASE_B_GAMES_PER_ARM:
+        raise TargetedHonorReleaseLockError("lock Phase-B games-per-arm drifted")
+    if expect_int(phase_b["rotation_count"], "lock.phase_b.rotation_count") != ROTATION_COUNT:
+        raise TargetedHonorReleaseLockError("lock Phase-B rotation count drifted")
+    if expect_int(phase_b["total_games"], "lock.phase_b.total_games") != PHASE_B_TOTAL_GAMES:
+        raise TargetedHonorReleaseLockError("lock Phase-B total game count drifted")
+    if expect_str(phase_b["role"], "lock.phase_b.role") != "DEVELOPMENT SCREEN":
+        raise TargetedHonorReleaseLockError("lock Phase-B role drifted")
 
     freshness = expect_object(
         phase_b["freshness"],
@@ -339,6 +370,25 @@ def parse_lock_document(value: object) -> dict[str, object]:
         raise TargetedHonorReleaseLockError("freshness seed identity drifted")
     if freshness["repository_collisions"] != [] or freshness["external_collisions"] != []:
         raise TargetedHonorReleaseLockError("freshness block contains collisions")
+    additional = tuple(
+        expect_int(
+            item,
+            f"lock.phase_b.freshness.additional_allocated_seeds[{index}]",
+        )
+        for index, item in enumerate(
+            expect_list(
+                freshness["additional_allocated_seeds"],
+                "lock.phase_b.freshness.additional_allocated_seeds",
+            )
+        )
+    )
+    expected_freshness = seed_freshness_block(
+        seeds,
+        external_freshness_confirmed=True,
+        additional_allocated_seeds=additional,
+    )
+    if canonical_json_text(freshness) != canonical_json_text(expected_freshness):
+        raise TargetedHonorReleaseLockError("lock freshness block is not re-derived")
 
     source = expect_object(
         raw["source_parent"],
@@ -357,6 +407,18 @@ def parse_lock_document(value: object) -> dict[str, object]:
     provenance = parse_execution_provenance(raw["provenance"])
     if provenance.lisjong_revision != LISJONG_REVISION:
         raise TargetedHonorReleaseLockError("lock lisjong revision drifted")
+    runtime = expect_object(
+        raw["runtime"],
+        {"python_implementation", "python_version", "sys_version"},
+        "lock.runtime",
+    )
+    python_version = expect_str(runtime["python_version"], "lock.runtime.python_version")
+    expect_str(runtime["python_implementation"], "lock.runtime.python_implementation")
+    expect_str(runtime["sys_version"], "lock.runtime.sys_version")
+    if python_version != provenance.python_version:
+        raise TargetedHonorReleaseLockError(
+            "lock runtime Python version differs from provenance"
+        )
 
     execution = expect_object(
         raw["execution_target"],
