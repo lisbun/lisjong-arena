@@ -249,6 +249,7 @@ def _parse_record(value: object, context: str) -> DecisionRecord:
 
 def _game_to_dict(value: GameDiagnostics) -> dict[str, object]:
     return {
+        "candidate_runtime_total_seconds": value.candidate_runtime_total_seconds,
         "candidate_seat": int(value.candidate_seat),
         "choice_discard_decision_count": value.choice_discard_decision_count,
         "discard_decision_count": value.discard_decision_count,
@@ -262,6 +263,7 @@ def _game_to_dict(value: GameDiagnostics) -> dict[str, object]:
 
 
 _GAME_FIELDS = {
+    "candidate_runtime_total_seconds",
     "candidate_seat",
     "choice_discard_decision_count",
     "discard_decision_count",
@@ -298,6 +300,10 @@ def _parse_game(value: object, context: str) -> GameDiagnostics:
         ),
         game_wall_clock_seconds=expect_float(
             raw["game_wall_clock_seconds"], f"{context}.game_wall_clock_seconds"
+        ),
+        candidate_runtime_total_seconds=expect_float(
+            raw["candidate_runtime_total_seconds"],
+            f"{context}.candidate_runtime_total_seconds",
         ),
         records=tuple(
             _parse_record(item, f"{context}.records[{index}]")
