@@ -162,9 +162,7 @@ def build_paired_result(
     summary = summarize_paired_deltas(deltas)
     payload: dict[str, object] = {
         "arms": {
-            "candidate": _arm_document(
-                candidate_artifact, candidate_artifact_path
-            ),
+            "candidate": _arm_document(candidate_artifact, candidate_artifact_path),
             "parent": _arm_document(parent_artifact, parent_artifact_path),
         },
         "candidate_binding": require_exact_candidate_semantics().to_document(),
@@ -184,7 +182,9 @@ def build_paired_result(
 
 def _parse_delta(value: object, index: int) -> PairedSeedDelta:
     context = f"paired_deltas[{index}]"
-    raw = expect_object(value, {"candidate_mean", "delta", "parent_mean", "seed"}, context)
+    raw = expect_object(
+        value, {"candidate_mean", "delta", "parent_mean", "seed"}, context
+    )
     return PairedSeedDelta(
         seed=expect_int(raw["seed"], f"{context}.seed"),
         candidate_mean=expect_float(raw["candidate_mean"], f"{context}.candidate_mean"),
@@ -240,9 +240,14 @@ def parse_paired_result(value: object) -> dict[str, object]:
         "worker_count",
     }
     raw = expect_object(value, fields, "paired_result")
-    if expect_int(raw["result_version"], "paired_result.result_version") != PAIRED_RESULT_VERSION:
+    if (
+        expect_int(raw["result_version"], "paired_result.result_version")
+        != PAIRED_RESULT_VERSION
+    ):
         raise TargetedHonorReleasePairedError("unsupported paired result version")
-    protocol = expect_object(raw["protocol"], set(raw["protocol"]), "paired_result.protocol")
+    protocol = expect_object(
+        raw["protocol"], set(raw["protocol"]), "paired_result.protocol"
+    )
     seeds = require_phase_b_population(tuple(protocol["phase_b_seeds"]))
     if protocol != protocol_document(seeds):
         raise TargetedHonorReleasePairedError("paired result protocol drifted")
@@ -266,7 +271,9 @@ def parse_paired_result(value: object) -> dict[str, object]:
     if expect_int(raw["worker_count"], "paired_result.worker_count") <= 0:
         raise TargetedHonorReleasePairedError("worker_count must be positive")
     payload = {key: raw[key] for key in raw if key != "result_identity"}
-    if expect_str(raw["result_identity"], "paired_result.result_identity") != _identity(payload):
+    if expect_str(raw["result_identity"], "paired_result.result_identity") != _identity(
+        payload
+    ):
         raise TargetedHonorReleasePairedError("paired result identity mismatch")
     return dict(raw)
 
@@ -316,7 +323,9 @@ def verify_paired_result(
     if summary.to_document() != document["primary_summary"]:
         raise TargetedHonorReleasePairedError("summary differs from raw artifacts")
     if classify(summary) != document["classification"]:
-        raise TargetedHonorReleasePairedError("classification differs from raw artifacts")
+        raise TargetedHonorReleasePairedError(
+            "classification differs from raw artifacts"
+        )
     return document
 
 
@@ -361,15 +370,21 @@ def verify_classified_result(
         },
         "classified_result",
     )
-    if expect_int(document["result_version"], "classified_result.result_version") != CLASSIFIED_RESULT_VERSION:
+    if (
+        expect_int(document["result_version"], "classified_result.result_version")
+        != CLASSIFIED_RESULT_VERSION
+    ):
         raise TargetedHonorReleasePairedError("unsupported classified result version")
     paired = load_paired_result(paired_result_path)
     if document["classification"] != paired["classification"]:
         raise TargetedHonorReleasePairedError("classified result label drifted")
-    if expect_str(
-        document["paired_result_identity"],
-        "classified_result.paired_result_identity",
-    ) != paired["result_identity"]:
+    if (
+        expect_str(
+            document["paired_result_identity"],
+            "classified_result.paired_result_identity",
+        )
+        != paired["result_identity"]
+    ):
         raise TargetedHonorReleasePairedError("paired result identity drifted")
     if expect_str(
         document["paired_result_digest"], "classified_result.paired_result_digest"
