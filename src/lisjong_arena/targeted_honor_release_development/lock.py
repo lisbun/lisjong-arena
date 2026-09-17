@@ -120,6 +120,10 @@ def _require_source_parent(path: str | Path):
         raise TargetedHonorReleaseLockError(
             "source parent artifact is not mechanism-riichi-defense"
         )
+    if artifact.plan.baseline_identity != COMPARATOR_IDENTITY:
+        raise TargetedHonorReleaseLockError(
+            "source parent artifact does not use the #252 passive comparator"
+        )
     if artifact.plan.seeds != PHASE_A_SEEDS:
         raise TargetedHonorReleaseLockError(
             "source parent artifact is not exact #252 seeds 651..750"
