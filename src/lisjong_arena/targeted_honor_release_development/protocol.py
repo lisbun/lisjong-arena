@@ -39,9 +39,7 @@ LISJONG_REVISION = "f29d129c67e5232d06563c6e457754377734ed14"
 
 CANDIDATE_IDENTITY = "targeted-honor-release-terminal-progression"
 CANDIDATE_CLASS_NAME = "TargetedHonorReleaseTerminalProgressionPolicy"
-CANDIDATE_SOURCE_MODULE = (
-    "lisjong.policies.targeted_honor_release_terminal_progression"
-)
+CANDIDATE_SOURCE_MODULE = "lisjong.policies.targeted_honor_release_terminal_progression"
 ANALYSIS_CLASS_NAME = "TargetedHonorReleaseAnalysis"
 
 PARENT_IDENTITY = "mechanism-riichi-defense"
@@ -169,9 +167,7 @@ def require_phase_b_population(seeds: object) -> tuple[int, ...]:
     try:
         ordered = tuple(seeds)  # type: ignore[arg-type]
     except TypeError:
-        raise TypeError(
-            "Phase B seeds must be an ordered collection of ints"
-        ) from None
+        raise TypeError("Phase B seeds must be an ordered collection of ints") from None
     if any(type(seed) is not int for seed in ordered):
         raise TypeError("Phase B seeds must contain only exact ints")
     if len(ordered) != PHASE_B_SEED_BLOCK_COUNT:
