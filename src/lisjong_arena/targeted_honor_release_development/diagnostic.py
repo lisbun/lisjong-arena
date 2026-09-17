@@ -14,7 +14,6 @@ import traceback
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from statistics import median
 
 from lisjong.policies.targeted_honor_release_terminal_progression import (
     HandValueDecisiveStage,
@@ -188,6 +187,7 @@ class GameDiagnostics:
     choice_discard_decision_count: int
     forced_discard_decision_count: int
     game_wall_clock_seconds: float
+    candidate_runtime_total_seconds: float
     records: tuple[DecisionRecord, ...]
 
     def __post_init__(self) -> None:
@@ -214,12 +214,10 @@ class GameDiagnostics:
             raise ValueError("choice and forced discards must partition discards")
         if self.discard_decision_count > self.focal_decision_count:
             raise ValueError("discard decisions cannot exceed focal decisions")
-        if (
-            type(self.game_wall_clock_seconds) is not float
-            or self.game_wall_clock_seconds < 0.0
-            or not math.isfinite(self.game_wall_clock_seconds)
-        ):
-            raise ValueError("game_wall_clock_seconds must be finite and non-negative")
+        for name in ("game_wall_clock_seconds", "candidate_runtime_total_seconds"):
+            value = getattr(self, name)
+            if type(value) is not float or value < 0.0 or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite and non-negative")
         object.__setattr__(self, "records", tuple(self.records))
 
 
@@ -295,6 +293,7 @@ class _Recorder:
         "discard_decision_count",
         "choice_discard_decision_count",
         "forced_discard_decision_count",
+        "candidate_runtime_total_seconds",
         "records",
     )
 
@@ -307,6 +306,7 @@ class _Recorder:
         self.discard_decision_count = 0
         self.choice_discard_decision_count = 0
         self.forced_discard_decision_count = 0
+        self.candidate_runtime_total_seconds = 0.0
         self.records: list[DecisionRecord] = []
 
     def observe(
@@ -314,8 +314,28 @@ class _Recorder:
     ) -> None:
         ordinal = self.focal_decision_count
         self.focal_decision_count += 1
+
+        trace_recorder = DecisionTraceRecorder()
+        started = time.perf_counter()
+        candidate_action = execute_policy_with_trace(
+            self.candidate, decision, trace_recorder
+        )
+        elapsed = float(time.perf_counter() - started)
+        self.candidate_runtime_total_seconds += elapsed
+        traces = trace_recorder.snapshot()
+        if len(traces) != 1:
+            raise TargetedHonorReleaseDiagnosticError(
+                "candidate traced execution must emit exactly one decision trace"
+            )
+        trace = traces[0]
+
         if not isinstance(parent_action, DiscardAction):
+            if candidate_action != parent_action:
+                raise TargetedHonorReleaseDiagnosticError(
+                    "candidate changed a non-discard parent decision"
+                )
             return
+
         discard_actions = tuple(
             action
             for action in decision.legal_actions
@@ -328,21 +348,13 @@ class _Recorder:
         self.discard_decision_count += 1
         if len(discard_actions) == 1:
             self.forced_discard_decision_count += 1
+            if candidate_action != parent_action:
+                raise TargetedHonorReleaseDiagnosticError(
+                    "candidate changed a forced parent discard"
+                )
             return
 
         self.choice_discard_decision_count += 1
-        trace_recorder = DecisionTraceRecorder()
-        started = time.perf_counter()
-        candidate_action = execute_policy_with_trace(
-            self.candidate, decision, trace_recorder
-        )
-        elapsed = float(time.perf_counter() - started)
-        traces = trace_recorder.snapshot()
-        if len(traces) != 1:
-            raise TargetedHonorReleaseDiagnosticError(
-                "candidate traced execution must emit exactly one decision trace"
-            )
-        trace = traces[0]
         analysis = trace.analysis
         if not isinstance(analysis, TargetedHonorReleaseAnalysis):
             raise TargetedHonorReleaseDiagnosticError(
@@ -394,6 +406,9 @@ class _Recorder:
             choice_discard_decision_count=self.choice_discard_decision_count,
             forced_discard_decision_count=self.forced_discard_decision_count,
             game_wall_clock_seconds=float(game_wall_clock_seconds),
+            candidate_runtime_total_seconds=float(
+                self.candidate_runtime_total_seconds
+            ),
             records=tuple(self.records),
         )
 
@@ -533,7 +548,9 @@ def aggregate_diagnostics(
     r5_runtime = tuple(
         record.candidate_elapsed_seconds for record in records if record.r5_activated
     )
-    candidate_total = sum(analyzed_runtime)
+    candidate_total = sum(
+        game.candidate_runtime_total_seconds for game in games
+    )
     return DiagnosticAggregate(
         game_count=len(games),
         choice_discard_decision_count=len(records),
@@ -572,9 +589,7 @@ def aggregate_diagnostics(
             tuple(game.game_wall_clock_seconds for game in games)
         ),
         replay_wall_clock_seconds=float(replay_wall_clock_seconds),
-        projected_h_arm_wall_clock_hours=(
-            float(replay_wall_clock_seconds) / 3600.0
-        ),
+        projected_h_arm_wall_clock_hours=candidate_total / 3600.0,
     )
 
 
