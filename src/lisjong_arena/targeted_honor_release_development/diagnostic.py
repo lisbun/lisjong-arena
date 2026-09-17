@@ -131,9 +131,7 @@ class DecisionRecord:
         for name in ("action_changed", "closed_hand", "r5_activated"):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(f"{name} must be a bool")
-        if not isinstance(
-            self.activation_stage, TargetedHonorReleaseActivationStage
-        ):
+        if not isinstance(self.activation_stage, TargetedHonorReleaseActivationStage):
             raise TypeError("activation_stage has the wrong enum type")
         if not isinstance(self.branch, TargetedHonorReleaseBranch):
             raise TypeError("branch has the wrong enum type")
@@ -174,7 +172,9 @@ class DecisionRecord:
         if self.candidate_elapsed_seconds < 0.0 or not math.isfinite(
             self.candidate_elapsed_seconds
         ):
-            raise ValueError("candidate_elapsed_seconds must be finite and non-negative")
+            raise ValueError(
+                "candidate_elapsed_seconds must be finite and non-negative"
+            )
         object.__setattr__(self, "terminal_shanten_masses", masses)
 
 
@@ -310,9 +310,7 @@ class _Recorder:
         self.candidate_runtime_total_seconds = 0.0
         self.records: list[DecisionRecord] = []
 
-    def observe(
-        self, decision: DecisionContext, parent_action: InternalAction
-    ) -> None:
+    def observe(self, decision: DecisionContext, parent_action: InternalAction) -> None:
         ordinal = self.focal_decision_count
         self.focal_decision_count += 1
 
@@ -407,9 +405,7 @@ class _Recorder:
             choice_discard_decision_count=self.choice_discard_decision_count,
             forced_discard_decision_count=self.forced_discard_decision_count,
             game_wall_clock_seconds=float(game_wall_clock_seconds),
-            candidate_runtime_total_seconds=float(
-                self.candidate_runtime_total_seconds
-            ),
+            candidate_runtime_total_seconds=float(self.candidate_runtime_total_seconds),
             records=tuple(self.records),
         )
 
@@ -444,13 +440,9 @@ def _run_single_game(
     candidate_seat: Seat,
     max_steps: int,
 ) -> tuple[LocalGameResult, GameDiagnostics]:
-    recorder = _Recorder(
-        seed=seed, rotation=rotation, candidate_seat=candidate_seat
-    )
+    recorder = _Recorder(seed=seed, rotation=rotation, candidate_seat=candidate_seat)
     wrapped = dict(policies)
-    wrapped[candidate_seat] = _ObservedParentPolicy(
-        policies[candidate_seat], recorder
-    )
+    wrapped[candidate_seat] = _ObservedParentPolicy(policies[candidate_seat], recorder)
     started = time.perf_counter()
     result = LocalGameRunner(
         wrapped, seed=seed, game_mode=GAME_MODE, max_steps=max_steps
@@ -549,9 +541,7 @@ def aggregate_diagnostics(
     r5_runtime = tuple(
         record.candidate_elapsed_seconds for record in records if record.r5_activated
     )
-    candidate_total = sum(
-        game.candidate_runtime_total_seconds for game in games
-    )
+    candidate_total = sum(game.candidate_runtime_total_seconds for game in games)
     return DiagnosticAggregate(
         game_count=len(games),
         choice_discard_decision_count=len(records),
@@ -575,7 +565,9 @@ def aggregate_diagnostics(
             records, "honor_target_candidate_count"
         ),
         hva_decisive_stage_counts=tuple(
-            sorted(Counter(record.hva_decisive_stage.name for record in records).items())
+            sorted(
+                Counter(record.hva_decisive_stage.name for record in records).items()
+            )
         ),
         r5_activation_count=sum(record.r5_activated for record in records),
         r5_best_count_distribution=_count_int(records, "r5_best_count"),
@@ -605,9 +597,7 @@ def classify_gate(
     if not trajectory_identity_passed:
         return DiagnosticGate(False, TRAJECTORY_FAILURE_LABEL, ("trajectory mismatch",))
     if game_count != PHASE_A_GAME_COUNT:
-        reasons.append(
-            f"expected {PHASE_A_GAME_COUNT} source games, got {game_count}"
-        )
+        reasons.append(f"expected {PHASE_A_GAME_COUNT} source games, got {game_count}")
     if execution_failure_count != 0:
         reasons.append(f"execution failures={execution_failure_count}")
     if aggregate.r5_activation_count == 0 or aggregate.action_change_count == 0:
@@ -620,10 +610,7 @@ def classify_gate(
                 f"action_change_count={aggregate.action_change_count}",
             ),
         )
-    if (
-        aggregate.projected_h_arm_wall_clock_hours
-        > FEASIBILITY_WALL_CLOCK_LIMIT_HOURS
-    ):
+    if aggregate.projected_h_arm_wall_clock_hours > FEASIBILITY_WALL_CLOCK_LIMIT_HOURS:
         return DiagnosticGate(
             False,
             INFEASIBLE_LABEL,
