@@ -23,6 +23,7 @@ from pathlib import Path
 
 from lisjong_arena.learned_policy_offline_q.artifact import provenance_document
 
+from .errors import StageA0SidecarError
 from .fresh import (
     FRESH_LIVE_LABEL_PATH_QUALIFIED,
     qualify_fresh_live_label,
@@ -51,7 +52,9 @@ from .sidecar import (
 def _recomputation_check(sidecar) -> QualificationCheck:
     try:
         count = verify_deterministic_recomputation(sidecar)
-    except Exception as error:
+    except StageA0SidecarError as error:
+        # recomputation不一致だけがqualification failureであり、それ以外の
+        # 例外はroute outcomeへ丸めず伝播させる。
         return QualificationCheck(
             name="deterministic_recomputation",
             qualified=False,
@@ -95,12 +98,24 @@ def _run_retained(arguments) -> int:
         hard_outcome = RETAINED_AUGMENTATION_QUALIFIED
         pending = None
         recommended = "retained-augmentation"
+    elif qualification.authorizes_fresh_fallback:
+        hard_outcome = None
+        pending = (
+            "retained augmentation is disqualified by exact row alignment "
+            f"({qualification.rejection_reason}); run fresh-smoke with this "
+            "report to qualify the fresh live-label path before selecting a "
+            "Stage A0 corpus route"
+        )
+        recommended = None
     else:
         hard_outcome = None
         pending = (
-            "retained augmentation is NOT QUALIFIED at this revision; run "
-            "fresh-smoke to qualify the fresh live-label path before selecting "
-            "a Stage A0 corpus route"
+            "the retained qualification preconditions are not met "
+            f"({qualification.rejection_reason}); exact row alignment has not "
+            "been attempted under the required conditions yet. Reproduce the "
+            "historical execution environment recorded in the retained manifest "
+            "and re-run retained-qualify. This report cannot authorize the "
+            "fresh live-label fallback"
         )
         recommended = None
 

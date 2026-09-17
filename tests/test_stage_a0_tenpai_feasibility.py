@@ -69,6 +69,7 @@ from lisjong_arena.stage_a0_tenpai_feasibility.fresh import (
     qualify_fresh_live_label,
 )
 from lisjong_arena.stage_a0_tenpai_feasibility.labels import TargetAvailability
+from lisjong_arena.stage_a0_tenpai_feasibility.protocol import RETAINED_DATASET_IDENTITY
 from lisjong_arena.stage_a0_tenpai_feasibility.report import (
     REPORT_SCHEMA_VERSION,
     RETAINED_AUGMENTATION_NOT_QUALIFIED,
@@ -81,6 +82,9 @@ from lisjong_arena.stage_a0_tenpai_feasibility.report import (
     require_retained_not_qualified,
 )
 from lisjong_arena.stage_a0_tenpai_feasibility.retained import (
+    EXACT_ALIGNMENT_DISQUALIFIED,
+    PRECONDITION_NOT_MET,
+    REJECTION_CLASS_BY_REASON,
     RETAINED_AUGMENTATION_QUALIFIED,
     compare_source_semantic_provenance,
     instrumentation_provenance_delta,
@@ -97,6 +101,30 @@ from lisjong_arena.stage_a0_tenpai_feasibility.sidecar import (
     verify_deterministic_recomputation,
     write_sidecar,
 )
+
+
+def retained_route_document(
+    *,
+    outcome,
+    rejection_reason=None,
+    dataset_identity=RETAINED_DATASET_IDENTITY,
+):
+    """strict reader が要求する retained route object の完全な field set。"""
+    return {
+        "outcome": outcome,
+        "dataset_identity": dataset_identity,
+        "examined_seeds": [245, 246],
+        "examined_row_count": 2,
+        "aligned_row_count": 0 if rejection_reason else 2,
+        "instrumentation_provenance": None,
+        "rejection_reason": rejection_reason,
+        "rejection_class": (
+            None
+            if rejection_reason is None
+            else REJECTION_CLASS_BY_REASON[rejection_reason]
+        ),
+        "rejection_detail": None if rejection_reason is None else "fixture",
+    }
 
 
 def _cells_by_seat(emission):
@@ -963,6 +991,109 @@ class RetainedAugmentationTest(unittest.TestCase):
         )
         self.assertTrue(all(entry["matches"] for entry in delta.values()))
 
+    def test_precondition_failures_do_not_authorize_the_fresh_fallback(self):
+        """exact alignment を正しい条件で試せていない失敗は precondition。"""
+        cases = {
+            "dataset-identity-mismatch": self._qualify(
+                expected_dataset_identity="0" * 64
+            ),
+            "provenance-revision-mismatch": self._qualify(
+                current_provenance={**RETAINED_PROVENANCE, "riichienv_version": "9.9"}
+            ),
+            "retained-artifact-unreadable": qualify_retained_augmentation(
+                Path(self.directory.name) / "missing",
+                seeds=self.seeds,
+                expected_dataset_identity=self.dataset.identity,
+                observed_decision_source=self._source,
+                current_provenance=RETAINED_PROVENANCE,
+            ),
+        }
+        for reason, result in cases.items():
+            with self.subTest(reason=reason):
+                self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
+                self.assertEqual(result.rejection_reason, reason)
+                self.assertEqual(result.rejection_class, PRECONDITION_NOT_MET)
+                self.assertFalse(result.authorizes_fresh_fallback)
+
+    def test_exact_alignment_failures_authorize_the_fresh_fallback(self):
+        """正しい条件下で exact join を試して失敗した場合だけ technical NOT QUALIFIED。"""
+
+        def feature_drift(seed):
+            for decision in self._source(seed):
+                actor_seat = decision.actor_seat
+                plan = uniform_plan(
+                    TENPAI_HAND,
+                    actor_seat=actor_seat,
+                    actor_hand="9m 9m 9p 9p 1s 2s 3s 4s 5s 6s 7s 8s 9s 1m",
+                )
+                yield observed_decision(
+                    plan,
+                    actor_seat=actor_seat,
+                    step_ordinal=decision.step_ordinal,
+                    decision_ordinal=decision.decision_ordinal,
+                )
+
+        def decision_drift(seed):
+            for decision in self._source(seed):
+                yield ObservedDecision(
+                    step_ordinal=decision.step_ordinal,
+                    decision_ordinal=decision.decision_ordinal + 7,
+                    actor_seat=decision.actor_seat,
+                    context=decision.context,
+                    selected_action=decision.selected_action,
+                    hidden=decision.hidden,
+                )
+
+        for name, source in (
+            ("feature", feature_drift),
+            ("decision", decision_drift),
+        ):
+            with self.subTest(case=name):
+                result = self._qualify(observed_decision_source=source)
+                self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
+                self.assertEqual(result.rejection_class, EXACT_ALIGNMENT_DISQUALIFIED)
+                self.assertTrue(result.authorizes_fresh_fallback)
+
+    def test_round_and_legal_mask_failures_are_alignment_disqualifications(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "retained"
+        dataset = build_retained_dataset(
+            path, self.emissions, row_overrides={"round_ordinal": 5}
+        )
+        result = qualify_retained_augmentation(
+            path,
+            seeds=self.seeds,
+            expected_dataset_identity=dataset.identity,
+            observed_decision_source=self._source,
+            current_provenance=RETAINED_PROVENANCE,
+        )
+        self.assertEqual(result.rejection_class, EXACT_ALIGNMENT_DISQUALIFIED)
+        self.assertTrue(result.authorizes_fresh_fallback)
+
+    def test_every_rejection_reason_is_classified(self):
+        reasons = set(REJECTION_CLASS_BY_REASON.values())
+        self.assertEqual(reasons, {PRECONDITION_NOT_MET, EXACT_ALIGNMENT_DISQUALIFIED})
+        self.assertEqual(
+            REJECTION_CLASS_BY_REASON["same-state-co-emission-failed"],
+            EXACT_ALIGNMENT_DISQUALIFIED,
+        )
+        self.assertEqual(
+            REJECTION_CLASS_BY_REASON["retained-row-missing"], PRECONDITION_NOT_MET
+        )
+
+    def test_an_unexpected_exception_is_not_converted_to_not_qualified(self):
+        """programming error を retained NOT QUALIFIED へ丸めない。"""
+
+        def failing(identity, concealed_tiles, own_melds):
+            raise RuntimeError("programming error")
+
+        original = labels.structural_wait_for_hand
+        labels.structural_wait_for_hand = failing
+        self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
+        with self.assertRaises(RuntimeError):
+            self._qualify()
+
     def test_a_round_identity_mismatch_is_rejected(self):
         """artifact が保持する derived round identity も明示比較する。"""
         for field, value in (
@@ -1205,14 +1336,25 @@ class FeasibilityReportStrictReaderTest(unittest.TestCase):
             seed=751,
         ).cells
 
-    def _retained_report(self, *, outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED, **over):
+    def _retained_report(
+        self,
+        *,
+        outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED,
+        rejection_reason="feature-row-mismatch",
+        corpus_identity=RETAINED_DATASET_IDENTITY,
+        **over,
+    ):
         cells = self._cells()
         arguments = {
             "provenance": FIXTURE_PROVENANCE,
             "instrumentation_provenance": None,
             "source_paths_examined": ("fixture",),
-            "retained_corpus_identity": "a" * 64,
-            "retained_outcome": {"outcome": outcome},
+            "retained_corpus_identity": corpus_identity,
+            "retained_outcome": retained_route_document(
+                outcome=outcome,
+                rejection_reason=rejection_reason,
+                dataset_identity=corpus_identity,
+            ),
             "retained_evidence": None,
             "smoke_population_identity": None,
             "fresh_outcome": None,
@@ -1244,7 +1386,7 @@ class FeasibilityReportStrictReaderTest(unittest.TestCase):
             self.assertEqual(
                 loaded.retained_outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED
             )
-            self.assertEqual(loaded.retained_corpus_identity, "a" * 64)
+            self.assertEqual(loaded.retained_corpus_identity, RETAINED_DATASET_IDENTITY)
             self.assertEqual(loaded.identity, report_identity(loaded.document))
 
     def test_a_not_qualified_retained_report_authorizes_the_fallback(self):
@@ -1254,7 +1396,9 @@ class FeasibilityReportStrictReaderTest(unittest.TestCase):
             self.assertEqual(
                 evidence["retained_outcome"], RETAINED_AUGMENTATION_NOT_QUALIFIED
             )
-            self.assertEqual(evidence["retained_corpus_identity"], "a" * 64)
+            self.assertEqual(
+                evidence["retained_corpus_identity"], RETAINED_DATASET_IDENTITY
+            )
             self.assertEqual(len(evidence["report_identity"]), 64)
 
     def test_a_qualified_retained_report_never_authorizes_the_fallback(self):
@@ -1262,6 +1406,7 @@ class FeasibilityReportStrictReaderTest(unittest.TestCase):
             path = self._write(
                 self._retained_report(
                     outcome=RETAINED_AUGMENTATION_QUALIFIED,
+                    rejection_reason=None,
                     hard_outcome=RETAINED_AUGMENTATION_QUALIFIED,
                     pending_reason=None,
                     recommended_route="retained-augmentation",
@@ -1286,8 +1431,8 @@ class FeasibilityReportStrictReaderTest(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = self._write(self._retained_report(), directory)
             document = json.loads(path.read_text("utf-8"))
-            document["routes"]["retained_augmentation"]["outcome"] = (
-                RETAINED_AUGMENTATION_QUALIFIED
+            document["routes"]["retained_augmentation"]["rejection_class"] = (
+                PRECONDITION_NOT_MET
             )
             path.write_text(canonical_json_text(document), encoding="utf-8")
             with self.assertRaises(StageA0ReportError):
@@ -1361,15 +1506,18 @@ class FeasibilityReportStrictReaderTest(unittest.TestCase):
         cells = self._cells()
         evidence = {
             "report_identity": "b" * 64,
-            "retained_corpus_identity": "a" * 64,
+            "retained_corpus_identity": RETAINED_DATASET_IDENTITY,
             "retained_outcome": RETAINED_AUGMENTATION_NOT_QUALIFIED,
         }
         report = FeasibilityReport(
             provenance=FIXTURE_PROVENANCE,
             instrumentation_provenance=None,
             source_paths_examined=("fixture",),
-            retained_corpus_identity="a" * 64,
-            retained_outcome={"outcome": RETAINED_AUGMENTATION_NOT_QUALIFIED},
+            retained_corpus_identity=RETAINED_DATASET_IDENTITY,
+            retained_outcome=retained_route_document(
+                outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED,
+                rejection_reason="feature-row-mismatch",
+            ),
             retained_evidence=evidence,
             smoke_population_identity=protocol.SMOKE_POPULATION_IDENTITY,
             fresh_outcome={"outcome": FRESH_LIVE_LABEL_PATH_QUALIFIED},
@@ -1419,7 +1567,15 @@ class FreshCommandEvidenceGateTest(unittest.TestCase):
         cli.main(arguments)
         return load_feasibility_report(Path(directory) / "fresh-report.json")
 
-    def _retained_report(self, directory, *, outcome, **over):
+    def _retained_report(
+        self,
+        directory,
+        *,
+        outcome,
+        rejection_reason="feature-row-mismatch",
+        corpus_identity=RETAINED_DATASET_IDENTITY,
+        **over,
+    ):
         cells = emit_decision(
             observed_decision(
                 uniform_plan(TENPAI_HAND, actor_seat=Seat.SEAT_0),
@@ -1432,8 +1588,12 @@ class FreshCommandEvidenceGateTest(unittest.TestCase):
             "provenance": FIXTURE_PROVENANCE,
             "instrumentation_provenance": None,
             "source_paths_examined": ("fixture",),
-            "retained_corpus_identity": "a" * 64,
-            "retained_outcome": {"outcome": outcome},
+            "retained_corpus_identity": corpus_identity,
+            "retained_outcome": retained_route_document(
+                outcome=outcome,
+                rejection_reason=rejection_reason,
+                dataset_identity=corpus_identity,
+            ),
             "retained_evidence": None,
             "smoke_population_identity": None,
             "fresh_outcome": None,
@@ -1469,19 +1629,72 @@ class FreshCommandEvidenceGateTest(unittest.TestCase):
             self.assertEqual(
                 evidence["retained_outcome"], RETAINED_AUGMENTATION_NOT_QUALIFIED
             )
-            self.assertEqual(evidence["retained_corpus_identity"], "a" * 64)
+            self.assertEqual(
+                evidence["retained_corpus_identity"], RETAINED_DATASET_IDENTITY
+            )
 
     def test_a_qualified_retained_report_cannot_authorize_the_fresh_outcome(self):
         with TemporaryDirectory() as directory:
             retained = self._retained_report(
                 directory,
                 outcome=RETAINED_AUGMENTATION_QUALIFIED,
+                rejection_reason=None,
                 hard_outcome=RETAINED_AUGMENTATION_QUALIFIED,
                 pending_reason=None,
                 recommended_route="retained-augmentation",
             )
             with self.assertRaises(StageA0ReportError):
                 self._run(directory, retained)
+
+    def test_a_precondition_failure_cannot_authorize_the_fresh_outcome(self):
+        for reason in (
+            "dataset-identity-mismatch",
+            "provenance-revision-mismatch",
+            "retained-artifact-unreadable",
+            "retained-row-missing",
+        ):
+            with self.subTest(reason=reason), TemporaryDirectory() as directory:
+                retained = self._retained_report(
+                    directory,
+                    outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED,
+                    rejection_reason=reason,
+                )
+                with self.assertRaises(StageA0ReportError):
+                    self._run(directory, retained)
+
+    def test_a_foreign_retained_corpus_cannot_authorize_the_fresh_outcome(self):
+        with TemporaryDirectory() as directory:
+            retained = self._retained_report(
+                directory,
+                outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED,
+                corpus_identity="c" * 64,
+            )
+            with self.assertRaises(StageA0ReportError):
+                self._run(directory, retained)
+
+    def test_an_inconsistent_corpus_identity_is_rejected(self):
+        with TemporaryDirectory() as directory:
+            retained = self._retained_report(
+                directory, outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED
+            )
+            document = json.loads(retained.read_text("utf-8"))
+            document["routes"]["retained_augmentation"]["dataset_identity"] = "d" * 64
+            document.pop("report_identity")
+            document["report_identity"] = report_identity(document)
+            retained.write_text(canonical_json_text(document), encoding="utf-8")
+            with self.assertRaises(StageA0ReportError):
+                self._run(directory, retained)
+
+    def test_an_unexpected_exception_is_not_converted_to_a_route_outcome(self):
+        def failing(identity, concealed_tiles, own_melds):
+            raise RuntimeError("programming error")
+
+        original = labels.structural_wait_for_hand
+        labels.structural_wait_for_hand = failing
+        self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
+        with TemporaryDirectory() as directory:
+            with self.assertRaises(RuntimeError):
+                self._run(directory, None)
 
     def test_a_tampered_retained_report_cannot_authorize_the_fresh_outcome(self):
         with TemporaryDirectory() as directory:
@@ -1534,6 +1747,21 @@ class FailClosedContractTest(unittest.TestCase):
         self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
         with self.assertRaises(RuntimeError):
             self._build()
+
+    def test_the_fresh_route_does_not_convert_unexpected_exceptions(self):
+        def failing(identity, concealed_tiles, own_melds):
+            raise RuntimeError("programming error")
+
+        def source(seed):
+            actor_seat = Seat(seed % 4)
+            plan = uniform_plan(TENPAI_HAND, actor_seat=actor_seat)
+            return (observed_decision(plan, actor_seat=actor_seat),)
+
+        original = labels.structural_wait_for_hand
+        labels.structural_wait_for_hand = failing
+        self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
+        with self.assertRaises(RuntimeError):
+            qualify_fresh_live_label(observed_decision_source=source)
 
     def test_a_non_zero_fail_closed_count_blocks_qualification(self):
         plan = uniform_plan(TENPAI_HAND, actor_seat=Seat.SEAT_0)

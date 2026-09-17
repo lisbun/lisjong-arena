@@ -54,10 +54,11 @@ from lisjong_arena.learned_policy_offline_q.artifact import (
     load_dataset,
     provenance_document,
 )
+from lisjong_arena.learned_policy_offline_q.errors import OfflineQError
 from lisjong_arena.learned_policy_stage2.recording import RoundOrdinals
 
 from .emission import emit_decision
-from .errors import StageA0ProtocolError
+from .errors import StageA0AlignmentError, StageA0ProtocolError
 from .execution import observed_decisions_for_seed
 from .protocol import (
     EXCLUDED_QUALIFICATION_SEEDS,
@@ -71,6 +72,41 @@ from .protocol import (
 
 RETAINED_AUGMENTATION_QUALIFIED = "RETAINED AUGMENTATION QUALIFIED"
 RETAINED_AUGMENTATION_NOT_QUALIFIED = "RETAINED AUGMENTATION NOT QUALIFIED"
+
+PRECONDITION_NOT_MET = "qualification-precondition-not-met"
+"""exact alignmentを正しい条件下で試せていない状態。
+
+retained corpusが読めない / 別のcorpusである / source-semantic provenanceが
+一致しない場合、retained routeはまだ技術的に評価されていない。operator側に
+historical execution environmentの再現などのactionが残っており、この状態は
+fresh fallbackをauthorizeしない。
+"""
+
+EXACT_ALIGNMENT_DISQUALIFIED = "exact-alignment-disqualified"
+"""正しいcorpus・一致したsource semanticsの下でexact joinを試し、失敗した状態。
+
+これがretained routeのtechnicalな`NOT QUALIFIED`であり、fresh fallbackを
+authorizeできる唯一のclassである。
+"""
+
+REJECTION_CLASS_BY_REASON = {
+    # precondition: exact replay / alignment をまだ正しい条件で試していない
+    "retained-artifact-unreadable": PRECONDITION_NOT_MET,
+    "dataset-identity-mismatch": PRECONDITION_NOT_MET,
+    "provenance-revision-mismatch": PRECONDITION_NOT_MET,
+    "retained-row-missing": PRECONDITION_NOT_MET,
+    # exact alignment: 正しい条件下でjoinを試し、exactに一致しなかった
+    "decision-identity-mismatch": EXACT_ALIGNMENT_DISQUALIFIED,
+    "round-identity-mismatch": EXACT_ALIGNMENT_DISQUALIFIED,
+    "feature-row-mismatch": EXACT_ALIGNMENT_DISQUALIFIED,
+    "legal-mask-mismatch": EXACT_ALIGNMENT_DISQUALIFIED,
+    "teacher-action-mismatch": EXACT_ALIGNMENT_DISQUALIFIED,
+    "same-state-co-emission-failed": EXACT_ALIGNMENT_DISQUALIFIED,
+}
+"""`retained-row-missing`はseedのrow populationを見た時点の判定であり、その
+seedについてreplayを実行していない。判断に迷う場合は保守側（fresh fallbackを
+authorizeしない）へ寄せるため、preconditionとして分類する。
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +125,7 @@ class RetainedQualification:
     aligned_row_count: int
     instrumentation_provenance: dict | None
     rejection_reason: str | None
+    rejection_class: str | None
     rejection_detail: str | None
     cells: tuple
 
@@ -111,10 +148,28 @@ class RetainedQualification:
             raise StageA0ProtocolError(
                 "a rejected retained route must state its rejection reason"
             )
+        elif self.rejection_class != REJECTION_CLASS_BY_REASON.get(
+            self.rejection_reason
+        ):
+            raise StageA0ProtocolError(
+                "a rejected retained route must carry the classification of its "
+                "rejection reason"
+            )
+        if self.outcome == RETAINED_AUGMENTATION_QUALIFIED and (
+            self.rejection_class is not None
+        ):
+            raise StageA0ProtocolError(
+                "a qualified retained route must not carry a rejection class"
+            )
 
     @property
     def is_qualified(self) -> bool:
         return self.outcome == RETAINED_AUGMENTATION_QUALIFIED
+
+    @property
+    def authorizes_fresh_fallback(self) -> bool:
+        """fresh fallbackをauthorizeできるtechnical disqualificationかどうか。"""
+        return self.rejection_class == EXACT_ALIGNMENT_DISQUALIFIED
 
     def to_document(self) -> dict[str, object]:
         return {
@@ -125,6 +180,7 @@ class RetainedQualification:
             "aligned_row_count": self.aligned_row_count,
             "instrumentation_provenance": self.instrumentation_provenance,
             "rejection_reason": self.rejection_reason,
+            "rejection_class": self.rejection_class,
             "rejection_detail": self.rejection_detail,
         }
 
@@ -139,6 +195,13 @@ def _rejected(
     aligned_row_count: int = 0,
     instrumentation_provenance: dict | None = None,
 ) -> RetainedQualification:
+    rejection_class = REJECTION_CLASS_BY_REASON.get(reason)
+    if rejection_class is None:
+        raise StageA0ProtocolError(
+            f"unclassified retained rejection reason: {reason!r}; every reason "
+            "must be either a qualification precondition failure or an "
+            "exact-alignment disqualification"
+        )
     return RetainedQualification(
         outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED,
         dataset_identity=dataset_identity,
@@ -147,6 +210,7 @@ def _rejected(
         aligned_row_count=aligned_row_count,
         instrumentation_provenance=instrumentation_provenance,
         rejection_reason=reason,
+        rejection_class=rejection_class,
         rejection_detail=detail,
         cells=(),
     )
@@ -248,7 +312,10 @@ def qualify_retained_augmentation(
 
     try:
         dataset = load_dataset(dataset_path)
-    except Exception as error:  # strict readback failure is a hard rejection
+    except (OfflineQError, OSError, ValueError) as error:
+        # artifact不在 / malformed / schema違反はretained側のstateであり、
+        # qualification preconditionが満たされていないことを意味する。
+        # それ以外の例外型はこのpathのbugなのでcatchせず伝播させる。
         return _rejected(
             "retained-artifact-unreadable",
             f"{type(error).__name__}: {error}",
@@ -309,7 +376,10 @@ def qualify_retained_augmentation(
                 emission = emit_decision(
                     decision, source_identity=identity, seed=seed, split=Split.TRAIN
                 )
-            except Exception as error:
+            except StageA0AlignmentError as error:
+                # same-state bindingの不成立だけがexpectedな alignment failure。
+                # programming / infrastructure errorはroute outcomeへ丸めず
+                # 伝播させる。
                 return _rejected(
                     "same-state-co-emission-failed",
                     f"seed {seed}: {type(error).__name__}: {error}",
@@ -405,12 +475,16 @@ def qualify_retained_augmentation(
         aligned_row_count=aligned_row_count,
         instrumentation_provenance=instrumentation,
         rejection_reason=None,
+        rejection_class=None,
         rejection_detail=None,
         cells=tuple(cells),
     )
 
 
 __all__ = [
+    "EXACT_ALIGNMENT_DISQUALIFIED",
+    "PRECONDITION_NOT_MET",
+    "REJECTION_CLASS_BY_REASON",
     "RETAINED_AUGMENTATION_NOT_QUALIFIED",
     "RETAINED_AUGMENTATION_QUALIFIED",
     "RetainedQualification",

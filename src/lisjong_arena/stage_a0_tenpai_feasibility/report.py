@@ -32,7 +32,12 @@ from .protocol import (
     PARENT_ISSUE_IDENTITIES,
     PROTOCOL_ID,
     RELATIVE_OPPONENT_OFFSETS,
+    RETAINED_DATASET_IDENTITY,
     exact_wait_implementation_identity,
+)
+from .retained import (
+    EXACT_ALIGNMENT_DISQUALIFIED,
+    REJECTION_CLASS_BY_REASON,
 )
 from .sidecar import availability_counts
 
@@ -90,6 +95,17 @@ _RETAINED_EVIDENCE_FIELDS = {
     "report_identity",
     "retained_corpus_identity",
     "retained_outcome",
+}
+_RETAINED_ROUTE_FIELDS = {
+    "outcome",
+    "dataset_identity",
+    "examined_seeds",
+    "examined_row_count",
+    "aligned_row_count",
+    "instrumentation_provenance",
+    "rejection_reason",
+    "rejection_class",
+    "rejection_detail",
 }
 
 
@@ -402,6 +418,10 @@ def load_feasibility_report(path) -> LoadedFeasibilityReport:
         _expect_digest(
             evidence["report_identity"], "sources.retained_evidence.report_identity"
         )
+        _expect_digest(
+            evidence["retained_corpus_identity"],
+            "sources.retained_evidence.retained_corpus_identity",
+        )
         if evidence["retained_outcome"] not in RETAINED_ROUTE_OUTCOMES:
             raise _error(
                 "sources.retained_evidence.retained_outcome is not a route outcome"
@@ -430,12 +450,56 @@ def load_feasibility_report(path) -> LoadedFeasibilityReport:
     routes = _expect_object(document["routes"], _ROUTE_FIELDS, "routes")
     retained_route = routes["retained_augmentation"]
     if retained_route is not None:
-        if type(retained_route) is not dict:
-            raise _error("routes.retained_augmentation must be an object or null")
-        if retained_route.get("outcome") not in RETAINED_ROUTE_OUTCOMES:
+        route = _expect_object(
+            retained_route, _RETAINED_ROUTE_FIELDS, "routes.retained_augmentation"
+        )
+        if route["outcome"] not in RETAINED_ROUTE_OUTCOMES:
             raise _error(
                 "routes.retained_augmentation.outcome is not a retained route outcome"
             )
+        if route["dataset_identity"] is not None:
+            _expect_digest(
+                route["dataset_identity"],
+                "routes.retained_augmentation.dataset_identity",
+            )
+        seeds = _expect(
+            route["examined_seeds"], list, "routes.retained_augmentation.examined_seeds"
+        )
+        if any(type(seed) is not int for seed in seeds):
+            raise _error("routes.retained_augmentation.examined_seeds must be integers")
+        for name in ("examined_row_count", "aligned_row_count"):
+            if _expect(route[name], int, f"routes.retained_augmentation.{name}") < 0:
+                raise _error(
+                    f"routes.retained_augmentation.{name} must not be negative"
+                )
+        if route["aligned_row_count"] > route["examined_row_count"]:
+            raise _error(
+                "routes.retained_augmentation.aligned_row_count exceeds the "
+                "examined row count"
+            )
+        _expect_optional(
+            route["instrumentation_provenance"],
+            dict,
+            "routes.retained_augmentation.instrumentation_provenance",
+        )
+        reason = route["rejection_reason"]
+        rejection_class = route["rejection_class"]
+        _expect_optional(
+            route["rejection_detail"],
+            str,
+            "routes.retained_augmentation.rejection_detail",
+        )
+        if route["outcome"] == RETAINED_AUGMENTATION_QUALIFIED:
+            if reason is not None or rejection_class is not None:
+                raise _error(
+                    "a qualified retained route must not carry a rejection reason"
+                )
+        else:
+            if REJECTION_CLASS_BY_REASON.get(reason) != rejection_class:
+                raise _error(
+                    "routes.retained_augmentation.rejection_class does not match "
+                    "its rejection reason"
+                )
     _expect_optional(
         routes["recommended_stage_a0_corpus_route"],
         str,
@@ -456,6 +520,27 @@ def load_feasibility_report(path) -> LoadedFeasibilityReport:
     if pending_reason is not None:
         _expect(pending_reason, str, "outcome.pending_reason")
 
+    identities = {
+        name: value
+        for name, value in (
+            ("sources.retained_corpus_identity", retained_identity),
+            (
+                "routes.retained_augmentation.dataset_identity",
+                None if retained_route is None else retained_route["dataset_identity"],
+            ),
+            (
+                "sources.retained_evidence.retained_corpus_identity",
+                None if evidence is None else evidence["retained_corpus_identity"],
+            ),
+        )
+        if value is not None
+    }
+    if len(set(identities.values())) > 1:
+        raise _error(
+            f"the retained corpus identity is inconsistent across the report: "
+            f"{identities!r}"
+        )
+
     identity = _expect_digest(document["report_identity"], "report_identity")
     if identity != report_identity(document):
         raise _error("report_identity does not match the report content")
@@ -466,38 +551,71 @@ def load_feasibility_report(path) -> LoadedFeasibilityReport:
 
 def require_retained_not_qualified(
     report: LoadedFeasibilityReport,
+    *,
+    expected_corpus_identity: str = RETAINED_DATASET_IDENTITY,
 ) -> dict[str, object]:
     """fresh fallbackを authorize できる retained evidence だけを通す。
 
-    retained routeが明示的に`RETAINED AUGMENTATION NOT QUALIFIED`であること
-    を要求する。stale / incompatible / conflictingなevidenceはfail closedし、
-    fresh fallbackとして扱わない。
+    次をすべて満たすreportだけを受け入れる。
+
+    ```text
+    retained route outcome == RETAINED AUGMENTATION NOT QUALIFIED
+    rejection class        == exact-alignment-disqualified
+    retained corpus        == #258が対象とするexact retained corpus
+    report自身がhard outcomeを主張していない
+    ```
+
+    `rejection class`を要求するのは、artifact unavailable / wrong dataset
+    identity / source-semantic provenance mismatchのような**qualification
+    preconditionが満たされていない**状態が、exact row alignmentを一度も
+    正しい条件で試さないままfresh fallbackをauthorizeしてしまうのを防ぐため
+    である。それらはoperator actionが残るpending stateであり、retained route
+    のtechnicalな失敗ではない。
+
+    stale / incompatible / conflictingなevidenceはfail closedし、fresh
+    fallbackとして扱わない。
     """
     if not isinstance(report, LoadedFeasibilityReport):
         raise TypeError("report must be a LoadedFeasibilityReport")
-    outcome = report.retained_outcome
-    if outcome is None:
+    route = report.document["routes"]["retained_augmentation"]
+    if route is None:
         raise _error(
             "the retained route was not measured in this report; the fresh "
             "live-label path cannot be authorized without it"
         )
+    outcome = route["outcome"]
     if outcome != RETAINED_AUGMENTATION_NOT_QUALIFIED:
         raise _error(
             f"the retained route is {outcome!r}; the fresh live-label path is "
             "only a fallback for RETAINED AUGMENTATION NOT QUALIFIED"
+        )
+    if route["rejection_class"] != EXACT_ALIGNMENT_DISQUALIFIED:
+        raise _error(
+            "the retained route failed as "
+            f"{route['rejection_class']!r} ({route['rejection_reason']!r}), not "
+            "as an exact-alignment disqualification; the qualification "
+            "preconditions are not met yet, so the fresh live-label path cannot "
+            "be authorized. Reproduce the historical execution environment and "
+            "re-run the retained qualification first."
         )
     if report.hard_outcome is not None:
         raise _error(
             f"the retained report already carries hard outcome "
             f"{report.hard_outcome!r}; it cannot also authorize a fresh fallback"
         )
-    if report.retained_corpus_identity is None:
+    identity = report.retained_corpus_identity
+    if identity is None:
         raise _error(
             "the retained report does not identify the retained corpus it examined"
         )
+    if identity != expected_corpus_identity:
+        raise _error(
+            f"the retained report examined corpus {identity!r}, not the #258 "
+            f"retained corpus {expected_corpus_identity!r}"
+        )
     return {
         "report_identity": report.identity,
-        "retained_corpus_identity": report.retained_corpus_identity,
+        "retained_corpus_identity": identity,
         "retained_outcome": outcome,
     }
 

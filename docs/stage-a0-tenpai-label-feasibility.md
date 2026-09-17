@@ -225,6 +225,26 @@ fieldはsilentに無視せずfail closedする。
 feature schema fingerprintとaction vocabulary fingerprintは `load_dataset()`
 がinstalled contractに対して既にfail closedで検証しており、重複検証しない。
 
+### rejection は 2 class に分ける
+
+retained routeの`NOT QUALIFIED`は、すべてが同じ意味ではない。
+
+| class | reasons | fresh fallback |
+| --- | --- | --- |
+| `qualification-precondition-not-met` | `retained-artifact-unreadable`, `dataset-identity-mismatch`, `provenance-revision-mismatch`, `retained-row-missing` | **authorizeしない** |
+| `exact-alignment-disqualified` | `decision-identity-mismatch`, `round-identity-mismatch`, `feature-row-mismatch`, `legal-mask-mismatch`, `teacher-action-mismatch`, `same-state-co-emission-failed` | authorizeする |
+
+precondition classは、exact row alignmentを**正しい条件下でまだ試せていない**
+状態である。特にsource-semantic provenance mismatchのままfresh fallbackへ
+進めてしまうと、historical execution environmentを再現しないまま経路を
+切り替えることになる。したがってこれらはoperator actionが残るpending state
+として扱い、fresh fallbackをauthorizeしない。
+
+`retained-row-missing`はそのseedのreplayを実行する前の判定なので、保守側
+（authorizeしない）へ寄せてpreconditionに分類する。
+
+分類のないrejection reasonはfail closedする。
+
 ### operatorに必要な追加step
 
 retained corpus `69094c1b…` のrecorded source-semantic provenanceは、現在の
@@ -297,16 +317,49 @@ canonical JSON bytes と report_identity の整合
 
 違反は `StageA0ReportError` としてfail closedする。
 
-fresh fallbackは、この strict readerを通し、かつ retained routeが明示的に
-`RETAINED AUGMENTATION NOT QUALIFIED` であるreportからしか
-`FRESH LIVE-LABEL PATH QUALIFIED` を作れない。stale / malformed / unrelated /
-tampered / 既にhard outcomeを持つreportはfail closedし、fresh fallbackとして
-扱わない。retained reportを渡さずにfresh smokeを実行した場合は、
-hard outcomeを作らず `pending_reason` のままにする。
+`routes.retained_augmentation` objectもexact field set / JSON typeで
+strict validateし、`rejection_class` がその `rejection_reason` の分類と一致
+することを要求する。さらに、top-levelの `sources.retained_corpus_identity`、
+`routes.retained_augmentation.dataset_identity`、
+`sources.retained_evidence.retained_corpus_identity` は、存在するものが
+互いに一致しなければfail closedする。
+
+fresh fallbackが `FRESH LIVE-LABEL PATH QUALIFIED` を作れるのは、strict reader
+を通したうえで次をすべて満たすreportからだけである。
+
+```text
+retained route outcome == RETAINED AUGMENTATION NOT QUALIFIED
+rejection class        == exact-alignment-disqualified
+retained corpus        == RETAINED_DATASET_IDENTITY（#258 が対象とする corpus）
+report 自身が hard outcome を主張していない
+```
+
+stale / malformed / unrelated / tampered / 別corpus / precondition failure /
+既にhard outcomeを持つreportはすべてfail closedし、fresh fallbackとして扱わ
+ない。retained reportを渡さずにfresh smokeを実行した場合は、hard outcomeを
+作らず `pending_reason` のままにする。
 
 final fresh reportには、入力したretained qualification reportの
 `report_identity` / retained corpus identity / retained outcomeを
 `sources.retained_evidence` として記録し、evidence chainを追跡可能にする。
+
+## Unexpected exception は route outcome へ丸めない
+
+qualification pathは、expectedなfailureとして明示的に分類できる例外だけを
+catchする。
+
+| path | catchする例外 | 意味 |
+| --- | --- | --- |
+| retained: artifact読み込み | `OfflineQError` / `OSError` / `ValueError` | `retained-artifact-unreadable`（precondition） |
+| retained / fresh: co-emission | `StageA0AlignmentError` | same-state binding不成立 |
+| CLI: deterministic recomputation | `StageA0SidecarError` | recomputation不一致 |
+| labels: canonical builder | `ValueError` | `OTHER_FAIL_CLOSED`（countable） |
+
+それ以外の例外（programming error / infrastructure error / canonical builderの
+`RuntimeError`等）はcatchせずそのまま伝播させ、CLIをhard failさせる。
+`RETAINED AUGMENTATION NOT QUALIFIED` / `FRESH LIVE-LABEL PATH NOT QUALIFIED` /
+`TENPAI LABEL PATH BLOCKED` のいずれへも変換しない。broadな
+`except Exception`はこのpackage内で使わない。
 
 ## Hard outcomes
 

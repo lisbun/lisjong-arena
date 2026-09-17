@@ -21,7 +21,7 @@ corpusは生成しない。
 from dataclasses import dataclass
 
 from .emission import emit_decision
-from .errors import StageA0ProtocolError
+from .errors import StageA0AlignmentError, StageA0ProtocolError
 from .execution import observed_decisions_for_seed
 from .protocol import (
     MAXIMUM_SMOKE_GAME_COUNT,
@@ -91,9 +91,9 @@ def qualify_fresh_live_label(
     """bounded technical smokeでlive co-emission pathを資格判定する。
 
     `observed_decision_source`は`seed -> Iterable[ObservedDecision]`のcallable
-    である。alignment
-    failureはlabelへ丸めず、`FRESH LIVE-LABEL PATH NOT QUALIFIED`として理由
-    つきで返す。
+    である。same-state alignment failureはlabelへ丸めず、
+    `FRESH LIVE-LABEL PATH NOT QUALIFIED`として理由つきで返す。unexpectedな
+    例外はroute outcomeへ変換せずそのまま伝播させる。
     """
     seeds = tuple(seeds)
     for seed in seeds:
@@ -113,7 +113,10 @@ def qualify_fresh_live_label(
                     source_identity=SMOKE_POPULATION_IDENTITY,
                     seed=seed,
                 )
-            except Exception as error:
+            except StageA0AlignmentError as error:
+                # same-state bindingの不成立だけがexpectedな alignment failure。
+                # programming / infrastructure errorはroute outcomeへ丸めず
+                # 伝播させる。
                 return FreshQualification(
                     outcome=FRESH_LIVE_LABEL_PATH_NOT_QUALIFIED,
                     population_identity=SMOKE_POPULATION_IDENTITY,
