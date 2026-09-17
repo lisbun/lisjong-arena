@@ -78,7 +78,9 @@ def _positive_completed_games(value: str) -> int:
     try:
         parsed = int(value)
     except ValueError as error:
-        raise argparse.ArgumentTypeError("--games must be a positive integer") from error
+        raise argparse.ArgumentTypeError(
+            "--games must be a positive integer"
+        ) from error
     if parsed < 1:
         raise argparse.ArgumentTypeError("--games must be a positive integer")
     return parsed
@@ -88,7 +90,9 @@ def _validate_max_completed_games(max_completed_games: int | None) -> None:
     """library APIでもbool-like / non-positive targetをfail closedにする。"""
     if max_completed_games is None:
         return
-    if isinstance(max_completed_games, bool) or not isinstance(max_completed_games, int):
+    if isinstance(max_completed_games, bool) or not isinstance(
+        max_completed_games, int
+    ):
         raise ValueError("max_completed_games must be a positive integer or None")
     if max_completed_games < 1:
         raise ValueError("max_completed_games must be a positive integer or None")
@@ -176,7 +180,9 @@ async def run_continuous_ranked(
     """
     _validate_max_completed_games(max_completed_games)
     if record_dir is not None and trace_path is not None:
-        raise ValueError("durable record acquisition cannot be combined with trace output")
+        raise ValueError(
+            "durable record acquisition cannot be combined with trace output"
+        )
     if record_dir is not None and not os.fspath(record_dir):
         raise ValueError("record_dir must be a non-empty path or None")
 
@@ -188,10 +194,7 @@ async def run_continuous_ranked(
     records_enabled = record_dir is not None
 
     while True:
-        if (
-            max_completed_games is not None
-            and completed_games >= max_completed_games
-        ):
+        if max_completed_games is not None and completed_games >= max_completed_games:
             stopped_reason = "target_completed_games_reached"
             break
         if stop_requested is not None and stop_requested():
@@ -204,7 +207,9 @@ async def run_continuous_ranked(
                 await run_ranked_game(policy, token, url=url, trace_path=trace_path)
             else:
                 destination = resolve_ranked_record_path(os.fspath(record_dir))
-                if destination is None:  # defensive: non-empty record_dir was validated above
+                if (
+                    destination is None
+                ):  # defensive: non-empty record_dir was validated above
                     raise ValueError("record_dir did not resolve to a destination")
                 await _acquire_ranked_record(
                     policy,
