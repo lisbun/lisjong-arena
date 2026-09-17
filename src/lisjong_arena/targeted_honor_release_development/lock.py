@@ -226,9 +226,7 @@ def build_lock_document(
 
 def save_lock_document(document: dict[str, object], path: str | Path) -> Path:
     destination = Path(path)
-    require_new_artifact_destinations(
-        {"lock": destination}, required_names=("lock",)
-    )
+    require_new_artifact_destinations({"lock": destination}, required_names=("lock",))
     write_new_artifact_file(destination, canonical_json_text(document))
     return destination
 
@@ -319,7 +317,10 @@ def parse_lock_document(value: object) -> dict[str, object]:
     max_workers = expect_int(phase_a["max_workers"], "lock.phase_a.max_workers")
     if max_workers <= 0:
         raise TargetedHonorReleaseLockError("lock max_workers must be positive")
-    if expect_int(phase_a["game_count"], "lock.phase_a.game_count") != PHASE_A_GAME_COUNT:
+    if (
+        expect_int(phase_a["game_count"], "lock.phase_a.game_count")
+        != PHASE_A_GAME_COUNT
+    ):
         raise TargetedHonorReleaseLockError("lock Phase-A game count drifted")
     if phase_a["ordered_seeds"] != list(PHASE_A_SEEDS):
         raise TargetedHonorReleaseLockError("lock Phase-A seed population drifted")
@@ -342,11 +343,20 @@ def parse_lock_document(value: object) -> dict[str, object]:
     ):
         raise TargetedHonorReleaseLockError("lock Phase-A runtime bound drifted")
 
-    if expect_int(phase_b["games_per_arm"], "lock.phase_b.games_per_arm") != PHASE_B_GAMES_PER_ARM:
+    if (
+        expect_int(phase_b["games_per_arm"], "lock.phase_b.games_per_arm")
+        != PHASE_B_GAMES_PER_ARM
+    ):
         raise TargetedHonorReleaseLockError("lock Phase-B games-per-arm drifted")
-    if expect_int(phase_b["rotation_count"], "lock.phase_b.rotation_count") != ROTATION_COUNT:
+    if (
+        expect_int(phase_b["rotation_count"], "lock.phase_b.rotation_count")
+        != ROTATION_COUNT
+    ):
         raise TargetedHonorReleaseLockError("lock Phase-B rotation count drifted")
-    if expect_int(phase_b["total_games"], "lock.phase_b.total_games") != PHASE_B_TOTAL_GAMES:
+    if (
+        expect_int(phase_b["total_games"], "lock.phase_b.total_games")
+        != PHASE_B_TOTAL_GAMES
+    ):
         raise TargetedHonorReleaseLockError("lock Phase-B total game count drifted")
     if expect_str(phase_b["role"], "lock.phase_b.role") != "DEVELOPMENT SCREEN":
         raise TargetedHonorReleaseLockError("lock Phase-B role drifted")
@@ -363,16 +373,22 @@ def parse_lock_document(value: object) -> dict[str, object]:
         },
         "lock.phase_b.freshness",
     )
-    if expect_bool(
-        freshness["external_freshness_confirmed"],
-        "lock.phase_b.freshness.external_freshness_confirmed",
-    ) is not True:
+    if (
+        expect_bool(
+            freshness["external_freshness_confirmed"],
+            "lock.phase_b.freshness.external_freshness_confirmed",
+        )
+        is not True
+    ):
         raise TargetedHonorReleaseLockError("external freshness was not confirmed")
     if expect_bool(freshness["fresh"], "lock.phase_b.freshness.fresh") is not True:
         raise TargetedHonorReleaseLockError("locked Phase-B population is not fresh")
     if freshness["ordered_seeds"] != list(seeds):
         raise TargetedHonorReleaseLockError("freshness seed identity drifted")
-    if freshness["repository_collisions"] != [] or freshness["external_collisions"] != []:
+    if (
+        freshness["repository_collisions"] != []
+        or freshness["external_collisions"] != []
+    ):
         raise TargetedHonorReleaseLockError("freshness block contains collisions")
     additional = tuple(
         expect_int(
@@ -399,7 +415,9 @@ def parse_lock_document(value: object) -> dict[str, object]:
         {"artifact_digest", "artifact_path", "provenance"},
         "lock.source_parent",
     )
-    source_path = Path(expect_str(source["artifact_path"], "lock.source_parent.artifact_path"))
+    source_path = Path(
+        expect_str(source["artifact_path"], "lock.source_parent.artifact_path")
+    )
     source_artifact = _require_source_parent(source_path)
     if expect_str(
         source["artifact_digest"], "lock.source_parent.artifact_digest"
@@ -416,7 +434,9 @@ def parse_lock_document(value: object) -> dict[str, object]:
         {"python_implementation", "python_version", "sys_version"},
         "lock.runtime",
     )
-    python_version = expect_str(runtime["python_version"], "lock.runtime.python_version")
+    python_version = expect_str(
+        runtime["python_version"], "lock.runtime.python_version"
+    )
     expect_str(runtime["python_implementation"], "lock.runtime.python_implementation")
     expect_str(runtime["sys_version"], "lock.runtime.sys_version")
     if python_version != provenance.python_version:
@@ -429,7 +449,10 @@ def parse_lock_document(value: object) -> dict[str, object]:
         {"branch", "revision", "target_type"},
         "lock.execution_target",
     )
-    if expect_str(execution["branch"], "lock.execution_target.branch") != EXECUTION_BRANCH:
+    if (
+        expect_str(execution["branch"], "lock.execution_target.branch")
+        != EXECUTION_BRANCH
+    ):
         raise TargetedHonorReleaseLockError("lock execution branch drifted")
     if (
         expect_str(execution["target_type"], "lock.execution_target.target_type")
