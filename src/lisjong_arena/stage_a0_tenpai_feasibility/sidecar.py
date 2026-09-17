@@ -28,6 +28,8 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import rmtree
+from tempfile import mkdtemp
 
 from lisjong.policy_contract import Seat, Wind
 from lisjong.policy_contract.meld import MeldKind, PublicMeld
@@ -482,11 +484,19 @@ def write_sidecar(
     }
     manifest["sidecar_identity"] = sidecar_identity(manifest)
 
-    destination.mkdir(parents=True)
-    (destination / CELLS_FILENAME).write_bytes(lines)
-    (destination / MANIFEST_FILENAME).write_text(
-        canonical_json_text(manifest), encoding="utf-8", newline="\n"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        mkdtemp(prefix=f".{destination.name}-staging-", dir=destination.parent)
     )
+    try:
+        (staging / CELLS_FILENAME).write_bytes(lines)
+        (staging / MANIFEST_FILENAME).write_text(
+            canonical_json_text(manifest), encoding="utf-8", newline="\n"
+        )
+        staging.rename(destination)
+    except BaseException:
+        rmtree(staging, ignore_errors=True)
+        raise
     return load_sidecar(destination)
 
 

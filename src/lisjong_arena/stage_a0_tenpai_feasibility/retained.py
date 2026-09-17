@@ -226,9 +226,19 @@ def qualify_retained_augmentation(
 
         emissions = {}
         for decision in observed_decision_source(seed):
-            emission = emit_decision(
-                decision, source_identity=identity, seed=seed, split=Split.TRAIN
-            )
+            try:
+                emission = emit_decision(
+                    decision, source_identity=identity, seed=seed, split=Split.TRAIN
+                )
+            except Exception as error:
+                return _rejected(
+                    "same-state-co-emission-failed",
+                    f"seed {seed}: {type(error).__name__}: {error}",
+                    dataset_identity=identity,
+                    examined_seeds=seeds,
+                    examined_row_count=examined_row_count,
+                    aligned_row_count=aligned_row_count,
+                )
             emissions[
                 (
                     decision.step_ordinal,

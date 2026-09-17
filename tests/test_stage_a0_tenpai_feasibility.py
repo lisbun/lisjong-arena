@@ -848,6 +848,28 @@ class RetainedAugmentationTest(unittest.TestCase):
         self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
         self.assertEqual(result.rejection_reason, "legal-mask-mismatch")
 
+    def test_a_same_state_failure_is_reported_not_raised(self):
+        def source(seed):
+            for decision in self._source(seed):
+                other = uniform_plan(NON_TENPAI_HAND, actor_seat=Seat.SEAT_3)
+                yield ObservedDecision(
+                    step_ordinal=decision.step_ordinal,
+                    decision_ordinal=decision.decision_ordinal,
+                    actor_seat=decision.actor_seat,
+                    context=decision.context,
+                    selected_action=decision.selected_action,
+                    hidden=hidden_state_for(
+                        other,
+                        actor_seat=decision.actor_seat,
+                        step_ordinal=decision.step_ordinal,
+                    ),
+                )
+
+        result = self._qualify(observed_decision_source=source)
+        self.assertEqual(result.outcome, RETAINED_AUGMENTATION_NOT_QUALIFIED)
+        self.assertEqual(result.rejection_reason, "same-state-co-emission-failed")
+        self.assertEqual(result.cells, ())
+
     def test_a_provenance_revision_mismatch_is_rejected(self):
         drifted = dict(RETAINED_PROVENANCE)
         drifted["lisjong_arena_revision"] = "9" * 40

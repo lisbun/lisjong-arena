@@ -78,7 +78,7 @@ def _run_retained(arguments) -> int:
     cells = qualification.cells
     sidecar = None
     recomputation = None
-    if qualification.is_qualified and arguments.sidecar is not None:
+    if qualification.is_qualified:
         sidecar = write_sidecar(
             arguments.sidecar,
             cells,
@@ -139,7 +139,7 @@ def _run_fresh(arguments) -> int:
     cells = qualification.cells
     sidecar = None
     recomputation = None
-    if qualification.is_qualified and arguments.sidecar is not None:
+    if qualification.is_qualified:
         sidecar = write_sidecar(
             arguments.sidecar,
             cells,
@@ -222,7 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="qualify exact augmentation of the retained flat-BC corpus",
     )
     retained.add_argument("--dataset", type=Path, required=True)
-    retained.add_argument("--sidecar", type=Path, default=None)
+    retained.add_argument("--sidecar", type=Path, required=True)
     retained.add_argument("--report", type=Path, required=True)
     retained.set_defaults(handler=_run_retained)
 
@@ -231,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="qualify the fresh live-label path on the locked technical smoke",
     )
     fresh.add_argument("--retained-report", type=Path, default=None)
-    fresh.add_argument("--sidecar", type=Path, default=None)
+    fresh.add_argument("--sidecar", type=Path, required=True)
     fresh.add_argument("--report", type=Path, required=True)
     fresh.set_defaults(handler=_run_fresh)
 
