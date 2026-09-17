@@ -7,9 +7,9 @@ layerとする。Policy契約、Session、Transportへ責務を持ち込まな�
 をbehavior-preservingにArenaへcanonical migrationしたものである。引数形式、
 trace path優先順位はmigration元contractを維持する。
 
-ranked durable record acquisition(Issue #168)はranked CLIだけのoptionとして
-opt-inで組み立てる。validation CLIやcontinuous ranked CLIへranked-only optionを
-漏らさないため、`build_arg_parser()`の既定では`--record-dir`を追加しない。
+ranked durable record acquisition(Issue #168)はranked one-game CLIとcontinuous
+ranked CLI(Issue #232)だけがopt-inで組み立てる。validation CLIへranked-only
+optionを漏らさないため、`build_arg_parser()`の既定では`--record-dir`を追加しない。
 """
 
 from __future__ import annotations
