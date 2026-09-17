@@ -215,6 +215,9 @@ def _game_diagnostics() -> tuple[GameDiagnostics, ...]:
                     choice_discard_decision_count=len(records),
                     forced_discard_decision_count=0,
                     game_wall_clock_seconds=0.1,
+                    candidate_runtime_total_seconds=(
+                        sum(record.candidate_elapsed_seconds for record in records)
+                    ),
                     records=records,
                 )
             )
@@ -324,17 +327,29 @@ class ParentTrajectoryObservationTest(unittest.TestCase):
         self.assertTrue(record.action_changed)
         self.assertTrue(record.r5_activated)
 
-    def test_forced_discard_does_not_execute_candidate(self) -> None:
+    def test_forced_discard_executes_shadow_candidate_once_for_runtime(self) -> None:
         recorder = diagnostic._Recorder(seed=651, rotation=0, candidate_seat=Seat.SEAT_0)
         decision = DecisionContext(input=_policy_input(), legal_actions=(A_M3,))
+
+        def traced(candidate, observed_decision, sink):
+            del candidate
+            sink.on_decision(
+                DecisionTrace(
+                    legal_actions=observed_decision.legal_actions,
+                    selected_action=A_M3,
+                    analysis=None,
+                )
+            )
+            return A_M3
+
         with mock.patch.object(
-            diagnostic,
-            "execute_policy_with_trace",
-            side_effect=AssertionError("candidate must not execute"),
-        ):
+            diagnostic, "execute_policy_with_trace", side_effect=traced
+        ) as candidate_call:
             recorder.observe(decision, A_M3)
+        candidate_call.assert_called_once()
         self.assertEqual(recorder.forced_discard_decision_count, 1)
         self.assertEqual(recorder.records, [])
+        self.assertGreaterEqual(recorder.candidate_runtime_total_seconds, 0.0)
 
 
 class DiagnosticGateTest(unittest.TestCase):
@@ -354,6 +369,7 @@ class DiagnosticGateTest(unittest.TestCase):
                 choice_discard_decision_count=0,
                 forced_discard_decision_count=0,
                 game_wall_clock_seconds=0.01,
+                candidate_runtime_total_seconds=0.0,
                 records=(),
             )
             for seed in PHASE_A_SEEDS
