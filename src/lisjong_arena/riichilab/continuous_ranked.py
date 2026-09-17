@@ -36,6 +36,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 from lisjong.policy_contract.policy import Policy
+
 from lisjong_arena.riichilab.cli import (
     build_arg_parser,
     resolve_ranked_record_path,
