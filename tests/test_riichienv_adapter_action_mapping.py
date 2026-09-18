@@ -20,6 +20,7 @@ migration元(lisbun/lisjong#29本文および最新コメント)の固定内容�
 import dataclasses
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from lisjong.policy_contract import (
     AnkanAction,
@@ -41,6 +42,7 @@ from lisjong.policy_contract import (
 from riichienv import Action as RiichiEnvAction
 from riichienv import ActionType, Meld, MeldType, Observation, RiichiEnv
 
+import lisjong_arena.riichienv.adapter.action_mapping as action_mapping
 from lisjong_arena.riichienv.adapter.action_mapping import (
     ActorMismatchError,
     ContextResolutionError,
@@ -299,6 +301,91 @@ class RiichiConversionTest(unittest.TestCase):
         mapping = _build_mapping(obs)
 
         self.assertEqual(mapping.candidates, (RiichiAction(actor=Seat.SEAT_2),))
+
+
+class CallTargetVersionCompatibilityTest(unittest.TestCase):
+    """RiichiEnv 0.4.8 / 0.4.10 の last_discard semantic drift を固定する。"""
+
+    def test_0_4_8_treats_last_discard_as_player_index(self) -> None:
+        action = make_action(
+            ActionType.PON, tile=119, consume_tiles=[116, 117], actor=2
+        )
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[action],
+            discards=[[], [], [], [119]],
+            last_discard=3,
+        )
+
+        with mock.patch.object(action_mapping, "_RIICHIENV_VERSION", "0.4.8"):
+            mapping = _build_mapping(obs)
+
+        self.assertEqual(mapping.candidates[0].target, Seat.SEAT_3)
+
+    def test_0_4_10_treats_last_discard_as_physical_tile_id(self) -> None:
+        action = make_action(
+            ActionType.PON, tile=119, consume_tiles=[116, 117], actor=2
+        )
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[action],
+            discards=[[], [], [], [119]],
+            last_discard=119,
+        )
+
+        with mock.patch.object(action_mapping, "_RIICHIENV_VERSION", "0.4.10"):
+            mapping = _build_mapping(obs)
+
+        self.assertEqual(mapping.candidates[0].target, Seat.SEAT_3)
+
+    def test_0_4_8_rejects_physical_tile_shaped_last_discard(self) -> None:
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[],
+            discards=[[], [], [], [119]],
+            last_discard=119,
+        )
+
+        with mock.patch.object(action_mapping, "_RIICHIENV_VERSION", "0.4.8"):
+            with self.assertRaises(ContextResolutionError):
+                _resolve_call_target(obs, Seat.SEAT_2, 119)
+
+    def test_0_4_8_chankan_uses_last_discard_seat_and_kakan_meld(self) -> None:
+        kakan = make_meld(
+            MeldType.Kakan,
+            [116, 117, 118, 119],
+            from_who=1,
+            called_tile=116,
+        )
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[],
+            melds=[[], [], [], [kakan]],
+            discards=[[], [], [], []],
+            last_discard=3,
+        )
+
+        with mock.patch.object(action_mapping, "_RIICHIENV_VERSION", "0.4.8"):
+            target = _resolve_call_target(
+                obs,
+                Seat.SEAT_2,
+                119,
+                allow_kakan=True,
+            )
+
+        self.assertEqual(target, Seat.SEAT_3)
+
+    def test_unknown_riichienv_version_fails_closed(self) -> None:
+        obs = make_observation(
+            player_id=2,
+            legal_actions=[],
+            discards=[[], [], [], [119]],
+            last_discard=119,
+        )
+
+        with mock.patch.object(action_mapping, "_RIICHIENV_VERSION", "0.5.0"):
+            with self.assertRaises(ContextResolutionError):
+                _resolve_call_target(obs, Seat.SEAT_2, 119)
 
 
 class ChiConversionTest(unittest.TestCase):
