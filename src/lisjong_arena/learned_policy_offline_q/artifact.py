@@ -868,8 +868,10 @@ def load_dataset_seed_prefix(
     完全artifactのdigest readbackが必要な用途は`load_dataset()`を使う。
     """
     verify_contract_identity()
-    if type(seeds) is not tuple or not seeds or any(
-        type(seed) is not int for seed in seeds
+    if (
+        type(seeds) is not tuple
+        or not seeds
+        or any(type(seed) is not int for seed in seeds)
     ):
         raise _error("seeds must be a non-empty tuple of integers")
 
@@ -912,10 +914,7 @@ def load_dataset_seed_prefix(
         raise _error("legal mask file size does not match row count x 802 uint8")
     if document["files"]["next_features"]["bytes"] != total_rows * _FEATURE_ROW_BYTES:
         raise _error("next_features file size does not match row count x 8204 float32")
-    if (
-        document["files"]["next_legal_mask"]["bytes"]
-        != total_rows * _MASK_ROW_BYTES
-    ):
+    if document["files"]["next_legal_mask"]["bytes"] != total_rows * _MASK_ROW_BYTES:
         raise _error("next legal mask file size does not match row count x 802 uint8")
 
     selected_games = document["games"][: len(seeds)]
@@ -938,9 +937,7 @@ def load_dataset_seed_prefix(
 
     payloads = {
         "rows": b"".join(row_lines),
-        "legal_mask": read_prefix(
-            LEGAL_MASK_FILENAME, row_count * _MASK_ROW_BYTES
-        ),
+        "legal_mask": read_prefix(LEGAL_MASK_FILENAME, row_count * _MASK_ROW_BYTES),
         "next_legal_mask": read_prefix(
             NEXT_LEGAL_MASK_FILENAME, row_count * _MASK_ROW_BYTES
         ),
