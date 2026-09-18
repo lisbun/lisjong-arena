@@ -531,8 +531,8 @@ def load_artifact(
     try:
         raw = read_json_document(Path(path))
         return parse_artifact(raw, parent_artifact_path=parent_artifact_path)
-    except ArtifactValidationError:
-        raise
+    except ArtifactValidationError as exc:
+        raise TargetedHonorReleaseArtifactError(str(exc)) from exc
     except (TypeError, ValueError, KeyError) as exc:
         raise TargetedHonorReleaseArtifactError(str(exc)) from exc
 
