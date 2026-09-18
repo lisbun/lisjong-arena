@@ -36,6 +36,7 @@ from lisjong.policy_contract.wind import Wind
 import lisjong_arena.targeted_honor_release_development.candidate_arm as candidate_arm_module
 import lisjong_arena.targeted_honor_release_development.diagnostic as diagnostic
 import lisjong_arena.targeted_honor_release_development.lock as lock_module
+from lisjong_arena.progression_development.paired import PairedSummary
 from lisjong_arena.targeted_honor_release_development.artifact import (
     build_artifact,
     load_artifact,
@@ -52,7 +53,6 @@ from lisjong_arena.targeted_honor_release_development.diagnostic import (
     require_trajectory_identity,
 )
 from lisjong_arena.targeted_honor_release_development.lock import (
-    TargetedHonorReleaseLockError,
     build_lock_document,
     load_lock_document,
     save_lock_document,
@@ -66,7 +66,6 @@ from lisjong_arena.targeted_honor_release_development.paired import (
     verify_classified_result,
     verify_paired_result,
 )
-from lisjong_arena.progression_development.paired import PairedSummary
 from lisjong_arena.targeted_honor_release_development.protocol import (
     CANDIDATE_IDENTITY,
     DIAGNOSTIC_COMPLETE_LABEL,
