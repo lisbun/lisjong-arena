@@ -51,7 +51,7 @@ from dataclasses import dataclass
 
 from lisjong_arena.learned_policy_offline_q.artifact import (
     LoadedOfflineQDataset,
-    load_dataset,
+    load_dataset_seed_prefix,
     provenance_document,
 )
 from lisjong_arena.learned_policy_offline_q.errors import OfflineQError
@@ -311,7 +311,7 @@ def qualify_retained_augmentation(
         )
 
     try:
-        dataset = load_dataset(dataset_path)
+        dataset = load_dataset_seed_prefix(dataset_path, seeds)
     except (OfflineQError, OSError, ValueError) as error:
         # artifact不在 / malformed / schema違反はretained側のstateであり、
         # qualification preconditionが満たされていないことを意味する。
