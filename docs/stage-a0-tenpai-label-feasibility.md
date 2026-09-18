@@ -375,6 +375,45 @@ STOP / INVALID
 feasibility artifactは、まだ実測できていないhard outcomeを作らない。
 `hard_outcome`と`pending_reason`はexactly oneだけが設定される。
 
+### routing
+
+`QualificationCheck`はどれも「routeが利用可能か」ではなく「evidenceと
+internal invariantが壊れていないか」を表す。したがってcheck failureは
+route unavailableではなくprotocol / evidence violationであり、必ず
+`STOP / INVALID`へ写す。fresh fallbackの理由にも
+`TENPAI LABEL PATH BLOCKED`にも変換しない。
+
+```text
+retained qualification precondition failure
+    -> pending / operator action（hard outcomeにしない）
+
+retained expected exact-alignment disqualification
+    -> pending、fresh fallback eligible
+
+retained exact alignment QUALIFIED + 全 check pass
+    -> RETAINED AUGMENTATION QUALIFIED
+
+retained exact alignment QUALIFIED + いずれかの check fail
+    -> STOP / INVALID
+
+fresh emission QUALIFIED + 全 check pass + valid retained evidence
+    -> FRESH LIVE-LABEL PATH QUALIFIED
+
+fresh emission QUALIFIED + 全 check pass + retained evidence なし
+    -> pending（route選択はまだできない）
+
+fresh expected same-state / path disqualification
+    + valid retained exact-alignment disqualification
+    -> TENPAI LABEL PATH BLOCKED
+
+fresh emission は成立したが invariant / evidence / check が fail
+    -> STOP / INVALID
+```
+
+`STOP / INVALID`へ写る具体例は、deterministic recomputation failure、
+public/private boundary failure、seat mapping inconsistency、
+`OTHER_FAIL_CLOSED > 0`、stable-13 / physical-inventory invariant failureである。
+
 ## Operator commands
 
 ```text

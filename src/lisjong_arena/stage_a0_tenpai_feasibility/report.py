@@ -111,7 +111,13 @@ _RETAINED_ROUTE_FIELDS = {
 
 @dataclass(frozen=True, slots=True)
 class QualificationCheck:
-    """1つのqualification軸のboolean判定と、その根拠。"""
+    """1つのqualification軸のboolean判定と、その根拠。
+
+    どのcheckも「routeが利用可能か」ではなく「evidenceとinternal invariantが
+    壊れていないか」を表す。したがってcheck failureはroute unavailableでは
+    なくprotocol / evidence violationであり、#258の`STOP / INVALID`へ写す。
+    fresh fallbackの理由にも`TENPAI LABEL PATH BLOCKED`にも変換しない。
+    """
 
     name: str
     qualified: bool

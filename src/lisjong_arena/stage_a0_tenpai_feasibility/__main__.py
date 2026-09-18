@@ -31,6 +31,7 @@ from .fresh import (
 from .protocol import SMOKE_POPULATION_IDENTITY, SMOKE_SEEDS
 from .report import (
     RETAINED_AUGMENTATION_QUALIFIED,
+    STOP_INVALID,
     TENPAI_LABEL_PATH_BLOCKED,
     FeasibilityReport,
     QualificationCheck,
@@ -70,6 +71,18 @@ def _recomputation_check(sidecar) -> QualificationCheck:
     )
 
 
+def _failed_checks(checks) -> tuple[str, ...]:
+    """qualification checkのうち失敗したものの名前を返す。
+
+    `QualificationCheck`はすべて「route が利用可能か」ではなく「evidence と
+    internal invariant が壊れていないか」を表す。したがって1つでも失敗した
+    場合、それは route unavailable ではなく protocol / evidence violation で
+    あり、#258 の `STOP / INVALID` になる。fresh fallback の理由にも
+    `TENPAI LABEL PATH BLOCKED` にも変換しない。
+    """
+    return tuple(check.name for check in checks if not check.qualified)
+
+
 def _emit(report: FeasibilityReport, path: Path) -> int:
     report.write(path)
     json.dump(report.to_document()["outcome"], sys.stdout, sort_keys=True)
@@ -94,7 +107,14 @@ def _run_retained(arguments) -> int:
         recomputation = _recomputation_check(sidecar)
 
     checks = build_checks(cells, deterministic_recomputation=recomputation)
-    if qualification.is_qualified and all(check.qualified for check in checks):
+    failed = _failed_checks(checks)
+    if failed:
+        # precondition は満たされ exact replay も実行済みで、その後の
+        # invariant / evidence validation が壊れた状態。
+        hard_outcome = STOP_INVALID
+        pending = None
+        recommended = None
+    elif qualification.is_qualified:
         hard_outcome = RETAINED_AUGMENTATION_QUALIFIED
         pending = None
         recommended = "retained-augmentation"
@@ -169,12 +189,18 @@ def _run_fresh(arguments) -> int:
         recomputation = _recomputation_check(sidecar)
 
     checks = build_checks(cells, deterministic_recomputation=recomputation)
-    qualified = qualification.is_qualified and all(check.qualified for check in checks)
-    if qualified and retained_evidence is not None:
+    failed = _failed_checks(checks)
+    if failed:
+        # co-emission は成立したが、その evidence / invariant が壊れた状態。
+        # expected な technical path failure ではないので BLOCKED にしない。
+        hard_outcome = STOP_INVALID
+        pending = None
+        recommended = None
+    elif qualification.is_qualified and retained_evidence is not None:
         hard_outcome = FRESH_LIVE_LABEL_PATH_QUALIFIED
         pending = None
         recommended = "fresh-live-label"
-    elif qualified:
+    elif qualification.is_qualified:
         hard_outcome = None
         pending = (
             "the fresh live-label co-emission path is demonstrated, but the "

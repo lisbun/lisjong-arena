@@ -73,6 +73,8 @@ from lisjong_arena.stage_a0_tenpai_feasibility.protocol import RETAINED_DATASET_
 from lisjong_arena.stage_a0_tenpai_feasibility.report import (
     REPORT_SCHEMA_VERSION,
     RETAINED_AUGMENTATION_NOT_QUALIFIED,
+    STOP_INVALID,
+    TENPAI_LABEL_PATH_BLOCKED,
     FeasibilityReport,
     LoadedFeasibilityReport,
     QualificationCheck,
@@ -1706,6 +1708,257 @@ class FreshCommandEvidenceGateTest(unittest.TestCase):
             retained.write_text(canonical_json_text(document), encoding="utf-8")
             with self.assertRaises(StageA0ReportError):
                 self._run(directory, retained)
+
+
+class HardOutcomeRoutingTest(unittest.TestCase):
+    """post-qualification invariant failure を STOP / INVALID へ写す。"""
+
+    def _cli(self):
+        from lisjong_arena.stage_a0_tenpai_feasibility import __main__ as cli
+
+        original = cli.provenance_document
+        cli.provenance_document = lambda: dict(FIXTURE_PROVENANCE)
+        self.addCleanup(setattr, cli, "provenance_document", original)
+        return cli
+
+    def _break_recomputation(self, cli):
+        def failing(sidecar):
+            raise StageA0SidecarError("cells do not recompute")
+
+        original = cli.verify_deterministic_recomputation
+        cli.verify_deterministic_recomputation = failing
+        self.addCleanup(setattr, cli, "verify_deterministic_recomputation", original)
+
+    def _break_boundary(self):
+        from lisjong_arena.stage_a0_tenpai_feasibility import report as report_module
+
+        def failing(cells):
+            return QualificationCheck(
+                name="public_private_boundary",
+                qualified=False,
+                detail="privileged truth reached the public row",
+            )
+
+        original = report_module.check_public_private_boundary
+        report_module.check_public_private_boundary = failing
+        self.addCleanup(
+            setattr, report_module, "check_public_private_boundary", original
+        )
+
+    def _break_fail_closed(self):
+        def failing(identity, concealed_tiles, own_melds):
+            raise ValueError("canonical contract drifted")
+
+        original = labels.structural_wait_for_hand
+        labels.structural_wait_for_hand = failing
+        self.addCleanup(setattr, labels, "structural_wait_for_hand", original)
+
+    # --- retained route --------------------------------------------------
+
+    def _qualified_retained(self, cells):
+        from lisjong_arena.stage_a0_tenpai_feasibility.retained import (
+            RetainedQualification,
+        )
+
+        return RetainedQualification(
+            outcome=RETAINED_AUGMENTATION_QUALIFIED,
+            dataset_identity=RETAINED_DATASET_IDENTITY,
+            examined_seeds=(245,),
+            examined_row_count=1,
+            aligned_row_count=1,
+            instrumentation_provenance=None,
+            rejection_reason=None,
+            rejection_class=None,
+            rejection_detail=None,
+            cells=cells,
+        )
+
+    def _run_retained(self, cli, directory, cells):
+        original = cli.qualify_retained_augmentation
+        cli.qualify_retained_augmentation = lambda dataset: self._qualified_retained(
+            cells
+        )
+        self.addCleanup(setattr, cli, "qualify_retained_augmentation", original)
+        cli.main(
+            [
+                "retained-qualify",
+                "--dataset",
+                str(Path(directory) / "corpus"),
+                "--sidecar",
+                str(Path(directory) / "sidecar"),
+                "--report",
+                str(Path(directory) / "retained-report.json"),
+            ]
+        )
+        return load_feasibility_report(Path(directory) / "retained-report.json")
+
+    def _retained_cells(self, source_identity=RETAINED_DATASET_IDENTITY):
+        plan = uniform_plan(TENPAI_HAND, actor_seat=Seat.SEAT_0)
+        return emit_decision(
+            observed_decision(plan, actor_seat=Seat.SEAT_0),
+            source_identity=source_identity,
+            seed=245,
+        ).cells
+
+    def test_retained_alignment_qualified_but_recomputation_fails_is_stop_invalid(
+        self,
+    ):
+        cli = self._cli()
+        self._break_recomputation(cli)
+        with TemporaryDirectory() as directory:
+            report = self._run_retained(cli, directory, self._retained_cells())
+            self.assertEqual(report.hard_outcome, STOP_INVALID)
+            self.assertIsNone(report.document["outcome"]["pending_reason"])
+            self.assertIsNone(
+                report.document["routes"]["recommended_stage_a0_corpus_route"]
+            )
+            self.assertFalse(
+                report.document["qualifications"]["deterministic_recomputation"][
+                    "qualified"
+                ]
+            )
+
+    def test_retained_alignment_qualified_but_fail_closed_cells_is_stop_invalid(self):
+        cli = self._cli()
+        self._break_fail_closed()
+        with TemporaryDirectory() as directory:
+            report = self._run_retained(cli, directory, self._retained_cells())
+            self.assertEqual(report.hard_outcome, STOP_INVALID)
+            self.assertFalse(
+                report.document["qualifications"]["fail_closed"]["qualified"]
+            )
+            self.assertEqual(
+                report.document["counts"]["availability"]["OTHER_FAIL_CLOSED"], 3
+            )
+
+    def test_retained_alignment_qualified_but_leakage_is_stop_invalid(self):
+        cli = self._cli()
+        self._break_boundary()
+        with TemporaryDirectory() as directory:
+            report = self._run_retained(cli, directory, self._retained_cells())
+            self.assertEqual(report.hard_outcome, STOP_INVALID)
+            self.assertFalse(
+                report.document["qualifications"]["public_private_boundary"][
+                    "qualified"
+                ]
+            )
+
+    def test_a_clean_retained_run_still_qualifies(self):
+        cli = self._cli()
+        with TemporaryDirectory() as directory:
+            report = self._run_retained(cli, directory, self._retained_cells())
+            self.assertEqual(report.hard_outcome, RETAINED_AUGMENTATION_QUALIFIED)
+            self.assertEqual(
+                report.document["routes"]["recommended_stage_a0_corpus_route"],
+                "retained-augmentation",
+            )
+
+    # --- fresh route -----------------------------------------------------
+
+    def _fresh_source(self, seed):
+        actor_seat = Seat(seed % 4)
+        plan = uniform_plan(TENPAI_HAND, actor_seat=actor_seat)
+        return (observed_decision(plan, actor_seat=actor_seat),)
+
+    def _broken_fresh_source(self, seed):
+        decision = self._fresh_source(seed)[0]
+        other = uniform_plan(TENPAI_HAND, actor_seat=Seat.SEAT_0)
+        yield ObservedDecision(
+            step_ordinal=decision.step_ordinal,
+            decision_ordinal=decision.decision_ordinal,
+            actor_seat=decision.actor_seat,
+            context=decision.context,
+            selected_action=decision.selected_action,
+            hidden=hidden_state_for(other, actor_seat=decision.actor_seat),
+        )
+
+    def _run_fresh(self, cli, directory, source, retained_report):
+        original = cli.qualify_fresh_live_label
+        cli.qualify_fresh_live_label = lambda **kwargs: original(
+            observed_decision_source=source, **kwargs
+        )
+        self.addCleanup(setattr, cli, "qualify_fresh_live_label", original)
+        arguments = [
+            "fresh-smoke",
+            "--sidecar",
+            str(Path(directory) / "fresh-sidecar"),
+        ]
+        if retained_report is not None:
+            arguments += ["--retained-report", str(retained_report)]
+        arguments += ["--report", str(Path(directory) / "fresh-report.json")]
+        cli.main(arguments)
+        return load_feasibility_report(Path(directory) / "fresh-report.json")
+
+    def _retained_evidence_report(self, directory):
+        cells = self._retained_cells(source_identity="fixture")
+        path = Path(directory) / "retained-evidence.json"
+        FeasibilityReport(
+            provenance=FIXTURE_PROVENANCE,
+            instrumentation_provenance=None,
+            source_paths_examined=("fixture",),
+            retained_corpus_identity=RETAINED_DATASET_IDENTITY,
+            retained_outcome=retained_route_document(
+                outcome=RETAINED_AUGMENTATION_NOT_QUALIFIED,
+                rejection_reason="feature-row-mismatch",
+            ),
+            retained_evidence=None,
+            smoke_population_identity=None,
+            fresh_outcome=None,
+            sidecar_identity=None,
+            row_count=1,
+            cell_count=len(cells),
+            availability_counts=availability_counts(cells),
+            checks=build_checks(cells, deterministic_recomputation=None),
+            hard_outcome=None,
+            pending_reason="retained route disqualified by exact alignment",
+            recommended_route=None,
+        ).write(path)
+        return path
+
+    def test_fresh_qualified_but_recomputation_fails_is_stop_invalid(self):
+        cli = self._cli()
+        self._break_recomputation(cli)
+        with TemporaryDirectory() as directory:
+            retained = self._retained_evidence_report(directory)
+            report = self._run_fresh(cli, directory, self._fresh_source, retained)
+            self.assertEqual(report.hard_outcome, STOP_INVALID)
+            self.assertIsNone(report.document["outcome"]["pending_reason"])
+            self.assertFalse(
+                report.document["qualifications"]["deterministic_recomputation"][
+                    "qualified"
+                ]
+            )
+
+    def test_fresh_qualified_but_leakage_is_stop_invalid(self):
+        cli = self._cli()
+        self._break_boundary()
+        with TemporaryDirectory() as directory:
+            retained = self._retained_evidence_report(directory)
+            report = self._run_fresh(cli, directory, self._fresh_source, retained)
+            self.assertEqual(report.hard_outcome, STOP_INVALID)
+
+    def test_an_expected_fresh_path_failure_with_retained_evidence_is_blocked(self):
+        cli = self._cli()
+        with TemporaryDirectory() as directory:
+            retained = self._retained_evidence_report(directory)
+            report = self._run_fresh(
+                cli, directory, self._broken_fresh_source, retained
+            )
+            self.assertEqual(report.hard_outcome, TENPAI_LABEL_PATH_BLOCKED)
+            self.assertEqual(
+                report.document["routes"]["fresh_live_label"]["rejection_reason"],
+                "same-state-co-emission-failed",
+            )
+
+    def test_a_stop_invalid_report_round_trips_through_the_strict_reader(self):
+        cli = self._cli()
+        self._break_recomputation(cli)
+        with TemporaryDirectory() as directory:
+            report = self._run_retained(cli, directory, self._retained_cells())
+            self.assertEqual(report.hard_outcome, STOP_INVALID)
+            reloaded = load_feasibility_report(report.path)
+            self.assertEqual(reloaded.identity, report.identity)
+            self.assertEqual(reloaded.hard_outcome, STOP_INVALID)
 
 
 class FailClosedContractTest(unittest.TestCase):
