@@ -58,9 +58,11 @@ from lisjong_arena.targeted_honor_release_development.lock import (
     save_lock_document,
 )
 from lisjong_arena.targeted_honor_release_development.paired import (
+    TargetedHonorReleasePairedError,
     build_classified_result,
     build_paired_result,
     classify,
+    parse_paired_result,
     save_classified_result,
     save_paired_result,
     verify_classified_result,
@@ -621,6 +623,31 @@ class PairedResultTest(unittest.TestCase):
             verified["candidate_trace"]["summary"]["action_change_count"], 1
         )
         self.assertEqual(verified["classification"]["label"], SIGNAL_LABEL)
+
+    def test_malformed_protocol_block_is_rejected_fail_closed(self) -> None:
+        from lisjong_arena.progression_development.paired import load_arm_artifact
+
+        with TemporaryDirectory() as directory_text:
+            directory = Path(directory_text)
+            h_path = self._save_arm(directory, candidate=True, score=25100)
+            c_path = self._save_arm(directory, candidate=False, score=25000)
+            h_trace_games = _trace_games(FRESH_SEEDS)
+            document = build_paired_result(
+                candidate_artifact=load_arm_artifact(h_path),
+                candidate_artifact_path=h_path,
+                parent_artifact=load_arm_artifact(c_path),
+                parent_artifact_path=c_path,
+                candidate_game_diagnostics=h_trace_games,
+                candidate_trace_aggregate=aggregate_diagnostics(
+                    h_trace_games, replay_wall_clock_seconds=40.0
+                ),
+                seeds=FRESH_SEEDS,
+                worker_count=8,
+            )
+            document["protocol"] = []
+
+        with self.assertRaises(TargetedHonorReleasePairedError):
+            parse_paired_result(document)
 
     def test_equal_arms_are_inconclusive(self) -> None:
         from lisjong_arena.progression_development.paired import load_arm_artifact
