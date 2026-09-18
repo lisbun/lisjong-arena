@@ -284,7 +284,6 @@ def save_model_artifact(
             not torch.equal(state_dict[name], reference[name]) for name in state_dict
         ):
             raise ScaleError("staged state_dict readback differs")
-        staging.rename(destination)
     return load_model_artifact(destination, population, lock)
 
 
