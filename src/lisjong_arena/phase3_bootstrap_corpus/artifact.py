@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lisjong_arena._artifact_io import sha256_bytes
 from lisjong_engine.public_state import PublicMeldType
 from lisjong_engine.round_evidence import (
     KanConfirmedEvidence,
@@ -24,6 +23,7 @@ from lisjong_engine.round_evidence import (
 )
 from lisjong_engine.rules import RuleSet
 
+from lisjong_arena._artifact_io import sha256_bytes
 from lisjong_arena.phase2_training_anchor.extraction import (
     FIRST_PARTY_SOURCE_CLASS,
     Phase2GameExtraction,
