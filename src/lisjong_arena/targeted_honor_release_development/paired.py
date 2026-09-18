@@ -201,6 +201,7 @@ def _candidate_trace_document(
 def _parse_candidate_trace(
     value: object,
     *,
+    seeds: tuple[int, ...],
     candidate_artifact: SingleRoundStrengthArtifact | None = None,
 ) -> tuple[tuple[GameDiagnostics, ...], DiagnosticAggregate]:
     raw = expect_object(value, {"games", "summary"}, "candidate_trace")
@@ -213,6 +214,18 @@ def _parse_candidate_trace(
     if len(games) != PHASE_B_GAMES_PER_ARM:
         raise TargetedHonorReleasePairedError(
             "candidate_trace must contain exactly 400 game diagnostics"
+        )
+    expected_identities = tuple(
+        (seed, rotation, rotation)
+        for seed in seeds
+        for rotation in range(4)
+    )
+    actual_identities = tuple(
+        (game.seed, game.rotation, int(game.candidate_seat)) for game in games
+    )
+    if actual_identities != expected_identities:
+        raise TargetedHonorReleasePairedError(
+            "candidate_trace does not follow the locked seed/rotation order"
         )
     summary = raw["summary"]
     if type(summary) is not dict:
@@ -363,7 +376,7 @@ def parse_paired_result(value: object) -> dict[str, object]:
         raise TargetedHonorReleasePairedError("classification is not re-derived")
     if raw["candidate_binding"] != require_exact_candidate_semantics().to_document():
         raise TargetedHonorReleasePairedError("candidate binding drifted")
-    _parse_candidate_trace(raw["candidate_trace"])
+    _parse_candidate_trace(raw["candidate_trace"], seeds=seeds)
     if raw["comparator_binding"] != require_exact_comparator():
         raise TargetedHonorReleasePairedError("comparator binding drifted")
     if expect_int(raw["worker_count"], "paired_result.worker_count") <= 0:
@@ -425,7 +438,9 @@ def verify_paired_result(
             "classification differs from raw artifacts"
         )
     _parse_candidate_trace(
-        document["candidate_trace"], candidate_artifact=candidate
+        document["candidate_trace"],
+        seeds=seeds,
+        candidate_artifact=candidate,
     )
     return document
 
