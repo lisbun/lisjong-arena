@@ -16,17 +16,23 @@ factoryは必ずこのmodule top-levelのimport可能なcallableとする。Wind
 local closureは使わない(``check_policy_spec_serializable()``で検証する)。
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from lisjong.policies import (
     FiniteHorizonCompletionPolicy,
     GenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
-    MechanismRiichiDefenseYakuhaiCallPolicy,
     TwoStepUkeirePolicy,
     YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
 
 from lisjong_arena.model import PolicySpec
+
+if TYPE_CHECKING:
+    from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy
 
 
 def create_two_step() -> TwoStepUkeirePolicy:
@@ -56,6 +62,12 @@ def create_yakuhai_call() -> (
 
 
 def create_mechanism_riichi_defense() -> MechanismRiichiDefenseYakuhaiCallPolicy:
+    # #258 retained qualification must run against the historical lisjong
+    # revision that predates this newer policy. Keep the curated catalog entry
+    # spawn-safe while requiring the symbol only when this factory is actually
+    # selected.
+    from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy
+
     return MechanismRiichiDefenseYakuhaiCallPolicy()
 
 
