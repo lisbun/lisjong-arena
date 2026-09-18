@@ -613,12 +613,13 @@ def classify_gate(
         reasons.append(f"expected {PHASE_A_GAME_COUNT} source games, got {game_count}")
     if execution_failure_count != 0:
         reasons.append(f"execution failures={execution_failure_count}")
+    if reasons:
+        return DiagnosticGate(False, INFEASIBLE_LABEL, tuple(reasons))
     if aggregate.r5_activation_count == 0 or aggregate.action_change_count == 0:
         return DiagnosticGate(
             False,
             OPPORTUNITY_NOT_OBSERVED_LABEL,
-            tuple(reasons)
-            + (
+            (
                 f"r5_activation_count={aggregate.r5_activation_count}",
                 f"action_change_count={aggregate.action_change_count}",
             ),
@@ -633,8 +634,6 @@ def classify_gate(
                 f"{FEASIBILITY_WALL_CLOCK_LIMIT_HOURS} hours",
             ),
         )
-    if reasons:
-        return DiagnosticGate(False, INFEASIBLE_LABEL, tuple(reasons))
     return DiagnosticGate(True, DIAGNOSTIC_COMPLETE_LABEL, ())
 
 
