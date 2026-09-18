@@ -854,6 +854,110 @@ def _validate_manifest(manifest: object) -> dict:
     return document
 
 
+def load_dataset_seed_prefix(
+    path: str | Path, seeds: tuple[int, ...]
+) -> LoadedOfflineQDataset:
+    """locked seed populationの先頭prefixだけをpayload readして返す。
+
+    #258 retained qualificationのように後続splitのpayload exposureを禁止した
+    protocol向けのreaderである。manifest全体はstrict validateし、artifact file
+    setと全file sizeは確認するが、dense payloadのsuffixはhash/readしない。
+    選択したprefix rowだけをrows / legal masksから読み、通常のrow invariantで
+    validateする。feature bytesはcallerがrow単位で読む。
+
+    完全artifactのdigest readbackが必要な用途は`load_dataset()`を使う。
+    """
+    verify_contract_identity()
+    if (
+        type(seeds) is not tuple
+        or not seeds
+        or any(type(seed) is not int for seed in seeds)
+    ):
+        raise _error("seeds must be a non-empty tuple of integers")
+
+    path = Path(path)
+    if not path.is_dir():
+        raise _error("dataset path is not a directory")
+    if {item.name for item in path.iterdir()} != _ARTIFACT_FILENAMES:
+        raise _error("dataset contains missing or extra files")
+
+    manifest_text = (path / MANIFEST_FILENAME).read_text(encoding="utf-8")
+    try:
+        manifest = json.loads(manifest_text)
+    except json.JSONDecodeError as error:
+        raise _error("manifest is not valid JSON") from error
+    document = _validate_manifest(manifest)
+    if canonical_json_text(document) != manifest_text:
+        raise _error("manifest bytes are not canonical JSON")
+
+    ordered_seeds = tuple(entry["seed"] for entry in document["games"])
+    if seeds != ordered_seeds[: len(seeds)]:
+        raise _error("requested seeds must be a contiguous prefix of the dataset")
+
+    filenames = {
+        "rows": ROWS_FILENAME,
+        "features": FEATURES_FILENAME,
+        "legal_mask": LEGAL_MASK_FILENAME,
+        "next_features": NEXT_FEATURES_FILENAME,
+        "next_legal_mask": NEXT_LEGAL_MASK_FILENAME,
+    }
+    for name, filename in filenames.items():
+        actual_bytes = (path / filename).stat().st_size
+        expected_bytes = document["files"][name]["bytes"]
+        if actual_bytes != expected_bytes:
+            raise _error(f"{name} byte count differs from the manifest")
+
+    total_rows = document["totals"]["row_count"]
+    if document["files"]["features"]["bytes"] != total_rows * _FEATURE_ROW_BYTES:
+        raise _error("features file size does not match row count x 8204 float32")
+    if document["files"]["legal_mask"]["bytes"] != total_rows * _MASK_ROW_BYTES:
+        raise _error("legal mask file size does not match row count x 802 uint8")
+    if document["files"]["next_features"]["bytes"] != total_rows * _FEATURE_ROW_BYTES:
+        raise _error("next_features file size does not match row count x 8204 float32")
+    if document["files"]["next_legal_mask"]["bytes"] != total_rows * _MASK_ROW_BYTES:
+        raise _error("next legal mask file size does not match row count x 802 uint8")
+
+    selected_games = document["games"][: len(seeds)]
+    row_count = sum(entry["row_count"] for entry in selected_games)
+
+    row_lines: list[bytes] = []
+    with (path / ROWS_FILENAME).open("rb") as stream:
+        for _ in range(row_count):
+            line = stream.readline()
+            if not line:
+                raise _error("rows.jsonl is shorter than the selected seed prefix")
+            row_lines.append(line)
+
+    def read_prefix(filename: str, byte_count: int) -> bytes:
+        with (path / filename).open("rb") as stream:
+            payload = stream.read(byte_count)
+        if len(payload) != byte_count:
+            raise _error(f"{filename} is shorter than the selected seed prefix")
+        return payload
+
+    payloads = {
+        "rows": b"".join(row_lines),
+        "legal_mask": read_prefix(LEGAL_MASK_FILENAME, row_count * _MASK_ROW_BYTES),
+        "next_legal_mask": read_prefix(
+            NEXT_LEGAL_MASK_FILENAME, row_count * _MASK_ROW_BYTES
+        ),
+    }
+    records = read_validated_rows(payloads, split_resolver=split_for_seed)
+    if len(records) != row_count:
+        raise _error("selected row prefix count differs from the manifest")
+
+    expected_rows = {entry["seed"]: entry["row_count"] for entry in selected_games}
+    per_game_counts = {seed: 0 for seed in seeds}
+    for record in records:
+        if record.seed not in per_game_counts:
+            raise _error("row prefix escaped the requested seed prefix")
+        per_game_counts[record.seed] += 1
+    if per_game_counts != expected_rows:
+        raise _error("selected per-game row counts differ from the manifest")
+
+    return LoadedOfflineQDataset(path=path, manifest=document, rows=records)
+
+
 def load_dataset(path: str | Path) -> LoadedOfflineQDataset:
     """dataset artifactを読み、identity / digest / row整合をfail closedで検証する。"""
     verify_contract_identity()
@@ -916,6 +1020,7 @@ __all__ = [
     "dataset_identity",
     "feature_block",
     "load_dataset",
+    "load_dataset_seed_prefix",
     "PROVENANCE_FIELDS",
     "provenance_document",
     "read_validated_rows",
