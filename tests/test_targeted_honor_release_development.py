@@ -60,11 +60,13 @@ from lisjong_arena.targeted_honor_release_development.lock import (
 from lisjong_arena.targeted_honor_release_development.paired import (
     build_classified_result,
     build_paired_result,
+    classify,
     save_classified_result,
     save_paired_result,
     verify_classified_result,
     verify_paired_result,
 )
+from lisjong_arena.progression_development.paired import PairedSummary
 from lisjong_arena.targeted_honor_release_development.protocol import (
     CANDIDATE_IDENTITY,
     DIAGNOSTIC_COMPLETE_LABEL,
@@ -518,6 +520,50 @@ class LockTest(unittest.TestCase):
                 loaded = load_lock_document(lock_path)
         self.assertEqual(loaded["phase_b"]["ordered_seeds"], list(FRESH_SEEDS))
         self.assertEqual(loaded["provenance"]["lisjong_revision"], LISJONG_REVISION)
+
+
+class PairedClassificationBoundaryTest(unittest.TestCase):
+    def test_signal_negative_and_zero_boundaries_are_exact(self) -> None:
+        signal = PairedSummary(
+            block_count=100,
+            mean_delta=1.0,
+            sample_standard_deviation=1.0,
+            standard_error=0.1,
+            interval_lower=0.01,
+            interval_upper=1.99,
+        )
+        negative = PairedSummary(
+            block_count=100,
+            mean_delta=-1.0,
+            sample_standard_deviation=1.0,
+            standard_error=0.1,
+            interval_lower=-1.99,
+            interval_upper=-0.01,
+        )
+        lower_zero = PairedSummary(
+            block_count=100,
+            mean_delta=0.5,
+            sample_standard_deviation=1.0,
+            standard_error=0.1,
+            interval_lower=0.0,
+            interval_upper=1.0,
+        )
+        upper_zero = PairedSummary(
+            block_count=100,
+            mean_delta=-0.5,
+            sample_standard_deviation=1.0,
+            standard_error=0.1,
+            interval_lower=-1.0,
+            interval_upper=0.0,
+        )
+
+        self.assertEqual(classify(signal)["label"], SIGNAL_LABEL)
+        self.assertEqual(
+            classify(negative)["label"],
+            "TARGETED HONOR-RELEASE DEVELOPMENT NEGATIVE",
+        )
+        self.assertEqual(classify(lower_zero)["label"], INCONCLUSIVE_LABEL)
+        self.assertEqual(classify(upper_zero)["label"], INCONCLUSIVE_LABEL)
 
 
 class PairedResultTest(unittest.TestCase):
