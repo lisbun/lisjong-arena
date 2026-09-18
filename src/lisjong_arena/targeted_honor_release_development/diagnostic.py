@@ -1,9 +1,10 @@
 """Issue #263 Phase-A parent-trajectory diagnostic.
 
-The exact #252 parent Policy drives every game.  On focal choice-discard
-positions only, the exact #174 candidate is executed once through lisjong's
-normal traced execution boundary.  The candidate proposal never feeds back into
-the replayed trajectory.
+The exact #252 parent Policy drives every game.  The exact #174 candidate is
+shadow-executed exactly once for every focal decision through lisjong's normal
+traced execution boundary so full candidate runtime is measured.  Detailed
+TargetedHonorReleaseAnalysis records are retained for focal choice-discard
+decisions.  The candidate proposal never feeds back into the replayed trajectory.
 """
 
 from __future__ import annotations
