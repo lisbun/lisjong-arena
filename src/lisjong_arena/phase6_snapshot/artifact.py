@@ -1,10 +1,10 @@
 """Strict external state_dict artifact persistence for Phase 6."""
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
+
+from lisjong_arena._artifact_io import sha256_bytes, staged_artifact_directory
 
 from .feature import FEATURE_SEMANTICS_ID
 from .model import create_model, parameter_count
@@ -52,10 +52,6 @@ class Phase6ArtifactError(ValueError):
 class LoadedArtifact:
     manifest: dict[str, object]
     model: object
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _digest(value: object, field: str) -> str:
@@ -140,7 +136,7 @@ def artifact_logical_identity(manifest: dict[str, object]) -> str:
             "weights_sha256",
         )
     }
-    return _sha256(_canonical_json(logical))
+    return sha256_bytes(_canonical_json(logical))
 
 
 def save_model_artifact(
@@ -160,16 +156,13 @@ def save_model_artifact(
         "weights_sha256",
     }:
         raise Phase6ArtifactError("pre-save manifest fields are not exact")
-    with TemporaryDirectory(
-        prefix=f".{destination.name}-staging-", dir=destination.parent
-    ) as staging_name:
-        staging = Path(staging_name)
+    with staged_artifact_directory(destination) as staging:
         weights_path = staging / WEIGHTS_FILENAME
         torch.save(model.state_dict(), weights_path)
         weights = weights_path.read_bytes()
         manifest = dict(manifest_without_weights)
         manifest["weights_bytes"] = len(weights)
-        manifest["weights_sha256"] = _sha256(weights)
+        manifest["weights_sha256"] = sha256_bytes(weights)
         validate_manifest(manifest)
         (staging / MANIFEST_FILENAME).write_bytes(_canonical_json(manifest))
 
@@ -204,7 +197,7 @@ def load_model_artifact(destination: str | Path) -> LoadedArtifact:
     weights = (destination / WEIGHTS_FILENAME).read_bytes()
     if len(weights) != manifest["weights_bytes"]:
         raise Phase6ArtifactError("weights byte count differs")
-    if _sha256(weights) != manifest["weights_sha256"]:
+    if sha256_bytes(weights) != manifest["weights_sha256"]:
         raise Phase6ArtifactError("weights SHA-256 differs")
     state_dict = torch.load(
         destination / WEIGHTS_FILENAME,
