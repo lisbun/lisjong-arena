@@ -334,6 +334,7 @@ def diagnostic_aggregate_to_document(value: DiagnosticAggregate) -> dict[str, ob
         "analyzed_decision_runtime": _numeric_to_dict(value.analyzed_decision_runtime),
         "branch_counts": _pairs_to_json(value.branch_counts),
         "branch_rates": _pair_rates(value.branch_counts, denominator),
+        "candidate_game_runtime": _numeric_to_dict(value.candidate_game_runtime),
         "candidate_runtime_per_game_seconds": value.candidate_runtime_per_game_seconds,
         "candidate_runtime_total_seconds": value.candidate_runtime_total_seconds,
         "choice_discard_decision_count": value.choice_discard_decision_count,
