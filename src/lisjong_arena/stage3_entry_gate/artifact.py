@@ -358,7 +358,6 @@ def save_model_artifact(
             for name in state_dict
         ):
             raise Stage3ArtifactError("staged state_dict readback differs")
-        Path(staging).rename(destination)
     return load_model_artifact(destination)
 
 
