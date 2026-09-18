@@ -7,10 +7,9 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from lisjong_arena._artifact_io import sha256_bytes
 from typing import Any
 
+from lisjong_arena._artifact_io import sha256_bytes
 from lisjong_engine.public_state import PublicMeldType
 from lisjong_engine.round_evidence import (
     KanConfirmedEvidence,
