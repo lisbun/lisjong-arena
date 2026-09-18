@@ -62,7 +62,7 @@ from lisjong_arena.targeted_honor_release_development.paired import (
     build_classified_result,
     build_paired_result,
     classify,
-    parse_paired_result,
+    load_paired_result,
     save_classified_result,
     save_paired_result,
     verify_classified_result,
@@ -645,9 +645,11 @@ class PairedResultTest(unittest.TestCase):
                 worker_count=8,
             )
             document["protocol"] = []
+            malformed_path = directory / "malformed-paired.json"
+            save_paired_result(document, malformed_path)
 
-        with self.assertRaises(TargetedHonorReleasePairedError):
-            parse_paired_result(document)
+            with self.assertRaises(TargetedHonorReleasePairedError):
+                load_paired_result(malformed_path)
 
     def test_equal_arms_are_inconclusive(self) -> None:
         from lisjong_arena.progression_development.paired import load_arm_artifact
