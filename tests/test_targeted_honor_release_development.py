@@ -72,6 +72,7 @@ from lisjong_arena.targeted_honor_release_development.protocol import (
     CANDIDATE_IDENTITY,
     DIAGNOSTIC_COMPLETE_LABEL,
     INCONCLUSIVE_LABEL,
+    INFEASIBLE_LABEL,
     LISJONG_REVISION,
     OPPORTUNITY_NOT_OBSERVED_LABEL,
     PARENT_IDENTITY,
@@ -432,6 +433,33 @@ class DiagnosticGateTest(unittest.TestCase):
         )
         self.assertFalse(gate.passed)
         self.assertEqual(gate.label, OPPORTUNITY_NOT_OBSERVED_LABEL)
+
+    def test_incomplete_execution_takes_priority_over_zero_opportunity(self) -> None:
+        games = tuple(
+            GameDiagnostics(
+                seed=seed,
+                rotation=rotation,
+                candidate_seat=Seat(rotation),
+                focal_decision_count=0,
+                discard_decision_count=0,
+                choice_discard_decision_count=0,
+                forced_discard_decision_count=0,
+                game_wall_clock_seconds=0.01,
+                candidate_runtime_total_seconds=0.0,
+                records=(),
+            )
+            for seed in PHASE_A_SEEDS
+            for rotation in range(4)
+        )
+        aggregate = aggregate_diagnostics(games, replay_wall_clock_seconds=1.0)
+        gate = classify_gate(
+            trajectory_identity_passed=True,
+            game_count=PHASE_A_GAME_COUNT - 1,
+            execution_failure_count=1,
+            aggregate=aggregate,
+        )
+        self.assertFalse(gate.passed)
+        self.assertEqual(gate.label, INFEASIBLE_LABEL)
 
 
 class TrajectoryIdentityTest(unittest.TestCase):
