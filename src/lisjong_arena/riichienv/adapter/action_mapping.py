@@ -2,8 +2,8 @@
 
 lisbun/lisjong `docs/internal-action-model.md`、`docs/action-identity.md`が
 定めるsemantic identity、semantic aggregation、deterministic representative、
-decision-local mapping、revalidation/fail closedの原則を、RiichiEnv 0.4.8
-向けに実装する。
+decision-local mapping、revalidation/fail closedの原則を、RiichiEnv 0.4.8 / 0.4.10
+の既知contractに対して実装する。
 
 対象は初期4人麻雀用11 `InternalAction` variantすべてである。`Action.to_mjai()`
 だけを変換の正本にせず、lisbun/lisjong#27で確認したRiichiEnv `Action`公開属性
@@ -23,6 +23,7 @@ decision-local mappingの生成時に受け取った`Observation.legal_actions()
 """
 
 from dataclasses import dataclass
+from importlib.metadata import version as distribution_version
 
 from lisjong.policy_contract.action import (
     AnkanAction,
@@ -111,29 +112,7 @@ class StaleActionMappingError(ActionAdapterError):
     """
 
 
-def _resolve_call_target(
-    observation: Observation,
-    actor: Seat,
-    physical_tile_id: int,
-    *,
-    allow_kakan: bool = False,
-) -> Seat:
-    """Chi/Pon/Daiminkan/Ronの`target`を、同decisionのObservationから解決する。
-
-    `last_discard`はphysical tile idであり、seatではない。通常discardへの
-    応答はその牌を直近に捨てた相手を、Ronのkakan chankan応答は同じ牌を含む
-    現在のKAKAN meldの所有者を探す。両経路の合計がちょうど1件でなければ
-    推測せずfail closedする。
-    """
-    if type(physical_tile_id) is not int or not 0 <= physical_tile_id <= 135:
-        raise ContextResolutionError("called/winning tile must be a physical tile id")
-    last_discard = getattr(observation, "last_discard", None)
-    if last_discard is None:
-        raise ContextResolutionError(
-            "observation.last_discard is None; cannot resolve call target"
-        )
-    if type(last_discard) is not int or last_discard != physical_tile_id:
-        raise ContextResolutionError("last_discard does not match called/winning tile")
+def _observation_call_rows(observation: Observation) -> tuple[list, list]:
     discards_by_seat = getattr(observation, "discards", None)
     melds_by_seat = getattr(observation, "melds", None)
     if (
@@ -145,15 +124,74 @@ def _resolve_call_target(
         raise ContextResolutionError(
             "observation must contain four discard and meld rows"
         )
-
-    matches: list[Seat] = []
-    for seat in Seat:
-        discards = discards_by_seat[seat]
-        melds = melds_by_seat[seat]
+    for discards, melds in zip(discards_by_seat, melds_by_seat, strict=True):
         if not isinstance(discards, list) or not isinstance(melds, list):
             raise ContextResolutionError("discard and meld rows must be lists")
+    return discards_by_seat, melds_by_seat
+
+
+def _resolve_call_target_0_4_8(
+    observation: Observation,
+    actor: Seat,
+    physical_tile_id: int,
+    *,
+    allow_kakan: bool,
+) -> Seat:
+    """RiichiEnv 0.4.8 の seat-oriented last_discard contract を解決する。"""
+    target_index = getattr(observation, "last_discard", None)
+    if target_index is None:
+        raise ContextResolutionError(
+            "observation.last_discard is None; cannot resolve call target"
+        )
+    if type(target_index) is not int or not 0 <= target_index <= 3:
+        raise ContextResolutionError(
+            "RiichiEnv 0.4.8 last_discard must be a player index"
+        )
+    target = seat_from_player_index(target_index)
+    if target == actor:
+        raise ContextResolutionError("last_discard seat must differ from actor")
+
+    discards_by_seat, melds_by_seat = _observation_call_rows(observation)
+    target_discards = discards_by_seat[target]
+    if target_discards and target_discards[-1] == physical_tile_id:
+        return target
+
+    if allow_kakan:
+        for meld in melds_by_seat[target]:
+            if not isinstance(meld, Meld):
+                raise ContextResolutionError("opponent meld must be a RiichiEnv Meld")
+            if meld.meld_type == MeldType.Kakan and physical_tile_id in meld.tiles:
+                return target
+
+    raise ContextResolutionError(
+        "called/winning tile matches neither the 0.4.8 target's last discard "
+        "nor an active kakan meld"
+    )
+
+
+def _resolve_call_target_0_4_10(
+    observation: Observation,
+    actor: Seat,
+    physical_tile_id: int,
+    *,
+    allow_kakan: bool,
+) -> Seat:
+    """RiichiEnv 0.4.10 の physical-tile last_discard contract を解決する。"""
+    last_discard = getattr(observation, "last_discard", None)
+    if last_discard is None:
+        raise ContextResolutionError(
+            "observation.last_discard is None; cannot resolve call target"
+        )
+    if type(last_discard) is not int or last_discard != physical_tile_id:
+        raise ContextResolutionError("last_discard does not match called/winning tile")
+
+    discards_by_seat, melds_by_seat = _observation_call_rows(observation)
+    matches: list[Seat] = []
+    for seat in Seat:
         if seat == actor:
             continue
+        discards = discards_by_seat[seat]
+        melds = melds_by_seat[seat]
         if discards and discards[-1] == physical_tile_id:
             matches.append(seat)
         if allow_kakan:
@@ -171,6 +209,46 @@ def _resolve_call_target(
             f"found {len(matches)}"
         )
     return matches[0]
+
+
+_RIICHIENV_VERSION = distribution_version("riichienv")
+
+
+def _resolve_call_target(
+    observation: Observation,
+    actor: Seat,
+    physical_tile_id: int,
+    *,
+    allow_kakan: bool = False,
+) -> Seat:
+    """Chi/Pon/Daiminkan/Ronのtargetをinstalled RiichiEnv contractで解決する。
+
+    Published RiichiEnv 0.4.8は`Observation.last_discard`をdiscarding player
+    indexとして公開し、0.4.10はphysical tile idとして公開する。値域から推測
+    せず、installed distribution versionで既知contractを選ぶ。未知versionは
+    fail closedする。
+    """
+    if type(physical_tile_id) is not int or not 0 <= physical_tile_id <= 135:
+        raise ContextResolutionError("called/winning tile must be a physical tile id")
+
+    if _RIICHIENV_VERSION == "0.4.8":
+        return _resolve_call_target_0_4_8(
+            observation,
+            actor,
+            physical_tile_id,
+            allow_kakan=allow_kakan,
+        )
+    if _RIICHIENV_VERSION == "0.4.10":
+        return _resolve_call_target_0_4_10(
+            observation,
+            actor,
+            physical_tile_id,
+            allow_kakan=allow_kakan,
+        )
+    raise ContextResolutionError(
+        "unsupported RiichiEnv last_discard contract for installed version "
+        f"{_RIICHIENV_VERSION!r}"
+    )
 
 
 def _translate_discard(
