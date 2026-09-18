@@ -197,9 +197,7 @@ class _DrivingRecorder:
             choice_discard_decision_count=self.choice_discard_decision_count,
             forced_discard_decision_count=self.forced_discard_decision_count,
             game_wall_clock_seconds=float(game_wall_clock_seconds),
-            candidate_runtime_total_seconds=float(
-                self.candidate_runtime_total_seconds
-            ),
+            candidate_runtime_total_seconds=float(self.candidate_runtime_total_seconds),
             records=tuple(self.records),
         )
 
@@ -277,8 +275,7 @@ def _run_game_job(job: _CandidateJob) -> _CandidateJobOutcome:
             rotation=job.rotation,
             result=None,
             error_text=(
-                "targeted honor-release H-arm game failed:\n"
-                f"{traceback.format_exc()}"
+                f"targeted honor-release H-arm game failed:\n{traceback.format_exc()}"
             ),
             diagnostic=None,
         )
