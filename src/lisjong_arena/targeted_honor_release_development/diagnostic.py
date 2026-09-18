@@ -245,6 +245,8 @@ class DiagnosticAggregate:
     parent_retained_value_counts: tuple[tuple[str, int], ...]
     target_candidate_counts: tuple[tuple[str, int], ...]
     honor_target_candidate_counts: tuple[tuple[str, int], ...]
+    target_candidate_available_count: int
+    honor_peer_available_count: int
     hva_decisive_stage_counts: tuple[tuple[str, int], ...]
     r5_activation_count: int
     r5_best_count_distribution: tuple[tuple[str, int], ...]
@@ -563,6 +565,12 @@ def aggregate_diagnostics(
         target_candidate_counts=_count_int(records, "target_candidate_count"),
         honor_target_candidate_counts=_count_int(
             records, "honor_target_candidate_count"
+        ),
+        target_candidate_available_count=sum(
+            record.target_candidate_count > 0 for record in records
+        ),
+        honor_peer_available_count=sum(
+            record.honor_target_candidate_count > 0 for record in records
         ),
         hva_decisive_stage_counts=tuple(
             sorted(
