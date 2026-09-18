@@ -33,6 +33,7 @@ from lisjong.policy_contract.round_state import RoundState
 from lisjong.policy_contract.tile import Tile, TileCategory, TileType
 from lisjong.policy_contract.wind import Wind
 
+import lisjong_arena.targeted_honor_release_development.candidate_arm as candidate_arm_module
 import lisjong_arena.targeted_honor_release_development.diagnostic as diagnostic
 import lisjong_arena.targeted_honor_release_development.lock as lock_module
 from lisjong_arena.targeted_honor_release_development.artifact import (
@@ -196,13 +197,13 @@ def _decision_record(
     )
 
 
-def _game_diagnostics() -> tuple[GameDiagnostics, ...]:
+def _trace_games(seeds: tuple[int, ...]) -> tuple[GameDiagnostics, ...]:
     games = []
-    for seed in PHASE_A_SEEDS:
+    for seed in seeds:
         for rotation in range(4):
             records = (
                 (_decision_record(seed=seed, rotation=rotation),)
-                if seed == PHASE_A_SEEDS[0] and rotation == 0
+                if seed == seeds[0] and rotation == 0
                 else ()
             )
             games.append(
@@ -222,6 +223,10 @@ def _game_diagnostics() -> tuple[GameDiagnostics, ...]:
                 )
             )
     return tuple(games)
+
+
+def _game_diagnostics() -> tuple[GameDiagnostics, ...]:
+    return _trace_games(PHASE_A_SEEDS)
 
 
 def _phase_a_result() -> PhaseADiagnosticResult:
@@ -354,6 +359,42 @@ class ParentTrajectoryObservationTest(unittest.TestCase):
         self.assertEqual(recorder.forced_discard_decision_count, 1)
         self.assertEqual(recorder.records, [])
         self.assertGreaterEqual(recorder.candidate_runtime_total_seconds, 0.0)
+
+
+class DrivingCandidateObservationTest(unittest.TestCase):
+    def test_h_selected_action_drives_and_typed_trace_is_recorded_once(self) -> None:
+        recorder = candidate_arm_module._DrivingRecorder(
+            seed=751, rotation=0, candidate_seat=Seat.SEAT_0
+        )
+        decision = DecisionContext(
+            input=_policy_input(),
+            legal_actions=(A_M3, A_EAST),
+        )
+
+        class Candidate:
+            pass
+
+        def traced(candidate, observed_decision, sink):
+            del candidate
+            sink.on_decision(
+                DecisionTrace(
+                    legal_actions=observed_decision.legal_actions,
+                    selected_action=A_EAST,
+                    analysis=_active_analysis(),
+                )
+            )
+            return A_EAST
+
+        with mock.patch.object(
+            candidate_arm_module, "execute_policy_with_trace", side_effect=traced
+        ) as candidate_call:
+            selected = recorder.decide(Candidate(), decision)
+
+        self.assertIs(selected, A_EAST)
+        candidate_call.assert_called_once()
+        (record,) = recorder.records
+        self.assertTrue(record.action_changed)
+        self.assertTrue(record.r5_activated)
 
 
 class DiagnosticGateTest(unittest.TestCase):
@@ -505,11 +546,17 @@ class PairedResultTest(unittest.TestCase):
             c = load_arm_artifact(c_path)
             paired_path = directory / "paired.json"
             classified_path = directory / "classified.json"
+            h_trace_games = _trace_games(FRESH_SEEDS)
+            h_trace_aggregate = aggregate_diagnostics(
+                h_trace_games, replay_wall_clock_seconds=40.0
+            )
             document = build_paired_result(
                 candidate_artifact=h,
                 candidate_artifact_path=h_path,
                 parent_artifact=c,
                 parent_artifact_path=c_path,
+                candidate_game_diagnostics=h_trace_games,
+                candidate_trace_aggregate=h_trace_aggregate,
                 seeds=FRESH_SEEDS,
                 worker_count=8,
             )
@@ -525,6 +572,9 @@ class PairedResultTest(unittest.TestCase):
             save_classified_result(classified, classified_path)
             verify_classified_result(classified_path, paired_result_path=paired_path)
         self.assertEqual(verified["primary_summary"]["block_count"], 100)
+        self.assertEqual(
+            verified["candidate_trace"]["summary"]["action_change_count"], 1
+        )
         self.assertEqual(verified["classification"]["label"], SIGNAL_LABEL)
 
     def test_equal_arms_are_inconclusive(self) -> None:
@@ -534,11 +584,17 @@ class PairedResultTest(unittest.TestCase):
             directory = Path(directory_text)
             h_path = self._save_arm(directory, candidate=True, score=25000)
             c_path = self._save_arm(directory, candidate=False, score=25000)
+            h_trace_games = _trace_games(FRESH_SEEDS)
+            h_trace_aggregate = aggregate_diagnostics(
+                h_trace_games, replay_wall_clock_seconds=40.0
+            )
             document = build_paired_result(
                 candidate_artifact=load_arm_artifact(h_path),
                 candidate_artifact_path=h_path,
                 parent_artifact=load_arm_artifact(c_path),
                 parent_artifact_path=c_path,
+                candidate_game_diagnostics=h_trace_games,
+                candidate_trace_aggregate=h_trace_aggregate,
                 seeds=FRESH_SEEDS,
                 worker_count=8,
             )
