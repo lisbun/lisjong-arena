@@ -11,11 +11,11 @@ artifactはstate_dictだけを保存し、factory / callable / 任意codeを保�
 weightsとgenerated resultはGit repositoryへcommitしない。
 """
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
+
+from lisjong_arena._artifact_io import sha256_bytes, staged_artifact_directory
 
 from lisjong_arena.phase4_raw_corpus.codec import canonical_json_bytes
 from lisjong_arena.phase6_snapshot.feature import FEATURE_SEMANTICS_ID
@@ -67,10 +67,6 @@ class LoadedMixModel:
     manifest: dict[str, object]
     state_dict: object
     weights_bytes: int
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _digest(value: object, name: str) -> str:
@@ -333,16 +329,13 @@ def save_model_artifact(
     if destination.exists():
         raise FileExistsError(f"destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(
-        prefix=f".{destination.name}-staging-", dir=destination.parent
-    ) as staging_name:
-        staging = Path(staging_name)
+    with staged_artifact_directory(destination) as staging:
         weights_path = staging / WEIGHTS_FILENAME
         torch.save(model.state_dict(), weights_path)
         weights = weights_path.read_bytes()
         manifest = dict(manifest_without_weight_fields)
         manifest["weights_bytes"] = len(weights)
-        manifest["weights_sha256"] = _sha256(weights)
+        manifest["weights_sha256"] = sha256_bytes(weights)
         validate_model_manifest(manifest)
         (staging / MANIFEST_FILENAME).write_bytes(canonical_json_bytes(manifest))
         state_dict = torch.load(weights_path, weights_only=True, map_location="cpu")
@@ -371,7 +364,7 @@ def load_model_artifact(destination: str | Path) -> LoadedMixModel:
     weights = (destination / WEIGHTS_FILENAME).read_bytes()
     if len(weights) != manifest["weights_bytes"]:
         raise MixArtifactError("weights byte count differs")
-    if _sha256(weights) != _digest(manifest["weights_sha256"], "weights_sha256"):
+    if sha256_bytes(weights) != _digest(manifest["weights_sha256"], "weights_sha256"):
         raise MixArtifactError("weights digest differs")
     state_dict = torch.load(
         destination / WEIGHTS_FILENAME, weights_only=True, map_location="cpu"
@@ -536,7 +529,7 @@ def _validate_arm_plan_binding(arm_id: str, entry: dict) -> None:
     plan = entry.get("population_plan")
     if type(plan) is not dict:
         raise MixArtifactError(f"arm {arm_id} entry lacks its population plan")
-    expected_identity = hashlib.sha256(canonical_json_bytes(plan)).hexdigest()
+    expected_identity = sha256_bytes(canonical_json_bytes(plan))
     if entry["population_identity"] != expected_identity:
         raise MixArtifactError(
             f"arm {arm_id} population identity is not the hash of its recorded "
@@ -655,7 +648,7 @@ def save_result(destination: str | Path, value: dict[str, object]) -> Path:
     validate_result_value(value)
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = dict(value)
-    payload["result_identity"] = _sha256(canonical_json_bytes(payload))
+    payload["result_identity"] = sha256_bytes(canonical_json_bytes(payload))
     destination.write_bytes(canonical_json_bytes(payload))
     return destination
 
@@ -666,7 +659,7 @@ def load_result(destination: str | Path) -> dict[str, object]:
     if canonical_json_bytes(value) != data:
         raise MixArtifactError("result bytes are not canonical JSON")
     identity = value.pop("result_identity", None)
-    expected = _sha256(canonical_json_bytes(value))
+    expected = sha256_bytes(canonical_json_bytes(value))
     value["result_identity"] = identity
     if identity != expected:
         raise MixArtifactError("result logical identity differs")
