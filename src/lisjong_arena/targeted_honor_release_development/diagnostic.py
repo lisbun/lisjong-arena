@@ -569,7 +569,7 @@ def aggregate_diagnostics(
             records, "honor_target_candidate_count"
         ),
         target_candidate_available_count=sum(
-            record.target_candidate_count > 0 for record in records
+            record.target_candidate_count > 1 for record in records
         ),
         honor_peer_available_count=sum(
             record.honor_target_candidate_count > 0 for record in records
