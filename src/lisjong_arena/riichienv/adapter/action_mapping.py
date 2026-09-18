@@ -250,6 +250,7 @@ def _resolve_call_target(
         f"{_RIICHIENV_VERSION!r}"
     )
 
+
 def _translate_discard(
     action: RiichiEnvAction, observation: Observation, actor: Seat
 ) -> DiscardAction:
