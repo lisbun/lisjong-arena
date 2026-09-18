@@ -31,6 +31,12 @@ from lisjong_arena.single_round_artifact import (
     execution_provenance_to_dict,
 )
 
+from .artifact import (
+    diagnostic_aggregate_to_document,
+    game_diagnostics_to_document,
+    parse_game_diagnostics,
+)
+from .diagnostic import DiagnosticAggregate, GameDiagnostics, aggregate_diagnostics
 from .protocol import (
     CANDIDATE_IDENTITY,
     CLASSIFICATION_RULE_ID,
@@ -146,12 +152,97 @@ def _arm_document(
     }
 
 
+def _validate_candidate_trace_alignment(
+    games: tuple[GameDiagnostics, ...],
+    candidate_artifact: SingleRoundStrengthArtifact,
+) -> None:
+    if len(games) != PHASE_B_GAMES_PER_ARM:
+        raise TargetedHonorReleasePairedError(
+            "H trace diagnostics must contain exactly 400 games"
+        )
+    if len(candidate_artifact.game_results) != len(games):
+        raise TargetedHonorReleasePairedError(
+            "H trace diagnostics do not align with the H strength artifact"
+        )
+    for diagnostic, game in zip(
+        games, candidate_artifact.game_results, strict=True
+    ):
+        if (
+            diagnostic.seed != game.seed
+            or diagnostic.rotation != game.rotation
+            or diagnostic.candidate_seat != game.candidate_seat
+        ):
+            raise TargetedHonorReleasePairedError(
+                "H trace diagnostics game identity differs from the H artifact"
+            )
+
+
+def _candidate_trace_document(
+    games: tuple[GameDiagnostics, ...],
+    aggregate: DiagnosticAggregate,
+    candidate_artifact: SingleRoundStrengthArtifact,
+) -> dict[str, object]:
+    frozen = tuple(games)
+    _validate_candidate_trace_alignment(frozen, candidate_artifact)
+    rederived = aggregate_diagnostics(
+        frozen,
+        replay_wall_clock_seconds=aggregate.replay_wall_clock_seconds,
+    )
+    if rederived != aggregate:
+        raise TargetedHonorReleasePairedError(
+            "H trace aggregate is not re-derived from its game diagnostics"
+        )
+    return {
+        "games": [game_diagnostics_to_document(game) for game in frozen],
+        "summary": diagnostic_aggregate_to_document(aggregate),
+    }
+
+
+def _parse_candidate_trace(
+    value: object,
+    *,
+    candidate_artifact: SingleRoundStrengthArtifact | None = None,
+) -> tuple[tuple[GameDiagnostics, ...], DiagnosticAggregate]:
+    raw = expect_object(value, {"games", "summary"}, "candidate_trace")
+    games = tuple(
+        parse_game_diagnostics(item, f"candidate_trace.games[{index}]")
+        for index, item in enumerate(
+            expect_list(raw["games"], "candidate_trace.games")
+        )
+    )
+    if len(games) != PHASE_B_GAMES_PER_ARM:
+        raise TargetedHonorReleasePairedError(
+            "candidate_trace must contain exactly 400 game diagnostics"
+        )
+    summary = raw["summary"]
+    if type(summary) is not dict:
+        raise TargetedHonorReleasePairedError(
+            "candidate_trace.summary must be an object"
+        )
+    replay_wall_clock = expect_float(
+        summary.get("replay_wall_clock_seconds"),
+        "candidate_trace.summary.replay_wall_clock_seconds",
+    )
+    aggregate = aggregate_diagnostics(
+        games, replay_wall_clock_seconds=replay_wall_clock
+    )
+    if summary != diagnostic_aggregate_to_document(aggregate):
+        raise TargetedHonorReleasePairedError(
+            "candidate_trace summary does not match re-derived diagnostics"
+        )
+    if candidate_artifact is not None:
+        _validate_candidate_trace_alignment(games, candidate_artifact)
+    return games, aggregate
+
+
 def build_paired_result(
     *,
     candidate_artifact: SingleRoundStrengthArtifact,
     candidate_artifact_path: str | Path,
     parent_artifact: SingleRoundStrengthArtifact,
     parent_artifact_path: str | Path,
+    candidate_game_diagnostics: tuple[GameDiagnostics, ...],
+    candidate_trace_aggregate: DiagnosticAggregate,
     seeds: tuple[int, ...],
     worker_count: int,
 ) -> dict[str, object]:
@@ -166,6 +257,11 @@ def build_paired_result(
             "parent": _arm_document(parent_artifact, parent_artifact_path),
         },
         "candidate_binding": require_exact_candidate_semantics().to_document(),
+        "candidate_trace": _candidate_trace_document(
+            candidate_game_diagnostics,
+            candidate_trace_aggregate,
+            candidate_artifact,
+        ),
         "classification": classify(summary),
         "comparator_binding": require_exact_comparator(),
         "paired_deltas": [item.to_document() for item in deltas],
@@ -229,6 +325,7 @@ def parse_paired_result(value: object) -> dict[str, object]:
     fields = {
         "arms",
         "candidate_binding",
+        "candidate_trace",
         "classification",
         "comparator_binding",
         "paired_deltas",
@@ -266,6 +363,7 @@ def parse_paired_result(value: object) -> dict[str, object]:
         raise TargetedHonorReleasePairedError("classification is not re-derived")
     if raw["candidate_binding"] != require_exact_candidate_semantics().to_document():
         raise TargetedHonorReleasePairedError("candidate binding drifted")
+    _parse_candidate_trace(raw["candidate_trace"])
     if raw["comparator_binding"] != require_exact_comparator():
         raise TargetedHonorReleasePairedError("comparator binding drifted")
     if expect_int(raw["worker_count"], "paired_result.worker_count") <= 0:
@@ -326,6 +424,9 @@ def verify_paired_result(
         raise TargetedHonorReleasePairedError(
             "classification differs from raw artifacts"
         )
+    _parse_candidate_trace(
+        document["candidate_trace"], candidate_artifact=candidate
+    )
     return document
 
 
