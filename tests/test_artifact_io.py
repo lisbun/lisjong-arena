@@ -9,10 +9,7 @@ from lisjong_arena._artifact_io import sha256_bytes, staged_artifact_directory
 
 class Sha256BytesTest(unittest.TestCase):
     def test_known_digest_is_deterministic_lowercase_hex(self) -> None:
-        expected = (
-            "ba7816bf8f01cfea414140de5dae2223"
-            "b00361a396177a9cb410ff61f20015ad"
-        )
+        expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         self.assertEqual(sha256_bytes(b"abc"), expected)
         self.assertEqual(sha256_bytes(b"abc"), expected)
 
@@ -30,7 +27,10 @@ class StagedArtifactDirectoryTest(unittest.TestCase):
 
             self.assertEqual((destination / "payload.bin").read_bytes(), b"payload")
             self.assertFalse(
-                any(path.name.startswith(".artifact-staging-") for path in root.iterdir())
+                any(
+                    path.name.startswith(".artifact-staging-")
+                    for path in root.iterdir()
+                )
             )
 
     def test_failure_cleans_staging_without_partial_publish(self) -> None:
@@ -45,7 +45,10 @@ class StagedArtifactDirectoryTest(unittest.TestCase):
 
             self.assertFalse(destination.exists())
             self.assertFalse(
-                any(path.name.startswith(".artifact-staging-") for path in root.iterdir())
+                any(
+                    path.name.startswith(".artifact-staging-")
+                    for path in root.iterdir()
+                )
             )
 
 
