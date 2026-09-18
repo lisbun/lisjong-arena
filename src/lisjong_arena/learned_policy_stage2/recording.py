@@ -140,11 +140,15 @@ class RowEncodeCost:
     feature_encode_seconds: float
 
 
-class _RoundOrdinals:
+class RoundOrdinals:
     """player-safeなround identityを、出現順の0-based ordinalへ写す。
 
     `(round_wind, hand_number, honba)`は1 hanchan内で一意に進むため、既出の
     組へ戻った場合はfail closedする（生成順の破損を黙って通さない）。
+
+    同じcontiguous grouping ruleは`lisbun/lisjong-arena #140`のmacro-transition
+    rowが持つ`round_ordinal`と、`#258`がretained rowに対してそれをre-execution
+    から再導出するalignment checkでも共有する。
     """
 
     __slots__ = ("_ordinals", "_current")
@@ -181,21 +185,27 @@ class RecordedDecision:
     selected_action: object
 
 
-def iter_recorded_decisions(
-    recording: GameRecording,
+def iter_inspection_decisions(
+    inspection: LocalGameInspection,
+    *,
+    expected_decision_count: int,
 ) -> Iterator[RecordedDecision]:
-    """1 hanchanのteacher decisionをcanonical順で返す。
+    """1 hanchanのinspectionからteacher decisionをcanonical順で返す。
 
     canonical順は`step_ordinal`昇順、step内は`actor_seat`昇順で固定する。
     `DecisionContext`は記録された`PolicyInput`と、`execute_policy_with_trace()`
     がPolicyへ提示したのと同じ`legal_actions`から再構成する。
     `DecisionTrace.analysis`は読まない。
+
+    Stage 2のlocked seed populationに属さない実行（`lisbun/lisjong-arena #258`
+    のtechnical smokeなど）も同じcanonical順序契約を共有するため、split解決を
+    伴う`GameRecording`からこの走査だけを分離している。
     """
-    if not isinstance(recording, GameRecording):
-        raise TypeError("recording must be a GameRecording")
+    if not isinstance(inspection, LocalGameInspection):
+        raise TypeError("inspection must be a LocalGameInspection")
 
     decision_ordinal = 0
-    for step in recording.inspection.step_observations:
+    for step in inspection.step_observations:
         previous_seat = -1
         for observation in step.seat_decisions:
             actor_seat = int(observation.seat)
@@ -217,10 +227,22 @@ def iter_recorded_decisions(
             )
             decision_ordinal += 1
 
-    if decision_ordinal != recording.result.decisions:
+    if decision_ordinal != expected_decision_count:
         raise Stage2RecordingError(
             "recorded decision count does not match the executed decision count"
         )
+
+
+def iter_recorded_decisions(
+    recording: GameRecording,
+) -> Iterator[RecordedDecision]:
+    """1 hanchanのteacher decisionをcanonical順で返す。"""
+    if not isinstance(recording, GameRecording):
+        raise TypeError("recording must be a GameRecording")
+    return iter_inspection_decisions(
+        recording.inspection,
+        expected_decision_count=recording.result.decisions,
+    )
 
 
 def encode_teacher_action(decision: RecordedDecision) -> int:
@@ -245,7 +267,7 @@ def build_decision_rows(
     feature encodeのみのaccumulated wall-clockを1件だけappendする（rowそのもの
     には測定値を入れない）。
     """
-    rounds = _RoundOrdinals()
+    rounds = RoundOrdinals()
     encode_seconds = 0.0
     decision_count = 0
 
@@ -293,7 +315,7 @@ def build_decision_rows(
 
 def round_count(recording: GameRecording) -> int:
     """1 hanchanのplayer-safe round identityの数を数える。"""
-    rounds = _RoundOrdinals()
+    rounds = RoundOrdinals()
     for decision in iter_recorded_decisions(recording):
         round_state = decision.context.input.round
         rounds.resolve(
@@ -309,10 +331,12 @@ def round_count(recording: GameRecording) -> int:
 __all__ = [
     "GameRecording",
     "RecordedDecision",
+    "RoundOrdinals",
     "RowEncodeCost",
     "build_decision_rows",
     "build_teacher_population",
     "encode_teacher_action",
+    "iter_inspection_decisions",
     "iter_recorded_decisions",
     "record_teacher_game",
     "round_count",
