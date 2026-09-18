@@ -57,6 +57,24 @@ from .protocol import (
 PAIRED_RESULT_VERSION = 1
 CLASSIFIED_RESULT_VERSION = 1
 
+_PROTOCOL_FIELDS = {
+    "classification_rule_id",
+    "execution_branch",
+    "feasibility_wall_clock_limit_hours",
+    "formal_test",
+    "game_mode",
+    "max_steps",
+    "phase_a_game_count",
+    "phase_a_role",
+    "phase_a_seeds",
+    "phase_b_games_per_arm",
+    "phase_b_role",
+    "phase_b_seeds",
+    "phase_b_total_games",
+    "protocol_id",
+    "rotation_count",
+}
+
 
 class TargetedHonorReleasePairedError(ValueError):
     """Issue #263 paired evidence is malformed or inconsistent."""
@@ -350,9 +368,19 @@ def parse_paired_result(value: object) -> dict[str, object]:
     ):
         raise TargetedHonorReleasePairedError("unsupported paired result version")
     protocol = expect_object(
-        raw["protocol"], set(raw["protocol"]), "paired_result.protocol"
+        raw["protocol"], _PROTOCOL_FIELDS, "paired_result.protocol"
     )
-    seeds = require_phase_b_population(tuple(protocol["phase_b_seeds"]))
+    seeds = require_phase_b_population(
+        tuple(
+            expect_int(seed, f"paired_result.protocol.phase_b_seeds[{index}]")
+            for index, seed in enumerate(
+                expect_list(
+                    protocol["phase_b_seeds"],
+                    "paired_result.protocol.phase_b_seeds",
+                )
+            )
+        )
+    )
     if protocol != protocol_document(seeds):
         raise TargetedHonorReleasePairedError("paired result protocol drifted")
     deltas = tuple(
