@@ -482,8 +482,8 @@ def parse_lock_document(value: object) -> dict[str, object]:
 def load_lock_document(path: str | Path) -> dict[str, object]:
     try:
         return parse_lock_document(read_json_document(Path(path)))
-    except ArtifactValidationError:
-        raise
+    except ArtifactValidationError as exc:
+        raise TargetedHonorReleaseLockError(str(exc)) from exc
     except (TypeError, ValueError, KeyError) as exc:
         raise TargetedHonorReleaseLockError(str(exc)) from exc
 
