@@ -23,6 +23,7 @@ from lisjong_engine.round_evidence import (
 )
 from lisjong_engine.rules import RuleSet
 
+from lisjong_arena._artifact_io import sha256_bytes
 from lisjong_arena.phase2_training_anchor.extraction import (
     FIRST_PARTY_SOURCE_CLASS,
     Phase2GameExtraction,
@@ -368,7 +369,7 @@ def _json_bytes(value: object) -> bytes:
 def canonical_sha256(canonical_bytes: bytes) -> str:
     if type(canonical_bytes) is not bytes:
         raise TypeError("canonical_bytes must be bytes")
-    return hashlib.sha256(canonical_bytes).hexdigest()
+    return sha256_bytes(canonical_bytes)
 
 
 def save_phase3_bootstrap_corpus(

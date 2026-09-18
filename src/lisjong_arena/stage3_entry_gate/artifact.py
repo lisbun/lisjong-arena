@@ -10,14 +10,13 @@ artifactはstate_dictだけを保存し、factory / callable / 任意codeを保�
 weightsとgenerated resultはGit repositoryへcommitしない。
 """
 
-import hashlib
 import json
 import platform
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
+from lisjong_arena._artifact_io import sha256_bytes, staged_artifact_directory
 from lisjong_arena.phase4_raw_corpus.codec import canonical_json_bytes
 from lisjong_arena.phase6_snapshot.feature import FEATURE_SEMANTICS_ID
 from lisjong_arena.phase6_snapshot.tensor import FEATURE_DIM
@@ -50,10 +49,6 @@ class LoadedStage3Model:
     manifest: dict[str, object]
     state_dict: object
     weights_bytes: int
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _digest(value: object, name: str) -> str:
@@ -348,16 +343,13 @@ def save_model_artifact(
     if destination.exists():
         raise FileExistsError(f"destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with TemporaryDirectory(
-        prefix=f".{destination.name}-staging-", dir=destination.parent
-    ) as staging_name:
-        staging = Path(staging_name)
+    with staged_artifact_directory(destination) as staging:
         weights_path = staging / WEIGHTS_FILENAME
         torch.save(model.state_dict(), weights_path)
         weights = weights_path.read_bytes()
         manifest = dict(manifest_without_weight_fields)
         manifest["weights_bytes"] = len(weights)
-        manifest["weights_sha256"] = _sha256(weights)
+        manifest["weights_sha256"] = sha256_bytes(weights)
         validate_model_manifest(manifest)
         (staging / MANIFEST_FILENAME).write_bytes(canonical_json_bytes(manifest))
         state_dict = torch.load(weights_path, weights_only=True, map_location="cpu")
@@ -366,7 +358,6 @@ def save_model_artifact(
             for name in state_dict
         ):
             raise Stage3ArtifactError("staged state_dict readback differs")
-        Path(staging).rename(destination)
     return load_model_artifact(destination)
 
 
@@ -386,7 +377,7 @@ def load_model_artifact(destination: str | Path) -> LoadedStage3Model:
     weights = (destination / WEIGHTS_FILENAME).read_bytes()
     if len(weights) != manifest["weights_bytes"]:
         raise Stage3ArtifactError("weights byte count differs")
-    if _sha256(weights) != _digest(manifest["weights_sha256"], "weights_sha256"):
+    if sha256_bytes(weights) != _digest(manifest["weights_sha256"], "weights_sha256"):
         raise Stage3ArtifactError("weights digest differs")
     state_dict = torch.load(
         destination / WEIGHTS_FILENAME, weights_only=True, map_location="cpu"
@@ -503,7 +494,7 @@ def save_result(destination: str | Path, value: dict[str, object]) -> Path:
     validate_result_value(value)
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = dict(value)
-    payload["result_identity"] = _sha256(canonical_json_bytes(payload))
+    payload["result_identity"] = sha256_bytes(canonical_json_bytes(payload))
     destination.write_bytes(canonical_json_bytes(payload))
     return destination
 
@@ -514,7 +505,7 @@ def load_result(destination: str | Path) -> dict[str, object]:
     if canonical_json_bytes(value) != data:
         raise Stage3ArtifactError("result bytes are not canonical JSON")
     identity = value.pop("result_identity", None)
-    expected = _sha256(canonical_json_bytes(value))
+    expected = sha256_bytes(canonical_json_bytes(value))
     value["result_identity"] = identity
     if identity != expected:
         raise Stage3ArtifactError("result logical identity differs")

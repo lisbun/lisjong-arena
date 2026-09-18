@@ -1,19 +1,24 @@
 """artifact contractが共有するJSON serialization / parse / file書き込みのplumbing。
 
 このmoduleはevaluation semanticsもartifact schemaも所有しない。既存AABB
-``lisjong_arena.artifact``とABBB ``lisjong_arena.single_round_artifact``が
-それぞれ独立したschemaを持ったまま、``1 artifact = 1 immutable file``の
-書き込み規則、canonical JSON表現、fail-closedなfield検証だけを共通化する。
+``lisjong_arena.artifact``とABBB ``lisjong_arena.single_round_artifact``を
+含むconsumerがそれぞれ独立したschemaを持ったまま、immutable file write、
+canonical JSON、bytes digest、same-parent directory stagingといった
+responsibility-neutralなplumbingだけを共通化する。
 
-ここで提供するのは低レベルのplumbingだけであり、どのfieldが必要か、どの
-derived valueが正本かといったcontract自体は各artifact moduleが決める。
+ここで提供するのは低レベルのplumbingだけであり、どのfieldが必要か、何を
+digest対象とするか、どのreadbackが成功条件かといったcontract自体は各artifact
+moduleが決める。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from tempfile import TemporaryDirectory
+from typing import Any, Iterator
 
 
 class ArtifactValidationError(ValueError):
@@ -98,6 +103,27 @@ def canonical_json_text(document: dict[str, Any]) -> str:
     )
 
 
+def sha256_bytes(data: bytes) -> str:
+    """bytesのSHA-256をlowercase hexで返す。digest対象の意味はcallerが所有する。"""
+    return hashlib.sha256(data).hexdigest()
+
+
+@contextmanager
+def staged_artifact_directory(destination: Path) -> Iterator[Path]:
+    """same-parent staging directoryを成功時だけdestinationへpublishする。
+
+    callerはdestinationのwrite-once preflightとparent directory作成を所有する。
+    このhelperはartifact schema / required files / readback ruleを知らず、bodyが
+    例外を送出した場合はstagingをTemporaryDirectoryのcleanupへ委ねて公開しない。
+    """
+    with TemporaryDirectory(
+        prefix=f".{destination.name}-staging-", dir=destination.parent
+    ) as staging_name:
+        staging = Path(staging_name)
+        yield staging
+        staging.rename(destination)
+
+
 def write_new_artifact_file(path: Path, text: str) -> None:
     """新しいfileだけへUTF-8 textを書き、既存pathを上書きしない。
 
@@ -176,5 +202,7 @@ __all__ = [
     "expect_str",
     "parse_json_text",
     "read_json_document",
+    "sha256_bytes",
+    "staged_artifact_directory",
     "write_new_artifact_file",
 ]
