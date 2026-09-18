@@ -14,6 +14,7 @@
 import hashlib
 import json
 import unittest
+from unittest import mock
 from array import array
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -794,6 +795,19 @@ class RetainedAugmentationTest(unittest.TestCase):
         self.assertEqual(len(result.cells), 3 * len(self.seeds))
         for cell in result.cells:
             self.assertEqual(cell.row_identity.source_identity, self.dataset.identity)
+
+    def test_qualification_does_not_full_read_retained_payload_files(self):
+        """#258 qualification must not materialize VALIDATION / protected TEST payloads."""
+        with mock.patch.object(
+            Path,
+            "read_bytes",
+            side_effect=AssertionError(
+                "retained qualification must use bounded prefix reads"
+            ),
+        ):
+            result = self._qualify()
+        self.assertEqual(result.outcome, RETAINED_AUGMENTATION_QUALIFIED)
+        self.assertEqual(result.aligned_row_count, len(self.seeds))
 
     def test_a_wrong_decision_ordinal_is_rejected(self):
         def source(seed):
