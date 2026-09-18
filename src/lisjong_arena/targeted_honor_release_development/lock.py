@@ -43,7 +43,6 @@ from lisjong_arena.single_round_artifact import (
 )
 
 from .protocol import (
-    CANDIDATE_IDENTITY,
     CLASSIFICATION_RULE_ID,
     COMPARATOR_IDENTITY,
     EXECUTION_BRANCH,
@@ -56,7 +55,6 @@ from .protocol import (
     PHASE_B_GAMES_PER_ARM,
     PHASE_B_TOTAL_GAMES,
     ROTATION_COUNT,
-    TargetedHonorReleaseProtocolError,
     protocol_document,
     require_exact_candidate_semantics,
     require_exact_comparator,
