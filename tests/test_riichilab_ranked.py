@@ -118,8 +118,9 @@ class RunRankedGameTest(unittest.TestCase):
         captured: dict[str, object] = {}
 
         class _FakeSession:
-            def __init__(self, policy: object) -> None:
+            def __init__(self, policy: object, *, presentation: object = None) -> None:
                 captured["policy"] = policy
+                captured["presentation"] = presentation
 
             def status(self) -> SimpleNamespace:
                 return status
@@ -203,7 +204,7 @@ class RunRankedGameTest(unittest.TestCase):
         captured: dict[str, object] = {}
 
         class _FakeSession:
-            def __init__(self, policy: object) -> None:
+            def __init__(self, policy: object, *, presentation: object = None) -> None:
                 pass
 
             def status(self) -> SimpleNamespace:

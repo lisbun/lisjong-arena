@@ -24,8 +24,17 @@ from collections.abc import Mapping
 
 from lisjong.policy_contract import Policy, Seat
 
-from lisjong_arena.riichilab.adapter import RiichiLabSeatAdapter
+from lisjong_arena.riichilab.adapter import (
+    ProcessedRequestAction,
+    RiichiLabSeatAdapter,
+    SendReadyResponse,
+)
 from lisjong_arena.riichilab.errors import ProtocolError
+from lisjong_arena.riichilab.live_presentation import (
+    BoundedRankedPresentationBuffer,
+    RankedCompletionPresentation,
+    RankedDecisionPresentation,
+)
 
 _VALIDATION_SEAT = Seat.SEAT_0
 
@@ -198,6 +207,24 @@ class _GameSession:
     def _accept_bound_seat(self, seat: Seat) -> None:
         """mode固有のseat制約を検証する。rankedは0..3をすべて受理する。"""
 
+    def _process_request_action(
+        self, event: Mapping
+    ) -> tuple[SendReadyResponse, ProcessedRequestAction | None]:
+        """1件の`request_action`をAdapterへ委譲する既定path。
+
+        live presentation consumerを持たないsessionは、既存の
+        `process_request_action()`をそのまま呼び、decision factsを構築
+        しない(`None`を返す)。
+        """
+        return self._adapter.process_request_action(event), None
+
+    def _publish_decision_presentation(self, processed: ProcessedRequestAction) -> None:
+        """decision factをpresentation consumerへ渡す。既定では何もしない。
+
+        live presentation seamを持つのはranked sessionだけであり、
+        validation sessionはこのhookを使わない。
+        """
+
     def _handle_start_game(self, event: Mapping) -> None:
         seat_value = event.get("id")
         if isinstance(seat_value, bool) or not isinstance(seat_value, int):
@@ -242,7 +269,7 @@ class _GameSession:
         self._requests_received += 1
 
         # Policy判断・Action mapping・送信前validationはAdapterへ委譲する。
-        response = self._adapter.process_request_action(event)
+        response, decision_facts = self._process_request_action(event)
         if response.request_id != request_id:
             raise ProtocolError(
                 "adapter response request_id does not match the current request"
@@ -254,6 +281,8 @@ class _GameSession:
 
         self._sent_request_ids.add(request_id)
         self._responses_sent += 1
+        if decision_facts is not None:
+            self._publish_decision_presentation(decision_facts)
         outgoing = dict(response.action)
         outgoing["request_id"] = response.request_id
         return outgoing
@@ -344,9 +373,31 @@ class RankedSession(_GameSession):
 
     `start_game.id`の0..3をすべて受理し、`end_game`をterminal eventとする。
     自動requeue・次game・reconnectはこのsessionの責務に含めない。
+
+    `presentation`(default `None`・opt-in)を渡した場合だけ、
+    `lisbun/lisjong-play#41`向けのplayer-visible live presentation factを
+    bounded bufferへpublishする。presentationはread-only consumerであり、
+    Policy判断、action mapping、`possible_actions` validation、送信payload、
+    `request_id` lifecycleのいずれも変更しない。publishはvalidationを
+    すべて通過し、送信可能と確定したdecisionについてだけ行う。
     """
 
-    __slots__ = ()
+    __slots__ = ("_presentation",)
+
+    def __init__(
+        self,
+        policy: Policy,
+        *,
+        presentation: BoundedRankedPresentationBuffer | None = None,
+    ) -> None:
+        if presentation is not None and not isinstance(
+            presentation, BoundedRankedPresentationBuffer
+        ):
+            raise TypeError(
+                "presentation must be a BoundedRankedPresentationBuffer or None"
+            )
+        super().__init__(policy)
+        self._presentation = presentation
 
     @property
     def is_complete(self) -> bool:
@@ -355,6 +406,27 @@ class RankedSession(_GameSession):
     @property
     def terminal_event_name(self) -> str:
         return EVENT_TYPE_END_GAME
+
+    def _process_request_action(
+        self, event: Mapping
+    ) -> tuple[SendReadyResponse, ProcessedRequestAction | None]:
+        if self._presentation is None:
+            return super()._process_request_action(event)
+
+        processed = self._adapter.process_request_action_with_decision_facts(event)
+        return processed.response, processed
+
+    def _publish_decision_presentation(self, processed: ProcessedRequestAction) -> None:
+        if self._presentation is None:
+            return
+        self._presentation.publish_decision(
+            RankedDecisionPresentation(
+                request_id=processed.response.request_id,
+                self_seat=self._seat,
+                policy_input=processed.policy_input,
+                selected_action=processed.selected_action,
+            )
+        )
 
     def _handle_end_game(self, event: Mapping) -> None:
         if self._adapter is None:
@@ -376,6 +448,10 @@ class RankedSession(_GameSession):
 
             self._scores = (scores[0], scores[1], scores[2], scores[3])
         super()._handle_end_game(event)
+        if self._presentation is not None:
+            self._presentation.publish_completion(
+                RankedCompletionPresentation(self_seat=self._seat, scores=self._scores)
+            )
 
 
 __all__ = [

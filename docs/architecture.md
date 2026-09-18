@@ -294,6 +294,37 @@ ranked recordが持つのはserving時点でlisjong自身に見えていたplaye
 teacher labelの供給源としては扱わない。credential / Authorization情報はrecordへ
 流さない。
 
+### RiichiLab ranked live presentation seam
+
+RiichiLab ranked実行中のplayer-visible decision stateは、外部presentation
+consumer(`lisbun/lisjong-play#41`のlive spectator等)へread-onlyで渡せる。
+executionとobservationはArena責務であり、このseamもArenaが所有する。
+
+```text
+RiichiLab request_action
+    -> RiichiLabSeatAdapter
+    -> DecisionContext.input (PolicyInput)
+        ├─> Policy / action mapping / send-ready response  (authoritative)
+        └─> immutable presentation fact
+                -> bounded / non-blocking buffer
+                -> external presentation consumer (read-only)
+```
+
+presentationはplayer-visible Policy decision stateのread-only consumerであり、
+ranked execution timingを支配しない。publishはbounded bufferへのO(1) appendだけで
+あり、Policy response、`possible_actions` validation、WebSocket send、次request
+処理のいずれもconsumerの遅延で遅れない。consumerがdetachしてもranked sessionは
+abortしない。
+
+presentation factの正本はPolicyへ実際に渡した`PolicyInput`であり、raw transport
+payload(raw `request_action` JSON / base64 Observation)をpresentation APIにしない。
+credential / Authorization / WebSocket objectはpresentation boundaryを越えない。
+このseamはRiichiLab ranked live presentation専用のbounded prerequisiteであり、
+project-wide event bus / telemetry frameworkへ拡張しない。
+
+presentationの有無で、Policy response、requests / responses count、ack semantics、
+`RankedGameResult`、durable ranked recordのsemantic contentはいずれも変化しない。
+
 ## Experiment-local Research / ML
 
 Arenaは、bounded research questionを検証するために必要なpurpose-specific ML / analysis implementationを所有できる。

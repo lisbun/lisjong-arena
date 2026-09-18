@@ -70,6 +70,9 @@ from lisjong_arena._artifact_io import (
     read_json_document,
     write_new_artifact_file,
 )
+from lisjong_arena.riichilab.live_presentation import (
+    BoundedRankedPresentationBuffer,
+)
 from lisjong_arena.riichilab.ranked import RankedGameResult, run_ranked_game
 from lisjong_arena.riichilab.request_action import (
     ParsedRequestAction,
@@ -1120,6 +1123,7 @@ async def acquire_ranked_game_record(
     profile_identity: str | None = None,
     policy_identity: str | None = None,
     provenance: RankedRecordProvenance | None = None,
+    presentation: BoundedRankedPresentationBuffer | None = None,
 ) -> DurableRankedGameRecord:
     """1 ranked hanchanを実行し、完走した場合だけdurable recordへpublishする。
 
@@ -1132,6 +1136,13 @@ async def acquire_ranked_game_record(
 
     `token`はexisting transport boundaryへ渡すだけであり、record layerへは
     渡らない。
+
+    `presentation`(default `None`・opt-in、`lisbun/lisjong-play#41`)は
+    `run_ranked_game()`へそのままthread throughするだけである。
+    `--record-dir`とlive presentationを同時利用できるようにするためのもので
+    あり、record schema / payload / provenance / digest semanticsのいずれも
+    presentationの有無で変化しない(presentationはrecord layerを一切通らず、
+    protocol trace writerにも触れない)。
     """
     target = Path(destination)
     if target.exists():
@@ -1153,7 +1164,13 @@ async def acquire_ranked_game_record(
     )
     try:
         trace_path = staging / PROTOCOL_TRACE_FILENAME
-        result = await run_ranked_game(policy, token, url=url, trace_path=trace_path)
+        result = await run_ranked_game(
+            policy,
+            token,
+            url=url,
+            trace_path=trace_path,
+            presentation=presentation,
+        )
         return save_ranked_game_record(
             result, trace_path, target, provenance=provenance
         )

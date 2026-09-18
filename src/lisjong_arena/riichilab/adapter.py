@@ -31,7 +31,13 @@ preservingにArenaへphysical migrationしたものである(Arena Issue #27)。
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from lisjong.policy_contract import Policy, Seat, execute_policy
+from lisjong.policy_contract import (
+    InternalAction,
+    Policy,
+    PolicyInput,
+    Seat,
+    execute_policy,
+)
 
 from lisjong_arena.riichienv.adapter import (
     RiichiEnvActionMappingSession,
@@ -57,6 +63,26 @@ class SendReadyResponse:
 
     request_id: int
     action: dict
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessedRequestAction:
+    """1件の`request_action`のsend-ready responseと、その決定のdecision facts。
+
+    `response`はこれまでどおり送信前validationを完了したsend-ready payloadで
+    ある。`policy_input`と`selected_action`は、同じdecisionでPolicyへ実際に
+    渡した`DecisionContext.input`と、`execute_policy()`が合法候補へ照合して
+    返したcanonical `InternalAction`そのものであり、presentation向けに
+    再計算・再解釈した値ではない。
+
+    Policyを二重実行しないために、send-ready responseとdecision factsは
+    1回の`process_request_action_with_decision_facts()`呼び出しで同時に
+    返す。
+    """
+
+    response: SendReadyResponse
+    policy_input: PolicyInput
+    selected_action: InternalAction
 
 
 class RiichiLabSeatAdapter:
@@ -89,6 +115,24 @@ class RiichiLabSeatAdapter:
         いずれかの段階で失敗した場合はpayloadを返さず、対応する例外を
         送出する。arbitrary fallbackは行わない。
         """
+        return self.process_request_action_with_decision_facts(
+            raw_request_action
+        ).response
+
+    def process_request_action_with_decision_facts(
+        self, raw_request_action: Mapping
+    ) -> ProcessedRequestAction:
+        """`process_request_action()`と同じ処理を行い、decision factsも返す。
+
+        `process_request_action()`はこのmethodのthin wrapperであり、両者で
+        Policyが二重実行されることはない。decision factsを必要としない
+        consumerは既存の`process_request_action()`をそのまま使える。
+
+        戻り値の`policy_input` / `selected_action`は、read-onlyな
+        player-visible presentationのためにdecisionの正本をそのまま公開する
+        ものであり、Policy判断・action mapping・validationのいずれも変更
+        しない。
+        """
         parsed = parse_request_action(raw_request_action)
 
         observation_seat = seat_from_player_index(parsed.observation.player_id)
@@ -113,7 +157,11 @@ class RiichiLabSeatAdapter:
         # ここで失敗した場合はresponseを返さない。
         validate_against_possible_actions(response, parsed.possible_actions)
 
-        return SendReadyResponse(request_id=parsed.request_id, action=response)
+        return ProcessedRequestAction(
+            response=SendReadyResponse(request_id=parsed.request_id, action=response),
+            policy_input=decision.context.input,
+            selected_action=selected,
+        )
 
 
-__all__ = ["RiichiLabSeatAdapter", "SendReadyResponse"]
+__all__ = ["ProcessedRequestAction", "RiichiLabSeatAdapter", "SendReadyResponse"]

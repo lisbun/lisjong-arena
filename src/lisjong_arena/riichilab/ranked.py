@@ -30,6 +30,10 @@ from lisjong_arena.riichilab.cli import (
     resolve_trace_path,
 )
 from lisjong_arena.riichilab.errors import ProtocolError, RiichiLabClientError
+from lisjong_arena.riichilab.live_presentation import (
+    BoundedRankedPresentationBuffer,
+    RankedFailurePresentation,
+)
 from lisjong_arena.riichilab.profile import (
     ProfileError,
     build_runtime_summary,
@@ -64,25 +68,47 @@ async def run_ranked_game(
     *,
     url: str = DEFAULT_RANKED_URL,
     trace_path: str | os.PathLike | None = None,
+    presentation: BoundedRankedPresentationBuffer | None = None,
 ) -> RankedGameResult:
-    """ranked endpointへ1回接続し、1 full hanchanの`end_game`で終了する。"""
+    """ranked endpointへ1回接続し、1 full hanchanの`end_game`で終了する。
+
+    `presentation`(default `None`・opt-in、`lisbun/lisjong-play#41`)を渡した
+    場合だけ、player-visible live presentation factをそのbounded bufferへ
+    publishする。presentationはread-only consumerであり、Policy response、
+    requests / responses count、ack semantics、最終的な`RankedGameResult`の
+    いずれも変化させない。`run_ranked_game()`はrun全体が完走しなかったこと
+    を示すterminal failure factだけを追加でpublishし、per-event factは
+    `RankedSession`が所有する。
+    """
     if not isinstance(token, str) or not token:
         raise ValueError("token must be a non-empty string")
 
-    session = RankedSession(policy)
+    session = RankedSession(policy, presentation=presentation)
     trace_writer = (
         JsonlProtocolTraceWriter(trace_path) if trace_path is not None else None
     )
     try:
-        async with connect_ranked_transport(url, token) as transport:
-            await drive_ranked_session(session, transport, trace=trace_writer)
-    finally:
-        if trace_writer is not None:
-            trace_writer.close()
+        try:
+            async with connect_ranked_transport(url, token) as transport:
+                await drive_ranked_session(session, transport, trace=trace_writer)
+        finally:
+            if trace_writer is not None:
+                trace_writer.close()
 
-    status = session.status()
-    if status.seat is None:
-        raise ProtocolError("ranked game completed without a bound seat")
+        status = session.status()
+        if status.seat is None:
+            raise ProtocolError("ranked game completed without a bound seat")
+    except Exception as error:
+        # viewerがrendering停止をsuccessful match completionと取り違えない
+        # ための最小限のterminal factだけをpublishし、例外はwrapせずそのまま
+        # 伝播させる。failure messageやraw transport payloadは渡さない。
+        # `asyncio.CancelledError`は`BaseException`であり、ここでは捕捉せず
+        # 標準のcancellation semanticsを維持する。
+        if presentation is not None:
+            presentation.publish_failure(
+                RankedFailurePresentation(failure_type=type(error).__name__)
+            )
+        raise
 
     return RankedGameResult(
         end_game_received=status.end_game_received,
