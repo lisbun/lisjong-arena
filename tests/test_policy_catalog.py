@@ -10,6 +10,8 @@ spawn-safeであること、CLIが登録名を既存serial / parallel evaluation
 
 import contextlib
 import io
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -126,6 +128,49 @@ class CatalogContentsTest(unittest.TestCase):
         self.assertEqual(args.baseline, "extended-combined")
         self.assertEqual(args.seeds, tuple(range(20000, 20100)))
         self.assertEqual(ROTATION_COUNT * len(args.seeds), 400)
+
+
+class HistoricalDependencyCompatibilityTest(unittest.TestCase):
+    def test_stage_a0_import_does_not_require_newer_catalog_policy(self) -> None:
+        script = """
+import lisjong.policies
+
+del lisjong.policies.MechanismRiichiDefenseYakuhaiCallPolicy
+
+from lisjong_arena.learned_policy_offline_q.artifact import provenance_document
+from lisjong_arena.policy_catalog import (
+    POLICY_CATALOG,
+    create_mechanism_riichi_defense,
+    create_yakuhai_call,
+)
+from lisjong_arena.stage_a0_tenpai_feasibility import __main__ as stage_a0_cli
+
+assert callable(provenance_document)
+assert callable(stage_a0_cli.main)
+assert POLICY_CATALOG["yakuhai-call"].factory is create_yakuhai_call
+create_yakuhai_call()
+
+try:
+    create_mechanism_riichi_defense()
+except ImportError:
+    pass
+else:
+    raise AssertionError(
+        "mechanism-riichi-defense must require its unavailable historical symbol "
+        "only when selected"
+    )
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=completed.stdout + completed.stderr,
+        )
 
 
 class FactoryTest(unittest.TestCase):
