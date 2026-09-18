@@ -48,7 +48,13 @@ from .diagnostic import (
     aggregate_diagnostics,
     classify_gate,
 )
-from .protocol import LISJONG_REVISION, PHASE_A_GAME_COUNT, PROTOCOL_ID
+from .protocol import (
+    LISJONG_REVISION,
+    PHASE_A_GAME_COUNT,
+    PHASE_A_SEEDS,
+    PROTOCOL_ID,
+    ROTATION_COUNT,
+)
 
 ARTIFACT_VERSION = 1
 
@@ -492,6 +498,18 @@ def parse_artifact(
     if len(games) != PHASE_A_GAME_COUNT:
         raise TargetedHonorReleaseArtifactError(
             "artifact must contain exactly 400 game diagnostics"
+        )
+    expected_game_identities = tuple(
+        (seed, rotation, rotation)
+        for seed in PHASE_A_SEEDS
+        for rotation in range(ROTATION_COUNT)
+    )
+    actual_game_identities = tuple(
+        (game.seed, game.rotation, int(game.candidate_seat)) for game in games
+    )
+    if actual_game_identities != expected_game_identities:
+        raise TargetedHonorReleaseArtifactError(
+            "artifact game diagnostics do not match the exact #252 seed/rotation order"
         )
     replay_wall = expect_float(
         raw["replay_wall_clock_seconds"], "artifact.replay_wall_clock_seconds"
