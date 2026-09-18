@@ -187,6 +187,14 @@ def _require_phase_a_gate(
     )
     parent_path = _source_parent_path(lock_document)
     artifact = load_artifact(path, parent_artifact_path=parent_path)
+    if artifact["provenance"] != lock_document["provenance"]:
+        raise TargetedHonorReleasePairedError(
+            "Phase-A artifact provenance differs from the pre-execution lock"
+        )
+    if artifact["max_workers"] != locked_max_workers(lock_document):
+        raise TargetedHonorReleasePairedError(
+            "Phase-A artifact worker count differs from the pre-execution lock"
+        )
     gate = artifact["gate"]
     if not isinstance(gate, dict) or gate.get("passed") is not True:
         label = gate.get("label") if isinstance(gate, dict) else None
