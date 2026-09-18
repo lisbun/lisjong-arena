@@ -1,12 +1,14 @@
 """artifact contractが共有するJSON serialization / parse / file書き込みのplumbing。
 
 このmoduleはevaluation semanticsもartifact schemaも所有しない。既存AABB
-``lisjong_arena.artifact``とABBB ``lisjong_arena.single_round_artifact``が
-それぞれ独立したschemaを持ったまま、``1 artifact = 1 immutable file``の
-書き込み規則、canonical JSON表現、fail-closedなfield検証だけを共通化する。
+``lisjong_arena.artifact``とABBB ``lisjong_arena.single_round_artifact``を
+含むconsumerがそれぞれ独立したschemaを持ったまま、immutable file write、
+canonical JSON、bytes digest、same-parent directory stagingといった
+responsibility-neutralなplumbingだけを共通化する。
 
-ここで提供するのは低レベルのplumbingだけであり、どのfieldが必要か、どの
-derived valueが正本かといったcontract自体は各artifact moduleが決める。
+ここで提供するのは低レベルのplumbingだけであり、どのfieldが必要か、何を
+digest対象とするか、どのreadbackが成功条件かといったcontract自体は各artifact
+moduleが決める。
 """
 
 from __future__ import annotations
