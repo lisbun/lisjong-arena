@@ -90,6 +90,16 @@ def _pairs_to_json(value: tuple[tuple[str, int], ...]) -> list[list[object]]:
     return [[name, count] for name, count in value]
 
 
+def _rate(count: int, denominator: int) -> float | None:
+    return None if denominator == 0 else count / denominator
+
+
+def _pair_rates(
+    value: tuple[tuple[str, int], ...], denominator: int
+) -> list[list[object]]:
+    return [[name, _rate(count, denominator)] for name, count in value]
+
+
 def _parse_pairs(value: object, context: str) -> tuple[tuple[str, int], ...]:
     result = []
     for index, item in enumerate(expect_list(value, context)):
@@ -245,7 +255,7 @@ def _parse_record(value: object, context: str) -> DecisionRecord:
     )
 
 
-def _game_to_dict(value: GameDiagnostics) -> dict[str, object]:
+def game_diagnostics_to_document(value: GameDiagnostics) -> dict[str, object]:
     return {
         "candidate_runtime_total_seconds": value.candidate_runtime_total_seconds,
         "candidate_seat": int(value.candidate_seat),
@@ -274,7 +284,7 @@ _GAME_FIELDS = {
 }
 
 
-def _parse_game(value: object, context: str) -> GameDiagnostics:
+def parse_game_diagnostics(value: object, context: str) -> GameDiagnostics:
     raw = expect_object(value, _GAME_FIELDS, context)
     return GameDiagnostics(
         seed=expect_int(raw["seed"], f"{context}.seed"),
@@ -312,22 +322,34 @@ def _parse_game(value: object, context: str) -> GameDiagnostics:
     )
 
 
-def _aggregate_to_dict(value: DiagnosticAggregate) -> dict[str, object]:
+def diagnostic_aggregate_to_document(value: DiagnosticAggregate) -> dict[str, object]:
+    denominator = value.choice_discard_decision_count
     return {
         "action_change_count": value.action_change_count,
+        "action_change_rate": _rate(value.action_change_count, denominator),
         "activation_stage_counts": _pairs_to_json(value.activation_stage_counts),
+        "activation_stage_rates": _pair_rates(
+            value.activation_stage_counts, denominator
+        ),
         "analyzed_decision_runtime": _numeric_to_dict(value.analyzed_decision_runtime),
         "branch_counts": _pairs_to_json(value.branch_counts),
+        "branch_rates": _pair_rates(value.branch_counts, denominator),
         "candidate_runtime_per_game_seconds": value.candidate_runtime_per_game_seconds,
         "candidate_runtime_total_seconds": value.candidate_runtime_total_seconds,
         "choice_discard_decision_count": value.choice_discard_decision_count,
         "closed_count": value.closed_count,
+        "closed_rate": _rate(value.closed_count, denominator),
         "game_count": value.game_count,
         "honor_target_candidate_counts": _pairs_to_json(
             value.honor_target_candidate_counts
         ),
+        "honor_peer_available_count": value.honor_peer_available_count,
+        "honor_peer_available_rate": _rate(
+            value.honor_peer_available_count, denominator
+        ),
         "hva_decisive_stage_counts": _pairs_to_json(value.hva_decisive_stage_counts),
         "open_count": value.open_count,
+        "open_rate": _rate(value.open_count, denominator),
         "parent_retained_value_counts": _pairs_to_json(
             value.parent_retained_value_counts
         ),
@@ -336,14 +358,16 @@ def _aggregate_to_dict(value: DiagnosticAggregate) -> dict[str, object]:
         "projected_h_arm_wall_clock_hours": value.projected_h_arm_wall_clock_hours,
         "r5_activated_runtime": _numeric_to_dict(value.r5_activated_runtime),
         "r5_activation_count": value.r5_activation_count,
+        "r5_activation_rate": _rate(value.r5_activation_count, denominator),
         "r5_best_count_distribution": _pairs_to_json(value.r5_best_count_distribution),
         "replay_game_runtime": _numeric_to_dict(value.replay_game_runtime),
         "replay_wall_clock_seconds": value.replay_wall_clock_seconds,
+        "target_candidate_available_count": value.target_candidate_available_count,
+        "target_candidate_available_rate": _rate(
+            value.target_candidate_available_count, denominator
+        ),
         "target_candidate_counts": _pairs_to_json(value.target_candidate_counts),
     }
-
-
-_AGGREGATE_FIELDS = set(_aggregate_to_dict.__annotations__)  # documentation marker
 
 
 def _gate_to_dict(value: DiagnosticGate) -> dict[str, object]:
@@ -375,7 +399,9 @@ def build_artifact(
     payload: dict[str, object] = {
         "artifact_version": ARTIFACT_VERSION,
         "gate": _gate_to_dict(phase_a.gate),
-        "games": [_game_to_dict(game) for game in phase_a.game_diagnostics],
+        "games": [
+            game_diagnostics_to_document(game) for game in phase_a.game_diagnostics
+        ],
         "max_workers": max_workers,
         "protocol_id": PROTOCOL_ID,
         "provenance": execution_provenance_to_dict(actual_provenance),
@@ -386,7 +412,7 @@ def build_artifact(
                 parent.provenance
             ),
         },
-        "summary": _aggregate_to_dict(phase_a.aggregate),
+        "summary": diagnostic_aggregate_to_document(phase_a.aggregate),
         "trajectory_identity_passed": True,
     }
     document = dict(payload)
@@ -459,7 +485,7 @@ def parse_artifact(
         )
 
     games = tuple(
-        _parse_game(item, f"artifact.games[{index}]")
+        parse_game_diagnostics(item, f"artifact.games[{index}]")
         for index, item in enumerate(expect_list(raw["games"], "artifact.games"))
     )
     if len(games) != PHASE_A_GAME_COUNT:
@@ -470,7 +496,7 @@ def parse_artifact(
         raw["replay_wall_clock_seconds"], "artifact.replay_wall_clock_seconds"
     )
     aggregate = aggregate_diagnostics(games, replay_wall_clock_seconds=replay_wall)
-    expected_summary = _aggregate_to_dict(aggregate)
+    expected_summary = diagnostic_aggregate_to_document(aggregate)
     if raw["summary"] != expected_summary:
         raise TargetedHonorReleaseArtifactError(
             "artifact summary does not match re-derived diagnostics"
@@ -515,7 +541,10 @@ __all__ = [
     "ARTIFACT_VERSION",
     "TargetedHonorReleaseArtifactError",
     "build_artifact",
+    "diagnostic_aggregate_to_document",
+    "game_diagnostics_to_document",
     "load_artifact",
     "parse_artifact",
+    "parse_game_diagnostics",
     "save_artifact",
 ]
