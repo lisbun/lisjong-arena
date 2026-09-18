@@ -14,10 +14,10 @@
 import hashlib
 import json
 import unittest
-from unittest import mock
 from array import array
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 from _stage_a0_tenpai_fixtures import (
     FIXTURE_PROVENANCE,
