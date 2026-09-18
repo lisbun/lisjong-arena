@@ -20,6 +20,7 @@ from lisjong_arena.single_round_evaluation import (
 )
 
 from .artifact import build_artifact, load_artifact, save_artifact
+from .candidate_arm import CandidateArmDiagnosticResult, run_candidate_arm_parallel
 from .diagnostic import PhaseADiagnosticResult, run_phase_a_parallel
 from .lock import (
     load_lock_document,
@@ -150,6 +151,32 @@ def _run_arm(
     return artifact
 
 
+def _run_candidate_arm(
+    plan: SingleRoundEvaluationPlan,
+    *,
+    worker_count: int,
+    destination: Path,
+    expected_provenance: SingleRoundExecutionProvenance,
+    execute: Callable[..., CandidateArmDiagnosticResult],
+) -> tuple[SingleRoundStrengthArtifact, CandidateArmDiagnosticResult]:
+    result = execute(plan, max_workers=worker_count)
+    if len(result.evaluation_result.game_results) != PHASE_B_GAMES_PER_ARM:
+        raise TargetedHonorReleasePairedError(
+            f"H arm must produce exactly {PHASE_B_GAMES_PER_ARM} games"
+        )
+    if len(result.game_diagnostics) != PHASE_B_GAMES_PER_ARM:
+        raise TargetedHonorReleasePairedError(
+            f"H arm must produce exactly {PHASE_B_GAMES_PER_ARM} trace records"
+        )
+    save_single_round_artifact(result.evaluation_result, destination)
+    artifact = load_arm_artifact(destination)
+    if artifact.provenance != expected_provenance:
+        raise TargetedHonorReleasePairedError(
+            "H arm provenance differs from the locked live execution target"
+        )
+    return artifact, result
+
+
 def _require_phase_a_gate(
     lock_document: dict[str, object],
     *,
@@ -178,6 +205,9 @@ def run_phase_b(
     paired_result_path: str | Path,
     classified_result_path: str | Path,
     execute: Callable[..., SingleRoundEvaluationResult] = default_execute,
+    candidate_execute: Callable[
+        ..., CandidateArmDiagnosticResult
+    ] = run_candidate_arm_parallel,
 ) -> PhaseBOutcome:
     """Run the prelocked fresh H/C arms only after a passing Phase-A gate."""
     require_exact_candidate_semantics()
@@ -211,12 +241,12 @@ def run_phase_b(
         ),
     )
 
-    candidate = _run_arm(
+    candidate, candidate_diagnostics = _run_candidate_arm(
         build_arm_plan(candidate_arm=True, seeds=seeds),
         worker_count=worker_count,
         destination=destinations["candidate_artifact"],
         expected_provenance=live,
-        execute=execute,
+        execute=candidate_execute,
     )
     parent = _run_arm(
         build_arm_plan(candidate_arm=False, seeds=seeds),
@@ -230,6 +260,8 @@ def run_phase_b(
         candidate_artifact_path=destinations["candidate_artifact"],
         parent_artifact=parent,
         parent_artifact_path=destinations["parent_artifact"],
+        candidate_game_diagnostics=candidate_diagnostics.game_diagnostics,
+        candidate_trace_aggregate=candidate_diagnostics.aggregate,
         seeds=seeds,
         worker_count=worker_count,
     )
