@@ -164,9 +164,7 @@ def _validate_candidate_trace_alignment(
         raise TargetedHonorReleasePairedError(
             "H trace diagnostics do not align with the H strength artifact"
         )
-    for diagnostic, game in zip(
-        games, candidate_artifact.game_results, strict=True
-    ):
+    for diagnostic, game in zip(games, candidate_artifact.game_results, strict=True):
         if (
             diagnostic.seed != game.seed
             or diagnostic.rotation != game.rotation
@@ -207,18 +205,14 @@ def _parse_candidate_trace(
     raw = expect_object(value, {"games", "summary"}, "candidate_trace")
     games = tuple(
         parse_game_diagnostics(item, f"candidate_trace.games[{index}]")
-        for index, item in enumerate(
-            expect_list(raw["games"], "candidate_trace.games")
-        )
+        for index, item in enumerate(expect_list(raw["games"], "candidate_trace.games"))
     )
     if len(games) != PHASE_B_GAMES_PER_ARM:
         raise TargetedHonorReleasePairedError(
             "candidate_trace must contain exactly 400 game diagnostics"
         )
     expected_identities = tuple(
-        (seed, rotation, rotation)
-        for seed in seeds
-        for rotation in range(4)
+        (seed, rotation, rotation) for seed in seeds for rotation in range(4)
     )
     actual_identities = tuple(
         (game.seed, game.rotation, int(game.candidate_seat)) for game in games
