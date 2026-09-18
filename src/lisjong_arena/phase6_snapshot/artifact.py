@@ -173,7 +173,6 @@ def save_model_artifact(
         ):
             raise Phase6ArtifactError("staged state_dict readback differs")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        staging.rename(destination)
     return load_model_artifact(destination)
 
 
