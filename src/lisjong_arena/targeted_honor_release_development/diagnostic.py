@@ -256,6 +256,7 @@ class DiagnosticAggregate:
     r5_activated_runtime: NumericSummary
     candidate_runtime_total_seconds: float
     candidate_runtime_per_game_seconds: float
+    candidate_game_runtime: NumericSummary
     replay_game_runtime: NumericSummary
     replay_wall_clock_seconds: float
     projected_h_arm_wall_clock_hours: float
@@ -586,6 +587,9 @@ def aggregate_diagnostics(
         candidate_runtime_total_seconds=candidate_total,
         candidate_runtime_per_game_seconds=(
             candidate_total / len(games) if games else 0.0
+        ),
+        candidate_game_runtime=_numeric_summary(
+            tuple(game.candidate_runtime_total_seconds for game in games)
         ),
         replay_game_runtime=_numeric_summary(
             tuple(game.game_wall_clock_seconds for game in games)
