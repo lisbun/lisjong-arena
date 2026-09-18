@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lisjong_arena._artifact_io import sha256_bytes, staged_artifact_directory
-
 from lisjong_arena.phase4_raw_corpus.codec import canonical_json_bytes
 from lisjong_arena.phase6_snapshot.feature import FEATURE_SEMANTICS_ID
 from lisjong_arena.phase6_snapshot.tensor import FEATURE_DIM
