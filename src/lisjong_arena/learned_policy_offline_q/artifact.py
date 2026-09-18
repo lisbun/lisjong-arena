@@ -960,6 +960,7 @@ def load_dataset_seed_prefix(
 
     return LoadedOfflineQDataset(path=path, manifest=document, rows=records)
 
+
 def load_dataset(path: str | Path) -> LoadedOfflineQDataset:
     """dataset artifactを読み、identity / digest / row整合をfail closedで検証する。"""
     verify_contract_identity()
