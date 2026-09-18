@@ -1,32 +1,38 @@
-"""``single_round_compare`` CLIが名前でPolicyを解決するための明示的catalog。
+"""\`single_round_compare\` CLIが名前でPolicyを解決するための明示的catalog。
 
-登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
-``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call`` /
-``mechanism-riichi-defense``の7つだけである。
-ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
+登録するPolicyは\`two-step\` / \`finite-horizon\` / \`combined\` /
+\`hand-value-aware\` / \`extended-combined\` / \`yakuhai-call\` /
+\`mechanism-riichi-defense\`の7つだけである。
+ほかのfirst-party Policyが\`lisjong.policies\`からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
 
-research / development中のPolicyは``lisjong_arena.policy_reference``が明示的な
-``package.module:attribute``だけを解決できる。これはcatalog registrationの代替
+research / development中のPolicyは\`lisjong_arena.policy_reference\`が明示的な
+\`package.module:attribute\`だけを解決できる。これはcatalog registrationの代替
 ではなく、entry point plugin、filesystem discovery、YAML/TOML config等も導入
 しない。
 
 factoryは必ずこのmodule top-levelのimport可能なcallableとする。Windows
-``spawn`` workerからimport / serialize可能である必要があるため、lambdaや
-local closureは使わない(``check_policy_spec_serializable()``で検証する)。
+\`spawn\` workerからimport / serialize可能である必要があるため、lambdaや
+local closureは使わない(\`check_policy_spec_serializable()\`で検証する)。
 """
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from lisjong.policies import (
     FiniteHorizonCompletionPolicy,
     GenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
-    MechanismRiichiDefenseYakuhaiCallPolicy,
     TwoStepUkeirePolicy,
     YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
 
 from lisjong_arena.model import PolicySpec
+
+if TYPE_CHECKING:
+    from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy
 
 
 def create_two_step() -> TwoStepUkeirePolicy:
@@ -56,6 +62,12 @@ def create_yakuhai_call() -> (
 
 
 def create_mechanism_riichi_defense() -> MechanismRiichiDefenseYakuhaiCallPolicy:
+    # #258 retained qualification must run against the historical lisjong
+    # revision that predates this newer policy. Keep the curated catalog entry
+    # spawn-safe while requiring the symbol only when this factory is actually
+    # selected.
+    from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy
+
     return MechanismRiichiDefenseYakuhaiCallPolicy()
 
 
@@ -76,7 +88,7 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
         identity="mechanism-riichi-defense", factory=create_mechanism_riichi_defense
     ),
 }
-"""登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
+"""登録名 -> \`PolicySpec\`。各keyは対応する\`PolicySpec.identity\`と一致する。"""
 
 
 __all__ = [
