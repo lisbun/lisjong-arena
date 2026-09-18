@@ -33,7 +33,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from lisjong_arena._artifact_io import sha256_bytes, staged_artifact_directory
-
 from lisjong_arena.phase4_raw_corpus.codec import canonical_json_bytes
 from lisjong_arena.stage3_scale_learning_curve.artifact import (
     selected_epoch_from_history,
