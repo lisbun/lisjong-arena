@@ -215,7 +215,7 @@ def _game_diagnostics() -> tuple[GameDiagnostics, ...]:
                     choice_discard_decision_count=len(records),
                     forced_discard_decision_count=0,
                     game_wall_clock_seconds=0.1,
-                    candidate_runtime_total_seconds=(
+                    candidate_runtime_total_seconds=float(
                         sum(record.candidate_elapsed_seconds for record in records)
                     ),
                     records=records,
@@ -272,9 +272,7 @@ class ProtocolTest(unittest.TestCase):
             require_phase_b_population(tuple(range(700, 800)))
 
     def test_external_freshness_confirmation_is_mandatory(self) -> None:
-        with self.assertRaisesRegex(
-            TargetedHonorReleaseProtocolError, "local/private"
-        ):
+        with self.assertRaisesRegex(TargetedHonorReleaseProtocolError, "local/private"):
             seed_freshness_block(
                 FRESH_SEEDS,
                 external_freshness_confirmed=False,
@@ -292,13 +290,17 @@ class ProtocolTest(unittest.TestCase):
 
 
 class ParentTrajectoryObservationTest(unittest.TestCase):
-    def test_candidate_is_observed_once_but_parent_action_drives_trajectory(self) -> None:
+    def test_candidate_is_observed_once_but_parent_action_drives_trajectory(
+        self,
+    ) -> None:
         class Parent:
             def choose_action(self, decision):
                 del decision
                 return A_M3
 
-        recorder = diagnostic._Recorder(seed=651, rotation=0, candidate_seat=Seat.SEAT_0)
+        recorder = diagnostic._Recorder(
+            seed=651, rotation=0, candidate_seat=Seat.SEAT_0
+        )
         wrapper = diagnostic._ObservedParentPolicy(Parent(), recorder)
         decision = DecisionContext(
             input=_policy_input(),
@@ -328,7 +330,9 @@ class ParentTrajectoryObservationTest(unittest.TestCase):
         self.assertTrue(record.r5_activated)
 
     def test_forced_discard_executes_shadow_candidate_once_for_runtime(self) -> None:
-        recorder = diagnostic._Recorder(seed=651, rotation=0, candidate_seat=Seat.SEAT_0)
+        recorder = diagnostic._Recorder(
+            seed=651, rotation=0, candidate_seat=Seat.SEAT_0
+        )
         decision = DecisionContext(input=_policy_input(), legal_actions=(A_M3,))
 
         def traced(candidate, observed_decision, sink):
@@ -452,6 +456,15 @@ class LockTest(unittest.TestCase):
                     "require_merged_arena_revision",
                     return_value=ARENA_REVISION,
                 ),
+                mock.patch.object(
+                    lock_module,
+                    "_runtime_document",
+                    return_value={
+                        "python_implementation": "CPython",
+                        "python_version": "3.14.6",
+                        "sys_version": "3.14.6",
+                    },
+                ),
             ):
                 document = build_lock_document(
                     parent_artifact_path=source,
@@ -462,9 +475,7 @@ class LockTest(unittest.TestCase):
                 )
                 save_lock_document(document, lock_path)
                 loaded = load_lock_document(lock_path)
-        self.assertEqual(
-            loaded["phase_b"]["ordered_seeds"], list(FRESH_SEEDS)
-        )
+        self.assertEqual(loaded["phase_b"]["ordered_seeds"], list(FRESH_SEEDS))
         self.assertEqual(loaded["provenance"]["lisjong_revision"], LISJONG_REVISION)
 
 
@@ -480,9 +491,7 @@ class PairedResultTest(unittest.TestCase):
         )
         result = evaluation_result(plan, constant_focal_score(score))
         path = directory / ("candidate.json" if candidate else "parent.json")
-        save_arm_artifact(
-            result, path, execution_provenance=_live_provenance()
-        )
+        save_arm_artifact(result, path, execution_provenance=_live_provenance())
         return path
 
     def test_positive_paired_result_uses_100_seed_blocks(self) -> None:
@@ -514,12 +523,8 @@ class PairedResultTest(unittest.TestCase):
                 paired_result=verified, paired_result_path=paired_path
             )
             save_classified_result(classified, classified_path)
-            verify_classified_result(
-                classified_path, paired_result_path=paired_path
-            )
-        self.assertEqual(
-            verified["primary_summary"]["block_count"], 100
-        )
+            verify_classified_result(classified_path, paired_result_path=paired_path)
+        self.assertEqual(verified["primary_summary"]["block_count"], 100)
         self.assertEqual(verified["classification"]["label"], SIGNAL_LABEL)
 
     def test_equal_arms_are_inconclusive(self) -> None:
