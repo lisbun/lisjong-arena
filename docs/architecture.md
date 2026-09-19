@@ -579,6 +579,13 @@ Policy-internal analysis semantics
 
 Arenaはlisjong-produced `DecisionTrace` / `AnalysisTrace`等をtransport / persistenceしてよいが、payload semanticsを再定義しない。
 
+RiichiLab longitudinal analysisは、この分離に従うpurpose-specificなoffline
+diagnosticである。self-history acquisitionとopponent metadata enrichmentはanalysis
+本体から分離し、canonical `riichilab_self_history`、strict local MJAI、exact durable
+provenance、明示的legacy epoch、optional local opponent cacheだけをconsumeする。
+observational historyをcontrolled Policy comparisonやcausal strength evidenceへ
+昇格させない。
+
 ## Policy contract ownership
 
 external environmentからPolicyへ投影するimplementationはArena側に置けるが、投影先の意味はlisjongが所有する。
