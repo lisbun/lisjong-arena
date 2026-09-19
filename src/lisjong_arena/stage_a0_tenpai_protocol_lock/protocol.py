@@ -201,6 +201,10 @@ def historical_precision_document() -> dict[str, object]:
         record["derived_sample_sd"] = _derived_sd_from_interval(item)
         evidence.append(record)
     proxy = max(float(item["derived_sample_sd"]) for item in evidence)
+    preferred_n = 100
+    preferred_se = proxy / math.sqrt(preferred_n)
+    preferred_half_width = 1.96 * preferred_se
+    preferred_mde = (Z_975 + Z_POWER_80) * preferred_se
     n = len(DOWNSTREAM_SEEDS)
     se = proxy / math.sqrt(n)
     half_width = 1.96 * se
@@ -234,6 +238,29 @@ def historical_precision_document() -> dict[str, object]:
             "formula": "(z_0.975 + z_0.80) * s / sqrt(n)",
             "projected_mde": classical_mde,
         },
+        "candidate_budgets": [
+            {
+                "block_count": preferred_n,
+                "games_total": preferred_n * DOWNSTREAM_ROTATIONS * 2,
+                "projected_se": preferred_se,
+                "projected_normal_95_half_width": preferred_half_width,
+                "projected_classical_mde": preferred_mde,
+                "criterion_satisfied": (
+                    preferred_half_width <= ACCEPTABLE_95_HALF_WIDTH
+                    and preferred_mde <= MINIMUM_MEANINGFUL_SCORE_EFFECT
+                ),
+                "decision": "REJECTED BEFORE A/T: insufficient locked precision",
+            },
+            {
+                "block_count": n,
+                "games_total": DOWNSTREAM_TOTAL_GAMES,
+                "projected_se": se,
+                "projected_normal_95_half_width": half_width,
+                "projected_classical_mde": classical_mde,
+                "criterion_satisfied": enabled,
+                "decision": "SELECTED BEFORE A/T",
+            },
+        ],
         "projected_block_count": n,
         "projected_se": se,
         "projected_normal_95_half_width": half_width,
@@ -270,6 +297,13 @@ def static_contract_document() -> dict[str, object]:
             "protected_test_seeds_unread": list(PROTECTED_TEST_SEEDS),
             "scientific_seed_prefix": list(SCIENTIFIC_SEEDS),
             "technical_smoke_seeds_excluded": list(feasibility.SMOKE_SEEDS),
+            "teacher": {
+                "identity": feasibility.TEACHER_IDENTITY,
+                "policy_class": feasibility.TEACHER_POLICY_CLASS,
+                "population": feasibility.TEACHER_POPULATION,
+                "source_revision": feasibility.TEACHER_SOURCE_REVISION,
+                "game_mode": feasibility.GAME_MODE,
+            },
             "source_semantics": {
                 "lisjong_revision": SOURCE_LISJONG_REVISION,
                 "lisjong_engine_revision": SOURCE_LISJONG_ENGINE_REVISION,
@@ -370,14 +404,33 @@ def static_contract_document() -> dict[str, object]:
                 "output": "three raw Bernoulli logits from the shared 128 hidden state",
                 "normalization": AUXILIARY_LOSS_NORMALIZATION,
                 "class_treatment": CLASS_IMBALANCE_TREATMENT,
+                "class_treatment_rationale": (
+                    "no class weighting or resampling: preserve the natural TRAIN "
+                    "posterior target and avoid a prevalence-dependent tuning degree "
+                    "of freedom"
+                ),
                 "lambda_tenpai": LAMBDA_TENPAI,
+                "lambda_tenpai_rationale": (
+                    "unit weight is fixed before outcomes because Policy CE and "
+                    "auxiliary BCE are both mean natural-log losses; no pilot/HPO "
+                    "rescales the auxiliary objective"
+                ),
                 "empty_target_behavior": EMPTY_TARGET_BEHAVIOR,
                 "non_finite_behavior": NON_FINITE_BEHAVIOR,
             },
-            "serving": (
-                "discard auxiliary head; serving input/action contract remains the "
-                "existing flat-BC player-safe 8204->128->802 policy"
-            ),
+            "serving": {
+                "policy_adapter": (
+                    "lisjong_arena.learned_policy_stage3.policy.LearnedServingPolicy"
+                ),
+                "runtime_factory": (
+                    "lisjong_arena.learned_policy_stage3.policy.create_serving_runtime"
+                ),
+                "semantics": (
+                    "discard auxiliary head; use the existing player-safe "
+                    "8204->128->802 feature/logit/legal-mask/masked-argmax/"
+                    "resolve_legal_action path"
+                ),
+            },
         },
         "downstream": {
             "status": DOWNSTREAM_STATUS,
