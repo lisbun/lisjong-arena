@@ -4,11 +4,10 @@ import importlib.util
 import math
 import unittest
 from dataclasses import replace
-from tempfile import TemporaryDirectory
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from lisjong_engine.wind import Wind
-
 from test_phase11_classical_wait_baseline import _other_target, _snapshot, _target
 
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
