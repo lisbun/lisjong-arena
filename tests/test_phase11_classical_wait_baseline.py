@@ -3,6 +3,7 @@
 import ast
 import inspect
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +12,7 @@ from lisjong_engine.public_state import PublicRiichiStatus
 from lisjong_engine.wind import Wind
 
 import lisjong_arena.phase11_classical_wait_baseline.data as classical_data
+import lisjong_arena.phase11_classical_wait_baseline.lock as classical_lock
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 from lisjong_arena.phase6_snapshot.feature import (
     OpponentSnapshotFeature,
@@ -222,6 +224,52 @@ class LockedProtocolTest(unittest.TestCase):
                 "--hpo",
             ):
                 self.assertNotIn(forbidden, options)
+
+
+class ExecutionProvenanceTest(unittest.TestCase):
+    def test_editable_arena_revision_is_bound_to_clean_source_head(self):
+        provenance = {
+            "source_revisions": {
+                "lisjong": "1" * 40,
+                "lisjong_engine": "2" * 40,
+                "lisjong_arena": None,
+            },
+            "fully_resolved": False,
+        }
+        with (
+            patch.object(classical_lock, "phase4_provenance", return_value=object()),
+            patch.object(
+                classical_lock,
+                "_provenance_value",
+                return_value=provenance,
+            ),
+        ):
+            actual = classical_lock._current_provenance("3" * 40)
+        self.assertEqual(actual["source_revisions"]["lisjong_arena"], "3" * 40)
+        self.assertTrue(actual["fully_resolved"])
+
+    def test_resolved_arena_metadata_must_match_clean_source_head(self):
+        provenance = {
+            "source_revisions": {
+                "lisjong": "1" * 40,
+                "lisjong_engine": "2" * 40,
+                "lisjong_arena": "4" * 40,
+            },
+            "fully_resolved": True,
+        }
+        with (
+            patch.object(classical_lock, "phase4_provenance", return_value=object()),
+            patch.object(
+                classical_lock,
+                "_provenance_value",
+                return_value=provenance,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                ClassicalWaitError,
+                "installed Arena revision against clean source HEAD",
+            ):
+                classical_lock._current_provenance("3" * 40)
 
 
 class ArtifactStrictReadbackTest(unittest.TestCase):
