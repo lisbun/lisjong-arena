@@ -325,6 +325,20 @@ class LockArtifactTest(unittest.TestCase):
                 "validation_partition_identity": "c" * 64,
                 "scientific_sidecar_identity": "f" * 64,
                 "public_keys_identity": "1" * 64,
+                "scientific_source_provenance": {
+                    "lisjong_revision": contract["route"]["source_semantics"][
+                        "lisjong_revision"
+                    ],
+                    "lisjong_engine_revision": contract["route"]["source_semantics"][
+                        "lisjong_engine_revision"
+                    ],
+                    "riichienv_version": contract["route"]["source_semantics"][
+                        "riichienv_version"
+                    ],
+                    "python_version": contract["route"]["source_semantics"][
+                        "python_version"
+                    ],
+                },
                 "scientific_seeds": list(SCIENTIFIC_SEEDS),
                 "protected_test_seeds_unread": list(PROTECTED_TEST_SEEDS),
             },
