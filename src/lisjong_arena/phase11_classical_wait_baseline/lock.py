@@ -113,7 +113,10 @@ def _validate_provenance(value: object) -> dict[str, object]:
 def _current_provenance(clean_head: str) -> dict[str, object]:
     """Resolve dependency revisions while binding editable Arena to its clean HEAD."""
     provenance = _provenance_value(phase4_provenance(RuleSet.default()))
-    if type(provenance) is not dict or type(provenance.get("source_revisions")) is not dict:
+    if (
+        type(provenance) is not dict
+        or type(provenance.get("source_revisions")) is not dict
+    ):
         raise ClassicalWaitError("provenance is missing source revisions")
     revisions = provenance["source_revisions"]
     arena_revision = revisions.get("lisjong_arena")
@@ -124,7 +127,11 @@ def _current_provenance(clean_head: str) -> dict[str, object]:
             for name in ("lisjong", "lisjong_engine", "lisjong_arena")
         )
     else:
-        exact(arena_revision, clean_head, "installed Arena revision against clean source HEAD")
+        exact(
+            arena_revision,
+            clean_head,
+            "installed Arena revision against clean source HEAD",
+        )
     return _validate_provenance(provenance)
 
 
