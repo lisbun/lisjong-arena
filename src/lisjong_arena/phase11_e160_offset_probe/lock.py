@@ -177,6 +177,7 @@ def _validate_latent_reference(value: object) -> dict[str, object]:
         "train_coverage",
         "validation_coverage",
         "centering",
+        "centered_latent_summary",
     }:
         raise E160OffsetProbeError("latent reference fields are not exact")
     exact(
@@ -209,6 +210,84 @@ def _validate_latent_reference(value: object) -> dict[str, object]:
         name="VALIDATION",
     )
     validate_centering(value["centering"])
+    summaries = value["centered_latent_summary"]
+    if type(summaries) is not dict or set(summaries) != {"train", "validation"}:
+        raise E160OffsetProbeError("centered latent summary partitions are not exact")
+    for partition, coverage_name in (
+        ("train", "train_coverage"),
+        ("validation", "validation_coverage"),
+    ):
+        summary = summaries[partition]
+        if type(summary) is not dict or set(summary) != {
+            "partition",
+            "overall",
+            "per_output_row",
+        }:
+            raise E160OffsetProbeError("centered latent summary fields are not exact")
+        exact(summary["partition"], partition, f"{partition} latent summary partition")
+        rows = summary["per_output_row"]
+        if type(rows) is not list or len(rows) != 3:
+            raise E160OffsetProbeError(
+                "centered latent summary requires three output rows"
+            )
+        expected_counts = value[coverage_name]["eligible_rows_by_output_row"]
+        for row_index, row in enumerate(rows):
+            if type(row) is not dict or row.get("output_row") != row_index:
+                raise E160OffsetProbeError(
+                    "centered latent summary output-row identity is invalid"
+                )
+            exact(
+                row["eligible_rows"],
+                expected_counts[row_index],
+                f"{partition} centered latent row count",
+            )
+        exact(
+            summary["overall"]["eligible_rows"],
+            value[coverage_name]["eligible_rows"],
+            f"{partition} centered latent overall row count",
+        )
+        for stats in [summary["overall"], *rows]:
+            required = {
+                "eligible_rows",
+                "scalar_values",
+                "minimum",
+                "maximum",
+                "mean",
+                "rms",
+                "max_abs",
+            }
+            if "output_row" in stats:
+                required.add("output_row")
+            if set(stats) != required:
+                raise E160OffsetProbeError(
+                    "centered latent summary statistic fields are not exact"
+                )
+            if (
+                type(stats["eligible_rows"]) is not int
+                or stats["eligible_rows"] <= 0
+                or stats["scalar_values"] != stats["eligible_rows"] * 128
+            ):
+                raise E160OffsetProbeError(
+                    "centered latent summary statistic counts are invalid"
+                )
+            for name in ("minimum", "maximum", "mean", "rms", "max_abs"):
+                number = stats[name]
+                if type(number) not in (int, float) or not math.isfinite(number):
+                    raise E160OffsetProbeError(
+                        "centered latent summary contains a non-finite statistic"
+                    )
+            if not (
+                stats["minimum"] <= stats["mean"] <= stats["maximum"]
+                and stats["rms"] >= 0
+            ):
+                raise E160OffsetProbeError(
+                    "centered latent summary statistic ordering is invalid"
+                )
+            exact(
+                stats["max_abs"],
+                max(abs(stats["minimum"]), abs(stats["maximum"])),
+                "centered latent max-abs statistic",
+            )
     return value
 
 
