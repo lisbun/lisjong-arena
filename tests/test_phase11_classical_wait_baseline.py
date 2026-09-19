@@ -3,10 +3,10 @@
 import ast
 import inspect
 import unittest
-from unittest.mock import patch
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from lisjong_engine.public_state import PublicRiichiStatus
 from lisjong_engine.wind import Wind
@@ -247,6 +247,26 @@ class ExecutionProvenanceTest(unittest.TestCase):
             actual = classical_lock._current_provenance("3" * 40)
         self.assertEqual(actual["source_revisions"]["lisjong_arena"], "3" * 40)
         self.assertTrue(actual["fully_resolved"])
+
+    def test_dependency_revision_is_not_filled_from_arena_head(self):
+        provenance = {
+            "source_revisions": {
+                "lisjong": None,
+                "lisjong_engine": "2" * 40,
+                "lisjong_arena": None,
+            },
+            "fully_resolved": False,
+        }
+        with (
+            patch.object(classical_lock, "phase4_provenance", return_value=object()),
+            patch.object(
+                classical_lock,
+                "_provenance_value",
+                return_value=provenance,
+            ),
+        ):
+            with self.assertRaisesRegex(ClassicalWaitError, "lisjong revision"):
+                classical_lock._current_provenance("3" * 40)
 
     def test_resolved_arena_metadata_must_match_clean_source_head(self):
         provenance = {
