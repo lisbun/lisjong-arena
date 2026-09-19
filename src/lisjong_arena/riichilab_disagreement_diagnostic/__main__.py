@@ -22,9 +22,7 @@ from .analysis import (
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=(
-            "Issue #251 offline RiichiLab strong-bot disagreement diagnostic"
-        )
+        description=("Issue #251 offline RiichiLab strong-bot disagreement diagnostic")
     )
     parser.add_argument("--snapshot", required=True)
     parser.add_argument("--output-dir", required=True)

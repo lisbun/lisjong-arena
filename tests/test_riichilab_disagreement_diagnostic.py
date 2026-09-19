@@ -80,9 +80,7 @@ class MaterializationObserverTests(unittest.TestCase):
 
     def test_forced_decision_is_observed_for_coverage(self):
         result, observations = _captured(riichi_log())
-        forced = [
-            item for item in observations if item.legal_action_count == 1
-        ]
+        forced = [item for item in observations if item.legal_action_count == 1]
         self.assertEqual(len(forced), result.forced_rows)
         self.assertGreater(len(forced), 0)
 
@@ -92,9 +90,7 @@ class DisagreementAnalyzerTests(unittest.TestCase):
         observation, _alternative = _discard_choice()
         seen = []
         analyzer = DisagreementAnalyzer(
-            policy_factory=lambda: _FixedPolicy(
-                observation.teacher_action, seen
-            )
+            policy_factory=lambda: _FixedPolicy(observation.teacher_action, seen)
         )
 
         analyzer.observe(observation)
@@ -114,28 +110,20 @@ class DisagreementAnalyzerTests(unittest.TestCase):
         analyzer.observe(observation)
         document = analyzer.aggregate_document()
 
-        teacher_family = analysis_module.action_family(
-            observation.teacher_action
-        )
+        teacher_family = analysis_module.action_family(observation.teacher_action)
         baseline_family = analysis_module.action_family(alternative)
         self.assertEqual(document["agreement"]["disagreements"], 1)
         self.assertEqual(document["per_bot"]["Mortal-v4b"]["total"], 1)
         self.assertEqual(
-            document["per_decision_kind"][
-                observation.decision_kind.value
-            ]["total"],
+            document["per_decision_kind"][observation.decision_kind.value]["total"],
             1,
         )
         self.assertEqual(
-            document["action_family_confusion"][teacher_family][
-                baseline_family
-            ],
+            document["action_family_confusion"][teacher_family][baseline_family],
             1,
         )
         hand_key = "open" if observation.is_open_hand else "closed"
-        riichi_key = (
-            "riichi" if observation.is_riichi_declared else "non_riichi"
-        )
+        riichi_key = "riichi" if observation.is_riichi_declared else "non_riichi"
         self.assertEqual(document["hand_state"][hand_key]["total"], 1)
         self.assertEqual(document["riichi_state"][riichi_key]["total"], 1)
         self.assertEqual(
@@ -147,9 +135,7 @@ class DisagreementAnalyzerTests(unittest.TestCase):
 
     def test_forced_decision_is_excluded_from_primary_agreement(self):
         _result, observations = _captured(riichi_log())
-        forced = next(
-            item for item in observations if item.legal_action_count == 1
-        )
+        forced = next(item for item in observations if item.legal_action_count == 1)
 
         def fail_if_called():
             raise AssertionError("forced decisions must not execute the baseline")
@@ -178,9 +164,7 @@ class DisagreementAnalyzerTests(unittest.TestCase):
         analyzer = DisagreementAnalyzer(
             policy_factory=lambda: _FixedPolicy(alternative, [])
         )
-        concealed = list(
-            observation.decision.input.own_hand.concealed_tiles
-        )
+        concealed = list(observation.decision.input.own_hand.concealed_tiles)
         expected_teacher = list(concealed)
         expected_teacher.remove(observation.teacher_action.tile)
         expected_baseline = list(concealed)
@@ -203,9 +187,7 @@ class DisagreementAnalyzerTests(unittest.TestCase):
         self.assertEqual(len(calls[0]), len(concealed) - 1)
         self.assertEqual(len(calls[1]), len(concealed) - 1)
         self.assertEqual(
-            document["discard_shanten_disagreement"][
-                "baseline_shanten_worse"
-            ],
+            document["discard_shanten_disagreement"]["baseline_shanten_worse"],
             1,
         )
 

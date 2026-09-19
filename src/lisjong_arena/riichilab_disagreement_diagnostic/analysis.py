@@ -32,9 +32,7 @@ OUTCOME_INVALID = "STOP / INVALID"
 
 COMPARATOR_IDENTITY = "mechanism-riichi-defense"
 COMPARATOR_CLASS_NAME = "MechanismRiichiDefenseYakuhaiCallPolicy"
-COMPARATOR_BINDING_ARENA_REVISION = (
-    "05bf7c24613e4a94de9db889605390df318e4557"
-)
+COMPARATOR_BINDING_ARENA_REVISION = "05bf7c24613e4a94de9db889605390df318e4557"
 LISJONG_REVISION = "f29d129c67e5232d06563c6e457754377734ed14"
 EXPECTED_RIICHIENV_VERSION = "0.4.10"
 
@@ -86,8 +84,7 @@ def _breakdown(
     totals: Counter[str], agreements: Counter[str]
 ) -> dict[str, dict[str, object]]:
     return {
-        key: _agreement_document(totals[key], agreements[key])
-        for key in sorted(totals)
+        key: _agreement_document(totals[key], agreements[key]) for key in sorted(totals)
     }
 
 
@@ -118,7 +115,7 @@ def _post_discard_shanten(
 
     try:
         return calculate_shanten(concealed)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -186,14 +183,10 @@ class DisagreementAnalyzer:
 
     def observe(self, observation: MaterializationDecisionObservation) -> None:
         if not isinstance(observation, MaterializationDecisionObservation):
-            raise TypeError(
-                "observation must be a MaterializationDecisionObservation"
-            )
+            raise TypeError("observation must be a MaterializationDecisionObservation")
         if observation.bot_id not in _BOT_NAMES:
             raise DiagnosticBlockedError("replay exposed an unexpected target bot id")
-        if observation.legal_action_count != len(
-            observation.decision.legal_actions
-        ):
+        if observation.legal_action_count != len(observation.decision.legal_actions):
             raise DiagnosticBlockedError(
                 "replay observation legal-action count is inconsistent"
             )
@@ -299,12 +292,8 @@ class DisagreementAnalyzer:
         discard_total = sum(self._discard_shanten.values())
         discard_document = {
             "discard_vs_discard_disagreements": discard_total,
-            "baseline_shanten_worse": self._discard_shanten[
-                "baseline_shanten_worse"
-            ],
-            "teacher_shanten_worse": self._discard_shanten[
-                "teacher_shanten_worse"
-            ],
+            "baseline_shanten_worse": self._discard_shanten["baseline_shanten_worse"],
+            "teacher_shanten_worse": self._discard_shanten["teacher_shanten_worse"],
             "same_shanten": self._discard_shanten["same_shanten"],
             "unavailable": self._discard_shanten["unavailable"],
         }
@@ -313,22 +302,14 @@ class DisagreementAnalyzer:
             "coverage": {
                 "choice_decisions": self._choice_decisions,
                 "forced_decisions": self._forced_decisions,
-                "observed_decisions": (
-                    self._choice_decisions + self._forced_decisions
-                ),
+                "observed_decisions": (self._choice_decisions + self._forced_decisions),
             },
-            "agreement": _agreement_document(
-                self._choice_decisions, self._agreements
-            ),
+            "agreement": _agreement_document(self._choice_decisions, self._agreements),
             "per_bot": per_bot,
-            "per_decision_kind": _breakdown(
-                self._per_kind_total, self._per_kind_agree
-            ),
+            "per_decision_kind": _breakdown(self._per_kind_total, self._per_kind_agree),
             "action_family_confusion": confusion,
             "hand_state": _breakdown(self._hand_total, self._hand_agree),
-            "riichi_state": _breakdown(
-                self._riichi_total, self._riichi_agree
-            ),
+            "riichi_state": _breakdown(self._riichi_total, self._riichi_agree),
             "legal_action_count": {
                 "exact": exact_legal_counts,
                 "buckets": _breakdown(
@@ -356,7 +337,9 @@ class DisagreementAnalyzer:
     ) -> dict[str, object]:
         arena_revision = _require_revision(arena_revision)
         if source.corpus_identity != ARM_R_CORPUS_IDENTITY:
-            raise DiagnosticInvalidError("corpus identity is not the locked #170 source")
+            raise DiagnosticInvalidError(
+                "corpus identity is not the locked #170 source"
+            )
         if source.manifest_sha256 != ARM_R_MANIFEST_SHA256:
             raise DiagnosticInvalidError(
                 "manifest identity is not the locked #170 source"
@@ -396,8 +379,7 @@ class DisagreementAnalyzer:
                 "manifest_sha256": source.manifest_sha256,
                 "snapshot_identity": source.snapshot_identity,
                 "teacher_bots": [
-                    {"bot_id": bot_id, "name": name}
-                    for bot_id, name in TARGET_BOTS
+                    {"bot_id": bot_id, "name": name} for bot_id, name in TARGET_BOTS
                 ],
             },
             "comparator": {
