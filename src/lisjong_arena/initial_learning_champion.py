@@ -30,12 +30,8 @@ POLICY_IDENTITY = (
     "learned-source-pilot-y:"
     "ecb31fc6954095041423fcfc312d0b07f952ce550f5b05f5e94238bcce7bb45e"
 )
-CHECKPOINT_IDENTITY = (
-    "ecb31fc6954095041423fcfc312d0b07f952ce550f5b05f5e94238bcce7bb45e"
-)
-CHECKPOINT_DIGEST = (
-    "746ef5ada2cc83d2aefbfa94cac464f03d27edb8082d22e0e455ea916dde385f"
-)
+CHECKPOINT_IDENTITY = "ecb31fc6954095041423fcfc312d0b07f952ce550f5b05f5e94238bcce7bb45e"
+CHECKPOINT_DIGEST = "746ef5ada2cc83d2aefbfa94cac464f03d27edb8082d22e0e455ea916dde385f"
 
 
 class InitialLearningChampionBindingError(ValueError):
