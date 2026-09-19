@@ -40,6 +40,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 ### Bounded evaluation contracts pending execution
 
 - [Progression development evaluation](progression-development-evaluation.md) — Issue #252のfeasibility gate + paired passive-x3 development screen（real executionはmerge後のoperator作業）
+- [Overall Champion AABB half-game formal protocol v1](overall-champion-aabb-half.md) — Issue #250のcross-family Overall determination protocol / lock / bundle verification（actual 400-hanchan formal runはmerge後のoperator作業）
 - [Stage A0 non-riichi Tenpai label path feasibility](stage-a0-tenpai-label-feasibility.md) — Issue #258のlabel path / corpus qualification（retained corpusに対する実測はmerge後のoperator作業）
 
 これらはconcreteなexecution / acquisition surfaceのcontractを記録する。**現在どの研究を優先するか**はactive GitHub Issueを正本とし、reusable contract自体が変わらない限りoperator文書へcurrent priorityを転記しない。
