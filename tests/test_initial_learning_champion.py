@@ -61,7 +61,9 @@ class InitialLearningChampionBindingTest(unittest.TestCase):
         os.environ[champion.CHECKPOINT_ENV_VAR] = str(configured)
         expected = _checkpoint(configured)
 
-        with mock.patch.object(champion, "load_checkpoint", return_value=expected) as load:
+        with mock.patch.object(
+            champion, "load_checkpoint", return_value=expected
+        ) as load:
             self.assertIs(champion._loaded_checkpoint(), expected)
 
         load.assert_called_once_with(configured)
@@ -135,7 +137,9 @@ class InitialLearningChampionBindingTest(unittest.TestCase):
         runtime = SimpleNamespace(create_policy=mock.Mock(side_effect=policies))
 
         with (
-            mock.patch.object(champion, "load_checkpoint", return_value=checkpoint) as load,
+            mock.patch.object(
+                champion, "load_checkpoint", return_value=checkpoint
+            ) as load,
             mock.patch.object(
                 champion, "create_serving_runtime", return_value=runtime
             ) as create_runtime,
@@ -165,7 +169,9 @@ class InitialLearningChampionBindingTest(unittest.TestCase):
         self.assertEqual(served.identity, champion.CHECKPOINT_IDENTITY)
         self.assertEqual(served.path, weights)
 
-    def test_factory_and_checkpoint_bindings_are_exact_top_level_callables(\n        self,\n    ) -> None:
+    def test_factory_and_checkpoint_bindings_are_exact_top_level_callables(
+        self,
+    ) -> None:
         factory = (
             "lisjong_arena.initial_learning_champion:"
             "create_initial_learning_champion_policy"
