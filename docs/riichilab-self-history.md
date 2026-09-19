@@ -40,7 +40,10 @@ python -m lisjong_arena.riichilab_self_history report `
   --output-dir C:\Dev\lisjong-artifacts\riichilab\lisjong-dev-history
 ```
 
-exit codeはmetadataとMJAIの両方がCOMPLETEのとき`0`、それ以外は`1`です。
+`sync` / `report`とも、exit codeはmetadataとMJAIの両方がCOMPLETEのとき`0`、
+それ以外は`1`です。`report`は保存済みreportのstatusをそのまま反映するので、
+JSON本文とprocess exitが食い違いません。status fieldが欠落・不正なreportは
+成功として扱わずfail closedします。
 
 ## Pagination contract
 

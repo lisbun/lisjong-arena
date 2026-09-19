@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from lisjong_arena.riichilab_corpus.http import HttpResponse
-from lisjong_arena.riichilab_self_history.__main__ import main
+from lisjong_arena.riichilab_self_history.__main__ import main, report_exit_code
 from lisjong_arena.riichilab_self_history.errors import SelfHistoryError
 from lisjong_arena.riichilab_self_history.models import (
     SelfHistoryGame,
@@ -331,19 +331,86 @@ class CliTest(unittest.TestCase):
         self._rejects(["sync", "--max-games", "1000", "--output-dir", "/tmp/unused"])
         self._rejects(["sync", "--bot-id", "313", "--max-games", "1000"])
 
-    def test_report_command_prints_the_stored_report(self) -> None:
+    def _report_command(self, root: Path) -> tuple[int, object]:
         import contextlib
         import io as stdio
 
+        stream = stdio.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = main(["report", "--output-dir", str(root)])
+        return code, json.loads(stream.getvalue())
+
+    def test_report_command_prints_the_stored_report(self) -> None:
         games = _api_games(0, 2)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             report = _sync(_single_page_transport(games), root)
-            stream = stdio.StringIO()
-            with contextlib.redirect_stdout(stream):
-                code = main(["report", "--output-dir", str(root)])
+            code, printed = self._report_command(root)
             self.assertEqual(code, 0)
-            self.assertEqual(json.loads(stream.getvalue()), report)
+            self.assertEqual(printed, report)
+
+    def test_report_command_exits_non_zero_for_a_stored_partial_report(self) -> None:
+        games = _api_games(0, 3)
+        transport = _single_page_transport(games)
+        transport.route(_log_url(games[1]), HttpResponse(404, {}, b""))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = _sync(transport, root)
+            self.assertEqual(report["metadata"]["status"], "COMPLETE")
+            self.assertEqual(report["mjai"]["status"], "PARTIAL")
+
+            code, printed = self._report_command(root)
+            # The JSON body and the process exit must agree: a stored PARTIAL
+            # report is never reported to automation as success.
+            self.assertEqual(code, 1)
+            self.assertEqual(printed, report)
+
+    def test_report_command_exits_non_zero_for_a_stored_failed_report(self) -> None:
+        games = _api_games(0, 2)
+        transport = _single_page_transport(games)
+        for value in games:
+            transport.route(_log_url(value), HttpResponse(404, {}, b""))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(_sync(transport, root)["mjai"]["status"], "FAILED")
+            self.assertEqual(self._report_command(root)[0], 1)
+
+
+class ExitCodeContractTest(unittest.TestCase):
+    def _report(self, **overrides: object) -> dict[str, object]:
+        value: dict[str, object] = {
+            "metadata": {"status": "COMPLETE"},
+            "mjai": {"status": "COMPLETE"},
+            "overall_status": "COMPLETE",
+        }
+        value.update(overrides)
+        return value
+
+    def test_complete_on_both_axes_exits_zero(self) -> None:
+        self.assertEqual(report_exit_code(self._report()), 0)
+
+    def test_any_non_complete_status_exits_one(self) -> None:
+        for overrides in (
+            {"mjai": {"status": "PARTIAL"}, "overall_status": "PARTIAL"},
+            {"mjai": {"status": "FAILED"}, "overall_status": "FAILED"},
+            {"metadata": {"status": "PARTIAL"}},
+            {"overall_status": "PARTIAL"},
+        ):
+            with self.subTest(overrides=overrides):
+                self.assertEqual(report_exit_code(self._report(**overrides)), 1)
+
+    def test_a_report_without_usable_status_fields_fails_closed(self) -> None:
+        for value in (
+            [],
+            {},
+            {"metadata": {"status": "COMPLETE"}, "overall_status": "COMPLETE"},
+            self._report(overall_status=None),
+            self._report(mjai={"status": 1}),
+            self._report(metadata={}),
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(SelfHistoryError):
+                    report_exit_code(value)
 
 
 if __name__ == "__main__":

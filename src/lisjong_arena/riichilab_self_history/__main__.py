@@ -20,6 +20,7 @@ from pathlib import Path
 
 from lisjong_arena.riichilab_corpus.http import StdlibHttpTransport
 from lisjong_arena.riichilab_corpus.persistence import read_json
+from lisjong_arena.riichilab_self_history.errors import SelfHistoryError
 from lisjong_arena.riichilab_self_history.persistence import (
     REPORT_FILENAME,
     resolve_output_root,
@@ -65,6 +66,34 @@ def _print(value: object) -> None:
     )
 
 
+def report_exit_code(report: object) -> int:
+    """Return the CLI exit code a completion report implies.
+
+    `sync`と`report`は同じreportを見るので、exit code contractもここ1箇所で定義
+    する。metadata completenessとMJAI coverageは独立fieldのままだが、process exit
+    はその両方がCOMPLETEのときだけ成功とする。status fieldが欠落・不正なreportは
+    成功として扱わずfail closedする。
+    """
+    if type(report) is not dict:
+        raise SelfHistoryError("self-history acquisition report must be an object")
+    metadata = report.get("metadata")
+    mjai = report.get("mjai")
+    if type(metadata) is not dict or type(mjai) is not dict:
+        raise SelfHistoryError(
+            "self-history acquisition report is missing its status sections"
+        )
+    statuses = (
+        report.get("overall_status"),
+        metadata.get("status"),
+        mjai.get("status"),
+    )
+    if any(type(status) is not str or not status for status in statuses):
+        raise SelfHistoryError(
+            "self-history acquisition report status fields are invalid"
+        )
+    return 0 if all(status == "COMPLETE" for status in statuses) else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     if arguments.command == "sync":
@@ -76,15 +105,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             timeout=arguments.timeout,
         )
         _print(report)
-        return 0 if report["overall_status"] == "COMPLETE" else 1
+        return report_exit_code(report)
 
     root = resolve_output_root(arguments.output_dir)
-    _print(read_json(root / REPORT_FILENAME, "self-history acquisition report"))
-    return 0
+    report = read_json(root / REPORT_FILENAME, "self-history acquisition report")
+    _print(report)
+    return report_exit_code(report)
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["main"]
+__all__ = ["main", "report_exit_code"]
