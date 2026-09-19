@@ -133,10 +133,11 @@ def retained_value() -> dict[str, object]:
 
 
 def feature_value() -> dict[str, object]:
-    return {
+    contract = {
         "semantics_id": FEATURE_SEMANTICS_ID,
         "names": list(FEATURE_NAMES),
         "dimension": FEATURE_DIM,
+        "base_tile_axis": "canonical 34 base tile kinds; red and normal five share one kind",
         "candidate_unseen": "remaining_tile_counts[candidate] / 4",
         "local_support_formula": LOCAL_SUPPORT_FORMULA,
         "riichi_timing_formula": RIICHI_TIMING_FORMULA,
@@ -146,6 +147,7 @@ def feature_value() -> dict[str, object]:
         "danger_weights_reused": False,
         "river_or_suji_hard_zero": False,
     }
+    return {**contract, "fingerprint": identity(contract)}
 
 
 def solver_value() -> dict[str, object]:
