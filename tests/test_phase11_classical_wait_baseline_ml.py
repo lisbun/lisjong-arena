@@ -16,6 +16,10 @@ from lisjong_arena.phase11_classical_wait_baseline.artifact import (
     save_model,
 )
 from lisjong_arena.phase11_classical_wait_baseline.data import ClassicalExample
+from lisjong_arena.phase11_classical_wait_baseline.lock import (
+    _runtime,
+    validate_runtime,
+)
 from lisjong_arena.phase11_classical_wait_baseline.model import (
     fit_offset_logistic,
     predict_probability,
@@ -47,6 +51,15 @@ def _train_record(seed: int, candidate_unseen: int, positive_tile: int):
             _other_target(Wind.WEST),
         ),
     )
+
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")
+class RuntimeContractTest(unittest.TestCase):
+    def test_runtime_normalizes_torch_version_to_plain_string(self):
+        runtime = _runtime()
+        self.assertIs(type(runtime["torch"]), str)
+        self.assertTrue(runtime["torch"].startswith("2.13.0"))
+        self.assertIs(validate_runtime(runtime), runtime)
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")
