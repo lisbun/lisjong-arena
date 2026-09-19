@@ -82,9 +82,7 @@ def _record(
         depth=1,
         opponent_winds=("south", "west", "north"),
         latent=tuple([latent_value] * LATENT_DIM),
-        targets=tuple(
-            _target(row, eligible=row in eligible_rows) for row in range(3)
-        ),
+        targets=tuple(_target(row, eligible=row in eligible_rows) for row in range(3)),
     )
 
 
@@ -188,9 +186,7 @@ class CenteringAndLatentTest(unittest.TestCase):
                 (0.0,) * LATENT_DIM,
             )
 
-        validation = (
-            _record(DatasetPartition.VALIDATION, 4, 99.0),
-        )
+        validation = (_record(DatasetPartition.VALIDATION, 4, 99.0),)
         with self.assertRaisesRegex(E160OffsetProbeError, "TRAIN records only"):
             centering_receipt(validation)
 
