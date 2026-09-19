@@ -20,6 +20,7 @@ from lisjong_arena.phase11_e160_offset_probe.data import (
 from lisjong_arena.phase11_e160_offset_probe.evaluation import classify_interval
 from lisjong_arena.phase11_e160_offset_probe.model import predict_probability
 from lisjong_arena.phase11_e160_offset_probe.protocol import (
+    CENTERED_MEAN_ABSOLUTE_TOLERANCE,
     CENTERING_SEMANTICS_ID,
     E160_OFFSET_INCONCLUSIVE,
     E160_OFFSET_REGRESSION,
@@ -125,6 +126,10 @@ class LockedProtocolTest(unittest.TestCase):
         self.assertEqual(contract["scaling"], "none")
         self.assertFalse(contract["pca"])
         self.assertFalse(contract["whitening"])
+        self.assertEqual(
+            contract["centered_mean_absolute_tolerance"],
+            CENTERED_MEAN_ABSOLUTE_TOLERANCE,
+        )
 
     def test_cli_has_no_solver_centering_or_rescue_override(self):
         parser = _parser()
@@ -180,6 +185,10 @@ class CenteringAndLatentTest(unittest.TestCase):
         self.assertEqual(centering["means"][0], [1.0] * LATENT_DIM)
         self.assertEqual(centering["means"][1], [2.0] * LATENT_DIM)
         self.assertEqual(centering["means"][2], [3.0] * LATENT_DIM)
+        self.assertLessEqual(
+            centering["max_abs_centered_train_mean"],
+            CENTERED_MEAN_ABSOLUTE_TOLERANCE,
+        )
         for row_index, record in enumerate(records):
             self.assertEqual(
                 centered_latent(record, row_index, centering),
