@@ -31,9 +31,7 @@ def _jeffreys_probability(positive: int, support: int) -> float:
         raise TypeError("positive/support must be integers")
     if support <= 0 or not 0 <= positive <= support:
         raise StageA0ProtocolLockError("invalid Bernoulli support counts")
-    return (positive + JEFFREYS_ALPHA) / (
-        support + JEFFREYS_ALPHA + JEFFREYS_BETA
-    )
+    return (positive + JEFFREYS_ALPHA) / (support + JEFFREYS_ALPHA + JEFFREYS_BETA)
 
 
 def _cell_key(cell) -> tuple[int, int, int, int, int]:
