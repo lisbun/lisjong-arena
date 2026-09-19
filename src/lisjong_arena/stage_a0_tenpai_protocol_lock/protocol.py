@@ -208,9 +208,7 @@ def historical_precision_document() -> dict[str, object]:
     minimum_n_for_power = math.ceil(
         ((Z_975 + Z_POWER_80) * proxy / MINIMUM_MEANINGFUL_SCORE_EFFECT) ** 2
     )
-    minimum_n_for_precision = math.ceil(
-        (1.96 * proxy / ACCEPTABLE_95_HALF_WIDTH) ** 2
-    )
+    minimum_n_for_precision = math.ceil((1.96 * proxy / ACCEPTABLE_95_HALF_WIDTH) ** 2)
     enabled = (
         n >= minimum_n_for_power
         and n >= minimum_n_for_precision
@@ -249,7 +247,7 @@ def historical_precision_document() -> dict[str, object]:
 def static_contract_document() -> dict[str, object]:
     precision = historical_precision_document()
     if precision["classification"] != DOWNSTREAM_STATUS:
-        raise RuntimeError("the checked-in downstream plan no longer satisfies its lock")
+        raise RuntimeError(\n            "the checked-in downstream plan no longer satisfies its lock"\n        )
     return {
         "identities": {
             "protocol_id": PROTOCOL_ID,
