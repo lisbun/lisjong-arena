@@ -16,6 +16,10 @@ participant identityはauto-discoverしない。execution APIはcallerから
 ``PolicySpec``を受け取り、実行前にlock participant bindingとのexact一致を
 fail closedで確認する。generic Champion registryは導入しない。
 
+live execution targetはexecutionの前後両方で検証し、後者はcomparison
+artifactを書き出す前に行う。実行中にparticipantのserved checkpointや
+ML runtimeが差し替わったformal eventは、raw resultごと採用しない。
+
 このmoduleを実行するとreal 400-hanchan evaluationが走る。CIとtestは
 ``execute``境界を差し替えて実RiichiEnvを起動しない。
 """
@@ -145,9 +149,23 @@ def run_overall_evaluation(
     learning_spec: PolicySpec,
     execute: Callable[..., ComparisonResult] = default_execute,
 ) -> OverallEvaluationOutcome:
-    """lockされたone-shot Overall formal eventを実行し、strict evidenceを残す。"""
+    """lockされたone-shot Overall formal eventを実行し、strict evidenceを残す。
+
+    live execution targetはexecutionの**前後両方**で検証する。400 hanchanは
+    長時間になり得るうえ、generic comparison contractはgame / seatごとに
+    factoryからfresh Policy instanceを生成するため、実行中にservedな
+    checkpointやML runtimeが差し替わると、1つのformal eventの中に異なる
+    participantの結果が混ざり得る。post-execution checkはcomparison artifact
+    を書き出す前に行い、失敗した場合はraw resultをformal artifactとして
+    一切採用しない。
+
+    v1の境界はこのpre + post verificationまでとする。実行中に変更され終了前に
+    元のbytesへ戻されるadversarial mutationはここでは検出対象にしない。
+    検出するにはimmutable snapshotか各factory invocationでのhashingが必要で、
+    Issue #250のbounded implementationを超える。
+    """
     lock = load_lock_document(lock_path)
-    live = require_live_execution_target(lock)
+    live_before = require_live_execution_target(lock)
     heuristic_binding, learning_binding = locked_participants(lock)
     require_spec_matches_binding(heuristic_spec, heuristic_binding, role="heuristic")
     require_spec_matches_binding(learning_spec, learning_binding, role="learning")
@@ -176,11 +194,19 @@ def run_overall_evaluation(
             f"{len(result.seat_results)} seat-results"
         )
 
+    # Nothing has been written yet, so a failure here discards the raw result
+    # instead of publishing a formal artifact for a drifted execution target.
+    live_after = require_live_execution_target(lock)
+    if live_after != live_before:
+        raise OverallChampionLockError(
+            "live execution target changed while the formal event was running"
+        )
+
     comparison_path = destinations["comparison_artifact"]
     save_comparison_artifact(result, comparison_path)
     comparison = load_bundle_comparison(comparison_path)
     require_comparison_provenance(lock, comparison.provenance)
-    if comparison.provenance.lisjong_revision != live.lisjong_revision:
+    if comparison.provenance.lisjong_revision != live_after.lisjong_revision:
         raise OverallChampionResultError(
             "comparison artifact lisjong revision differs from the live "
             "execution target"

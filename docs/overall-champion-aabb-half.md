@@ -316,6 +316,41 @@ participant implementation revision / served checkpoint の一致
 既存 `lisjong_arena._execution_safety` をそのままreuseする。PR branch上で
 formal resultを生成してからmergeする運用にしない。
 
+### pre + post verification (formal v1 boundary)
+
+live execution targetは **executionの前後両方** で検証する。
+
+```text
+live_before = require_live_execution_target(lock)
+        ↓
+execute(plan)                 # 400 hanchan
+        ↓
+live_after  = require_live_execution_target(lock)
+              live_after == live_before を要求
+        ↓
+save_comparison_artifact(...) # ここで初めてformal artifactを書く
+```
+
+preflightだけではformal event全体をbindできない。400 hanchanは長時間になり
+得るうえ、generic comparison contractはgame / seatごとにfactoryからfresh
+Policy instanceを生成するため、実行中にservedなcheckpointやML runtimeが
+差し替わると、1つのformal eventの中に異なるparticipantの結果が混ざり得る。
+
+post-execution checkは **comparison artifactを書き出す前** に行う。失敗した
+場合、raw resultはformal artifactとして一切採用されない。
+
+```text
+post-check failure
+    -> comparison.json を書かない
+    -> overall-result.json を書かない
+    -> raw result を破棄
+```
+
+v1の境界はこのpre + post verificationまでとする。実行中に変更され、終了前に
+元のbytesへ戻されるadversarial mutationはここでは検出対象にしない。検出する
+にはimmutable snapshotか各factory invocationでのhashingが必要で、Issue #250の
+bounded implementationを超える。
+
 ### ML runtime drift
 
 lockは宣言されたML runtime packageのexact versionを記録する。execution

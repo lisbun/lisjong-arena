@@ -901,6 +901,156 @@ class MlRuntimeBindingTest(unittest.TestCase):
                 )
 
 
+class PostExecutionVerificationTest(unittest.TestCase):
+    """formal run中のparticipant / runtime driftをpost-checkで拒否すること。
+
+    400 hanchanは長時間になり得るうえ、Policy instanceはgame / seatごとに
+    factoryから生成されるため、preflightだけではformal event全体をbindできない。
+    """
+
+    def setUp(self) -> None:
+        self.directory = _Directory()
+        self.addCleanup(self.directory.close)
+        install_checkpoint(self.directory.path)
+        self.addCleanup(clear_checkpoint)
+        self.lock = lock_document(
+            self.directory.path, ml_runtime_packages=("lisjong-arena",)
+        )
+        save_lock_document(self.lock, self.directory.lock)
+        self.result = comparison_result(SEEDS, uniform_profile(HEURISTIC_ADVANTAGE))
+        self.executed = 0
+
+    def _run(self, during_execution=None):
+        def execute(plan: ComparisonPlan, *, max_workers: int):
+            self.executed += 1
+            if during_execution is not None:
+                during_execution()
+            return self.result
+
+        with (
+            merged_main_execution(),
+            mock.patch(
+                "lisjong_arena.artifact._collect_execution_provenance",
+                return_value=comparison_provenance(),
+            ),
+        ):
+            return run_overall_evaluation(
+                lock_path=self.directory.lock,
+                heuristic_spec=heuristic_spec(),
+                learning_spec=learning_spec(),
+                execute=execute,
+            )
+
+    def _assert_no_formal_artifact_was_written(self) -> None:
+        self.assertEqual(self.executed, 1, "execution should have been attempted")
+        self.assertFalse(
+            self.directory.comparison.exists(),
+            "a drifted formal event must not publish comparison.json",
+        )
+        self.assertFalse(
+            self.directory.result.exists(),
+            "a drifted formal event must not publish overall-result.json",
+        )
+
+    def test_checkpoint_bytes_replaced_during_execution_is_rejected(self) -> None:
+        def swap() -> None:
+            install_checkpoint(self.directory.path, payload=b"weights swapped mid-run")
+
+        with self.assertRaisesRegex(OverallChampionLockError, "digest"):
+            self._run(swap)
+        self._assert_no_formal_artifact_was_written()
+
+    def test_checkpoint_identity_replaced_during_execution_is_rejected(self) -> None:
+        def swap() -> None:
+            install_checkpoint(self.directory.path, identity="swapped-mid-run")
+
+        with self.assertRaisesRegex(OverallChampionLockError, "checkpoint identity"):
+            self._run(swap)
+        self._assert_no_formal_artifact_was_written()
+
+    def test_checkpoint_removed_during_execution_is_rejected(self) -> None:
+        def remove() -> None:
+            (self.directory.path / "learning-champion.weights").unlink()
+
+        with self.assertRaisesRegex(OverallChampionLockError, "cannot be read"):
+            self._run(remove)
+        self._assert_no_formal_artifact_was_written()
+
+    def test_ml_runtime_drift_during_execution_is_rejected(self) -> None:
+        drifted = dict(self.lock["ml_runtime"])
+        drifted["lisjong-arena"] = "9.9.9"
+
+        def drift() -> None:
+            patcher = mock.patch.object(
+                lock_module, "collect_ml_runtime", return_value=drifted
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        with self.assertRaisesRegex(OverallChampionLockError, "live ML runtime"):
+            self._run(drift)
+        self._assert_no_formal_artifact_was_written()
+
+    def test_implementation_revision_drift_during_execution_is_rejected(self) -> None:
+        drifted = lock_provenance()
+        drifted = type(drifted)(
+            execution_environment=drifted.execution_environment,
+            lisjong_arena_version=drifted.lisjong_arena_version,
+            lisjong_arena_revision=drifted.lisjong_arena_revision,
+            lisjong_version=drifted.lisjong_version,
+            lisjong_revision="9" * 40,
+            lisjong_engine_version=drifted.lisjong_engine_version,
+            lisjong_engine_revision=drifted.lisjong_engine_revision,
+            riichienv_version=drifted.riichienv_version,
+            python_version=drifted.python_version,
+        )
+
+        def drift() -> None:
+            patcher = mock.patch.object(
+                lock_module, "collect_execution_provenance", return_value=drifted
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        with self.assertRaises(OverallChampionLockError):
+            self._run(drift)
+        self._assert_no_formal_artifact_was_written()
+
+    def test_stable_target_keeps_the_successful_path_green(self) -> None:
+        outcome = self._run()
+        self.assertEqual(self.executed, 1)
+        self.assertEqual(outcome.classification["label"], HEURISTIC_SUPERIOR_LABEL)
+        self.assertTrue(self.directory.comparison.exists())
+        self.assertTrue(self.directory.result.exists())
+        self.assertEqual(
+            verify_overall_bundle(
+                lock_path=self.directory.lock,
+                comparison_path=self.directory.comparison,
+                result_path=self.directory.result,
+            ),
+            outcome.overall_result,
+        )
+
+    def test_the_execution_target_is_verified_before_and_after_execution(self) -> None:
+        calls: list[str] = []
+        real = lock_module.require_live_execution_target
+
+        def recording(document):
+            calls.append("verified")
+            return real(document)
+
+        def during() -> None:
+            calls.append("executed")
+
+        with mock.patch(
+            "lisjong_arena.overall_champion_aabb.experiment"
+            ".require_live_execution_target",
+            recording,
+        ):
+            self._run(during)
+        self.assertEqual(calls, ["verified", "executed", "verified"])
+
+
 class OperatorSurfaceTest(unittest.TestCase):
     """invalid evidenceがoperator surfaceで``STOP / INVALID``になること。"""
 
