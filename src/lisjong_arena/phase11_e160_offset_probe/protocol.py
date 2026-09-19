@@ -63,9 +63,7 @@ EXPECTED_BASELINE_LOG_LOSS = 0.16936299644382038
 BASELINE_TOLERANCE = 1e-12
 
 CENTERING_SEMANTICS_ID = "train-only-exact-output-row-latent-mean-v1"
-LATENT_FINGERPRINT_SEMANTICS_ID = (
-    "phase172-same-step-next-latent-metadata-float32-v1"
-)
+LATENT_FINGERPRINT_SEMANTICS_ID = "phase172-same-step-next-latent-metadata-float32-v1"
 
 SOLVER = {
     "family": "torch.optim.LBFGS full-batch prevalence-offset linear probe",
