@@ -37,6 +37,10 @@ from .protocol import (
     QUALIFIED_ROUTE,
     RETAINED_DATASET_IDENTITY,
     SCIENTIFIC_SEEDS,
+    SOURCE_LISJONG_ENGINE_REVISION,
+    SOURCE_LISJONG_REVISION,
+    SOURCE_PYTHON_VERSION,
+    SOURCE_RIICHIENV_VERSION,
     TRAIN_SEEDS,
     VALIDATION_SEEDS,
     StageA0ProtocolLockError,
@@ -268,6 +272,54 @@ def _require_downstream_execution_provenance(provenance: dict[str, object]) -> N
             )
 
 
+def _scientific_cell_key(cell) -> tuple[int, int, int, int, int]:
+    identity = cell.row_identity
+    return (
+        identity.seed,
+        identity.step_ordinal,
+        identity.decision_ordinal,
+        identity.actor_seat,
+        cell.identity.viewer_relative_offset,
+    )
+
+
+def _require_scientific_data_binding(sidecar, public_keys) -> None:
+    """Fail closed on provenance drift or incomplete player-safe key coverage."""
+    expected_source = {
+        "lisjong_revision": SOURCE_LISJONG_REVISION,
+        "lisjong_engine_revision": SOURCE_LISJONG_ENGINE_REVISION,
+        "riichienv_version": SOURCE_RIICHIENV_VERSION,
+        "python_version": SOURCE_PYTHON_VERSION,
+    }
+    sidecar_provenance = sidecar.manifest["provenance"]
+    for name, expected in expected_source.items():
+        if sidecar_provenance.get(name) != expected:
+            raise StageA0ProtocolLockError(
+                f"scientific sidecar provenance {name} drifted from the qualified "
+                "retained source semantics"
+            )
+    if public_keys.manifest["provenance"] != sidecar_provenance:
+        raise StageA0ProtocolLockError(
+            "public-key provenance is not identical to the scientific sidecar"
+        )
+
+    sidecar_keys = {_scientific_cell_key(cell) for cell in sidecar.cells}
+    public_key_set = {record.cell_key for record in public_keys.records}
+    if len(sidecar_keys) != len(sidecar.cells):
+        raise StageA0ProtocolLockError(
+            "scientific sidecar contains duplicate opponent-cell identities"
+        )
+    if len(public_key_set) != len(public_keys.records):
+        raise StageA0ProtocolLockError(
+            "public-key artifact contains duplicate opponent-cell identities"
+        )
+    if sidecar_keys != public_key_set:
+        raise StageA0ProtocolLockError(
+            "public-key artifact does not cover the exact TRAIN+VALIDATION sidecar "
+            "cell population"
+        )
+
+
 def build_lock_b(
     *,
     lock_a_path,
@@ -295,6 +347,7 @@ def build_lock_b(
         raise StageA0ProtocolLockError("scientific sidecar exact-wait identity drifted")
     if public_keys.manifest["sidecar_identity"] != sidecar.identity:
         raise StageA0ProtocolLockError("public-key artifact is not bound to sidecar")
+    _require_scientific_data_binding(sidecar, public_keys)
 
     baseline = build_train_baseline_parameters(sidecar, public_keys)
     validate_train_baseline_parameters(baseline)
@@ -334,6 +387,7 @@ def build_lock_b(
             ],
             "scientific_sidecar_identity": sidecar.identity,
             "public_keys_identity": public_keys.identity,
+            "scientific_source_provenance": dict(sidecar.manifest["provenance"]),
             "scientific_seeds": list(SCIENTIFIC_SEEDS),
             "protected_test_seeds_unread": list(PROTECTED_TEST_SEEDS),
         },
@@ -387,6 +441,17 @@ def load_lock_b(path: str | Path) -> dict[str, object]:
         raise StageA0ProtocolLockError("Lock B dataset identity drifted")
     if data["scientific_seeds"] != list(SCIENTIFIC_SEEDS):
         raise StageA0ProtocolLockError("Lock B scientific seed population drifted")
+    expected_source = {
+        "lisjong_revision": SOURCE_LISJONG_REVISION,
+        "lisjong_engine_revision": SOURCE_LISJONG_ENGINE_REVISION,
+        "riichienv_version": SOURCE_RIICHIENV_VERSION,
+        "python_version": SOURCE_PYTHON_VERSION,
+    }
+    for name, expected in expected_source.items():
+        if data["scientific_source_provenance"].get(name) != expected:
+            raise StageA0ProtocolLockError(
+                f"Lock B scientific source provenance {name} drifted"
+            )
     if data["protected_test_seeds_unread"] != list(PROTECTED_TEST_SEEDS):
         raise StageA0ProtocolLockError("Lock B protected TEST population drifted")
     exposure = document["exposure"]
