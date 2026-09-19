@@ -16,9 +16,11 @@ from lisjong_arena.targeted_honor_release_development.protocol import (
     candidate_spec,
     comparator_spec,
     parent_spec,
-    repository_declared_allocated_seeds as declared_before_confirmation,
     require_exact_candidate_semantics,
     require_exact_comparator,
+)
+from lisjong_arena.targeted_honor_release_development.protocol import (
+    repository_declared_allocated_seeds as declared_before_confirmation,
 )
 
 PROTOCOL_ID = "targeted-honor-release-confirmation-v1"
