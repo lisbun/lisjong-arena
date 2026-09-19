@@ -145,6 +145,77 @@ class CanonicalOrderTest(unittest.TestCase):
         self.assertEqual(serial_result.metrics_b, parallel_result.metrics_b)
 
 
+
+class ProgressCallbackTest(unittest.TestCase):
+    def test_serial_runner_notifies_each_completed_hanchan(self) -> None:
+        plan = _plan((11, 22))
+        outcomes = _fake_outcomes(plan)
+        calls_per_seed: dict[int, int] = dict.fromkeys(plan.seeds, 0)
+        notifications: list[tuple[int, int]] = []
+
+        def _serial_single_game(policies, *, seed, game_mode, max_steps):
+            rotation = calls_per_seed[seed]
+            calls_per_seed[seed] += 1
+            return outcomes[(seed, rotation)].result
+
+        with mock.patch(
+            "lisjong_arena.comparison._run_single_game", _serial_single_game
+        ):
+            run_comparison(
+                plan,
+                progress_callback=lambda completed, total: notifications.append(
+                    (completed, total)
+                ),
+            )
+
+        self.assertEqual(
+            notifications,
+            [(index, 8) for index in range(1, 9)],
+        )
+
+    def test_parallel_runner_forwards_parent_process_progress_callback(self) -> None:
+        plan = _plan((30, 10))
+        outcomes = _fake_outcomes(plan, shuffle=True)
+        notifications: list[tuple[int, int]] = []
+
+        def fake_run_game_jobs(jobs, *, max_workers, progress_callback=None):
+            self.assertEqual(max_workers, 3)
+            self.assertEqual(len(jobs), 8)
+            for completed in range(1, len(jobs) + 1):
+                if progress_callback is not None:
+                    progress_callback(completed, len(jobs))
+            return outcomes
+
+        with mock.patch(
+            "lisjong_arena.comparison.run_game_jobs",
+            side_effect=fake_run_game_jobs,
+        ):
+            result = run_comparison_parallel(
+                plan,
+                max_workers=3,
+                progress_callback=lambda completed, total: notifications.append(
+                    (completed, total)
+                ),
+            )
+
+        self.assertEqual(
+            notifications,
+            [(index, 8) for index in range(1, 9)],
+        )
+        self.assertEqual(
+            [
+                (item.seed, item.rotation, int(item.seat))
+                for item in result.seat_results
+            ],
+            [
+                (seed, rotation, seat)
+                for seed in plan.seeds
+                for rotation in range(ROTATION_COUNT)
+                for seat in range(4)
+            ],
+        )
+
+
 class MaxWorkersTest(unittest.TestCase):
     def test_max_workers_is_forwarded_to_run_game_jobs(self) -> None:
         plan = _plan((1,))
