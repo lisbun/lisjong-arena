@@ -195,6 +195,12 @@ class ClassificationTest(unittest.TestCase):
             classify(self._summary(-2.0, 0.0))["label"], INCONCLUSIVE_LABEL
         )
 
+    def test_classification_rejects_non_finite_interval(self) -> None:
+        with self.assertRaisesRegex(
+            TargetedHonorReleaseConfirmationPairedError, "finite ordered"
+        ):
+            classify(self._summary(float("nan"), 2.0))
+
     def test_classification_rejects_wrong_primary_unit_count(self) -> None:
         wrong = PairedSummary(
             block_count=SEED_BLOCK_COUNT - 1,
