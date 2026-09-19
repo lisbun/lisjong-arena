@@ -11,7 +11,7 @@ from lisjong.policy_contract import Policy, execute_policy
 from lisjong.policy_contract.action import DiscardAction
 
 from lisjong_arena.policy_catalog import POLICY_CATALOG
-from lisjong_arena.riichilab_corpus.models import RecentGamesSnapshot, TARGET_BOTS
+from lisjong_arena.riichilab_corpus.models import TARGET_BOTS, RecentGamesSnapshot
 from lisjong_arena.riichilab_source_pilot.dataset import (
     MaterializedSource,
     materialize_local_corpus,

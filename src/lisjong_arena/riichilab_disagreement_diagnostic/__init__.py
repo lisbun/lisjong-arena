@@ -4,10 +4,6 @@ from .analysis import (
     COMPARATOR_BINDING_ARENA_REVISION,
     COMPARATOR_CLASS_NAME,
     COMPARATOR_IDENTITY,
-    DiagnosticBlockedError,
-    DiagnosticInvalidError,
-    DisagreementAnalyzer,
-    DisagreementDiagnosticError,
     EXPECTED_CHOICE_ROWS,
     EXPECTED_DECISION_OPPORTUNITIES,
     EXPECTED_FORCED_ROWS,
@@ -18,6 +14,10 @@ from .analysis import (
     OUTCOME_COMPLETE,
     OUTCOME_INVALID,
     SCHEMA_VERSION,
+    DiagnosticBlockedError,
+    DiagnosticInvalidError,
+    DisagreementAnalyzer,
+    DisagreementDiagnosticError,
     run_diagnostic,
 )
 
