@@ -235,9 +235,7 @@ def centered_latent_summary(
     def finish(stats: dict) -> dict[str, object]:
         count = stats["scalar_values"]
         if stats["eligible_rows"] <= 0 or count <= 0:
-            raise E160OffsetProbeError(
-                "centered latent summary requires eligible rows"
-            )
+            raise E160OffsetProbeError("centered latent summary requires eligible rows")
         mean = stats["sum"] / count
         rms = math.sqrt(stats["square_sum"] / count)
         result = {
