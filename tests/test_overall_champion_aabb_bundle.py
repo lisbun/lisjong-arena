@@ -1114,7 +1114,9 @@ class OperatorSurfaceTest(unittest.TestCase):
         self.assertIn("ETA", stderr.getvalue())
         self.assertIn("finish ~", stderr.getvalue())
         self.assertNotIn("400/400", stdout.getvalue())
-        self.assertIn(f"result_identity={self.document['result_identity']}", stdout.getvalue())
+        self.assertIn(
+            f"result_identity={self.document['result_identity']}", stdout.getvalue()
+        )
 
     def test_run_progress_line_closes_when_execution_fails(self) -> None:
         from lisjong_arena.overall_champion_aabb.__main__ import main
