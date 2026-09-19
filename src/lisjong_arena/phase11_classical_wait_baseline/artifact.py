@@ -90,13 +90,7 @@ def validate_feature_summary(
             for number in numbers
         ):
             raise ClassicalWaitError("feature summary contains a non-finite value")
-        if not (
-            0.0
-            <= row["minimum"]
-            <= row["mean"]
-            <= row["maximum"]
-            <= 1.0
-        ):
+        if not (0.0 <= row["minimum"] <= row["mean"] <= row["maximum"] <= 1.0):
             raise ClassicalWaitError("feature summary values must remain in [0,1]")
     return value
 
