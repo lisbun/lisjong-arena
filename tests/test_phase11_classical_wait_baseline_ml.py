@@ -9,7 +9,7 @@ from pathlib import Path
 
 from lisjong_engine.wind import Wind
 
-from test_phase11_classical_wait_baseline import _record, _snapshot, _target, _other_target
+from test_phase11_classical_wait_baseline import _other_target, _snapshot, _target
 
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 from lisjong_arena.phase11_classical_wait_baseline.artifact import (
@@ -24,7 +24,6 @@ from lisjong_arena.phase11_classical_wait_baseline.model import (
 from lisjong_arena.phase11_classical_wait_baseline.protocol import (
     FEATURE_DIM,
     ClassicalWaitError,
-    identity,
 )
 
 TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
@@ -53,11 +52,6 @@ def _train_record(seed: int, candidate_unseen: int, positive_tile: int):
 
 @unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")
 class DeterministicFitTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        global torch
-        import torch
-
     def setUp(self):
         self.records = (
             _train_record(1, 4, 4),
