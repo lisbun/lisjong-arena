@@ -71,7 +71,7 @@ def _runtime() -> dict[str, object]:
         raise ClassicalWaitError("Arena #222 requires the locked CPU-only runtime")
     return {
         "python": platform.python_version(),
-        "torch": torch.__version__,
+        "torch": str(torch.__version__),
         "riichienv": importlib.metadata.version("riichienv"),
         "platform": platform.platform(),
         "device": "cpu",
