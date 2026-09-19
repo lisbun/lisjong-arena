@@ -57,8 +57,7 @@ def baseline_log_loss(records: tuple, baseline: dict) -> float:
     for _record, _target, tile_index, _features, label in eligible_cells(records):
         probability = float(probabilities[tile_index])
         total += -(
-            label * math.log(probability)
-            + (1 - label) * math.log1p(-probability)
+            label * math.log(probability) + (1 - label) * math.log1p(-probability)
         )
         cells += 1
     if cells <= 0:
@@ -97,7 +96,9 @@ def _add(aggregate: dict, label: int, baseline_p: float, classical_p: float):
     aggregate["classical_probability_sum"] += classical_p
 
 
-def evaluate_classical(records: tuple, baseline: dict, model: dict) -> dict[str, object]:
+def evaluate_classical(
+    records: tuple, baseline: dict, model: dict
+) -> dict[str, object]:
     if not records or any(
         record.partition is not DatasetPartition.VALIDATION for record in records
     ):
@@ -152,9 +153,7 @@ def evaluate_classical(records: tuple, baseline: dict, model: dict) -> dict[str,
             {"source_class": source_class, "game_seed": game_seed, **row}
             for (source_class, game_seed), row in sorted(games.items())
         ],
-        "per_tile": [
-            {"tile_index": index, **row} for index, row in enumerate(tiles)
-        ],
+        "per_tile": [{"tile_index": index, **row} for index, row in enumerate(tiles)],
         "reliability": {
             name: [
                 {
