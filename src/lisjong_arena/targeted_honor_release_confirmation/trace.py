@@ -223,9 +223,7 @@ def parse_trace_artifact(value: object) -> dict[str, object]:
         raise TargetedHonorReleaseConfirmationTraceError(
             "H trace seed/rotation/focal-seat order drifted"
         )
-    summary = expect_object(
-        raw["summary"], _SUMMARY_FIELDS, "candidate_trace.summary"
-    )
+    summary = expect_object(raw["summary"], _SUMMARY_FIELDS, "candidate_trace.summary")
     replay_wall_clock_seconds = expect_float(
         summary["replay_wall_clock_seconds"],
         "candidate_trace.summary.replay_wall_clock_seconds",
@@ -251,10 +249,9 @@ def parse_trace_artifact(value: object) -> dict[str, object]:
         raw["candidate_artifact_digest"], "candidate_trace.candidate_artifact_digest"
     )
     payload = {key: raw[key] for key in raw if key != "result_identity"}
-    if (
-        expect_str(raw["result_identity"], "candidate_trace.result_identity")
-        != _identity(payload)
-    ):
+    if expect_str(
+        raw["result_identity"], "candidate_trace.result_identity"
+    ) != _identity(payload):
         raise TargetedHonorReleaseConfirmationTraceError(
             "H trace result identity mismatch"
         )
