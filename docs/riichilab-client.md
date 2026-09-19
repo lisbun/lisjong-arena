@@ -105,6 +105,11 @@ src/lisjong_arena/riichilab/
                     resilient / continuous ranked runner(Issue #47)。
                     run_ranked_game()を変更せずその上位layerとして
                     retry / backoff / requeue / graceful shutdownを持つ
+    live_presentation.py
+                    ranked live presentation seam
+                    (`lisbun/lisjong-play#41` prerequisite)。
+                    immutable player-visible presentation factと
+                    bounded / non-blocking delivery bufferを持つ
 ```
 
 `lisjong_arena.riichilab` package rootへ大量のeager re-exportは追加しない。
@@ -181,6 +186,84 @@ optionalである。
 
 Arenaの`RankedGameResult`は、このlower-level status contractをconsumer
 として扱う。
+
+### ranked live presentation seam (opt-in)
+
+`RankedSession(policy, presentation=...)`と
+`run_ranked_game(..., presentation=...)`は、`lisbun/lisjong-play#41`の
+live spectator向けにplayer-visible decision stateを外部consumerへ渡す、
+opt-inのbounded seamである。`presentation`を指定しない既存behaviorは
+完全に不変であり、その場合Session/runnerは従来どおり
+`RiichiLabSeatAdapter.process_request_action()`だけを呼び、presentation
+factを構築しない。
+
+**presentationはplayer-visible Policy decision stateのread-only consumer
+であり、ranked execution timingを支配しない。** Policy判断、action mapping、
+`possible_actions` validation、送信payload、`request_id` lifecycle、
+ack semantics、`RankedGameResult`のいずれもpresentationの有無で変化しない。
+
+publishされるfactは次の3種だけである。
+
+| fact | 内容 | 発行元 |
+| --- | --- | --- |
+| `RankedDecisionPresentation` | `request_id` / bound seat / そのdecisionでPolicyへ渡した`PolicyInput` / canonical selected `InternalAction` | `RankedSession` |
+| `RankedCompletionPresentation` | bound seat / `end_game` final scores(欠落時は`None`) | `run_ranked_game()` |
+| `RankedFailurePresentation` | 完走しなかったことを示す例外type名だけ | `run_ranked_game()` |
+
+#### terminal lifecycle
+
+per-decision factは`RankedSession`が所有し、terminal factは
+`run_ranked_game()`が所有する。1 runにつきcompletionとfailureのどちらか
+一方だけがpublishされる。
+
+```text
+trace writer open
+  -> drive_ranked_session()
+  -> transport context exit / cleanup
+  -> trace writer close
+  -> session.status() / bound seat validation
+       すべて成功 -> RankedCompletionPresentation を1回だけpublish
+       いずれか失敗 -> RankedFailurePresentation だけをpublish
+```
+
+`end_game`受信時点ではcompletionをpublishしない。`end_game`の後にも
+transport cleanup、`JsonlProtocolTraceWriter.close()`
+(`ProtocolTraceError`を送出し得る)、`SessionStatus`検証が残るため、そこで
+publishすると、すでにcompletedとして表示したconsumerへ後からfailureを
+渡すことになり、terminal stateを一意にできない。runtime trace
+initialization failure(writer open失敗)もfailure publicationの対象に
+含める。
+
+- presentation factの正本はPolicyへ実際に渡した`DecisionContext.input`で
+  あり、raw `request_action` JSON / base64 Observationをpresentation APIに
+  しない。consumerはtransport payloadを再parseしない
+- token / Authorization / credential / WebSocket objectはfactにもbufferにも
+  含めない。failure factはmessageを持たず例外type名だけを運ぶ
+- Policyは二重実行しない。send-ready responseとdecision factsは
+  `process_request_action_with_decision_facts()`の1回の呼び出しで得る
+- publishはsend可能と確定したdecisionについてだけ行う
+
+delivery boundaryは`BoundedRankedPresentationBuffer`である。
+
+- capacityは明示的・有限(既定64)であり、unbounded Queueは使わない
+- publish側はlock保持中にO(1) appendだけを行い、consumer callbackを
+  ranked response path上で同期実行しない。consumerが遅い・drainを止めても
+  Policy response / validation / WebSocket send / 次request処理は遅延しない
+- decision snapshotはcumulative player-visible stateであるため、capacity
+  到達時は最も古いsnapshotをcoalesce(drop)し、件数を
+  `coalesced_decisions` / `total_coalesced_decisions`で可視化する
+- terminal fact(completion / failure)はcapacityの外の専用slotで保持し、
+  silentにdropしない
+- `detach()`後のpublishはno-op相当で例外を送出せず、ranked sessionを
+  abortさせない
+
+`--record-dir`との併用のため、`acquire_ranked_game_record()`は同じ
+optional `presentation`を`run_ranked_game()`へthread throughするだけで
+ある。presentationはrecord layerもprotocol trace writerも通らないため、
+durable ranked recordのschema / payload / provenance / digest semanticsは
+presentationの有無で変化しない。
+
+generic event bus / telemetry framework / viewer frameworkへは拡張しない。
 
 ### `SessionStatus` detached snapshot
 

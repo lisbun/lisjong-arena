@@ -24,10 +24,18 @@ lifecycle・timeout schedulerを対象外とすること)は
 `lisjong_arena.riichilab`配下の以下のsubmoduleが、Arena-owned canonical
 protocol-facing bridgeである。
 
-- `adapter`: `RiichiLabSeatAdapter` / `SendReadyResponse`。1 game x 1 seat
-  へbindされたstateful runtime。`SeatMaterializedState`と
-  `RiichiEnvActionMappingSession`をconstructorで1回だけ生成し、
-  `process_request_action()`呼び出しをまたいで継続保持する
+- `adapter`: `RiichiLabSeatAdapter` / `SendReadyResponse` /
+  `ProcessedRequestAction`。1 game x 1 seatへbindされたstateful runtime。
+  `SeatMaterializedState`と`RiichiEnvActionMappingSession`をconstructorで
+  1回だけ生成し、`process_request_action()`呼び出しをまたいで継続保持する。
+  `process_request_action_with_decision_facts()`は同じ処理を1回だけ実行し、
+  send-ready responseに加えて、そのdecisionでPolicyへ渡した`PolicyInput`と
+  canonical selected `InternalAction`を`ProcessedRequestAction`として返す
+  (`process_request_action()`はそのthin wrapperであり、Policyは二重実行
+  されない)。これはread-onlyなplayer-visible presentation
+  (`docs/riichilab-client.md`の「ranked live presentation seam」)のための
+  decision facts公開であり、Policy判断・action mapping・validationのいずれも
+  変更しない
 - `request_action`: `ParsedRequestAction` / `parse_request_action()`。
   RiichiLab `request_action`入力境界
 - `mjai_response`: `build_mjai_response()`。resolve済みRiichiEnv Actionの
