@@ -165,7 +165,10 @@ class LockedProtocolTest(unittest.TestCase):
                 "riichi_declaration_turn_normalized",
             ),
         )
-        self.assertFalse(feature_value()["static_tile_class_terms_in_primary_model"])
+        feature_contract = feature_value()
+        self.assertFalse(feature_contract["static_tile_class_terms_in_primary_model"])
+        self.assertEqual(len(feature_contract["fingerprint"]), 64)
+        self.assertIn("red and normal five", feature_contract["base_tile_axis"])
         self.assertEqual(
             feature_value()["local_support_formula"],
             "min(unseen(required_a), unseen(required_b)) / 4",
@@ -230,6 +233,17 @@ class FeatureSemanticsTest(unittest.TestCase):
             )
             self.assertEqual(values[0], count / 4)
             self.assertEqual(values[1:9], (0.0,) * 8)
+
+    def test_red_and_normal_five_share_the_single_canonical_base_kind(self):
+        remaining = list((4,) * 34)
+        remaining[4] = 2
+        values = feature_vector(
+            _snapshot(remaining=tuple(remaining)),
+            _target(),
+            4,
+        )
+        self.assertEqual(values[0], 0.5)
+        self.assertEqual(len(_snapshot().remaining_tile_counts), 34)
 
     def test_penchan_kanchan_and_both_ryanmen_geometries_are_fixed(self):
         # 3m: penchan requires 1m/2m, kanchan 2m/4m, low ryanmen 4m/5m.
