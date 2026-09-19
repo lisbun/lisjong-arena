@@ -77,7 +77,9 @@ _LOCK_B_FIELDS = {
 
 
 def _identity(document: dict[str, object]) -> str:
-    logical = {\n        name: value for name, value in document.items() if name != "lock_identity"\n    }
+    logical = {
+        name: value for name, value in document.items() if name != "lock_identity"
+    }
     return hashlib.sha256(canonical_json_text(logical).encode("utf-8")).hexdigest()
 
 
@@ -124,23 +126,35 @@ def build_lock_a(
 
     report = load_feasibility_report(feasibility_report_path)
     if report.identity != EXPECTED_258_REPORT_IDENTITY:
-        raise StageA0ProtocolLockError(\n            "Lock A is not bound to the completed #258 report"\n        )
+        raise StageA0ProtocolLockError(
+            "Lock A is not bound to the completed #258 report"
+        )
     if report.hard_outcome != RETAINED_AUGMENTATION_QUALIFIED:
-        raise StageA0ProtocolLockError(\n            "#258 did not finish as retained augmentation qualified"\n        )
+        raise StageA0ProtocolLockError(
+            "#258 did not finish as retained augmentation qualified"
+        )
     if (
         report.document["routes"]["recommended_stage_a0_corpus_route"]
         != QUALIFIED_ROUTE
     ):
-        raise StageA0ProtocolLockError(\n            "#258 recommended route is not retained augmentation"\n        )
+        raise StageA0ProtocolLockError(
+            "#258 recommended route is not retained augmentation"
+        )
 
     sidecar = load_sidecar(qualified_sidecar_path)
     if sidecar.identity != EXPECTED_258_SIDECAR_IDENTITY:
-        raise StageA0ProtocolLockError(\n            "Lock A is not bound to the completed #258 sidecar"\n        )
+        raise StageA0ProtocolLockError(
+            "Lock A is not bound to the completed #258 sidecar"
+        )
     if sidecar.route != QUALIFIED_ROUTE:
-        raise StageA0ProtocolLockError(\n            "#258 sidecar route is not retained augmentation"\n        )
+        raise StageA0ProtocolLockError(
+            "#258 sidecar route is not retained augmentation"
+        )
     sidecar_seeds = {cell.row_identity.seed for cell in sidecar.cells}
     if sidecar_seeds != set(TRAIN_SEEDS):
-        raise StageA0ProtocolLockError(\n            "#258 sidecar must contain exactly retained TRAIN seeds"\n        )
+        raise StageA0ProtocolLockError(
+            "#258 sidecar must contain exactly retained TRAIN seeds"
+        )
 
     train_identity = _partition_identity(dataset.manifest, TRAIN_SEEDS, "TRAIN")
     validation_identity = _partition_identity(
@@ -201,9 +215,13 @@ def load_lock_a(path: str | Path) -> dict[str, object]:
     if document["schema_version"] != LOCK_A_SCHEMA_VERSION:
         raise StageA0ProtocolLockError("unsupported Lock A schema")
     if document["contract_fingerprint"] != contract_fingerprint():
-        raise StageA0ProtocolLockError(\n            "Lock A contract fingerprint differs from implementation"\n        )
+        raise StageA0ProtocolLockError(
+            "Lock A contract fingerprint differs from implementation"
+        )
     if document["contract"] != static_contract_document():
-        raise StageA0ProtocolLockError(\n            "Lock A static contract differs from implementation"\n        )
+        raise StageA0ProtocolLockError(
+            "Lock A static contract differs from implementation"
+        )
     if _identity(document) != document["lock_identity"]:
         raise StageA0ProtocolLockError("Lock A identity does not match its content")
     prerequisite = document["prerequisite"]
@@ -343,9 +361,13 @@ def load_lock_b(path: str | Path) -> dict[str, object]:
     if document["schema_version"] != LOCK_B_SCHEMA_VERSION:
         raise StageA0ProtocolLockError("unsupported Lock B schema")
     if document["contract_fingerprint"] != contract_fingerprint():
-        raise StageA0ProtocolLockError(\n            "Lock B contract fingerprint differs from implementation"\n        )
+        raise StageA0ProtocolLockError(
+            "Lock B contract fingerprint differs from implementation"
+        )
     if document["contract"] != static_contract_document():
-        raise StageA0ProtocolLockError(\n            "Lock B static contract differs from implementation"\n        )
+        raise StageA0ProtocolLockError(
+            "Lock B static contract differs from implementation"
+        )
     if document["precision_preflight"] != historical_precision_document():
         raise StageA0ProtocolLockError("Lock B precision preflight drifted")
     validate_train_baseline_parameters(document["baseline_parameters"])
@@ -357,7 +379,9 @@ def load_lock_b(path: str | Path) -> dict[str, object]:
         else LOCKED_NOT_POWERED_OUTCOME
     )
     if document["hard_outcome"] != expected_outcome:
-        raise StageA0ProtocolLockError(\n            "Lock B hard outcome does not match downstream status"\n        )
+        raise StageA0ProtocolLockError(
+            "Lock B hard outcome does not match downstream status"
+        )
     data = document["data"]
     if data["retained_dataset_identity"] != RETAINED_DATASET_IDENTITY:
         raise StageA0ProtocolLockError("Lock B dataset identity drifted")
