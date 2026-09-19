@@ -59,7 +59,7 @@ def coverage_value(records: tuple) -> dict[str, object]:
                 unavailable_rows += 1
                 continue
             if len(target.mask) != TILE_KIND_COUNT:
-                raise E160OffsetProbeError("structural-wait mask must contain 34 values")
+                raise E160OffsetProbeError(\n                    "structural-wait mask must contain 34 values"\n                )
             eligible_rows += 1
             per_output_row[row_index] += 1
             eligible_games.add((record.source_class, record.game_seed))
@@ -153,8 +153,7 @@ def centered_latent(record, row_index: int, centering: dict) -> tuple[float, ...
     latent = _latent_values(record.latent)
     mean = centering["means"][row_index]
     return tuple(
-        value - float(center)
-        for value, center in zip(latent, mean, strict=True)
+        value - float(center) for value, center in zip(latent, mean, strict=True)
     )
 
 
@@ -218,15 +217,11 @@ def load_latent_records(
 def retained_receipt(evidence) -> dict[str, object]:
     value = retained_readback_value(evidence)
     return {
-        "phase150_execution_lock_identity": value[
-            "phase150_execution_lock_identity"
-        ],
+        "phase150_execution_lock_identity": value["phase150_execution_lock_identity"],
         "population_identity": value["population_identity"],
         "raw_corpus_identity": value["raw_corpus_identity"],
         "dataset_identity": value["dataset_identity"],
-        "phase167_execution_lock_identity": value[
-            "phase167_execution_lock_identity"
-        ],
+        "phase167_execution_lock_identity": value["phase167_execution_lock_identity"],
         "phase167_result_identity": value["phase167_result_identity"],
         "e160_weights_sha256": value["e160_weights_sha256"],
         "train_seeds": value["train_seeds"],
