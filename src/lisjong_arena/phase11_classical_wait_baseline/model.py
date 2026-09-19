@@ -122,7 +122,7 @@ def fit_offset_logistic(
         max_eval=SOLVER["max_evaluations"],
         tolerance_grad=SOLVER["tolerance_grad"],
         tolerance_change=SOLVER["tolerance_change"],
-        history_size=100,
+        history_size=SOLVER["history_size"],
         line_search_fn=SOLVER["line_search"],
     )
 
@@ -251,6 +251,10 @@ def validate_model(
     for name in ("optimizer_iterations", "optimizer_function_evaluations"):
         if type(value[name]) is not int or value[name] < 0:
             raise ClassicalWaitError(f"{name} must be a non-negative integer")
+    if value["optimizer_iterations"] > SOLVER["max_iterations"]:
+        raise ClassicalWaitError("optimizer iterations exceed the locked budget")
+    if value["optimizer_function_evaluations"] > SOLVER["max_evaluations"]:
+        raise ClassicalWaitError("optimizer evaluations exceed the locked budget")
     weights = value["weights"]
     if (
         type(weights) is not list
