@@ -63,6 +63,7 @@ EXPECTED_BASELINE_LOG_LOSS = 0.16936299644382038
 BASELINE_TOLERANCE = 1e-12
 
 CENTERING_SEMANTICS_ID = "train-only-exact-output-row-latent-mean-v1"
+CENTERED_MEAN_ABSOLUTE_TOLERANCE = 1e-12
 LATENT_FINGERPRINT_SEMANTICS_ID = "phase172-same-step-next-latent-metadata-float32-v1"
 
 SOLVER = {
@@ -200,6 +201,7 @@ def centering_value() -> dict[str, object]:
         "scaling": "none",
         "pca": False,
         "whitening": False,
+        "centered_mean_absolute_tolerance": CENTERED_MEAN_ABSOLUTE_TOLERANCE,
     }
 
 
@@ -268,6 +270,7 @@ __all__ = [
     "BOOTSTRAP_ORDER_INDICES",
     "BOOTSTRAP_REPLICATES",
     "BOOTSTRAP_SEED",
+    "CENTERED_MEAN_ABSOLUTE_TOLERANCE",
     "CENTERING_SEMANTICS_ID",
     "E160_OFFSET_INCONCLUSIVE",
     "E160_OFFSET_REGRESSION",
