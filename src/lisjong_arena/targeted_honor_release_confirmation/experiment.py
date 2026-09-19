@@ -8,7 +8,7 @@ from pathlib import Path
 
 from lisjong_arena._execution_safety import require_new_artifact_destinations
 from lisjong_arena.model import SingleRoundEvaluationPlan, SingleRoundEvaluationResult
-from lisjong_arena.progression_development.paired import load_arm_artifact
+from lisjong_arena.paired_evaluation import load_arm_artifact
 from lisjong_arena.single_round_artifact import (
     SingleRoundExecutionProvenance,
     SingleRoundStrengthArtifact,

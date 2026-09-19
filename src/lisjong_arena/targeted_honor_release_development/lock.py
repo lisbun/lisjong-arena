@@ -31,7 +31,7 @@ from lisjong_arena._execution_safety import (
     require_merged_arena_revision,
     require_new_artifact_destinations,
 )
-from lisjong_arena.progression_development.paired import (
+from lisjong_arena.paired_evaluation import (
     artifact_file_digest,
     load_arm_artifact,
 )

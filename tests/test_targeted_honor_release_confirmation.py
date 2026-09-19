@@ -16,7 +16,7 @@ from _progression_development_fixtures import provenance
 import lisjong_arena.targeted_honor_release_confirmation.lock as lock_module
 import lisjong_arena.targeted_honor_release_confirmation.paired as paired_module
 import lisjong_arena.targeted_honor_release_confirmation.protocol as protocol_module
-from lisjong_arena.progression_development.paired import PairedSummary
+from lisjong_arena.paired_evaluation import PairedSummary
 from lisjong_arena.targeted_honor_release_confirmation.lock import (
     build_lock_document,
     load_lock_document,
