@@ -24,11 +24,14 @@ def _read_json(path: Path, name: str) -> dict[str, object]:
     if not path.is_file():
         raise ClassicalWaitError(f"{name} is missing: {path}")
     try:
-        value = json.loads(path.read_bytes())
+        raw = path.read_bytes()
+        value = json.loads(raw)
     except (json.JSONDecodeError, OSError) as error:
         raise ClassicalWaitError(f"{name} is not valid JSON: {error}") from error
     if type(value) is not dict:
         raise ClassicalWaitError(f"{name} must be a JSON object")
+    if canonical_json_bytes(value) != raw:
+        raise ClassicalWaitError(f"{name} bytes are not canonical JSON")
     return value
 
 
