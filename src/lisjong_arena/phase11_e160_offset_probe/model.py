@@ -174,7 +174,9 @@ def fit_probe(
         raise E160OffsetProbeError("probe fit produced non-finite values")
     assert_frozen_state_unchanged(frozen_snapshot, frozen_model)
     if any(parameter.grad is not None for parameter in frozen_model.parameters()):
-        raise E160OffsetProbeError("frozen E160 parameters unexpectedly received gradients")
+        raise E160OffsetProbeError(
+            "frozen E160 parameters unexpectedly received gradients"
+        )
 
     state = optimizer.state[weights]
     model = {
