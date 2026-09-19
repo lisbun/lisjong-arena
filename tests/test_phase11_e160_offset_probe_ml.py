@@ -56,9 +56,7 @@ def _record(seed: int, latent_sign: float, positive: bool, *, validation=False):
     latent[0] = latent_sign
     return LatentExample(
         partition=(
-            DatasetPartition.VALIDATION
-            if validation
-            else DatasetPartition.TRAIN
+            DatasetPartition.VALIDATION if validation else DatasetPartition.TRAIN
         ),
         source_class="fixture",
         game_seed=seed,
