@@ -165,7 +165,7 @@ class InitialLearningChampionBindingTest(unittest.TestCase):
         self.assertEqual(served.identity, champion.CHECKPOINT_IDENTITY)
         self.assertEqual(served.path, weights)
 
-    def test_factory_and_checkpoint_bindings_are_exact_top_level_callables(self) -> None:
+    def test_factory_and_checkpoint_bindings_are_exact_top_level_callables(\n        self,\n    ) -> None:
         factory = (
             "lisjong_arena.initial_learning_champion:"
             "create_initial_learning_champion_policy"
