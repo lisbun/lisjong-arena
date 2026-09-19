@@ -83,8 +83,10 @@ VALIDATION does not influence centering. There is no scaling, PCA, whitening,
 feature search, or alternate centering path.
 
 The pre-execution lock records the three 128-vectors, their eligible counts,
-the centering identity, the complete retained latent fingerprint, and the
-frozen E160 byte digest.
+the centering identity, the complete retained latent fingerprint, the frozen
+E160 byte digest, and TRAIN / VALIDATION centered-latent aggregate summaries.
+Those summaries use latent values and public eligibility only; they do not
+include structural-wait label counts.
 
 ## Solver
 
