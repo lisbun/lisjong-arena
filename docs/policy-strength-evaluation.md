@@ -193,6 +193,24 @@ individual evaluationの解釈とdecisionでは、次を守る。
 promotion、reject、continue等に具体的な判断基準が必要な場合は、evaluation目的とcostに応じて
 個別のbounded Issueで事前に明示する。本書へ全candidate共通の数値thresholdを固定しない。
 
+## Environment identity preflight
+
+result-producing evaluation、formal screening、locked / one-shot evaluationを開始する前に、
+current Arena checkout の internal VCS dependency identity を fail closed で確認する。
+
+```powershell
+python -m lisjong_arena.environment_verify --project pyproject.toml
+```
+
+このpreflightは `pyproject.toml` のexact VCS pinをauthorityとして、installed
+PEP 610 `direct_url.json` のrepository / commit identity、relevant transitive
+internal pin disagreement、`pip check` をnetworkなしで検証する。
+
+`pip check` successだけではsame-version VCS packageのsource revision一致を証明しない。
+mismatch時はevaluationを開始せず、[cross-repository environment identity](environment-identity.md)
+のclean virtualenv bootstrapを行う。formal protocol固有のcheckout revision / artifact /
+non-editable-install preflightがある場合、それらはこのcheckに追加して満たす。
+
 ## Measurement source of truth
 
 current Policy-vs-Policy ABBB pathでは、1 runをversioned immutable artifactとして保存できる。
