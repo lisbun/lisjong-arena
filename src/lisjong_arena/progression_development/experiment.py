@@ -33,6 +33,7 @@ from lisjong_arena.model import (
     SingleRoundEvaluationPlan,
     SingleRoundEvaluationResult,
 )
+from lisjong_arena.paired_evaluation import load_arm_artifact
 from lisjong_arena.single_round_artifact import (
     SingleRoundExecutionProvenance,
     SingleRoundStrengthArtifact,
@@ -53,7 +54,6 @@ from .lock import (
 from .paired import (
     PairedResultError,
     build_paired_result,
-    load_arm_artifact,
     save_paired_result,
     verify_paired_result,
 )

@@ -17,13 +17,15 @@ from lisjong_arena._artifact_io import (
     write_new_artifact_file,
 )
 from lisjong_arena._execution_safety import require_new_artifact_destinations
-from lisjong_arena.progression_development.paired import (
+from lisjong_arena.paired_evaluation import (
+    PairedEvaluationError,
     PairedSeedDelta,
     PairedSummary,
     arm_diagnostics,
     artifact_file_digest,
     focal_seed_block_means,
     load_arm_artifact,
+    paired_deltas_from_block_means,
     summarize_paired_deltas,
 )
 from lisjong_arena.single_round_artifact import (
@@ -134,15 +136,10 @@ def derive_paired_deltas(
         raise TargetedHonorReleasePairedError("H seed-block order drifted")
     if tuple(seed for seed, _ in c_blocks) != locked:
         raise TargetedHonorReleasePairedError("C seed-block order drifted")
-    return tuple(
-        PairedSeedDelta(
-            seed=seed,
-            candidate_mean=h_mean,
-            parent_mean=c_mean,
-            delta=h_mean - c_mean,
-        )
-        for (seed, h_mean), (_, c_mean) in zip(h_blocks, c_blocks, strict=True)
-    )
+    try:
+        return paired_deltas_from_block_means(h_blocks, c_blocks)
+    except PairedEvaluationError as exc:
+        raise TargetedHonorReleasePairedError(str(exc)) from exc
 
 
 def classify(summary: PairedSummary) -> dict[str, object]:

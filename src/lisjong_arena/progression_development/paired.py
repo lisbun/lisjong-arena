@@ -27,15 +27,20 @@ secondary diagnosticsはdescriptiveであり、``classify_paired_summary()``の
 game execution、rotation、artifact schema、canonical strength aggregationは
 既存Arena contractが所有する。ここはstrict-readした2本のarm artifactから
 paired値をraw evidenceで再導出し、事前登録したruleを1回だけ適用する。
+
+seed-block validation、paired delta導出、paired summary statistics、arm
+diagnostics、artifact digestといったmechanicsは
+``lisjong_arena.paired_evaluation``がArena-owned reusable primitiveとして
+所有する。このmoduleはそれらを複製せず、#252固有のidentity / population /
+protocol / classification / artifact schemaだけを載せる。
 """
 
 from __future__ import annotations
 
-import hashlib
 import math
-from dataclasses import dataclass
 from pathlib import Path
 
+from lisjong_arena import paired_evaluation
 from lisjong_arena._artifact_io import (
     ArtifactValidationError,
     canonical_json_text,
@@ -49,10 +54,19 @@ from lisjong_arena._artifact_io import (
 )
 from lisjong_arena._execution_safety import require_new_artifact_destinations
 from lisjong_arena.model import SingleRoundGameResult
+from lisjong_arena.paired_evaluation import (
+    INTERVAL_Z,
+    PairedEvaluationError,
+    PairedSeedDelta,
+    PairedSummary,
+    arm_diagnostics,
+    artifact_file_digest,
+    load_arm_artifact,
+    paired_deltas_from_block_means,
+)
 from lisjong_arena.single_round_artifact import (
     SingleRoundStrengthArtifact,
     execution_provenance_to_dict,
-    load_single_round_artifact,
 )
 
 from .protocol import (
@@ -65,7 +79,6 @@ from .protocol import (
     PARENT_IDENTITY,
     PHASE_B_GAMES_PER_ARM,
     PHASE_B_SEEDS,
-    ROTATION_COUNT,
     SIGNAL_LABEL,
     ProgressionProtocolError,
     document_identity,
@@ -78,9 +91,6 @@ from .protocol import (
 
 PAIRED_RESULT_VERSION = 1
 """paired result documentのschema version。"""
-
-INTERVAL_Z = 1.96
-"""normal-approx 95% intervalの係数(既存seed-block statisticsと同じ)。"""
 
 _DELTA_FIELDS = {"candidate_mean", "delta", "parent_mean", "seed"}
 
@@ -125,85 +135,18 @@ class PairedResultError(ValueError):
     """paired derivation / classification / readbackが成立しない場合。"""
 
 
-@dataclass(frozen=True, slots=True)
-class PairedSeedDelta:
-    """1 ordered seed blockのpaired primary observation。"""
-
-    seed: int
-    candidate_mean: float
-    parent_mean: float
-    delta: float
-
-    def to_document(self) -> dict[str, object]:
-        return {
-            "candidate_mean": self.candidate_mean,
-            "delta": self.delta,
-            "parent_mean": self.parent_mean,
-            "seed": self.seed,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class PairedSummary:
-    """100 paired seed blocksのprimary summary。"""
-
-    block_count: int
-    mean_delta: float
-    sample_standard_deviation: float
-    standard_error: float
-    interval_lower: float
-    interval_upper: float
-
-    def to_document(self) -> dict[str, object]:
-        return {
-            "block_count": self.block_count,
-            "interval_lower": self.interval_lower,
-            "interval_upper": self.interval_upper,
-            "mean_delta": self.mean_delta,
-            "sample_standard_deviation": self.sample_standard_deviation,
-            "standard_error": self.standard_error,
-        }
-
-
 def focal_seed_block_means(
     game_results: tuple[SingleRoundGameResult, ...],
 ) -> tuple[tuple[int, float], ...]:
-    """raw game resultsから``(seed, focal seat mean score)``を導出する。
+    """neutral seed-block mechanicsを#252のerror contextで包む。
 
-    1 seed blockはrotation 0..3の4件ちょうどであり、順序と件数をここで
-    fail closedする。summaryではなくraw evidenceから再導出する。
+    validation内容とfloat computation orderはArena-owned mechanicsが所有し、
+    ここは複製しない。#252 pathで送出するerror typeだけを維持する。
     """
-    if not isinstance(game_results, tuple):
-        raise PairedResultError("game_results must be a tuple")
-    if not game_results:
-        raise PairedResultError("game_results must not be empty")
-    if len(game_results) % ROTATION_COUNT != 0:
-        raise PairedResultError(
-            "game_results must contain exactly four rotations per seed block"
-        )
-
-    blocks: list[tuple[int, float]] = []
-    for offset in range(0, len(game_results), ROTATION_COUNT):
-        block = game_results[offset : offset + ROTATION_COUNT]
-        seed = block[0].seed
-        if any(item.seed != seed for item in block):
-            raise PairedResultError(
-                "each seed block must contain records for the same seed"
-            )
-        if tuple(item.rotation for item in block) != tuple(range(ROTATION_COUNT)):
-            raise PairedResultError(
-                "each seed block must contain rotations 0, 1, 2, 3 in order"
-            )
-        if tuple(int(item.candidate_seat) for item in block) != tuple(
-            range(ROTATION_COUNT)
-        ):
-            raise PairedResultError(
-                "each seed block must place the focal seat in rotations 0, 1, 2, 3"
-            )
-        blocks.append(
-            (seed, sum(item.candidate_score for item in block) / ROTATION_COUNT)
-        )
-    return tuple(blocks)
+    try:
+        return paired_evaluation.focal_seed_block_means(game_results)
+    except PairedEvaluationError as exc:
+        raise PairedResultError(str(exc)) from exc
 
 
 def _require_arm_artifact(
@@ -270,43 +213,20 @@ def derive_paired_deltas(
     if tuple(seed for seed, _ in parent_blocks) != PHASE_B_SEEDS:
         raise PairedResultError("parent arm seed blocks are not the locked order")
 
-    return tuple(
-        PairedSeedDelta(
-            seed=seed,
-            candidate_mean=candidate_mean,
-            parent_mean=parent_mean,
-            delta=candidate_mean - parent_mean,
-        )
-        for (seed, candidate_mean), (_, parent_mean) in zip(
-            candidate_blocks, parent_blocks, strict=True
-        )
-    )
+    try:
+        return paired_deltas_from_block_means(candidate_blocks, parent_blocks)
+    except PairedEvaluationError as exc:
+        raise PairedResultError(str(exc)) from exc
 
 
 def summarize_paired_deltas(
     deltas: tuple[PairedSeedDelta, ...],
 ) -> PairedSummary:
-    """paired ``D_s``のmeanとnormal-approx 95% intervalを導出する。"""
-    if not isinstance(deltas, tuple) or not deltas:
-        raise PairedResultError("deltas must be a non-empty tuple")
-    if len(deltas) < 2:
-        raise PairedResultError(
-            "a normal-approx interval needs at least two paired seed blocks"
-        )
-    values = [item.delta for item in deltas]
-    count = len(values)
-    mean_delta = sum(values) / count
-    variance = sum((value - mean_delta) ** 2 for value in values) / (count - 1)
-    sample_standard_deviation = math.sqrt(variance)
-    standard_error = sample_standard_deviation / math.sqrt(count)
-    return PairedSummary(
-        block_count=count,
-        mean_delta=mean_delta,
-        sample_standard_deviation=sample_standard_deviation,
-        standard_error=standard_error,
-        interval_lower=mean_delta - INTERVAL_Z * standard_error,
-        interval_upper=mean_delta + INTERVAL_Z * standard_error,
-    )
+    """neutral paired summary mechanicsを#252のerror contextで包む。"""
+    try:
+        return paired_evaluation.summarize_paired_deltas(deltas)
+    except PairedEvaluationError as exc:
+        raise PairedResultError(str(exc)) from exc
 
 
 def classify_paired_summary(summary: PairedSummary) -> dict[str, object]:
@@ -328,45 +248,6 @@ def classify_paired_summary(summary: PairedSummary) -> dict[str, object]:
     else:
         kind, label = "INCONCLUSIVE", INCONCLUSIVE_LABEL
     return {"kind": kind, "label": label, "rule_id": CLASSIFICATION_RULE_ID}
-
-
-def artifact_file_digest(path: str | Path) -> str:
-    """保存済みarm artifact fileのsha256 digestを返す。"""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def arm_diagnostics(artifact: SingleRoundStrengthArtifact) -> dict[str, object]:
-    """既存canonical summaryからsecondary diagnosticsを抜き出す。
-
-    値はすべて既存canonical aggregationの結果であり、新しい統計semanticsは
-    導入しない。``tenpai_reached_rate``だけはcanonical metricsが持たないため
-    同じ母数(``round_count``)でここで割るが、これはarm-localなdescriptive
-    derivationであり、共有aggregationへは足さない。classificationはこの
-    documentを参照しない。
-    """
-    metrics = artifact.summary.candidate_metrics
-    mahjong = metrics.mahjong_metrics
-    return {
-        "deal_in_count": mahjong.deal_in_count,
-        "deal_in_rate": mahjong.deal_in_rate,
-        "exhaustive_draw_count": mahjong.exhaustive_draw_count,
-        "exhaustive_draw_tenpai_count": mahjong.exhaustive_draw_tenpai_count,
-        "exhaustive_draw_tenpai_rate": mahjong.exhaustive_draw_tenpai_rate,
-        "game_count": metrics.game_count,
-        "mean_deal_in_loss": mahjong.mean_deal_in_loss,
-        "mean_first_tenpai_turn": mahjong.mean_first_tenpai_turn,
-        "mean_focal_seat_score": metrics.mean_candidate_score,
-        "mean_win_points": mahjong.mean_win_points,
-        "round_count": mahjong.round_count,
-        "tenpai_reached_count": mahjong.tenpai_reached_count,
-        "tenpai_reached_rate": (
-            None
-            if mahjong.round_count == 0
-            else mahjong.tenpai_reached_count / mahjong.round_count
-        ),
-        "win_count": mahjong.win_count,
-        "win_rate": mahjong.win_rate,
-    }
 
 
 def _arm_document(
@@ -636,11 +517,6 @@ def verify_paired_result(
             "stored provenance does not match the arm artifacts' provenance"
         )
     return document
-
-
-def load_arm_artifact(path: str | Path) -> SingleRoundStrengthArtifact:
-    """arm artifactを既存strict readbackで読み戻す。"""
-    return load_single_round_artifact(path)
 
 
 __all__ = [

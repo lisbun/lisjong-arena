@@ -36,7 +36,7 @@ from lisjong.policy_contract.wind import Wind
 import lisjong_arena.targeted_honor_release_development.candidate_arm as candidate_arm_module
 import lisjong_arena.targeted_honor_release_development.diagnostic as diagnostic
 import lisjong_arena.targeted_honor_release_development.lock as lock_module
-from lisjong_arena.progression_development.paired import PairedSummary
+from lisjong_arena.paired_evaluation import PairedSummary
 from lisjong_arena.targeted_honor_release_development.artifact import (
     build_artifact,
     load_artifact,
@@ -467,7 +467,7 @@ class TrajectoryIdentityTest(unittest.TestCase):
         with TemporaryDirectory() as directory_text:
             directory = Path(directory_text)
             parent_path = _source_parent_artifact(directory)
-            from lisjong_arena.progression_development.paired import load_arm_artifact
+            from lisjong_arena.paired_evaluation import load_arm_artifact
 
             parent = load_arm_artifact(parent_path)
             replay = evaluation_result(
@@ -611,7 +611,7 @@ class PairedResultTest(unittest.TestCase):
         return path
 
     def test_positive_paired_result_uses_100_seed_blocks(self) -> None:
-        from lisjong_arena.progression_development.paired import load_arm_artifact
+        from lisjong_arena.paired_evaluation import load_arm_artifact
 
         with TemporaryDirectory() as directory_text:
             directory = Path(directory_text)
@@ -653,7 +653,7 @@ class PairedResultTest(unittest.TestCase):
         self.assertEqual(verified["classification"]["label"], SIGNAL_LABEL)
 
     def test_malformed_protocol_block_is_rejected_fail_closed(self) -> None:
-        from lisjong_arena.progression_development.paired import load_arm_artifact
+        from lisjong_arena.paired_evaluation import load_arm_artifact
 
         with TemporaryDirectory() as directory_text:
             directory = Path(directory_text)
@@ -680,7 +680,7 @@ class PairedResultTest(unittest.TestCase):
                 load_paired_result(malformed_path)
 
     def test_equal_arms_are_inconclusive(self) -> None:
-        from lisjong_arena.progression_development.paired import load_arm_artifact
+        from lisjong_arena.paired_evaluation import load_arm_artifact
 
         with TemporaryDirectory() as directory_text:
             directory = Path(directory_text)

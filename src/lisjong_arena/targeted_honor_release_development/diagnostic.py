@@ -45,7 +45,7 @@ from lisjong_arena.model import (
     SingleRoundEvaluationResult,
     SingleRoundGameResult,
 )
-from lisjong_arena.progression_development.paired import load_arm_artifact
+from lisjong_arena.paired_evaluation import load_arm_artifact
 from lisjong_arena.riichienv.local_game_runner import LocalGameResult, LocalGameRunner
 from lisjong_arena.single_round_artifact import SingleRoundStrengthArtifact
 from lisjong_arena.single_round_evaluation import (

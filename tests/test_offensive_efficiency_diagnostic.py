@@ -400,7 +400,7 @@ class TrajectoryIdentityTest(unittest.TestCase):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "parent.json"
             save_arm_artifact(historical.evaluation_result, path)
-            from lisjong_arena.progression_development.paired import load_arm_artifact
+            from lisjong_arena.paired_evaluation import load_arm_artifact
 
             parent = load_arm_artifact(path)
             with self.assertRaisesRegex(

@@ -32,7 +32,7 @@ from lisjong_arena._artifact_io import (
     read_json_document,
     write_new_artifact_file,
 )
-from lisjong_arena.progression_development.paired import (
+from lisjong_arena.paired_evaluation import (
     artifact_file_digest,
     load_arm_artifact,
 )

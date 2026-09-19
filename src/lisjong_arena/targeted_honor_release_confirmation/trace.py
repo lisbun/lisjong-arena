@@ -17,7 +17,7 @@ from lisjong_arena._artifact_io import (
     write_new_artifact_file,
 )
 from lisjong_arena._execution_safety import require_new_artifact_destinations
-from lisjong_arena.progression_development.paired import artifact_file_digest
+from lisjong_arena.paired_evaluation import artifact_file_digest
 from lisjong_arena.single_round_artifact import (
     SingleRoundStrengthArtifact,
     execution_provenance_to_dict,

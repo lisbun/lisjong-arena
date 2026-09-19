@@ -99,6 +99,37 @@ concrete repeated use
 
 generic `utils.py`、generic trainer / dataset / backend framework、dependency-injection layer等を、将来のreuseを推測して先行導入しない。
 
+### Reusable paired-evaluation mechanics vs scientific contract
+
+paired seed-block評価では、reusable Arena mechanicsとpurpose-specific scientific contractを次で分ける。
+
+```text
+reusable Arena mechanics (lisjong_arena/paired_evaluation.py)
+    transport                 arm artifactのstrict readとbyte-level digest
+    deterministic validation  4-rotation seed blockの形式検証
+    mechanical aggregation    block mean -> paired delta -> paired summary
+
+purpose-specific experiment package
+    hypothesis                何を主張しようとしているのか
+    participants              candidate / parent / comparator identity
+    population                ordered seed population
+    protocol                  protocol ID、Phase構成、games per arm、schema version
+    classification            label、rule identity、gate、evidence role
+    interpretation            結果をどう科学的に読むか
+```
+
+shared primitiveが存在することは、すべてのexperimentが同じstatistical protocolを使うという意味ではない。主単位となるblock数、その母数でnormal-approx intervalを解釈してよいか、どのlabelへ写像するかは各experimentが自分のprotocolとして固定する。mechanicsを共有しても、scientific interpretationは共有しない。
+
+dependency directionは次を維持する。
+
+```text
+purpose-specific experiment
+    -> neutral paired-evaluation mechanics
+    -> existing Arena model / artifact primitives
+```
+
+neutral layerはexperiment packageをimportしない。purpose-specific moduleがutility目的で別experimentのpackageへ依存することも避け、mechanicsはneutral moduleから取得する。experiment identityそのものに由来する依存(historical populationの重複確認、過去armの再解析等)はこのruleの対象外であり、A-type dependencyとして維持する。
+
 ### Dependency direction for new code
 
 新規または新たにstable/shared化するcodeは、原則として次の方向を守る。
@@ -658,10 +689,12 @@ positive experimentをproduction Policy promotionと同義にしない。
 | experiment-local feature / tensor schema | Arena Research | lisjong-arena |
 | experiment-local dataset / training harness | Arena Research | lisjong-arena |
 | experiment-local model / checkpoint / diagnostic | Arena Research | lisjong-arena |
+| experiment hypothesis / population / classification | Arena Research | lisjong-arena |
 | responsibility-neutral low-level helper | Arena Shared Infrastructure | lisjong-arena |
 | AABB / ABBB / other comparison protocol | Arena Evaluation | lisjong-arena |
 | evaluation metric / artifact / provenance | Arena Evaluation | lisjong-arena |
 | external benchmark orchestration | Arena Evaluation | lisjong-arena |
+| reusable paired-evaluation mechanics | Arena Evaluation | lisjong-arena |
 
 `contract owner != physical location`になり得る場合は、concrete consumer / promotion decisionで明示する。temporary experiment codeの物理配置だけからstable ownershipを推論しない。
 
