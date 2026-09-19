@@ -122,6 +122,21 @@ def validate_mjai_gzip(
     *,
     participations: tuple[Participation, ...],
 ) -> ValidationResult:
+    """Validate one MJAI log for the Issue #170 corpus participation contract."""
+    return validate_mjai_log(payload, seats=tuple(item.seat for item in participations))
+
+
+def validate_mjai_log(
+    payload: bytes,
+    *,
+    seats: tuple[int, ...] = (),
+) -> ValidationResult:
+    """Validate gzip / strict JSONL / MJAI lifecycle for any local seat join.
+
+    `seats`だけをjoin keyとして受け取るneutral primitiveであり、Issue #170の
+    `Participation`にもcorpus schemaにも依存しない。`validate_mjai_gzip()`は
+    #170 call site互換のためにこの関数へ委譲する。
+    """
     events = parse_jsonl_gzip(payload)
     if events[0]["type"] != "start_game" or events[-1]["type"] != "end_game":
         raise CorpusError("MJAI game must start with start_game and end with end_game")
@@ -133,8 +148,8 @@ def validate_mjai_gzip(
     names = events[0].get("names")
     if names is not None and (type(names) is not list or len(names) != 4):
         raise CorpusError("start_game names must contain four seats when present")
-    for item in participations:
-        if not 0 <= item.seat <= 3 or (names is not None and item.seat >= len(names)):
+    for seat in seats:
+        if not 0 <= seat <= 3 or (names is not None and seat >= len(names)):
             raise CorpusError("participation seat cannot join to start_game")
 
     in_round = False
@@ -260,4 +275,5 @@ __all__ = [
     "ValidationResult",
     "parse_jsonl_gzip",
     "validate_mjai_gzip",
+    "validate_mjai_log",
 ]

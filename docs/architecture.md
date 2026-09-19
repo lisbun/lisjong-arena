@@ -236,6 +236,14 @@ RiichiLabのthird-party server log acquisitionは、ranked session transportお�
 参加情報は別recordとし、bounded snapshot/plan、local cache、validation、provenanceまでをArenaが所有する。
 player-perspective dataset化、HandBelief / Learned Policy training、再配布はこのcontractに含めない。
 
+operator-owned self Botのpaginated全対局履歴とserver-side MJAI logは、さらに別のfirst-party
+acquisition contractとする。Arena Issue #269の
+[RiichiLab self-history acquisition](riichilab-self-history.md)はこの形であり、third-party
+bounded corpusのfixed target / 250-game hard cap / corpus schema identityをgeneric化せず、
+neutralなHTTP / JSON / gzip / MJAI validation primitiveだけを共有する。metadata completenessと
+MJAI coverageは独立に報告し、statistical analysis / Policy比較 / opponent enrichmentは
+downstream consumerの責務として持たない。
+
 bounded Issueがexact corpus identityへbindしたdataset化を必要とする場合は、acquisition contractを
 拡張せず、そのIssue固有のexperiment-local materialization pathとして持つ。Arena Issue #211の
 [RiichiLab source pilot](riichilab-source-pilot.md)はその形であり、麻雀rules / state transitionを
