@@ -2,7 +2,7 @@
 
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
 ``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call`` /
-``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression``の8つだけである.
+``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression``の8つだけである。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
 
