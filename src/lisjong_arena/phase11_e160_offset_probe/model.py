@@ -110,7 +110,16 @@ def create_probe_optimizer(weights, frozen_model):
     import torch
 
     frozen_ids = {id(parameter) for parameter in frozen_model.parameters()}
-    optimizer = create_probe_optimizer(weights, frozen_model)
+    optimizer = torch.optim.LBFGS(
+        [weights],
+        lr=SOLVER["learning_rate"],
+        max_iter=SOLVER["max_iterations"],
+        max_eval=SOLVER["max_evaluations"],
+        tolerance_grad=SOLVER["tolerance_grad"],
+        tolerance_change=SOLVER["tolerance_change"],
+        history_size=SOLVER["history_size"],
+        line_search_fn=SOLVER["line_search"],
+    )
     optimizer_parameters = tuple(
         parameter for group in optimizer.param_groups for parameter in group["params"]
     )
@@ -161,16 +170,7 @@ def fit_probe(
         return total / total_cells
 
     initial_loss = float(loss_value().detach())
-    optimizer = torch.optim.LBFGS(
-        [weights],
-        lr=SOLVER["learning_rate"],
-        max_iter=SOLVER["max_iterations"],
-        max_eval=SOLVER["max_evaluations"],
-        tolerance_grad=SOLVER["tolerance_grad"],
-        tolerance_change=SOLVER["tolerance_change"],
-        history_size=SOLVER["history_size"],
-        line_search_fn=SOLVER["line_search"],
-    )
+    optimizer = create_probe_optimizer(weights, frozen_model)
 
     def closure():
         optimizer.zero_grad(set_to_none=True)
