@@ -11,13 +11,13 @@ from lisjong_engine.public_state import PublicRiichiStatus
 from lisjong_engine.wind import Wind
 
 import lisjong_arena.phase11_classical_wait_baseline.data as classical_data
-from lisjong_arena.phase11_classical_wait_baseline.artifact import _read_json
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 from lisjong_arena.phase6_snapshot.feature import (
     OpponentSnapshotFeature,
     Phase6SnapshotFeature,
 )
 from lisjong_arena.phase11_classical_wait_baseline.__main__ import _parser
+from lisjong_arena.phase11_classical_wait_baseline.artifact import _read_json
 from lisjong_arena.phase11_classical_wait_baseline.data import (
     ClassicalExample,
     coverage_value,
