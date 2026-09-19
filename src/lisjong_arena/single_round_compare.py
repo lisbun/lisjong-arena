@@ -58,11 +58,11 @@ from lisjong_arena.open_hand_call_diagnostics import (
     run_open_hand_diagnostic_evaluation,
     run_open_hand_diagnostic_evaluation_parallel,
 )
-from lisjong_arena.progress import ProgressReporter as _ProgressReporter
 from lisjong_arena.policy_reference import (
     PolicyReferenceError,
     resolve_policy_reference,
 )
+from lisjong_arena.progress import ProgressReporter as _ProgressReporter
 from lisjong_arena.single_round_artifact import (
     collect_execution_provenance,
     save_single_round_artifact,
