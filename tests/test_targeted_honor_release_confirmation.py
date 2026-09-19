@@ -166,13 +166,9 @@ class LockTest(unittest.TestCase):
                 )
                 save_lock_document(document, lock_path)
                 loaded = load_lock_document(lock_path)
-        self.assertEqual(
-            loaded["confirmation"]["seed_block_count"], SEED_BLOCK_COUNT
-        )
+        self.assertEqual(loaded["confirmation"]["seed_block_count"], SEED_BLOCK_COUNT)
         self.assertEqual(loaded["confirmation"]["games_per_arm"], GAMES_PER_ARM)
-        self.assertEqual(
-            loaded["provenance"]["lisjong_revision"], LISJONG_REVISION
-        )
+        self.assertEqual(loaded["provenance"]["lisjong_revision"], LISJONG_REVISION)
         self.assertFalse(loaded["result_exposed"])
 
 
@@ -194,9 +190,7 @@ class ClassificationTest(unittest.TestCase):
         self.assertEqual(
             classify(self._summary(-2.0, -0.01))["label"], CONFIRMED_NEGATIVE_LABEL
         )
-        self.assertEqual(
-            classify(self._summary(0.0, 2.0))["label"], INCONCLUSIVE_LABEL
-        )
+        self.assertEqual(classify(self._summary(0.0, 2.0))["label"], INCONCLUSIVE_LABEL)
         self.assertEqual(
             classify(self._summary(-2.0, 0.0))["label"], INCONCLUSIVE_LABEL
         )
