@@ -247,7 +247,9 @@ def historical_precision_document() -> dict[str, object]:
 def static_contract_document() -> dict[str, object]:
     precision = historical_precision_document()
     if precision["classification"] != DOWNSTREAM_STATUS:
-        raise RuntimeError(\n            "the checked-in downstream plan no longer satisfies its lock"\n        )
+        raise RuntimeError(
+            "the checked-in downstream plan no longer satisfies its lock"
+        )
     return {
         "identities": {
             "protocol_id": PROTOCOL_ID,
