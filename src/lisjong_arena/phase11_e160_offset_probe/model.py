@@ -112,7 +112,7 @@ def create_probe_optimizer(weights, frozen_model):
     optimizer_parameters = tuple(
         parameter for group in optimizer.param_groups for parameter in group["params"]
     )
-    if optimizer_parameters != (weights,):
+    if len(optimizer_parameters) != 1 or optimizer_parameters[0] is not weights:
         raise E160OffsetProbeError(
             "probe optimizer must contain exactly the standalone correction weights"
         )
