@@ -355,9 +355,7 @@ def parse_lock_document(value: object) -> dict[str, object]:
     ):
         raise TargetedHonorReleaseConfirmationLockError("lock branch drifted")
     if (
-        expect_str(
-            execution_target["target_type"], "lock.execution_target.target_type"
-        )
+        expect_str(execution_target["target_type"], "lock.execution_target.target_type")
         != EXECUTION_TARGET_TYPE
     ):
         raise TargetedHonorReleaseConfirmationLockError(
@@ -391,9 +389,8 @@ def parse_lock_document(value: object) -> dict[str, object]:
         expect_str(runtime[name], f"lock.runtime.{name}")
 
     payload = {key: raw[key] for key in raw if key != "lock_identity"}
-    if (
-        expect_str(raw["lock_identity"], "lock.lock_identity")
-        != document_identity(payload)
+    if expect_str(raw["lock_identity"], "lock.lock_identity") != document_identity(
+        payload
     ):
         raise TargetedHonorReleaseConfirmationLockError("lock identity mismatch")
     return dict(raw)
