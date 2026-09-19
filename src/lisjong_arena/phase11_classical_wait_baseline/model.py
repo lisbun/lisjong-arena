@@ -41,7 +41,10 @@ def _sigmoid(logit: float) -> float:
 def correction_logit(weights: tuple[float, ...] | list[float], features) -> float:
     if len(weights) != FEATURE_DIM or len(features) != FEATURE_DIM:
         raise ClassicalWaitError("correction vector dimension differs from the lock")
-    value = sum(float(weight) * float(feature) for weight, feature in zip(weights, features, strict=True))
+    value = sum(
+        float(weight) * float(feature)
+        for weight, feature in zip(weights, features, strict=True)
+    )
     if not math.isfinite(value):
         raise ClassicalWaitError("classical correction logit must be finite")
     return value
@@ -252,7 +255,10 @@ def validate_model(
     if (
         type(weights) is not list
         or len(weights) != FEATURE_DIM
-        or any(type(number) not in (int, float) or not math.isfinite(number) for number in weights)
+        or any(
+            type(number) not in (int, float) or not math.isfinite(number)
+            for number in weights
+        )
     ):
         raise ClassicalWaitError("classical weights are invalid")
     return value
