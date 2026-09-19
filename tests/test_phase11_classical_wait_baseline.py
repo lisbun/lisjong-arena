@@ -326,9 +326,7 @@ class FeatureSemanticsTest(unittest.TestCase):
             for node in ast.walk(tree)
             if isinstance(node, ast.ImportFrom)
         }
-        self.assertFalse(
-            any("mechanism_riichi_defense" in name for name in imported)
-        )
+        self.assertFalse(any("mechanism_riichi_defense" in name for name in imported))
 
 
 class EvaluationBoundaryTest(unittest.TestCase):
