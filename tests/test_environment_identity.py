@@ -45,16 +45,14 @@ class FakeDistribution:
 
 
 def project_text(*requirements):
-    dependencies = ",\n".join(
-        f'    "{requirement}"' for requirement in requirements
-    )
+    dependencies = ",\n".join(f'    "{requirement}"' for requirement in requirements)
     return (
-        '[project]\n'
+        "[project]\n"
         'name = "consumer"\n'
         'version = "0.1.0"\n'
-        'dependencies = [\n'
+        "dependencies = [\n"
         f"{dependencies}\n"
-        ']\n'
+        "]\n"
     )
 
 
@@ -95,10 +93,7 @@ class EnvironmentIdentityTest(unittest.TestCase):
 
     def test_exact_commit_passes(self):
         result = self.run_check(
-            project_text(
-                "lisjong @ "
-                f"git+https://github.com/lisbun/lisjong.git@{A}"
-            ),
+            project_text(f"lisjong @ git+https://github.com/lisbun/lisjong.git@{A}"),
             {"lisjong": FakeDistribution("lisjong", A)},
         )
         self.assertTrue(result.ok)
@@ -106,10 +101,7 @@ class EnvironmentIdentityTest(unittest.TestCase):
 
     def test_same_version_stale_commit_fails(self):
         result = self.run_check(
-            project_text(
-                "lisjong @ "
-                f"git+https://github.com/lisbun/lisjong.git@{B}"
-            ),
+            project_text(f"lisjong @ git+https://github.com/lisbun/lisjong.git@{B}"),
             {
                 "lisjong": FakeDistribution(
                     "lisjong",
@@ -120,18 +112,12 @@ class EnvironmentIdentityTest(unittest.TestCase):
         )
         self.assertFalse(result.ok)
         self.assertTrue(
-            any(
-                "stale internal dependency" in item
-                for item in result.errors
-            )
+            any("stale internal dependency" in item for item in result.errors)
         )
 
     def test_missing_direct_url_fails(self):
         result = self.run_check(
-            project_text(
-                "lisjong @ "
-                f"git+https://github.com/lisbun/lisjong.git@{A}"
-            ),
+            project_text(f"lisjong @ git+https://github.com/lisbun/lisjong.git@{A}"),
             {
                 "lisjong": FakeDistribution(
                     "lisjong",
@@ -142,44 +128,28 @@ class EnvironmentIdentityTest(unittest.TestCase):
         )
         self.assertFalse(result.ok)
         self.assertTrue(
-            any(
-                "direct_url.json is missing" in item
-                for item in result.errors
-            )
+            any("direct_url.json is missing" in item for item in result.errors)
         )
 
     def test_repository_mismatch_fails(self):
         result = self.run_check(
-            project_text(
-                "lisjong @ "
-                f"git+https://github.com/lisbun/lisjong.git@{A}"
-            ),
+            project_text(f"lisjong @ git+https://github.com/lisbun/lisjong.git@{A}"),
             {
                 "lisjong": FakeDistribution(
                     "lisjong",
                     A,
-                    url=(
-                        "https://github.com/lisbun/"
-                        "lisjong-fork.git"
-                    ),
+                    url=("https://github.com/lisbun/lisjong-fork.git"),
                 )
             },
         )
         self.assertFalse(result.ok)
-        self.assertTrue(
-            any(
-                "repository mismatch" in item
-                for item in result.errors
-            )
-        )
+        self.assertTrue(any("repository mismatch" in item for item in result.errors))
 
     def test_transitive_pin_disagreement_fails(self):
         result = self.run_check(
             project_text(
-                "lisjong @ "
-                f"git+https://github.com/lisbun/lisjong.git@{B}",
-                "lisjong-arena @ "
-                f"git+https://github.com/lisbun/lisjong-arena.git@{C}",
+                f"lisjong @ git+https://github.com/lisbun/lisjong.git@{B}",
+                f"lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@{C}",
             ),
             {
                 "lisjong": FakeDistribution("lisjong", B),
@@ -187,37 +157,25 @@ class EnvironmentIdentityTest(unittest.TestCase):
                     "lisjong-arena",
                     C,
                     requires=(
-                        "lisjong @ "
-                        f"git+https://github.com/lisbun/lisjong.git@{A}",
+                        f"lisjong @ git+https://github.com/lisbun/lisjong.git@{A}",
                     ),
                 ),
             },
         )
         self.assertFalse(result.ok)
         self.assertTrue(
-            any(
-                "incompatible internal pins" in item
-                for item in result.errors
-            )
+            any("incompatible internal pins" in item for item in result.errors)
         )
 
     def test_pip_check_failure_is_not_ignored(self):
         result = self.run_check(
-            project_text(
-                "lisjong @ "
-                f"git+https://github.com/lisbun/lisjong.git@{A}"
-            ),
+            project_text(f"lisjong @ git+https://github.com/lisbun/lisjong.git@{A}"),
             {"lisjong": FakeDistribution("lisjong", A)},
             pip_returncode=1,
-            pip_output=(
-                "demo 0.1 has requirement other==1, "
-                "but you have other 2."
-            ),
+            pip_output=("demo 0.1 has requirement other==1, but you have other 2."),
         )
         self.assertFalse(result.ok)
-        self.assertTrue(
-            any("pip check failed" in item for item in result.errors)
-        )
+        self.assertTrue(any("pip check failed" in item for item in result.errors))
 
 
 if __name__ == "__main__":
