@@ -38,14 +38,13 @@ from lisjong_arena.stage_a0_tenpai_feasibility.retained import (
 from lisjong_arena.stage_a0_tenpai_feasibility.sidecar import (
     ROUTE_RETAINED,
     LoadedSidecar,
-    load_sidecar,
     write_sidecar,
 )
 
 from .protocol import (
     CANONICAL_WAIT_IMPLEMENTATION_IDENTITY,
-    PUBLIC_KEYS_SCHEMA_VERSION,
     PROTECTED_TEST_SEEDS,
+    PUBLIC_KEYS_SCHEMA_VERSION,
     RETAINED_DATASET_IDENTITY,
     SCIENTIFIC_SEEDS,
     SOURCE_LISJONG_ENGINE_REVISION,
