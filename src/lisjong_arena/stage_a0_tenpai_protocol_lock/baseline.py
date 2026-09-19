@@ -102,7 +102,7 @@ def build_train_baseline_parameters(
             continue
         target = cell.target.tenpai
         if target not in (0, 1):
-            raise StageA0ProtocolLockError("eligible TRAIN cell has no binary Tenpai target")
+            raise StageA0ProtocolLockError(\n                "eligible TRAIN cell has no binary Tenpai target"\n            )
         support += 1
         positive += target
         exact = (record.live_wall_tiles_remaining, record.public_meld_count)
@@ -199,7 +199,7 @@ def validate_train_baseline_parameters(document: object) -> dict[str, object]:
     if type(support) is not int or support <= 0 or support != b0.get("support"):
         raise StageA0ProtocolLockError("baseline eligible support is invalid")
     if b1.get("global", {}).get("support") != support:
-        raise StageA0ProtocolLockError("Baseline 1 global support differs from Baseline 0")
+        raise StageA0ProtocolLockError(\n            "Baseline 1 global support differs from Baseline 0"\n        )
     return document
 
 
