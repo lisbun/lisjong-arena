@@ -220,7 +220,9 @@ class ScientificMaterializationTest(unittest.TestCase):
             self.assertEqual(len(cells), len(SCIENTIFIC_SEEDS) * 3)
             self.assertEqual(len(keys), len(SCIENTIFIC_SEEDS) * 3)
             self.assertEqual({key.seed for key in keys}, set(SCIENTIFIC_SEEDS))
-            self.assertFalse(\n                {key.seed for key in keys}.intersection(PROTECTED_TEST_SEEDS)\n            )
+            self.assertFalse(
+                {key.seed for key in keys}.intersection(PROTECTED_TEST_SEEDS)
+            )
 
     def test_public_key_artifact_round_trips_strictly(self):
         records = (
@@ -355,7 +357,9 @@ class LockArtifactTest(unittest.TestCase):
             path = Path(directory) / "lock-b.json"
             lock_artifact.save_lock(document, path)
             loaded = lock_artifact.load_lock_b(path)
-            self.assertEqual(\n                loaded["hard_outcome"], lock_artifact.LOCKED_ENABLED_OUTCOME\n            )
+            self.assertEqual(
+                loaded["hard_outcome"], lock_artifact.LOCKED_ENABLED_OUTCOME
+            )
             self.assertFalse(loaded["exposure"]["validation_target_summary_exposed"])
 
 
