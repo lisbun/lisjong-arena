@@ -334,22 +334,17 @@ def parse_paired_result(value: object) -> dict[str, object]:
             "classification differs from primary summary"
         )
     if raw["candidate_binding"] != require_exact_candidate_semantics().to_document():
-        raise TargetedHonorReleaseConfirmationPairedError(
-            "candidate binding drifted"
-        )
+        raise TargetedHonorReleaseConfirmationPairedError("candidate binding drifted")
     if raw["comparator_binding"] != require_exact_comparator():
-        raise TargetedHonorReleaseConfirmationPairedError(
-            "comparator binding drifted"
-        )
+        raise TargetedHonorReleaseConfirmationPairedError("comparator binding drifted")
     worker_count = expect_int(raw["worker_count"], "paired_result.worker_count")
     if worker_count <= 0:
         raise TargetedHonorReleaseConfirmationPairedError(
             "worker_count must be positive"
         )
     payload = {key: raw[key] for key in raw if key != "result_identity"}
-    if (
-        expect_str(raw["result_identity"], "paired_result.result_identity")
-        != _identity(payload)
+    if expect_str(raw["result_identity"], "paired_result.result_identity") != _identity(
+        payload
     ):
         raise TargetedHonorReleaseConfirmationPairedError(
             "paired result identity mismatch"
@@ -488,20 +483,16 @@ def verify_classified_result(
         raise TargetedHonorReleaseConfirmationPairedError(
             "paired result identity drifted"
         )
-    if (
-        expect_str(
-            raw["paired_result_digest"], "classified_result.paired_result_digest"
-        )
-        != artifact_file_digest(paired_result_path)
-    ):
+    if expect_str(
+        raw["paired_result_digest"], "classified_result.paired_result_digest"
+    ) != artifact_file_digest(paired_result_path):
         raise TargetedHonorReleaseConfirmationPairedError(
             "paired result digest drifted"
         )
     payload = {key: raw[key] for key in raw if key != "classified_identity"}
-    if (
-        expect_str(raw["classified_identity"], "classified_result.classified_identity")
-        != _identity(payload)
-    ):
+    if expect_str(
+        raw["classified_identity"], "classified_result.classified_identity"
+    ) != _identity(payload):
         raise TargetedHonorReleaseConfirmationPairedError(
             "classified result identity mismatch"
         )
