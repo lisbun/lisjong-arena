@@ -32,6 +32,8 @@ from .protocol import (
     EXPECTED_VALIDATION_HANCHAN,
     EXPECTED_VALIDATION_ROWS,
     EXPECTED_VALIDATION_UNAVAILABLE_ROWS,
+    FROZEN_E160_STATE_DIGEST,
+    LATENT_FINGERPRINT_SEMANTICS_ID,
     ROLE,
     SCHEMA,
     E160OffsetProbeError,
@@ -177,7 +179,16 @@ def _validate_latent_reference(value: object) -> dict[str, object]:
         "centering",
     }:
         raise E160OffsetProbeError("latent reference fields are not exact")
-    digest(value["frozen_state_digest"], "frozen state digest")
+    exact(
+        value["frozen_state_digest"],
+        FROZEN_E160_STATE_DIGEST,
+        "frozen E160 state digest",
+    )
+    exact(
+        value["latent_fingerprint_semantics_id"],
+        LATENT_FINGERPRINT_SEMANTICS_ID,
+        "latent fingerprint semantics",
+    )
     digest(value["latent_fingerprint"], "latent fingerprint")
     _validate_coverage(
         value["train_coverage"],
@@ -240,6 +251,7 @@ def validate_lock(value: object) -> dict[str, object]:
         "e160_weights_sha256",
     ):
         digest(retained.get(name), f"retained {name}")
+        exact(retained[name], retained_value()[name], f"retained {name}")
     exact(retained["train_seeds"], retained_value()["train_seeds"], "TRAIN seeds")
     exact(
         retained["validation_seeds"],
