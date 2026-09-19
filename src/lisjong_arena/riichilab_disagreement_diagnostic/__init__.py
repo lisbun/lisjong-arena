@@ -1,0 +1,43 @@
+"""Issue #251 aggregate-only RiichiLab disagreement diagnostic."""
+
+from .analysis import (
+    COMPARATOR_BINDING_ARENA_REVISION,
+    COMPARATOR_CLASS_NAME,
+    COMPARATOR_IDENTITY,
+    EXPECTED_CHOICE_ROWS,
+    EXPECTED_DECISION_OPPORTUNITIES,
+    EXPECTED_FORCED_ROWS,
+    EXPECTED_GAMES,
+    EXPECTED_RIICHIENV_VERSION,
+    LISJONG_REVISION,
+    OUTCOME_BLOCKED,
+    OUTCOME_COMPLETE,
+    OUTCOME_INVALID,
+    SCHEMA_VERSION,
+    DiagnosticBlockedError,
+    DiagnosticInvalidError,
+    DisagreementAnalyzer,
+    DisagreementDiagnosticError,
+    run_diagnostic,
+)
+
+__all__ = [
+    "COMPARATOR_BINDING_ARENA_REVISION",
+    "COMPARATOR_CLASS_NAME",
+    "COMPARATOR_IDENTITY",
+    "DiagnosticBlockedError",
+    "DiagnosticInvalidError",
+    "DisagreementAnalyzer",
+    "DisagreementDiagnosticError",
+    "EXPECTED_CHOICE_ROWS",
+    "EXPECTED_DECISION_OPPORTUNITIES",
+    "EXPECTED_FORCED_ROWS",
+    "EXPECTED_GAMES",
+    "EXPECTED_RIICHIENV_VERSION",
+    "LISJONG_REVISION",
+    "OUTCOME_BLOCKED",
+    "OUTCOME_COMPLETE",
+    "OUTCOME_INVALID",
+    "SCHEMA_VERSION",
+    "run_diagnostic",
+]

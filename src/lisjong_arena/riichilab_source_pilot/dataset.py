@@ -41,6 +41,7 @@ from lisjong_arena.riichilab_corpus.validation import parse_jsonl_gzip
 from .errors import BudgetNotMatchableError, MaterializationError, SourceIdentityError
 from .materialization import (
     REPLAY_SEAM,
+    DecisionObserver,
     GameMaterialization,
     GameUnsupportedReason,
     MaterializedRow,
@@ -185,7 +186,10 @@ def _verify_every_cached_game(
 
 
 def materialize_local_corpus(
-    snapshot: RecentGamesSnapshot, output_dir: str | Path
+    snapshot: RecentGamesSnapshot,
+    output_dir: str | Path,
+    *,
+    decision_observer: DecisionObserver | None = None,
 ) -> MaterializedSource:
     """exact #170 corpusをGate 0 contractでmaterializeする。
 
@@ -237,6 +241,7 @@ def materialize_local_corpus(
                 game_id=game_id,
                 target_seats=seats,
                 game_mode=SOURCE_GAME_MODE,
+                decision_observer=decision_observer,
             )
         )
     return build_source(
