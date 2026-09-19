@@ -189,6 +189,87 @@ def centered_latent(record, row_index: int, centering: dict) -> tuple[float, ...
     )
 
 
+def centered_latent_summary(
+    records: tuple,
+    centering: dict,
+) -> dict[str, object]:
+    """Summarize centered latent values without using structural-wait labels."""
+    if not records:
+        raise E160OffsetProbeError("centered latent summary requires records")
+    partitions = {record.partition for record in records}
+    if len(partitions) != 1:
+        raise E160OffsetProbeError(
+            "centered latent summary requires exactly one retained partition"
+        )
+    validate_centering(centering)
+
+    def empty_stats():
+        return {
+            "eligible_rows": 0,
+            "scalar_values": 0,
+            "minimum": math.inf,
+            "maximum": -math.inf,
+            "sum": 0.0,
+            "square_sum": 0.0,
+        }
+
+    overall = empty_stats()
+    per_row = [empty_stats() for _ in range(OUTPUT_ROWS)]
+
+    def add(stats: dict, values: tuple[float, ...]) -> None:
+        stats["eligible_rows"] += 1
+        stats["scalar_values"] += len(values)
+        stats["minimum"] = min(stats["minimum"], min(values))
+        stats["maximum"] = max(stats["maximum"], max(values))
+        stats["sum"] += sum(values)
+        stats["square_sum"] += sum(value * value for value in values)
+
+    for record in records:
+        for row_index, target in enumerate(record.targets):
+            if not target.eligible:
+                continue
+            values = centered_latent(record, row_index, centering)
+            add(overall, values)
+            add(per_row[row_index], values)
+
+    def finish(stats: dict) -> dict[str, object]:
+        count = stats["scalar_values"]
+        if stats["eligible_rows"] <= 0 or count <= 0:
+            raise E160OffsetProbeError(
+                "centered latent summary requires eligible rows"
+            )
+        mean = stats["sum"] / count
+        rms = math.sqrt(stats["square_sum"] / count)
+        result = {
+            "eligible_rows": stats["eligible_rows"],
+            "scalar_values": count,
+            "minimum": stats["minimum"],
+            "maximum": stats["maximum"],
+            "mean": mean,
+            "rms": rms,
+            "max_abs": max(abs(stats["minimum"]), abs(stats["maximum"])),
+        }
+        if any(
+            type(value) not in (int, float) or not math.isfinite(value)
+            for name, value in result.items()
+            if name not in ("eligible_rows", "scalar_values")
+        ):
+            raise E160OffsetProbeError(
+                "centered latent summary contains a non-finite value"
+            )
+        return result
+
+    partition = next(iter(partitions))
+    return {
+        "partition": partition.value,
+        "overall": finish(overall),
+        "per_output_row": [
+            {"output_row": row_index, **finish(stats)}
+            for row_index, stats in enumerate(per_row)
+        ],
+    }
+
+
 def latent_fingerprint(records: tuple) -> str:
     if not records:
         raise E160OffsetProbeError("latent fingerprint requires records")
@@ -221,6 +302,10 @@ def latent_reference(
         "train_coverage": coverage_value(train),
         "validation_coverage": coverage_value(validation),
         "centering": centering,
+        "centered_latent_summary": {
+            "train": centered_latent_summary(train, centering),
+            "validation": centered_latent_summary(validation, centering),
+        },
     }
     return value
 
@@ -264,6 +349,7 @@ def retained_receipt(evidence) -> dict[str, object]:
 
 __all__ = [
     "centered_latent",
+    "centered_latent_summary",
     "centering_receipt",
     "coverage_value",
     "latent_fingerprint",
