@@ -124,7 +124,9 @@ def _run(arguments: argparse.Namespace) -> int:
     lock = load_lock_document(arguments.lock)
     heuristic, learning = locked_participants(lock)
     progress_reporter = (
-        ProgressReporter(HANCHAN_COUNT, stream=sys.stderr) if arguments.progress else None
+        ProgressReporter(HANCHAN_COUNT, stream=sys.stderr)
+        if arguments.progress
+        else None
     )
     try:
         if progress_reporter is None:
