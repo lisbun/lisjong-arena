@@ -13,7 +13,8 @@ streamだけを使う。確認する境界は次のとおり。
   presentation factが持たないこと
 - bounded bufferがunbounded growthしないこと、slow / detached consumerが
   ranked execution pathをblockまたはabortしないこと
-- terminal factをsilentにdropしないこと
+- terminal fact(completion / failure)が1 runにつき一意にdeliveryされ、
+  silentにdropもされないこと
 - durable acquisitionへpresentationを付けてもrecord readback semanticsが
   不変であること
 
@@ -53,6 +54,7 @@ from lisjong_arena.riichilab.live_presentation import (
 )
 from lisjong_arena.riichilab.ranked import run_ranked_game
 from lisjong_arena.riichilab.session import RankedSession, ValidationSession
+from lisjong_arena.riichilab.trace import ProtocolTraceError
 from lisjong_arena.riichilab.transport import TransportClosed
 
 _TOKEN = "test-only-bot-token-value"
@@ -117,6 +119,44 @@ def _fake_connect(transport: _FakeTransport):
         yield transport
 
     return _connect
+
+
+def _run_ranked(messages, *, presentation=None, trace_path=None):
+    """fake transport上で1 ranked runを実行するshared helper。"""
+    transport = _FakeTransport(messages)
+    with patch(
+        "lisjong_arena.riichilab.ranked.connect_ranked_transport",
+        _fake_connect(transport),
+    ):
+        result = asyncio.run(
+            run_ranked_game(
+                MinimalPolicy(),
+                _TOKEN,
+                presentation=presentation,
+                trace_path=trace_path,
+            )
+        )
+    return result, transport
+
+
+class _FailingCloseTraceWriter:
+    """openには成功し`close()`でだけ失敗するtrace writer double。"""
+
+    def __init__(self, path) -> None:
+        self.path = path
+
+    def record(self, direction, event_type, payload) -> None:
+        return None
+
+    def close(self) -> None:
+        raise ProtocolTraceError("failed to close protocol trace file")
+
+
+class _FailingOpenTraceWriter:
+    """constructionの時点で失敗するtrace writer double。"""
+
+    def __init__(self, path) -> None:
+        raise ProtocolTraceError("failed to open protocol trace file")
 
 
 class _RecordingPolicy:
@@ -420,17 +460,23 @@ class RankedSessionPresentationSeamTest(unittest.TestCase):
                 )
             )
 
-    def test_completed_end_game_publishes_the_final_scores(self) -> None:
+    def test_session_owns_decision_facts_but_not_terminal_facts(self) -> None:
+        """`end_game`受信だけではcompletionをpublishしないことを固定する。
+
+        terminal factはrun全体の成否が確定して初めて一意に決まるため、
+        `run_ranked_game()`が所有する(`RunRankedGameTerminalLifecycleTest`)。
+        """
         observation = _reset_observation()
         buffer = BoundedRankedPresentationBuffer(capacity=8)
         session = RankedSession(MinimalPolicy(), presentation=buffer)
         self._drive(session, observation, (1,))
 
         batch = buffer.drain()
-        self.assertIsNotNone(batch.completion)
-        self.assertEqual(batch.completion.self_seat, Seat.SEAT_0)
-        self.assertEqual(batch.completion.scores, tuple(_FINAL_SCORES))
+        self.assertEqual(len(batch.decisions), 1)
+        self.assertIsNone(batch.completion)
         self.assertIsNone(batch.failure)
+        self.assertTrue(session.status().end_game_received)
+        self.assertEqual(session.status().scores, tuple(_FINAL_SCORES))
 
     def test_detached_consumer_does_not_break_the_session(self) -> None:
         observation = _reset_observation()
@@ -455,16 +501,8 @@ class RankedSessionPresentationSeamTest(unittest.TestCase):
 
 
 class RunRankedGamePresentationTest(unittest.TestCase):
-    def _run(self, messages, *, presentation=None):
-        transport = _FakeTransport(messages)
-        with patch(
-            "lisjong_arena.riichilab.ranked.connect_ranked_transport",
-            _fake_connect(transport),
-        ):
-            result = asyncio.run(
-                run_ranked_game(MinimalPolicy(), _TOKEN, presentation=presentation)
-            )
-        return result, transport
+    def _run(self, messages, *, presentation=None, trace_path=None):
+        return _run_ranked(messages, presentation=presentation, trace_path=trace_path)
 
     def test_run_without_presentation_keeps_existing_behavior(self) -> None:
         observation = _reset_observation()
@@ -516,7 +554,7 @@ class RunRankedGamePresentationTest(unittest.TestCase):
     def test_terminal_completion_is_not_dropped_by_decision_overflow(self) -> None:
         observation = _reset_observation()
         buffer = BoundedRankedPresentationBuffer(capacity=1)
-        result, _transport = self._run(
+        result, _transport = _run_ranked(
             _ranked_messages(observation, tuple(range(1, 8))), presentation=buffer
         )
 
@@ -565,6 +603,88 @@ class RunRankedGamePresentationTest(unittest.TestCase):
         self.assertNotIn("Bearer", rendered)
         self.assertNotIn("Authorization", rendered)
         self.assertNotIn(observation.serialize_to_base64(), rendered)
+
+
+class RunRankedGameTerminalLifecycleTest(unittest.TestCase):
+    """1 runにつきterminal factがcompletion / failureのどちらか一方だけになる。
+
+    `end_game`受信後にもtransport cleanup、trace writer close、
+    `session.status()` / bound seat validationが残るため、`end_game`時点で
+    completionをpublishすると、その後の失敗でcompletionとfailureの両方が
+    deliveryされ得る。`run_ranked_game()`がそれらをすべて通過した場合だけ
+    completionをpublishすることを固定する。
+    """
+
+    def test_normal_completion_publishes_exactly_one_completion(self) -> None:
+        observation = _reset_observation()
+        buffer = BoundedRankedPresentationBuffer(capacity=8)
+        result, _transport = _run_ranked(
+            _ranked_messages(observation, (1, 2)), presentation=buffer
+        )
+
+        batch = buffer.drain()
+        self.assertIsNotNone(batch.completion)
+        self.assertEqual(batch.completion.self_seat, Seat.SEAT_0)
+        self.assertEqual(batch.completion.scores, tuple(_FINAL_SCORES))
+        self.assertIsNone(batch.failure)
+        self.assertEqual(result.scores, tuple(_FINAL_SCORES))
+        self.assertTrue(result.end_game_received)
+        # 2回目のdrainでterminal factが再配信されないこと。
+        self.assertTrue(buffer.drain().is_empty)
+
+    def test_trace_close_failure_after_end_game_publishes_only_a_failure(self) -> None:
+        observation = _reset_observation()
+        buffer = BoundedRankedPresentationBuffer(capacity=8)
+        with patch(
+            "lisjong_arena.riichilab.ranked.JsonlProtocolTraceWriter",
+            _FailingCloseTraceWriter,
+        ):
+            with self.assertRaises(ProtocolTraceError):
+                _run_ranked(
+                    _ranked_messages(observation, (1,)),
+                    presentation=buffer,
+                    trace_path="unused-by-the-failing-writer",
+                )
+
+        batch = buffer.drain()
+        # `end_game`自体は受信済みだが、runは完走していない。
+        self.assertIsNone(batch.completion)
+        self.assertIsNotNone(batch.failure)
+        self.assertEqual(batch.failure.failure_type, "ProtocolTraceError")
+        self.assertTrue(buffer.drain().is_empty)
+
+    def test_trace_open_failure_publishes_only_a_failure(self) -> None:
+        observation = _reset_observation()
+        buffer = BoundedRankedPresentationBuffer(capacity=8)
+        with patch(
+            "lisjong_arena.riichilab.ranked.JsonlProtocolTraceWriter",
+            _FailingOpenTraceWriter,
+        ):
+            with self.assertRaises(ProtocolTraceError):
+                _run_ranked(
+                    _ranked_messages(observation, (1,)),
+                    presentation=buffer,
+                    trace_path="unused-by-the-failing-writer",
+                )
+
+        batch = buffer.drain()
+        self.assertEqual(batch.decisions, ())
+        self.assertIsNone(batch.completion)
+        self.assertIsNotNone(batch.failure)
+        self.assertEqual(batch.failure.failure_type, "ProtocolTraceError")
+        self.assertTrue(buffer.drain().is_empty)
+
+    def test_trace_failure_keeps_the_no_presentation_behavior_unchanged(self) -> None:
+        observation = _reset_observation()
+        with patch(
+            "lisjong_arena.riichilab.ranked.JsonlProtocolTraceWriter",
+            _FailingCloseTraceWriter,
+        ):
+            with self.assertRaises(ProtocolTraceError):
+                _run_ranked(
+                    _ranked_messages(observation, (1,)),
+                    trace_path="unused-by-the-failing-writer",
+                )
 
 
 class DurableRecordPresentationTest(unittest.TestCase):

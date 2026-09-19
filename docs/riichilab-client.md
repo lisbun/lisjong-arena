@@ -207,8 +207,32 @@ publishされるfactは次の3種だけである。
 | fact | 内容 | 発行元 |
 | --- | --- | --- |
 | `RankedDecisionPresentation` | `request_id` / bound seat / そのdecisionでPolicyへ渡した`PolicyInput` / canonical selected `InternalAction` | `RankedSession` |
-| `RankedCompletionPresentation` | bound seat / `end_game` final scores(欠落時は`None`) | `RankedSession` |
+| `RankedCompletionPresentation` | bound seat / `end_game` final scores(欠落時は`None`) | `run_ranked_game()` |
 | `RankedFailurePresentation` | 完走しなかったことを示す例外type名だけ | `run_ranked_game()` |
+
+#### terminal lifecycle
+
+per-decision factは`RankedSession`が所有し、terminal factは
+`run_ranked_game()`が所有する。1 runにつきcompletionとfailureのどちらか
+一方だけがpublishされる。
+
+```text
+trace writer open
+  -> drive_ranked_session()
+  -> transport context exit / cleanup
+  -> trace writer close
+  -> session.status() / bound seat validation
+       すべて成功 -> RankedCompletionPresentation を1回だけpublish
+       いずれか失敗 -> RankedFailurePresentation だけをpublish
+```
+
+`end_game`受信時点ではcompletionをpublishしない。`end_game`の後にも
+transport cleanup、`JsonlProtocolTraceWriter.close()`
+(`ProtocolTraceError`を送出し得る)、`SessionStatus`検証が残るため、そこで
+publishすると、すでにcompletedとして表示したconsumerへ後からfailureを
+渡すことになり、terminal stateを一意にできない。runtime trace
+initialization failure(writer open失敗)もfailure publicationの対象に
+含める。
 
 - presentation factの正本はPolicyへ実際に渡した`DecisionContext.input`で
   あり、raw `request_action` JSON / base64 Observationをpresentation APIに

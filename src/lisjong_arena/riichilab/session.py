@@ -32,7 +32,6 @@ from lisjong_arena.riichilab.adapter import (
 from lisjong_arena.riichilab.errors import ProtocolError
 from lisjong_arena.riichilab.live_presentation import (
     BoundedRankedPresentationBuffer,
-    RankedCompletionPresentation,
     RankedDecisionPresentation,
 )
 
@@ -375,11 +374,18 @@ class RankedSession(_GameSession):
     自動requeue・次game・reconnectはこのsessionの責務に含めない。
 
     `presentation`(default `None`・opt-in)を渡した場合だけ、
-    `lisbun/lisjong-play#41`向けのplayer-visible live presentation factを
+    `lisbun/lisjong-play#41`向けのplayer-visible decision presentation factを
     bounded bufferへpublishする。presentationはread-only consumerであり、
     Policy判断、action mapping、`possible_actions` validation、送信payload、
     `request_id` lifecycleのいずれも変更しない。publishはvalidationを
     すべて通過し、送信可能と確定したdecisionについてだけ行う。
+
+    このsessionが所有するのはper-decision factだけである。terminal fact
+    (completion / failure)はrun全体の成否が確定して初めて一意に決まるため、
+    `run_ranked_game()`が所有する。`end_game`受信時点でcompletionを
+    publishすると、その後のtransport cleanup / trace close / status
+    validationが失敗した場合に、同じrunについてcompletionとfailureの
+    両方がdeliveryされてしまう。
     """
 
     __slots__ = ("_presentation",)
@@ -448,10 +454,6 @@ class RankedSession(_GameSession):
 
             self._scores = (scores[0], scores[1], scores[2], scores[3])
         super()._handle_end_game(event)
-        if self._presentation is not None:
-            self._presentation.publish_completion(
-                RankedCompletionPresentation(self_seat=self._seat, scores=self._scores)
-            )
 
 
 __all__ = [

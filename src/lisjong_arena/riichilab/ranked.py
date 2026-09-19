@@ -32,6 +32,7 @@ from lisjong_arena.riichilab.cli import (
 from lisjong_arena.riichilab.errors import ProtocolError, RiichiLabClientError
 from lisjong_arena.riichilab.live_presentation import (
     BoundedRankedPresentationBuffer,
+    RankedCompletionPresentation,
     RankedFailurePresentation,
 )
 from lisjong_arena.riichilab.profile import (
@@ -76,18 +77,36 @@ async def run_ranked_game(
     場合だけ、player-visible live presentation factをそのbounded bufferへ
     publishする。presentationはread-only consumerであり、Policy response、
     requests / responses count、ack semantics、最終的な`RankedGameResult`の
-    いずれも変化させない。`run_ranked_game()`はrun全体が完走しなかったこと
-    を示すterminal failure factだけを追加でpublishし、per-event factは
-    `RankedSession`が所有する。
+    いずれも変化させない。
+
+    per-decision factは`RankedSession`が所有する。terminal factはこの
+    functionが所有し、1 runにつきcompletionとfailureのどちらか一方だけが
+    publishされる。
+
+    ```text
+    trace writer open
+      -> drive_ranked_session()
+      -> transport context exit / cleanup
+      -> trace writer close
+      -> session.status() / bound seat validation
+           すべて成功 -> RankedCompletionPresentation を1回だけpublish
+           いずれか失敗 -> RankedFailurePresentation だけをpublish
+    ```
+
+    `end_game`受信時点ではcompletionをpublishしない。その後のcleanupや
+    `JsonlProtocolTraceWriter.close()`(`ProtocolTraceError`を送出し得る)が
+    失敗した場合に、すでにcompletedとして表示したconsumerへ後からfailureを
+    渡すことになり、terminal stateを一意にできなくなるためである。
+    runtime trace initialization failureもfailure publicationの対象に含める。
     """
     if not isinstance(token, str) or not token:
         raise ValueError("token must be a non-empty string")
 
     session = RankedSession(policy, presentation=presentation)
-    trace_writer = (
-        JsonlProtocolTraceWriter(trace_path) if trace_path is not None else None
-    )
+    trace_writer = None
     try:
+        if trace_path is not None:
+            trace_writer = JsonlProtocolTraceWriter(trace_path)
         try:
             async with connect_ranked_transport(url, token) as transport:
                 await drive_ranked_session(session, transport, trace=trace_writer)
@@ -109,6 +128,13 @@ async def run_ranked_game(
                 RankedFailurePresentation(failure_type=type(error).__name__)
             )
         raise
+
+    # runがここまで到達した場合だけ、completionをterminal factとして1回
+    # publishする。以降このrunでfailureがpublishされることはない。
+    if presentation is not None:
+        presentation.publish_completion(
+            RankedCompletionPresentation(self_seat=status.seat, scores=status.scores)
+        )
 
     return RankedGameResult(
         end_game_received=status.end_game_received,

@@ -316,6 +316,11 @@ ranked execution timingを支配しない。publishはbounded bufferへのO(1) a
 処理のいずれもconsumerの遅延で遅れない。consumerがdetachしてもranked sessionは
 abortしない。
 
+per-decision factはsessionが所有し、terminal fact(completion / failure)はrun
+全体の成否が確定して初めて一意に決まるためone-game runnerが所有する。1 runにつき
+completionとfailureのどちらか一方だけをdeliveryし、`end_game`受信後のcleanup失敗で
+completionをfailureが後から覆すことはない。
+
 presentation factの正本はPolicyへ実際に渡した`PolicyInput`であり、raw transport
 payload(raw `request_action` JSON / base64 Observation)をpresentation APIにしない。
 credential / Authorization / WebSocket objectはpresentation boundaryを越えない。
