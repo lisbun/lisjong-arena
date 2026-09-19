@@ -20,7 +20,7 @@ RiichiEnvと将来の``lisjong-engine``という2つの実経路が揃う前に�
 workerから、同じ``LocalGameRunner``を直接呼び出す。
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from lisjong.policy_contract import Policy, Seat
 
@@ -203,7 +203,11 @@ def aggregate_policy_metrics(
     )
 
 
-def run_comparison(plan: ComparisonPlan) -> ComparisonResult:
+def run_comparison(
+    plan: ComparisonPlan,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> ComparisonResult:
     """``ComparisonPlan``に従ってPolicy comparisonを実行する。
 
     実行順序は``seed入力順 -> rotation 0..3 -> Seat 0..3``で決定的であり、
@@ -218,6 +222,8 @@ def run_comparison(plan: ComparisonPlan) -> ComparisonResult:
     if not isinstance(plan, ComparisonPlan):
         raise TypeError("plan must be a ComparisonPlan")
 
+    total = ROTATION_COUNT * len(plan.seeds)
+    completed = 0
     seat_results: list[SeatResult] = []
     for seed in plan.seeds:
         for rotation in range(ROTATION_COUNT):
@@ -245,6 +251,9 @@ def run_comparison(plan: ComparisonPlan) -> ComparisonResult:
                     game_mode=plan.game_mode,
                 )
             )
+            completed += 1
+            if progress_callback is not None:
+                progress_callback(completed, total)
 
     frozen_results = tuple(seat_results)
     return ComparisonResult(
@@ -256,7 +265,10 @@ def run_comparison(plan: ComparisonPlan) -> ComparisonResult:
 
 
 def run_comparison_parallel(
-    plan: ComparisonPlan, *, max_workers: int
+    plan: ComparisonPlan,
+    *,
+    max_workers: int,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> ComparisonResult:
     """``run_comparison()``と同一semanticsで、local process poolを使って並列実行する。
 
@@ -300,7 +312,11 @@ def run_comparison_parallel(
                 )
             )
 
-    outcomes = run_game_jobs(jobs, max_workers=max_workers)
+    outcomes = run_game_jobs(
+        jobs,
+        max_workers=max_workers,
+        progress_callback=progress_callback,
+    )
 
     seat_results: list[SeatResult] = []
     for seed in plan.seeds:

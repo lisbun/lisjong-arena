@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from lisjong_arena.model import PolicySpec
+from lisjong_arena.progress import ProgressReporter
 
 from .experiment import OverallEvaluationOutcome, run_overall_evaluation
 from .lock import (
@@ -21,6 +22,7 @@ from .lock import (
     save_lock_document,
 )
 from .protocol import (
+    HANCHAN_COUNT,
     IMPLEMENTATION_SOURCES,
     STOP_INVALID_LABEL,
     OverallChampionProtocolError,
@@ -121,11 +123,28 @@ def _lock(arguments: argparse.Namespace) -> int:
 def _run(arguments: argparse.Namespace) -> int:
     lock = load_lock_document(arguments.lock)
     heuristic, learning = locked_participants(lock)
-    outcome: OverallEvaluationOutcome = run_overall_evaluation(
-        lock_path=arguments.lock,
-        heuristic_spec=_spec_from_binding(heuristic),
-        learning_spec=_spec_from_binding(learning),
+    progress_reporter = (
+        ProgressReporter(HANCHAN_COUNT, stream=sys.stderr)
+        if arguments.progress
+        else None
     )
+    try:
+        if progress_reporter is None:
+            outcome: OverallEvaluationOutcome = run_overall_evaluation(
+                lock_path=arguments.lock,
+                heuristic_spec=_spec_from_binding(heuristic),
+                learning_spec=_spec_from_binding(learning),
+            )
+        else:
+            outcome = run_overall_evaluation(
+                lock_path=arguments.lock,
+                heuristic_spec=_spec_from_binding(heuristic),
+                learning_spec=_spec_from_binding(learning),
+                progress_callback=progress_reporter,
+            )
+    finally:
+        if progress_reporter is not None:
+            progress_reporter.close()
     _report(outcome.overall_result)
     print(f"comparison_artifact={outcome.comparison_artifact_path}")
     print(f"overall_result={outcome.overall_result_path}")
@@ -181,6 +200,11 @@ def _parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="run the one-shot locked Overall event")
     run.add_argument("--lock", type=Path, required=True)
+    run.add_argument(
+        "--progress",
+        action="store_true",
+        help="show completed hanchan, elapsed time, ETA, and finish time on stderr",
+    )
     run.set_defaults(handler=_run)
 
     verify = commands.add_parser("verify", help="strictly verify a finished bundle")

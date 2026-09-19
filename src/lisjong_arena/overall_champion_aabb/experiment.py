@@ -135,11 +135,20 @@ def build_comparison_plan(
     )
 
 
-def default_execute(plan: ComparisonPlan, *, max_workers: int) -> ComparisonResult:
+def default_execute(
+    plan: ComparisonPlan,
+    *,
+    max_workers: int,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> ComparisonResult:
     """既存generic comparisonのserial / parallel pathへ委譲する。"""
     if max_workers == 1:
-        return run_comparison(plan)
-    return run_comparison_parallel(plan, max_workers=max_workers)
+        return run_comparison(plan, progress_callback=progress_callback)
+    return run_comparison_parallel(
+        plan,
+        max_workers=max_workers,
+        progress_callback=progress_callback,
+    )
 
 
 def run_overall_evaluation(
@@ -148,6 +157,7 @@ def run_overall_evaluation(
     heuristic_spec: PolicySpec,
     learning_spec: PolicySpec,
     execute: Callable[..., ComparisonResult] = default_execute,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> OverallEvaluationOutcome:
     """lockされたone-shot Overall formal eventを実行し、strict evidenceを残す。
 
@@ -184,7 +194,14 @@ def run_overall_evaluation(
         learning_spec=learning_spec,
         seeds=seeds,
     )
-    result = execute(plan, max_workers=worker_count)
+    if progress_callback is None:
+        result = execute(plan, max_workers=worker_count)
+    else:
+        result = execute(
+            plan,
+            max_workers=worker_count,
+            progress_callback=progress_callback,
+        )
     if not isinstance(result, ComparisonResult):
         raise OverallChampionResultError("execution must return a ComparisonResult")
     if len(result.seat_results) != SEAT_RESULT_COUNT:

@@ -431,13 +431,18 @@ bool-as-int、malformed numeric type、non-finite statistics、overwrite attempt
 
 ```text
 python -m lisjong_arena.overall_champion_aabb lock   --out ... --seeds ... --workers ...
-python -m lisjong_arena.overall_champion_aabb run    --lock ...
+python -m lisjong_arena.overall_champion_aabb run    --lock ... --progress
 python -m lisjong_arena.overall_champion_aabb verify --lock ... --comparison ... --result ...
 ```
 
 `run` はreal 400-hanchan executionを開始するpost-merge operator作業である。CIと
 testはexecution境界を差し替え、actual formal evaluationも実RiichiEnvの半荘も
 実行しない。
+
+`--progress` はoptionalなoperator presentationであり、parent processが完了した半荘数から
+elapsed time / ETA / estimated finish clock timeをstderrへ表示する。progress/ETAは
+lock、comparison、result artifact、classificationへ保存されず、seed順・worker scheduling・
+result canonicalization・formal semanticsを変更しない。
 
 ## 13. Non-goals
 
