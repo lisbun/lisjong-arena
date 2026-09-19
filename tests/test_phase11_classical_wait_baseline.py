@@ -9,6 +9,7 @@ from lisjong_engine.public_state import PublicRiichiStatus
 from lisjong_engine.wind import Wind
 
 import lisjong_arena.phase11_classical_wait_baseline.data as classical_data
+from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 from lisjong_arena.phase6_snapshot.feature import (
     OpponentSnapshotFeature,
     Phase6SnapshotFeature,
@@ -35,7 +36,6 @@ from lisjong_arena.phase11_classical_wait_baseline.protocol import (
     retained_value,
 )
 from lisjong_arena.phase11_public_riichi_wait_readout.data import OpponentTarget
-from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 
 
 def _opponent(wind: Wind, discards: tuple[int, ...] | None = None):
