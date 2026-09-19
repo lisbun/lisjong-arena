@@ -7,6 +7,7 @@
 import contextlib
 import io
 import unittest
+from datetime import datetime
 from unittest import mock
 
 from _round_stats_fixtures import neutral_seat_round_stats_tuple
@@ -119,6 +120,21 @@ class ProgressReporterTest(unittest.TestCase):
         self.assertIn("elapsed 00:40 ETA       00:00", output)
         self.assertIn("\r", output)
         self.assertTrue(output.endswith("\n"))
+
+    def test_reports_estimated_finish_clock_time(self) -> None:
+        stream = io.StringIO()
+        times = iter((100.0, 110.0))
+        reporter = _ProgressReporter(
+            4,
+            stream=stream,
+            clock=lambda: next(times),
+            wall_clock=lambda: datetime(2026, 9, 20, 8, 0, 0),
+        )
+
+        reporter(1, 4)
+
+        self.assertIn("ETA       00:30", stream.getvalue())
+        self.assertIn("finish ~08:00", stream.getvalue())
 
     def test_rejects_changed_total(self) -> None:
         reporter = _ProgressReporter(4, stream=io.StringIO(), clock=lambda: 0.0)
