@@ -112,9 +112,7 @@ def create_probe_optimizer(weights, frozen_model):
     frozen_ids = {id(parameter) for parameter in frozen_model.parameters()}
     optimizer = create_probe_optimizer(weights, frozen_model)
     optimizer_parameters = tuple(
-        parameter
-        for group in optimizer.param_groups
-        for parameter in group["params"]
+        parameter for group in optimizer.param_groups for parameter in group["params"]
     )
     if optimizer_parameters != (weights,):
         raise E160OffsetProbeError(
