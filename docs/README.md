@@ -34,6 +34,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 ### RiichiLab research corpus
 
 - [RiichiLab self-history acquisition](riichilab-self-history.md)
+- [RiichiLab longitudinal diagnostic](riichilab-longitudinal.md)
 - [RiichiLab bounded server-log corpus](riichilab-corpus.md)
 - [RiichiLab downstream reconstruction qualification](riichilab-downstream-qualification.md)
 - [RiichiLab source pilot](riichilab-source-pilot.md)
