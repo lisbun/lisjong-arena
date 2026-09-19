@@ -8,8 +8,8 @@ import sysconfig
 from lisjong_engine.rules import RuleSet
 
 from lisjong_arena._execution_safety import require_clean_arena_head
-from lisjong_arena.phase11_public_riichi_wait_readout.retained import load_retained
 from lisjong_arena.phase4_raw_corpus.extraction import phase4_provenance
+from lisjong_arena.phase11_public_riichi_wait_readout.retained import load_retained
 from lisjong_arena.stage3_mix_pilot.generation import _provenance_value
 
 from .data import (
