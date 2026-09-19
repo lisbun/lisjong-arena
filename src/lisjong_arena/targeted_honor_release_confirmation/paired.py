@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from pathlib import Path
 
 from lisjong_arena._artifact_io import (
@@ -129,13 +130,23 @@ def derive_paired_deltas(
 
 
 def classify(summary: PairedSummary) -> dict[str, object]:
+    if not isinstance(summary, PairedSummary):
+        raise TargetedHonorReleaseConfirmationPairedError(
+            "summary must be a PairedSummary"
+        )
     if summary.block_count != SEED_BLOCK_COUNT:
         raise TargetedHonorReleaseConfirmationPairedError(
             f"classification requires exactly {SEED_BLOCK_COUNT} paired blocks"
         )
-    if summary.interval_lower > 0.0:
+    lower = summary.interval_lower
+    upper = summary.interval_upper
+    if not math.isfinite(lower) or not math.isfinite(upper) or lower > upper:
+        raise TargetedHonorReleaseConfirmationPairedError(
+            "paired interval is not a finite ordered interval"
+        )
+    if lower > 0.0:
         kind, label = "CONFIRMED_POSITIVE", CONFIRMED_POSITIVE_LABEL
-    elif summary.interval_upper < 0.0:
+    elif upper < 0.0:
         kind, label = "CONFIRMED_NEGATIVE", CONFIRMED_NEGATIVE_LABEL
     else:
         kind, label = "INCONCLUSIVE", INCONCLUSIVE_LABEL
