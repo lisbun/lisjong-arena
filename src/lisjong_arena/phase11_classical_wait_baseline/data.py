@@ -71,7 +71,9 @@ def records_from_sequences(sequences: tuple) -> tuple[ClassicalExample, ...]:
 
 def load_retained_records(
     corpus_root: str | Path,
-) -> tuple[tuple[ClassicalExample, ...], tuple[ClassicalExample, ...], dict[str, object]]:
+) -> tuple[
+    tuple[ClassicalExample, ...], tuple[ClassicalExample, ...], dict[str, object]
+]:
     """Strict-read exact #150 corpus and materialize the exact #172 data surface.
 
     No model artifact is loaded, no hanchan is generated, and no TEST partition exists.
@@ -101,18 +103,24 @@ def load_retained_records(
     if any(
         record.partition is not DatasetPartition.VALIDATION for record in validation
     ):
-        raise ClassicalWaitError("VALIDATION records contain a non-VALIDATION partition")
-    return train, validation, {
-        "phase150_execution_lock_identity": expected[
-            "phase150_execution_lock_identity"
-        ],
-        "population_identity": population["population_identity"],
-        "raw_corpus_identity": population["raw_corpus_identity"],
-        "dataset_identity": population["dataset_identity"],
-        "train_seeds": list(TRAIN_SEEDS),
-        "validation_seeds": list(VALIDATION_SEEDS),
-        "formal_test": False,
-    }
+        raise ClassicalWaitError(
+            "VALIDATION records contain a non-VALIDATION partition"
+        )
+    return (
+        train,
+        validation,
+        {
+            "phase150_execution_lock_identity": expected[
+                "phase150_execution_lock_identity"
+            ],
+            "population_identity": population["population_identity"],
+            "raw_corpus_identity": population["raw_corpus_identity"],
+            "dataset_identity": population["dataset_identity"],
+            "train_seeds": list(TRAIN_SEEDS),
+            "validation_seeds": list(VALIDATION_SEEDS),
+            "formal_test": False,
+        },
+    )
 
 
 def coverage_value(records: tuple[ClassicalExample, ...]) -> dict[str, object]:
@@ -177,19 +185,13 @@ def _requirements(
     elif rank == 7:
         penchan = (_index(suit, 8), _index(suit, 9))
     kanchan = (
-        (_index(suit, rank - 1), _index(suit, rank + 1))
-        if 2 <= rank <= 8
-        else None
+        (_index(suit, rank - 1), _index(suit, rank + 1)) if 2 <= rank <= 8 else None
     )
     ryanmen_low = (
-        (_index(suit, rank + 1), _index(suit, rank + 2))
-        if 1 <= rank <= 6
-        else None
+        (_index(suit, rank + 1), _index(suit, rank + 2)) if 1 <= rank <= 6 else None
     )
     ryanmen_high = (
-        (_index(suit, rank - 2), _index(suit, rank - 1))
-        if 4 <= rank <= 9
-        else None
+        (_index(suit, rank - 2), _index(suit, rank - 1)) if 4 <= rank <= 9 else None
     )
     return penchan, kanchan, ryanmen_low, ryanmen_high
 
@@ -201,7 +203,9 @@ def _support(
         return 0.0, 0.0
     left, right = (remaining[index] for index in requirement)
     if any(type(value) is not int or not 0 <= value <= 4 for value in (left, right)):
-        raise ClassicalWaitError("remaining inventory must use exact integer counts in 0..4")
+        raise ClassicalWaitError(
+            "remaining inventory must use exact integer counts in 0..4"
+        )
     if left == 0 or right == 0:
         return 0.0, 0.0
     return 1.0, min(left, right) / 4.0
@@ -218,7 +222,9 @@ def feature_vector(
     public identity/timing metadata already derived from the player-safe anchor.
     """
     if not target.established or target.riichi_junme is None:
-        raise ClassicalWaitError("primary features require an established-riichi target")
+        raise ClassicalWaitError(
+            "primary features require an established-riichi target"
+        )
     if not 1 <= target.riichi_junme <= 18:
         raise ClassicalWaitError("riichi declaration junme must be in 1..18")
     if len(snapshot.remaining_tile_counts) != TILE_KIND_COUNT:
@@ -233,9 +239,13 @@ def feature_vector(
     try:
         opponent = public_by_wind[target.wind]
     except KeyError as error:
-        raise ClassicalWaitError("target Wind is missing from public opponents") from error
+        raise ClassicalWaitError(
+            "target Wind is missing from public opponents"
+        ) from error
     if len(opponent.discard_counts) != TILE_KIND_COUNT:
-        raise ClassicalWaitError("opponent river counts must contain 34 base tile kinds")
+        raise ClassicalWaitError(
+            "opponent river counts must contain 34 base tile kinds"
+        )
 
     suited = _suited_rank(tile_index)
     penchan_req, kanchan_req, low_req, high_req = _requirements(suited)
@@ -265,8 +275,7 @@ def feature_vector(
         high_support,
         float(opponent.discard_counts[tile_index] > 0),
         float(
-            low_counterpart is not None
-            and opponent.discard_counts[low_counterpart] > 0
+            low_counterpart is not None and opponent.discard_counts[low_counterpart] > 0
         ),
         float(
             high_counterpart is not None
@@ -287,9 +296,13 @@ def eligible_cells(records: tuple[ClassicalExample, ...]):
             if not target.eligible:
                 continue
             for tile_index, label in enumerate(target.mask):
-                yield record, target, tile_index, feature_vector(
-                    record.snapshot, target, tile_index
-                ), label
+                yield (
+                    record,
+                    target,
+                    tile_index,
+                    feature_vector(record.snapshot, target, tile_index),
+                    label,
+                )
 
 
 def tile_class(tile_index: int) -> str:
