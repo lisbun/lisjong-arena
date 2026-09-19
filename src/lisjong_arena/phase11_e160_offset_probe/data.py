@@ -15,6 +15,7 @@ from lisjong_arena.phase11_public_riichi_wait_readout.retained import (
 )
 
 from .protocol import (
+    CENTERED_MEAN_ABSOLUTE_TOLERANCE,
     CENTERING_SEMANTICS_ID,
     FROZEN_E160_STATE_DIGEST,
     LATENT_DIM,
@@ -103,11 +104,30 @@ def centering_receipt(records: tuple) -> dict[str, object]:
         [value / counts[row_index] for value in sums[row_index]]
         for row_index in range(OUTPUT_ROWS)
     ]
+    residual_sums = [[0.0] * LATENT_DIM for _ in range(OUTPUT_ROWS)]
+    for record in records:
+        latent = _latent_values(record.latent)
+        for row_index, target in enumerate(record.targets):
+            if not target.eligible:
+                continue
+            for index, value in enumerate(latent):
+                residual_sums[row_index][index] += value - means[row_index][index]
+    max_abs_centered_mean = max(
+        abs(value / counts[row_index])
+        for row_index, row in enumerate(residual_sums)
+        for value in row
+    )
+    if max_abs_centered_mean > CENTERED_MEAN_ABSOLUTE_TOLERANCE:
+        raise E160OffsetProbeError(
+            "TRAIN centered latent mean exceeds the locked tolerance"
+        )
     core = {
         "semantics_id": CENTERING_SEMANTICS_ID,
         "fit_partition": "train",
         "eligible_rows_by_output_row": counts,
         "means": means,
+        "max_abs_centered_train_mean": max_abs_centered_mean,
+        "centered_mean_absolute_tolerance": CENTERED_MEAN_ABSOLUTE_TOLERANCE,
     }
     return {**core, "centering_identity": identity(core)}
 
@@ -118,6 +138,8 @@ def validate_centering(value: object) -> dict[str, object]:
         "fit_partition",
         "eligible_rows_by_output_row",
         "means",
+        "max_abs_centered_train_mean",
+        "centered_mean_absolute_tolerance",
         "centering_identity",
     }:
         raise E160OffsetProbeError("centering fields are not exact")
@@ -143,6 +165,17 @@ def validate_centering(value: object) -> dict[str, object]:
             )
         ):
             raise E160OffsetProbeError("centering vector is invalid")
+    maximum = value["max_abs_centered_train_mean"]
+    tolerance = value["centered_mean_absolute_tolerance"]
+    if type(maximum) not in (int, float) or not math.isfinite(maximum) or maximum < 0:
+        raise E160OffsetProbeError("centered TRAIN mean diagnostic is invalid")
+    exact(
+        tolerance,
+        CENTERED_MEAN_ABSOLUTE_TOLERANCE,
+        "centered TRAIN mean tolerance",
+    )
+    if maximum > tolerance:
+        raise E160OffsetProbeError("centered TRAIN mean exceeds the locked tolerance")
     core = {name: value[name] for name in value if name != "centering_identity"}
     exact(value["centering_identity"], identity(core), "centering identity")
     return value
