@@ -130,9 +130,7 @@ def _project_dependencies(project_path: Path) -> tuple[str, tuple[str, ...]]:
     if type(dependencies) is not list or any(
         type(item) is not str for item in dependencies
     ):
-        raise EnvironmentIdentityError(
-            "[project].dependencies must be a string array"
-        )
+        raise EnvironmentIdentityError("[project].dependencies must be a string array")
     return _normalize_name(raw_name), tuple(dependencies)
 
 
@@ -149,9 +147,7 @@ def _installed_identity(name: str) -> InstalledVcsIdentity:
     try:
         direct_url = json.loads(direct_url_text)
     except json.JSONDecodeError as exc:
-        raise EnvironmentIdentityError(
-            f"{name}: direct_url.json is malformed"
-        ) from exc
+        raise EnvironmentIdentityError(f"{name}: direct_url.json is malformed") from exc
     if type(direct_url) is not dict or type(direct_url.get("vcs_info")) is not dict:
         raise EnvironmentIdentityError(f"{name}: VCS provenance is missing")
     url = direct_url.get("url")
@@ -171,9 +167,7 @@ def _installed_identity(name: str) -> InstalledVcsIdentity:
     )
 
 
-def _add_pin(
-    pins: dict[str, ExpectedVcsPin], pin: ExpectedVcsPin
-) -> str | None:
+def _add_pin(pins: dict[str, ExpectedVcsPin], pin: ExpectedVcsPin) -> str | None:
     previous = pins.get(pin.name)
     if previous is None:
         pins[pin.name] = pin
@@ -267,9 +261,7 @@ def verify_environment(
     )
     pip_output = (process.stdout + process.stderr).strip()
     if process.returncode != 0:
-        errors.append(
-            f"pip check failed: {pip_output or f'exit {process.returncode}'}"
-        )
+        errors.append(f"pip check failed: {pip_output or f'exit {process.returncode}'}")
     return EnvironmentCheck(
         identities=tuple(identities),
         errors=tuple(errors),
