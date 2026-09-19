@@ -29,6 +29,10 @@ from lisjong.policies import (
 
 from lisjong_arena._parallel_execution import check_policy_spec_serializable
 from lisjong_arena.model import PolicySpec
+from lisjong_arena.overall_champion_aabb.protocol import (
+    factory_binding_of,
+    resolve_binding_callable,
+)
 from lisjong_arena.policy_catalog import (
     POLICY_CATALOG,
     create_combined,
@@ -261,6 +265,20 @@ class FactoryTest(unittest.TestCase):
         self.assertIsNot(
             create_targeted_honor_release_terminal_progression(),
             create_targeted_honor_release_terminal_progression(),
+        )
+
+    def test_targeted_honor_release_factory_satisfies_overall_binding(self) -> None:
+        binding = (
+            "lisjong_arena.policy_catalog:"
+            "create_targeted_honor_release_terminal_progression"
+        )
+        self.assertEqual(
+            factory_binding_of(create_targeted_honor_release_terminal_progression),
+            binding,
+        )
+        self.assertIs(
+            resolve_binding_callable(binding),
+            create_targeted_honor_release_terminal_progression,
         )
 
     def test_catalog_factories_are_the_same_top_level_callables(self) -> None:
