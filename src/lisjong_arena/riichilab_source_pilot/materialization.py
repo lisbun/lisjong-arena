@@ -19,6 +19,7 @@ import sys
 import tempfile
 from array import array
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -33,6 +34,7 @@ from lisjong.policy_contract.action import (
     ChiAction,
     DaiminkanAction,
     DiscardAction,
+    InternalAction,
     KakanAction,
     KyuushuKyuuhaiAction,
     PassAction,
@@ -253,6 +255,38 @@ class DecisionKind(Enum):
     TURN = "turn"
     POST_CALL_DISCARD = "post_call_discard"
     CALL_RESPONSE = "call_response"
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializationDecisionObservation:
+    """Replay中だけ存在するexact player-safe decision observation。
+
+    Issue #251のdiagnosticがMaterializedRowからDecisionContextを逆算せず、
+    teacher actionとbaseline actionを同じDecisionContext上で比較するための
+    experiment-local seamである。game_idはpolicy instanceをgame x seatで
+    isolateするためだけに渡し、public aggregateへは出さない。
+    """
+
+    game_id: str
+    actor_seat: Seat
+    bot_id: int
+    decision_kind: DecisionKind
+    decision: DecisionContext
+    teacher_action: InternalAction
+    legal_action_count: int
+    is_open_hand: bool
+    is_riichi_declared: bool
+
+
+DecisionObserver = Callable[[MaterializationDecisionObservation], None]
+
+
+def action_family(action: InternalAction) -> str:
+    """InternalActionを既存Gate 0と同じdescriptive familyへ写像する。"""
+    try:
+        return _ACTION_FAMILY_BY_TYPE[type(action)]
+    except KeyError as error:
+        raise TypeError("unsupported InternalAction type") from error
 
 
 class RowUnresolvedReason(Enum):
@@ -1166,6 +1200,7 @@ def materialize_game(
     game_id: str,
     target_seats: dict[Seat, int],
     game_mode: str,
+    decision_observer: DecisionObserver | None = None,
 ) -> GameMaterialization:
     """1 raw gameをGate 0 contractでmaterializeする。
 
@@ -1186,6 +1221,7 @@ def materialize_game(
             game_id=game_id,
             target_seats=dict(target_seats),
             game_mode=game_mode,
+            decision_observer=decision_observer,
         )
     except _GameUnsupported as signal:
         return GameMaterialization(
@@ -1266,6 +1302,7 @@ def _materialize_game(
     game_id: str,
     target_seats: dict[Seat, int],
     game_mode: str,
+    decision_observer: DecisionObserver | None,
 ) -> GameMaterialization:
     for event in events:
         _validate_replay_event(event)
@@ -1381,6 +1418,7 @@ def _materialize_game(
                 bot_id=bot_by_seat[entry.seat],
                 decision_ordinal=len(rows),
                 mjai=mjai,
+                decision_observer=decision_observer,
             )
         except _RowUnresolved as signal:
             unresolved[signal.reason.value] += 1
@@ -1717,6 +1755,7 @@ def _build_row(
     bot_id: int,
     decision_ordinal: int,
     mjai: dict | None,
+    decision_observer: DecisionObserver | None,
 ) -> MaterializedRow | None:
     """1 decisionをexact rowへ落とす。choice rowでない場合は`None`を返す。"""
     view = entry.observation
@@ -1768,9 +1807,24 @@ def _build_row(
         selected = _observed_internal_action(mapping_view, external, mjai, runtime.seat)
     if selected not in decision.legal_actions:
         raise _RowUnresolved(RowUnresolvedReason.TEACHER_ACTION_NOT_IN_EXACT_LEGAL_SET)
+
+    own_melds = policy_input.players[int(runtime.seat)].melds
+    observation = MaterializationDecisionObservation(
+        game_id=game_id,
+        actor_seat=runtime.seat,
+        bot_id=bot_id,
+        decision_kind=_decision_kind(view, view.legal_actions()),
+        decision=decision,
+        teacher_action=selected,
+        legal_action_count=legal_count,
+        is_open_hand=bool(own_melds),
+        is_riichi_declared=bool(view.raw.riichi_declared[int(runtime.seat)]),
+    )
     if legal_count < MINIMUM_LEGAL_ACTION_COUNT:
         # forced rowもteacher intentをexact legal candidateへ解決してから
-        # supervision対象外として計上する。
+        # supervision対象外として計上する。observerはcoverageだけを数えられる。
+        if decision_observer is not None:
+            decision_observer(observation)
         return None
 
     try:
@@ -1796,8 +1850,7 @@ def _build_row(
             RowUnresolvedReason.FEATURE_MATERIALIZATION_FAILED
         ) from error
 
-    own_melds = policy_input.players[int(runtime.seat)].melds
-    return MaterializedRow(
+    row = MaterializedRow(
         game_id=game_id,
         decision_ordinal=decision_ordinal,
         round_ordinal=entry.round_ordinal,
@@ -1809,13 +1862,16 @@ def _build_row(
         decision_kind=_decision_kind(view, view.legal_actions()),
         legal_action_count=legal_count,
         teacher_action_index=teacher_index,
-        teacher_action_family=_ACTION_FAMILY_BY_TYPE[type(selected)],
+        teacher_action_family=action_family(selected),
         implicit_pass=mjai is None,
-        is_open_hand=bool(own_melds),
-        is_riichi_declared=bool(view.raw.riichi_declared[int(runtime.seat)]),
+        is_open_hand=observation.is_open_hand,
+        is_riichi_declared=observation.is_riichi_declared,
         feature_payload=feature_payload,
         legal_mask_payload=pack_legal_mask(mask),
     )
+    if decision_observer is not None:
+        decision_observer(observation)
+    return row
 
 
 def _observed_internal_action(view, external, mjai: dict, seat: Seat):
@@ -1855,8 +1911,10 @@ __all__ = [
     "DecisionKind",
     "GameMaterialization",
     "GameUnsupportedReason",
+    "MaterializationDecisionObservation",
     "MaterializedRow",
     "RowUnresolvedReason",
+    "action_family",
     "materialize_game",
     "pack_feature_values",
     "pack_legal_mask",
