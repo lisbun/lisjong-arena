@@ -110,6 +110,31 @@ def _validate_provenance(value: object) -> dict[str, object]:
     return value
 
 
+def _current_provenance(clean_head: str) -> dict[str, object]:
+    """Resolve dependency revisions while binding editable Arena to its clean HEAD."""
+    provenance = _provenance_value(phase4_provenance(RuleSet.default()))
+    if (
+        type(provenance) is not dict
+        or type(provenance.get("source_revisions")) is not dict
+    ):
+        raise ClassicalWaitError("provenance is missing source revisions")
+    revisions = provenance["source_revisions"]
+    arena_revision = revisions.get("lisjong_arena")
+    if arena_revision is None:
+        revisions["lisjong_arena"] = clean_head
+        provenance["fully_resolved"] = all(
+            type(revisions.get(name)) is str
+            for name in ("lisjong", "lisjong_engine", "lisjong_arena")
+        )
+    else:
+        exact(
+            arena_revision,
+            clean_head,
+            "installed Arena revision against clean source HEAD",
+        )
+    return _validate_provenance(provenance)
+
+
 def _baseline_reference(
     train: tuple, validation: tuple
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -242,8 +267,7 @@ def current_receipt(
     artifact_audit: str,
 ) -> dict[str, object]:
     clean_head = require_clean_arena_head()
-    provenance = _provenance_value(phase4_provenance(RuleSet.default()))
-    _validate_provenance(provenance)
+    provenance = _current_provenance(clean_head)
     exact(
         clean_head,
         provenance["source_revisions"]["lisjong_arena"],
