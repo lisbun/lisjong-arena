@@ -34,10 +34,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-from time import monotonic
-from typing import TextIO
 
 from lisjong_arena.model import SingleRoundEvaluationPlan, SingleRoundEvaluationResult
 from lisjong_arena.mortal_runtime import MortalDockerConfig
@@ -60,6 +58,7 @@ from lisjong_arena.open_hand_call_diagnostics import (
     run_open_hand_diagnostic_evaluation,
     run_open_hand_diagnostic_evaluation_parallel,
 )
+from lisjong_arena.progress import ProgressReporter as _ProgressReporter
 from lisjong_arena.policy_reference import (
     PolicyReferenceError,
     resolve_policy_reference,
@@ -78,8 +77,6 @@ from lisjong_arena.single_round_summary_format import (
     describe_seeds,
     format_strength_body,
 )
-
-_PROGRESS_BAR_WIDTH = 24
 
 
 def parse_seeds(raw: str) -> tuple[int, ...]:
@@ -220,77 +217,6 @@ def build_arg_parser(*, prog: str) -> argparse.ArgumentParser:
         help="Docker CLI executable used only for the Mortal candidate",
     )
     return parser
-
-
-def _format_duration(seconds: float) -> str:
-    total_seconds = max(0, int(seconds))
-    minutes, second = divmod(total_seconds, 60)
-    hours, minute = divmod(minutes, 60)
-    if hours:
-        return f"{hours}:{minute:02d}:{second:02d}"
-    return f"{minute:02d}:{second:02d}"
-
-
-class _ProgressReporter:
-    """ABBB game completionを1行のstderr progressとして表示する。
-
-    evaluation semanticsやresultには一切関与せず、runnerから受け取る
-    ``(completed, total)``だけをwall-clock表示へ変換する。worker processから
-    直接出力せず、このobjectはCLIのparent processだけで使う。
-    """
-
-    __slots__ = ("_clock", "_finished", "_started_at", "_stream", "_total")
-
-    def __init__(
-        self,
-        total: int,
-        *,
-        stream: TextIO,
-        clock: Callable[[], float] = monotonic,
-    ) -> None:
-        if type(total) is not int or total <= 0:
-            raise ValueError("progress total must be a positive int")
-        self._total = total
-        self._stream = stream
-        self._clock = clock
-        self._started_at = clock()
-        self._finished = False
-        self._write(completed=0, elapsed=0.0)
-
-    def __call__(self, completed: int, total: int) -> None:
-        if total != self._total:
-            raise ValueError(f"progress total changed from {self._total} to {total}")
-        if type(completed) is not int or not 0 <= completed <= total:
-            raise ValueError("progress completed must be between 0 and total")
-        elapsed = max(0.0, self._clock() - self._started_at)
-        self._write(completed=completed, elapsed=elapsed)
-
-    def _write(self, *, completed: int, elapsed: float) -> None:
-        fraction = completed / self._total
-        filled = int(_PROGRESS_BAR_WIDTH * fraction)
-        bar = "#" * filled + "-" * (_PROGRESS_BAR_WIDTH - filled)
-        percentage = fraction * 100.0
-        eta_text = "calculating"
-        if completed > 0:
-            eta = elapsed / completed * (self._total - completed)
-            eta_text = f"{_format_duration(eta):>11}"
-        line = (
-            f"\r[{bar}] {completed}/{self._total} ({percentage:5.1f}%) "
-            f"elapsed {_format_duration(elapsed)} ETA {eta_text}"
-        )
-        self._stream.write(line)
-        if completed == self._total:
-            self._stream.write("\n")
-            self._finished = True
-        self._stream.flush()
-
-    def close(self) -> None:
-        """途中failure等でも後続stderr/stdoutがprogress行と重ならないよう改行する。"""
-        if self._finished:
-            return
-        self._stream.write("\n")
-        self._stream.flush()
-        self._finished = True
 
 
 _SummaryResult = SingleRoundEvaluationResult | MortalSingleRoundEvaluationResult
