@@ -185,7 +185,7 @@ def _align_scientific_prefix(
     for seed in SCIENTIFIC_SEEDS:
         split = split_for_seed(seed)
         if split is Split.TEST:
-            raise StageA0ProtocolLockError("protected TEST entered scientific materialization")
+            raise StageA0ProtocolLockError(\n                "protected TEST entered scientific materialization"\n            )
         indices = grouped[seed]
         if not indices:
             raise StageA0ProtocolLockError(f"seed {seed} has no retained decision rows")
@@ -221,7 +221,7 @@ def _align_scientific_prefix(
             )
             live_wall = state.round.live_wall_tiles_remaining
             if not 0 <= live_wall <= MAX_LIVE_WALL_TILES:
-                raise StageA0ProtocolLockError("live-wall key is outside the public contract")
+                raise StageA0ProtocolLockError(\n                    "live-wall key is outside the public contract"\n                )
             public_by_key[key] = (
                 live_wall,
                 {
@@ -249,7 +249,7 @@ def _align_scientific_prefix(
                         f"seed {seed} row {index} {name} mismatch: "
                         f"{retained_value!r} != {replayed_value!r}"
                     )
-            if array("f", dataset.feature_row(index)).tobytes() != emission.row.feature_bytes():
+            if (\n                array("f", dataset.feature_row(index)).tobytes()\n                != emission.row.feature_bytes()\n            ):
                 raise StageA0ProtocolLockError(
                     f"seed {seed} row {index} feature bytes do not exact-align"
                 )
@@ -294,7 +294,7 @@ def _align_scientific_prefix(
             "every retained decision row must produce exactly three opponent cells"
         )
     if len({record.cell_key for record in public_keys}) != len(public_keys):
-        raise StageA0ProtocolLockError("public key records contain duplicate cell identities")
+        raise StageA0ProtocolLockError(\n            "public key records contain duplicate cell identities"\n        )
     return tuple(cells), tuple(public_keys)
 
 
@@ -380,7 +380,7 @@ def load_public_keys(path) -> LoadedPublicKeys:
     if manifest["schema_version"] != PUBLIC_KEYS_SCHEMA_VERSION:
         raise StageA0ProtocolLockError("unsupported public-key schema")
     if manifest["source_identity"] != RETAINED_DATASET_IDENTITY:
-        raise StageA0ProtocolLockError("public-key source identity is not the retained corpus")
+        raise StageA0ProtocolLockError(\n            "public-key source identity is not the retained corpus"\n        )
     if manifest["train_seeds"] != list(TRAIN_SEEDS):
         raise StageA0ProtocolLockError("public-key TRAIN population drifted")
     if manifest["validation_seeds"] != list(VALIDATION_SEEDS):
@@ -394,7 +394,7 @@ def load_public_keys(path) -> LoadedPublicKeys:
 
     payload = (path / PUBLIC_KEYS_ROWS).read_bytes()
     file_entry = manifest["files"]["rows"]
-    if len(payload) != file_entry["bytes"] or sha256_bytes(payload) != file_entry["sha256"]:
+    if (\n        len(payload) != file_entry["bytes"]\n        or sha256_bytes(payload) != file_entry["sha256"]\n    ):
         raise StageA0ProtocolLockError("public-key rows digest does not match manifest")
     decoded = payload.decode("utf-8")
     if decoded and not decoded.endswith("\n"):
@@ -430,9 +430,9 @@ def load_public_keys(path) -> LoadedPublicKeys:
         if record.source_identity != RETAINED_DATASET_IDENTITY:
             raise StageA0ProtocolLockError("public-key record source identity drifted")
         if record.seed in PROTECTED_TEST_SEEDS or record.seed not in SCIENTIFIC_SEEDS:
-            raise StageA0ProtocolLockError("public-key record entered protected TEST/outside prefix")
+            raise StageA0ProtocolLockError(\n                "public-key record entered protected TEST/outside prefix"\n            )
         if record.split is not split_for_seed(record.seed):
-            raise StageA0ProtocolLockError("public-key record split does not match seed")
+            raise StageA0ProtocolLockError(\n                "public-key record split does not match seed"\n            )
         if record.relative_offset not in (1, 2, 3):
             raise StageA0ProtocolLockError("public-key relative offset must be 1..3")
         if not 0 <= record.actor_seat <= 3:
@@ -491,16 +491,20 @@ def materialize_retained_scientific_data(
         sidecar_identity=sidecar.identity,
         provenance=current,
     )
-    return sidecar, public, {
-        "dataset_identity": dataset.identity,
-        "scientific_seeds": list(SCIENTIFIC_SEEDS),
-        "row_count": len(dataset.rows),
-        "cell_count": len(cells),
-        "sidecar_identity": sidecar.identity,
-        "public_keys_identity": public.identity,
-        "instrumentation_provenance": instrumentation,
-        "protected_test_unread": True,
-    }
+    return (
+        sidecar,
+        public,
+        {
+            "dataset_identity": dataset.identity,
+            "scientific_seeds": list(SCIENTIFIC_SEEDS),
+            "row_count": len(dataset.rows),
+            "cell_count": len(cells),
+            "sidecar_identity": sidecar.identity,
+            "public_keys_identity": public.identity,
+            "instrumentation_provenance": instrumentation,
+            "protected_test_unread": True,
+        },
+    )
 
 
 __all__ = [
