@@ -30,6 +30,7 @@ from lisjong_arena._artifact_io import (
     expect_object,
     expect_str,
     read_json_document,
+    sha256_bytes,
     write_new_artifact_file,
 )
 from lisjong_arena._execution_safety import (
@@ -53,14 +54,17 @@ from lisjong_arena.single_round_artifact import (
 from .protocol import (
     EXECUTION_BRANCH,
     HEURISTIC_FAMILY,
+    IMPLEMENTATION_SOURCES,
     LEARNING_FAMILY,
     OverallChampionProtocolError,
     ParticipantBinding,
+    ServedCheckpoint,
     parse_participant_binding,
     protocol_document,
     require_overall_population,
     require_participants,
     require_protocol_document,
+    resolve_binding_callable,
 )
 
 LOCK_VERSION = 1
@@ -145,6 +149,97 @@ def _require_environment_consistent() -> None:
         )
 
 
+def _require_participant_source(
+    binding: ParticipantBinding,
+    provenance: SingleRoundExecutionProvenance,
+) -> None:
+    """1 participantのimplementation / checkpoint bindingをliveへ照合する。
+
+    - ``implementation_revision``は``implementation_source``が指すexecution
+      provenance factと完全一致しなければならない
+    - checkpointを持つparticipantでは、``checkpoint_binding``が指すserving側の
+      申告(``ServedCheckpoint``)を実際に呼び出し、identityの一致と、file bytes
+      から再計算したSHA-256の一致を要求する
+
+    Arenaはcheckpointを探索しない。呼ぶのはlockがexactにbindした1点だけで、
+    そこから得た事実だけを照合する。
+    """
+    field = IMPLEMENTATION_SOURCES[binding.implementation_source]
+    live_revision = getattr(provenance, field)
+    if binding.implementation_revision != live_revision:
+        raise OverallChampionLockError(
+            f"{binding.family} participant implementation revision does not match "
+            f"the live {binding.implementation_source} revision"
+        )
+    if not binding.has_checkpoint:
+        return
+
+    try:
+        resolver = resolve_binding_callable(binding.checkpoint_binding)
+    except OverallChampionProtocolError as exc:
+        raise OverallChampionLockError(
+            f"{binding.family} participant checkpoint binding is unusable: {exc}"
+        ) from exc
+    try:
+        served = resolver()
+    except Exception as exc:
+        raise OverallChampionLockError(
+            f"{binding.family} participant checkpoint binding could not report "
+            "the served checkpoint"
+        ) from exc
+    if not isinstance(served, ServedCheckpoint):
+        raise OverallChampionLockError(
+            f"{binding.family} participant checkpoint binding must return a "
+            "ServedCheckpoint"
+        )
+    if served.identity != binding.checkpoint_identity:
+        raise OverallChampionLockError(
+            f"{binding.family} participant serves checkpoint identity "
+            f"{served.identity!r}, not the bound {binding.checkpoint_identity!r}"
+        )
+    try:
+        payload = served.path.read_bytes()
+    except OSError as exc:
+        raise OverallChampionLockError(
+            f"{binding.family} participant served checkpoint cannot be read"
+        ) from exc
+    if sha256_bytes(payload) != binding.checkpoint_digest:
+        raise OverallChampionLockError(
+            f"{binding.family} participant served checkpoint digest does not "
+            "match the bound digest"
+        )
+
+
+def require_participant_sources(
+    heuristic: ParticipantBinding,
+    learning: ParticipantBinding,
+    provenance: SingleRoundExecutionProvenance,
+) -> None:
+    """両participantのsource bindingをliveへfail-closedでcross-bindする。"""
+    for binding in require_participants(heuristic, learning):
+        _require_participant_source(binding, provenance)
+
+
+def require_live_ml_runtime(document: dict[str, object]) -> dict[str, str]:
+    """lockされたML runtimeをlive環境から再取得し、exact一致を要求する。
+
+    lock後のversion driftとpackage消失はどちらもここでrejectする。宣言された
+    package集合そのものはlock identityが固定するため、宣言外のpackageを
+    Arenaが推測で列挙することはしない。
+    """
+    parsed = parse_lock_document(document)
+    locked = parsed["ml_runtime"]
+    assert isinstance(locked, dict)
+    live = collect_ml_runtime(tuple(locked))
+    if live != locked:
+        raise OverallChampionLockError(
+            "live ML runtime differs from the pre-execution lock "
+            f"(locked={dict(sorted(locked.items()))!r}, "
+            f"live={dict(sorted(live.items()))!r})"
+        )
+    return live
+
+
 def build_lock_document(
     *,
     destinations: dict[str, str | Path],
@@ -182,6 +277,7 @@ def build_lock_document(
         )
     except ExecutionSafetyError as exc:
         raise OverallChampionLockError(str(exc)) from exc
+    require_participant_sources(heuristic_binding, learning_binding, provenance)
 
     payload: dict[str, object] = {
         "artifact_destinations": {
@@ -401,6 +497,14 @@ def require_live_execution_target(
 
     formal executionはreview済みmerged implementationを対象とし、PR branchや
     dirty worktreeからは実行できない。
+
+    ここはexecution preflightの単一境界であり、次をすべてfail closedにする。
+
+    - internal VCS dependency環境の整合
+    - execution provenance(Arena / lisjong / lisjong-engine revision等)の一致
+    - clean worktreeとmerged main containment
+    - 宣言されたML runtime versionの一致(lock後のdriftを拒否)
+    - participant implementation revisionとserved checkpointの一致
     """
     locked = locked_provenance(document)
     try:
@@ -414,6 +518,9 @@ def require_live_execution_target(
         raise OverallChampionLockError(
             "live execution target differs from the pre-execution lock"
         )
+    require_live_ml_runtime(document)
+    heuristic, learning = locked_participants(document)
+    require_participant_sources(heuristic, learning, live)
     return live
 
 
@@ -446,20 +553,6 @@ def require_comparison_provenance(
             )
 
 
-def require_locked_destination(
-    document: dict[str, object], name: str, path: str | Path
-) -> Path:
-    if name not in REQUIRED_DESTINATIONS:
-        raise OverallChampionLockError(f"unknown locked destination {name!r}")
-    expected = locked_destinations(document)[name]
-    actual = Path(path)
-    if actual.resolve(strict=False) != expected.resolve(strict=False):
-        raise OverallChampionLockError(
-            f"destination {name} differs from the pre-execution lock"
-        )
-    return actual
-
-
 __all__ = [
     "EXECUTION_TARGET_TYPE",
     "LOCK_VERSION",
@@ -477,7 +570,8 @@ __all__ = [
     "locked_seeds",
     "parse_lock_document",
     "require_comparison_provenance",
+    "require_live_ml_runtime",
+    "require_participant_sources",
     "require_live_execution_target",
-    "require_locked_destination",
     "save_lock_document",
 ]

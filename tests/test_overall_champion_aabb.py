@@ -198,6 +198,17 @@ class ProtocolInvariantTest(unittest.TestCase):
                 family="hybrid",
                 policy_identity="x",
                 factory_binding="m:f",
+                implementation_source="lisjong",
+                implementation_revision="a" * 40,
+            )
+        with self.assertRaisesRegex(
+            OverallChampionProtocolError, "implementation_source"
+        ):
+            ParticipantBinding(
+                family="heuristic",
+                policy_identity="x",
+                factory_binding="m:f",
+                implementation_source="somewhere-else",
                 implementation_revision="a" * 40,
             )
 

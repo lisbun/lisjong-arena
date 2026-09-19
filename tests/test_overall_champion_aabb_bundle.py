@@ -16,15 +16,20 @@ from unittest import mock
 
 from _overall_champion_aabb_fixtures import (
     ARENA_REVISION,
+    CHECKPOINT_DIGEST,
+    CHECKPOINT_IDENTITY,
     HEURISTIC_ADVANTAGE,
     LEARNING_ADVANTAGE,
+    LISJONG_REVISION,
     TIE,
     alternating_profile,
+    clear_checkpoint,
     comparison_provenance,
     comparison_result,
     destinations,
     heuristic_binding,
     heuristic_spec,
+    install_checkpoint,
     learning_binding,
     learning_spec,
     lock_document,
@@ -56,6 +61,8 @@ from lisjong_arena.overall_champion_aabb.lock import (
     parse_lock_document,
     require_comparison_provenance,
     require_live_execution_target,
+    require_live_ml_runtime,
+    require_participant_sources,
     save_lock_document,
 )
 from lisjong_arena.overall_champion_aabb.protocol import (
@@ -70,6 +77,7 @@ from lisjong_arena.overall_champion_aabb.protocol import (
     SEED_BLOCK_COUNT,
     STOP_INVALID_LABEL,
     OverallChampionProtocolError,
+    resolve_binding_callable,
 )
 from lisjong_arena.overall_champion_aabb.result import (
     OverallChampionResultError,
@@ -116,6 +124,8 @@ class LockTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = _Directory()
         self.addCleanup(self.directory.close)
+        install_checkpoint(self.directory.path)
+        self.addCleanup(clear_checkpoint)
 
     def test_lock_binds_participants_population_protocol_and_provenance(self) -> None:
         document = lock_document(self.directory.path)
@@ -336,6 +346,8 @@ class BundleTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = _Directory()
         self.addCleanup(self.directory.close)
+        install_checkpoint(self.directory.path)
+        self.addCleanup(clear_checkpoint)
         self.lock = lock_document(self.directory.path)
         save_lock_document(self.lock, self.directory.lock)
 
@@ -415,6 +427,43 @@ class BundleTest(unittest.TestCase):
                 "zero_block_count": 0,
             },
         )
+
+    def test_bundle_verification_is_portable_across_directories(self) -> None:
+        """verifyはlocked absolute pathではなくbundle内容だけを信頼する。
+
+        destinationのwrite-once bindingはexecution boundaryの契約であり、
+        formal evidenceは別directoryへcopyしてもoffline verifyできる。
+        """
+        self._build_and_save(uniform_profile(HEURISTIC_ADVANTAGE))
+        elsewhere = self.directory.path / "archived"
+        elsewhere.mkdir()
+        for source in (
+            self.directory.lock,
+            self.directory.comparison,
+            self.directory.result,
+        ):
+            (elsewhere / source.name).write_bytes(source.read_bytes())
+        moved = verify_overall_bundle(
+            lock_path=elsewhere / self.directory.lock.name,
+            comparison_path=elsewhere / self.directory.comparison.name,
+            result_path=elsewhere / self.directory.result.name,
+        )
+        self.assertEqual(moved, self._verify())
+        self.assertNotEqual(
+            (elsewhere / self.directory.comparison.name), self.directory.comparison
+        )
+
+    def test_verification_does_not_need_the_live_execution_environment(self) -> None:
+        """offline verifyはserving環境やML runtimeの再取得を要求しない。"""
+        self._build_and_save(uniform_profile(TIE))
+        clear_checkpoint()
+        self.addCleanup(install_checkpoint, self.directory.path)
+        with mock.patch.object(
+            lock_module,
+            "collect_execution_provenance",
+            side_effect=AssertionError("verify must stay offline"),
+        ):
+            self.assertEqual(self._verify()["result_version"], 1)
 
     def test_result_artifact_is_write_once(self) -> None:
         document = self._build_and_save(uniform_profile(TIE))
@@ -620,12 +669,246 @@ class BundleTest(unittest.TestCase):
             )
 
 
+class ParticipantSourceBindingTest(unittest.TestCase):
+    """implementation revision / checkpointがlive executionへ束縛されること。"""
+
+    def setUp(self) -> None:
+        self.directory = _Directory()
+        self.addCleanup(self.directory.close)
+        install_checkpoint(self.directory.path)
+        self.addCleanup(clear_checkpoint)
+
+    def _no_execution(self, plan, *, max_workers):
+        raise AssertionError("execution must not start")
+
+    def _run_with(self, lock_path: Path):
+        with merged_main_execution():
+            return run_overall_evaluation(
+                lock_path=lock_path,
+                heuristic_spec=heuristic_spec(),
+                learning_spec=learning_spec(),
+                execute=self._no_execution,
+            )
+
+    def test_exact_binding_permits_execution(self) -> None:
+        document = lock_document(self.directory.path)
+        save_lock_document(document, self.directory.lock)
+        learning = document["participants"]["learning"]
+        self.assertEqual(learning["checkpoint_identity"], CHECKPOINT_IDENTITY)
+        self.assertEqual(learning["checkpoint_digest"], CHECKPOINT_DIGEST)
+        self.assertEqual(learning["implementation_source"], "lisjong-arena")
+        with merged_main_execution():
+            require_participant_sources(
+                *locked_participants(document), lock_provenance()
+            )
+            self.assertEqual(
+                require_live_execution_target(document).lisjong_arena_revision,
+                ARENA_REVISION,
+            )
+
+    def test_implementation_revision_mismatch_is_rejected_at_lock_time(self) -> None:
+        with merged_main_execution():
+            with self.assertRaisesRegex(
+                OverallChampionLockError, "implementation revision"
+            ):
+                build_lock_document(
+                    destinations=destinations(self.directory.path),
+                    heuristic=heuristic_binding(implementation_revision="9" * 40),
+                    learning=learning_binding(),
+                    seeds=SEEDS,
+                    max_workers=1,
+                )
+
+    def test_implementation_revision_mismatch_rejects_before_execution(self) -> None:
+        document = lock_document(self.directory.path)
+        drifted = copy.deepcopy(document)
+        drifted["participants"]["heuristic"]["implementation_revision"] = "9" * 40
+        payload = {
+            key: value for key, value in drifted.items() if key != "lock_identity"
+        }
+        drifted["lock_identity"] = document_identity(payload)
+        path = self.directory.path / "drifted-lock.json"
+        write_new_artifact_file(path, canonical_json_text(drifted))
+        with self.assertRaisesRegex(
+            OverallChampionLockError, "implementation revision"
+        ):
+            self._run_with(path)
+
+    def test_wrong_implementation_source_is_rejected(self) -> None:
+        """lisjong実装をengine revisionへbindしても通らない。"""
+        with merged_main_execution():
+            with self.assertRaisesRegex(
+                OverallChampionLockError, "implementation revision"
+            ):
+                build_lock_document(
+                    destinations=destinations(self.directory.path),
+                    heuristic=heuristic_binding(
+                        implementation_source="lisjong-engine",
+                        implementation_revision=LISJONG_REVISION,
+                    ),
+                    learning=learning_binding(),
+                    seeds=SEEDS,
+                    max_workers=1,
+                )
+
+    def test_checkpoint_identity_mismatch_is_rejected(self) -> None:
+        with merged_main_execution():
+            with self.assertRaisesRegex(
+                OverallChampionLockError, "checkpoint identity"
+            ):
+                build_lock_document(
+                    destinations=destinations(self.directory.path),
+                    heuristic=heuristic_binding(),
+                    learning=learning_binding(
+                        checkpoint_identity="a-different-checkpoint"
+                    ),
+                    seeds=SEEDS,
+                    max_workers=1,
+                )
+
+    def test_checkpoint_digest_mismatch_is_rejected(self) -> None:
+        with merged_main_execution():
+            with self.assertRaisesRegex(OverallChampionLockError, "digest"):
+                build_lock_document(
+                    destinations=destinations(self.directory.path),
+                    heuristic=heuristic_binding(),
+                    learning=learning_binding(checkpoint_digest="0" * 64),
+                    seeds=SEEDS,
+                    max_workers=1,
+                )
+
+    def test_served_checkpoint_drift_rejects_before_execution(self) -> None:
+        """lock後にserving側のweightsが差し替わったらrunを開始しない。"""
+        document = lock_document(self.directory.path)
+        save_lock_document(document, self.directory.lock)
+        install_checkpoint(self.directory.path, payload=b"replaced weights")
+        with self.assertRaisesRegex(OverallChampionLockError, "digest"):
+            self._run_with(self.directory.lock)
+
+    def test_served_checkpoint_identity_drift_rejects_before_execution(self) -> None:
+        document = lock_document(self.directory.path)
+        save_lock_document(document, self.directory.lock)
+        install_checkpoint(self.directory.path, identity="swapped-checkpoint")
+        with self.assertRaisesRegex(OverallChampionLockError, "checkpoint identity"):
+            self._run_with(self.directory.lock)
+
+    def test_missing_served_checkpoint_rejects_before_execution(self) -> None:
+        document = lock_document(self.directory.path)
+        save_lock_document(document, self.directory.lock)
+        path = install_checkpoint(self.directory.path)
+        path.unlink()
+        with self.assertRaisesRegex(OverallChampionLockError, "cannot be read"):
+            self._run_with(self.directory.lock)
+
+    def test_unresolvable_checkpoint_binding_is_rejected(self) -> None:
+        with merged_main_execution():
+            with self.assertRaisesRegex(OverallChampionLockError, "unusable"):
+                build_lock_document(
+                    destinations=destinations(self.directory.path),
+                    heuristic=heuristic_binding(),
+                    learning=learning_binding(
+                        checkpoint_binding="_overall_champion_aabb_fixtures:missing"
+                    ),
+                    seeds=SEEDS,
+                    max_workers=1,
+                )
+
+    def test_partially_declared_checkpoint_is_rejected(self) -> None:
+        with self.assertRaisesRegex(OverallChampionProtocolError, "declared together"):
+            learning_binding(checkpoint_digest=None)
+        with self.assertRaisesRegex(OverallChampionProtocolError, "declared together"):
+            learning_binding(checkpoint_binding=None)
+
+    def test_a_participant_without_weights_needs_no_checkpoint(self) -> None:
+        binding = heuristic_binding()
+        self.assertFalse(binding.has_checkpoint)
+        self.assertIsNone(binding.checkpoint_binding)
+        with merged_main_execution():
+            require_participant_sources(binding, learning_binding(), lock_provenance())
+
+    def test_binding_resolution_rejects_an_alias_or_re_export(self) -> None:
+        import _overall_champion_aabb_fixtures as fixtures
+
+        fixtures.aliased_checkpoint = fixtures.served_learning_checkpoint
+        self.addCleanup(lambda: delattr(fixtures, "aliased_checkpoint"))
+        with self.assertRaisesRegex(OverallChampionProtocolError, "re-export"):
+            resolve_binding_callable(
+                "_overall_champion_aabb_fixtures:aliased_checkpoint"
+            )
+
+
+class MlRuntimeBindingTest(unittest.TestCase):
+    """lockされたML runtimeがrun前に再検証されること。"""
+
+    def setUp(self) -> None:
+        self.directory = _Directory()
+        self.addCleanup(self.directory.close)
+        install_checkpoint(self.directory.path)
+        self.addCleanup(clear_checkpoint)
+        self.lock = lock_document(
+            self.directory.path, ml_runtime_packages=("lisjong-arena",)
+        )
+        save_lock_document(self.lock, self.directory.lock)
+
+    def test_locked_ml_runtime_exact_match_passes(self) -> None:
+        self.assertEqual(set(self.lock["ml_runtime"]), {"lisjong-arena"})
+        self.assertEqual(require_live_ml_runtime(self.lock), self.lock["ml_runtime"])
+        with merged_main_execution():
+            require_live_execution_target(self.lock)
+
+    def test_version_drift_is_rejected_before_execution(self) -> None:
+        live = dict(self.lock["ml_runtime"])
+        live["lisjong-arena"] = "9.9.9"
+        with mock.patch.object(lock_module, "collect_ml_runtime", return_value=live):
+            with self.assertRaisesRegex(OverallChampionLockError, "live ML runtime"):
+                require_live_ml_runtime(self.lock)
+            with merged_main_execution():
+                with self.assertRaisesRegex(
+                    OverallChampionLockError, "live ML runtime"
+                ):
+                    require_live_execution_target(self.lock)
+
+    def test_missing_package_is_rejected_before_execution(self) -> None:
+        with mock.patch.object(
+            lock_module,
+            "collect_ml_runtime",
+            side_effect=OverallChampionLockError("not installed"),
+        ):
+            with self.assertRaisesRegex(OverallChampionLockError, "not installed"):
+                require_live_ml_runtime(self.lock)
+
+    def test_a_removed_package_is_rejected_before_execution(self) -> None:
+        with mock.patch.object(lock_module, "collect_ml_runtime", return_value={}):
+            with self.assertRaisesRegex(OverallChampionLockError, "live ML runtime"):
+                require_live_ml_runtime(self.lock)
+
+    def test_ml_runtime_drift_stops_a_run_before_any_execution(self) -> None:
+        def execute(plan, *, max_workers):
+            raise AssertionError("execution must not start")
+
+        live = dict(self.lock["ml_runtime"])
+        live["lisjong-arena"] = "9.9.9"
+        with (
+            merged_main_execution(),
+            mock.patch.object(lock_module, "collect_ml_runtime", return_value=live),
+        ):
+            with self.assertRaisesRegex(OverallChampionLockError, "live ML runtime"):
+                run_overall_evaluation(
+                    lock_path=self.directory.lock,
+                    heuristic_spec=heuristic_spec(),
+                    learning_spec=learning_spec(),
+                    execute=execute,
+                )
+
+
 class OperatorSurfaceTest(unittest.TestCase):
     """invalid evidenceがoperator surfaceで``STOP / INVALID``になること。"""
 
     def setUp(self) -> None:
         self.directory = _Directory()
         self.addCleanup(self.directory.close)
+        install_checkpoint(self.directory.path)
+        self.addCleanup(clear_checkpoint)
         self.lock = lock_document(self.directory.path)
         save_lock_document(self.lock, self.directory.lock)
         save_synthetic_comparison(
@@ -684,6 +967,8 @@ class ExecutionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = _Directory()
         self.addCleanup(self.directory.close)
+        install_checkpoint(self.directory.path)
+        self.addCleanup(clear_checkpoint)
         self.lock = lock_document(self.directory.path)
         save_lock_document(self.lock, self.directory.lock)
 

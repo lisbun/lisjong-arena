@@ -28,9 +28,11 @@ pre-execution lockがbindする。
 
 from __future__ import annotations
 
+import importlib
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from lisjong_arena._artifact_io import (
     ArtifactValidationError,
@@ -137,6 +139,19 @@ operator surfaceだけがこのlabelを表示する。
 
 EXECUTION_BRANCH = "main"
 
+IMPLEMENTATION_SOURCES = {
+    "lisjong": "lisjong_revision",
+    "lisjong-engine": "lisjong_engine_revision",
+    "lisjong-arena": "lisjong_arena_revision",
+}
+"""participantのimplementation revisionをどのprovenance factで検証するか。
+
+Champion registryやauto-discoveryを作らないまま、``implementation_revision``を
+live executionへmachine-verifiableへ束縛するための、enumeratedで曖昧さのない
+対応表である。ここに無いsourceは受理しない。値はいずれも既にArenaが収集して
+いるexecution provenance fieldであり、新しいprovenance経路を足さない。
+"""
+
 _FULL_COMMIT_ID = re.compile(r"[0-9a-f]{40}").fullmatch
 _SHA256_HEX = re.compile(r"[0-9a-f]{64}").fullmatch
 _FACTORY_BINDING = re.compile(
@@ -150,6 +165,72 @@ class OverallChampionProtocolError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class ServedCheckpoint:
+    """serving実装が「自分が実際に読むcheckpoint」として申告するfact。
+
+    ``ParticipantBinding.checkpoint_binding``が指すcallableはこのvalueを返す。
+    caller supplied digestをlockへ保存するだけでは、実際にfactoryが読むweights
+    と一致する保証がないため、serving側の申告をpre-execution boundaryで
+    再取得してlockと照合する。
+
+    ここはArenaがcheckpointを探索するための仕組みではない。resolverの
+    ``module:qualname``はlockがexactにbindし、Arena側は与えられた1点だけを
+    呼ぶ。
+    """
+
+    identity: str
+    path: Path
+
+    def __post_init__(self) -> None:
+        if type(self.identity) is not str:
+            raise TypeError("identity must be a str")
+        if not self.identity:
+            raise ValueError("identity must not be empty")
+        if isinstance(self.path, str):
+            object.__setattr__(self, "path", Path(self.path))
+        if not isinstance(self.path, Path):
+            raise TypeError("path must be a Path")
+        if not str(self.path):
+            raise ValueError("path must not be empty")
+
+
+def resolve_binding_callable(binding: str) -> Callable[[], object]:
+    """``module:qualname`` bindingをexactなcallableへ解決する。
+
+    解決したcallableの正準名がbindingと一致することも要求するので、
+    re-exportやaliasを経由して別実装へすり替えられない。
+    """
+    if type(binding) is not str or _FACTORY_BINDING(binding) is None:
+        raise OverallChampionProtocolError(
+            "binding must name an exact callable as 'module:qualname'"
+        )
+    module_name, _, qualname = binding.partition(":")
+    try:
+        target: object = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise OverallChampionProtocolError(
+            f"binding module {module_name!r} cannot be imported"
+        ) from exc
+    for part in qualname.split("."):
+        try:
+            target = getattr(target, part)
+        except AttributeError as exc:
+            raise OverallChampionProtocolError(
+                f"binding {binding!r} does not resolve to an attribute"
+            ) from exc
+    if not callable(target):
+        raise OverallChampionProtocolError(
+            f"binding {binding!r} does not resolve to a callable"
+        )
+    if factory_binding_of(target) != binding:  # type: ignore[arg-type]
+        raise OverallChampionProtocolError(
+            f"binding {binding!r} resolves to {factory_binding_of(target)!r}; "  # type: ignore[arg-type]
+            "an alias or re-export is not an exact binding"
+        )
+    return target  # type: ignore[return-value]
+
+
+@dataclass(frozen=True, slots=True)
 class ParticipantBinding:
     """formal eventが1 participantについてbindするexact identity。
 
@@ -160,15 +241,25 @@ class ParticipantBinding:
     - ``family``: ``heuristic`` / ``learning``のいずれか
     - ``policy_identity``: exact Policy identity(class名から暗黙導出しない)
     - ``factory_binding``: ``module:qualname``形式のexact factory / serving binding
+    - ``implementation_source``: ``implementation_revision``をどのprovenance
+      factと照合するか(``IMPLEMENTATION_SOURCES``のいずれか)
     - ``implementation_revision``: 実装のfull commit ID
-    - ``checkpoint_identity`` / ``checkpoint_digest``: weightsを持つ
-      participantのcheckpoint identityとそのSHA-256(該当しない場合は``None``)
+    - ``checkpoint_binding``: serving実装が読むcheckpointを申告する
+      ``module:qualname`` callable(``ServedCheckpoint``を返す)
+    - ``checkpoint_identity`` / ``checkpoint_digest``: そのcheckpointのidentityと
+      file bytesのSHA-256
+
+    checkpoint関連の3 fieldはweightsを持つparticipantでのみ使い、3つとも
+    揃っているか3つとも``None``であるかのどちらかしか許さない。半端に
+    宣言されたcheckpointは検証できないため受理しない。
     """
 
     family: str
     policy_identity: str
     factory_binding: str
+    implementation_source: str
     implementation_revision: str
+    checkpoint_binding: str | None = None
     checkpoint_identity: str | None = None
     checkpoint_digest: str | None = None
 
@@ -177,6 +268,7 @@ class ParticipantBinding:
             "family",
             "policy_identity",
             "factory_binding",
+            "implementation_source",
             "implementation_revision",
         ):
             value = getattr(self, name)
@@ -192,11 +284,22 @@ class ParticipantBinding:
             raise OverallChampionProtocolError(
                 "factory_binding must name an exact callable as 'module:qualname'"
             )
+        if self.implementation_source not in IMPLEMENTATION_SOURCES:
+            raise OverallChampionProtocolError(
+                "implementation_source must be one of "
+                f"{tuple(IMPLEMENTATION_SOURCES)!r} but was "
+                f"{self.implementation_source!r}"
+            )
         if _FULL_COMMIT_ID(self.implementation_revision) is None:
             raise OverallChampionProtocolError(
                 "implementation_revision must be a lowercase full commit ID"
             )
-        for name in ("checkpoint_identity", "checkpoint_digest"):
+        checkpoint_fields = (
+            "checkpoint_binding",
+            "checkpoint_identity",
+            "checkpoint_digest",
+        )
+        for name in checkpoint_fields:
             value = getattr(self, name)
             if value is None:
                 continue
@@ -204,33 +307,48 @@ class ParticipantBinding:
                 raise TypeError(f"{name} must be a str or None")
             if not value:
                 raise ValueError(f"{name} must not be empty")
+        declared = [getattr(self, name) is not None for name in checkpoint_fields]
+        if any(declared) and not all(declared):
+            raise OverallChampionProtocolError(
+                "checkpoint_binding, checkpoint_identity and checkpoint_digest "
+                "must be declared together or all omitted"
+            )
         if self.checkpoint_digest is not None:
-            if self.checkpoint_identity is None:
-                raise OverallChampionProtocolError(
-                    "checkpoint_digest requires a checkpoint_identity"
-                )
             if _SHA256_HEX(self.checkpoint_digest) is None:
                 raise OverallChampionProtocolError(
                     "checkpoint_digest must be a lowercase SHA-256 hex digest"
                 )
+            if _FACTORY_BINDING(self.checkpoint_binding) is None:
+                raise OverallChampionProtocolError(
+                    "checkpoint_binding must name an exact callable as "
+                    "'module:qualname'"
+                )
+
+    @property
+    def has_checkpoint(self) -> bool:
+        return self.checkpoint_identity is not None
 
     def to_document(self) -> dict[str, object]:
         return {
+            "checkpoint_binding": self.checkpoint_binding,
             "checkpoint_digest": self.checkpoint_digest,
             "checkpoint_identity": self.checkpoint_identity,
             "factory_binding": self.factory_binding,
             "family": self.family,
             "implementation_revision": self.implementation_revision,
+            "implementation_source": self.implementation_source,
             "policy_identity": self.policy_identity,
         }
 
 
 _PARTICIPANT_FIELDS = {
+    "checkpoint_binding",
     "checkpoint_digest",
     "checkpoint_identity",
     "factory_binding",
     "family",
     "implementation_revision",
+    "implementation_source",
     "policy_identity",
 }
 
@@ -242,7 +360,7 @@ def parse_participant_binding(value: object, context: str) -> ParticipantBinding
     except ArtifactValidationError as exc:
         raise OverallChampionProtocolError(str(exc)) from exc
     optional: dict[str, str | None] = {}
-    for name in ("checkpoint_digest", "checkpoint_identity"):
+    for name in ("checkpoint_binding", "checkpoint_digest", "checkpoint_identity"):
         item = raw[name]
         if item is None:
             optional[name] = None
@@ -260,9 +378,13 @@ def parse_participant_binding(value: object, context: str) -> ParticipantBinding
             factory_binding=expect_str(
                 raw["factory_binding"], f"{context}.factory_binding"
             ),
+            implementation_source=expect_str(
+                raw["implementation_source"], f"{context}.implementation_source"
+            ),
             implementation_revision=expect_str(
                 raw["implementation_revision"], f"{context}.implementation_revision"
             ),
+            checkpoint_binding=optional["checkpoint_binding"],
             checkpoint_identity=optional["checkpoint_identity"],
             checkpoint_digest=optional["checkpoint_digest"],
         )
@@ -489,8 +611,10 @@ __all__ = [
     "SEED_BLOCK_COUNT",
     "STOP_INVALID_KIND",
     "STOP_INVALID_LABEL",
+    "IMPLEMENTATION_SOURCES",
     "OverallChampionProtocolError",
     "ParticipantBinding",
+    "ServedCheckpoint",
     "classification_document",
     "factory_binding_of",
     "parse_participant_binding",
@@ -498,6 +622,7 @@ __all__ = [
     "require_overall_population",
     "require_participants",
     "require_protocol_document",
+    "resolve_binding_callable",
     "require_rotation_plan",
     "rotation_plan_document",
 ]

@@ -233,32 +233,104 @@ exact seed valuesはprotocolへhard-codeしない。v1 invariantはseed-block co
 ## 9. Participant binding
 
 current Championをauto-discoverするregistryは持たない。formal eventのlockが
-少なくとも次をbindする。
+次をbindする。
 
 ```text
 family (heuristic / learning)
 exact policy identity
 exact factory / serving binding (module:qualname)
-implementation revision
-checkpoint / weights identity where applicable
+implementation source (lisjong / lisjong-engine / lisjong-arena)
+implementation revision (full commit ID)
+checkpoint binding (module:qualname)   \
+checkpoint identity                     |  weightsを持つparticipantのみ
+checkpoint digest (SHA-256)            /
 ```
 
-execution APIはcallerから `PolicySpec` を受け取り、実行前にlock participant
-bindingとのexact一致(identityとfactory binding)をfail-closedで確認する。
+checkpoint関連の3 fieldは3つとも揃うか3つとも無いかのどちらかであり、
+半端に宣言されたcheckpointは検証できないため受理しない。
+
+### live executionへのcross-binding
+
+lockへ値を書くだけでは、実際に実行されるコードやweightsとの一致を保証
+できない。そこで **lock生成時と実行直前の両方**で、次をfail closedに照合する。
+
+**implementation revision.** `implementation_source` はenumeratedな
+対応表であり、既にArenaが収集しているexecution provenance factを指す。
+
+```text
+lisjong         -> provenance.lisjong_revision
+lisjong-engine  -> provenance.lisjong_engine_revision
+lisjong-arena   -> provenance.lisjong_arena_revision
+```
+
+`implementation_revision` がそのlive factと一致しなければformal runを開始
+しない。sourceを取り違えたbinding(lisjong実装をengine revisionへbind等)も
+同じ照合で落ちる。
+
+**checkpoint / weights.** `checkpoint_binding` は serving実装側が
+「自分が実際に読むcheckpoint」を申告する `module:qualname` callableであり、
+`ServedCheckpoint(identity, path)` を返す。pre-execution boundaryはこれを
+実際に呼び出し、
+
+```text
+served identity == locked checkpoint_identity
+sha256(served path の file bytes) == locked checkpoint_digest
+```
+
+を要求する。caller supplied digestをlockへ保存するだけの検証にはしない。
+lock後にweightsが差し替わった場合も、identityが入れ替わった場合も、fileが
+消えた場合も、executionは開始前にrejectされる。
+
+Arenaはcheckpointを探索しない。呼ぶのはlockがexactにbindした1点だけであり、
+resolveしたcallableの正準名がbindingと一致することも要求するので、
+re-exportやaliasを経由した別実装へのすり替えも通らない。
+
+execution APIはcallerから `PolicySpec` を受け取り、実行前に
+
+```text
+policy identity
+factory binding (module:qualname の正準名一致)
+implementation source / revision
+served checkpoint identity / digest
+```
+
+をすべてfail-closedで確認する。
 
 ## 10. Merged-main execution discipline
 
-formal executionはreview済みmerged implementationを対象とする。lock生成時と実行
-直前の双方で、既存 `lisjong_arena._execution_safety` により
+formal executionはreview済みmerged implementationを対象とする。
+`require_live_execution_target()` がexecution preflightの単一境界であり、
+lock生成時と実行直前の双方で次を確認する。
 
 ```text
+internal VCS dependency環境の整合
+execution provenance (Arena / lisjong / lisjong-engine revision 等) の一致
 clean Arena worktree
 exact HEAD revision
 main containment
 write-once artifact destinations
+declared ML runtime version の一致
+participant implementation revision / served checkpoint の一致
 ```
 
-を確認する。PR branch上でformal resultを生成してからmergeする運用にしない。
+既存 `lisjong_arena._execution_safety` をそのままreuseする。PR branch上で
+formal resultを生成してからmergeする運用にしない。
+
+### ML runtime drift
+
+lockは宣言されたML runtime packageのexact versionを記録する。execution
+preflightはlocked package名でlive環境からversionを再取得し、**exact
+equality**を要求する。
+
+```text
+version drift   -> reject
+package missing -> reject
+```
+
+宣言されたpackage集合自体は `lock_identity` が固定するので、lock後に宣言を
+増減させることもできない。Arenaは宣言外のinstalled packageを推測で列挙しない。
+どのruntimeが `relevant` かはparticipantごとに異なるため、package名はoperator
+が明示的に宣言する。
 
 ```text
 implementation PR merge
@@ -289,6 +361,30 @@ result artifactのrecorded statisticsは信用しない。検証は必ずstrict-
 `comparison.json` のraw seat-resultsから再導出する。したがってresult fieldsだけを
 自己整合的に改変してresult identityを再計算しても、raw evidenceとの
 re-derivation mismatchで拒否される。
+
+### verifyはportableである(意図した設計)
+
+`verify_overall_bundle()` は **lockに記録されたartifact destination path自体とは
+照合しない**。3 fileの内容だけを信頼し、どのdirectoryに置かれていても同じ結果を
+返す。
+
+```text
+locked destination path
+    = execution boundary の write-once 契約
+      (run 時に require_new_artifact_destinations() が強制する)
+
+bundle 内容 (lock identity / comparison digest / raw evidence)
+    = formal identity
+      (verify が照合するのはこちらだけ)
+```
+
+これはformal evidenceを第三者へ引き渡して**offline verify**できるようにする
+ための意図的な設計である。verifyはserving環境、live provenance、ML runtimeの
+再取得も要求しない。absolute pathをformal identityの一部にしてしまうと、bundle
+をarchiveへ移した時点で再検証できなくなるため採用しない。
+
+destination自体は `lock_identity` に含まれ、result artifactは `lock_identity` で
+lockへ束縛されるので、記録としては不変のまま残る。
 
 fail closed対象には参加者/family/seed/seed order/game mode/max_steps/rotation・
 seat assignment mismatch、partial game、partial seed block、comparison digest

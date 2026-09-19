@@ -7,7 +7,6 @@ CIやtestからは実行しない。
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 from pathlib import Path
 
@@ -22,9 +21,11 @@ from .lock import (
     save_lock_document,
 )
 from .protocol import (
+    IMPLEMENTATION_SOURCES,
     STOP_INVALID_LABEL,
     OverallChampionProtocolError,
     ParticipantBinding,
+    resolve_binding_callable,
 )
 from .result import OverallChampionResultError, verify_overall_bundle
 from .statistics import OverallChampionStatisticsError
@@ -77,35 +78,10 @@ def _parse_seeds(raw: str) -> tuple[int, ...]:
     return tuple(values)
 
 
-def _resolve_factory(binding: str) -> object:
-    module_name, _, qualname = binding.partition(":")
-    if not module_name or not qualname:
-        raise OverallChampionLockError("factory binding must be 'module:qualname'")
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError as exc:
-        raise OverallChampionLockError(
-            f"factory binding module {module_name!r} cannot be imported"
-        ) from exc
-    target: object = module
-    for part in qualname.split("."):
-        try:
-            target = getattr(target, part)
-        except AttributeError as exc:
-            raise OverallChampionLockError(
-                f"factory binding {binding!r} does not resolve to a callable"
-            ) from exc
-    if not callable(target):
-        raise OverallChampionLockError(
-            f"factory binding {binding!r} does not resolve to a callable"
-        )
-    return target
-
-
 def _spec_from_binding(binding: ParticipantBinding) -> PolicySpec:
     return PolicySpec(
         identity=binding.policy_identity,
-        factory=_resolve_factory(binding.factory_binding),  # type: ignore[arg-type]
+        factory=resolve_binding_callable(binding.factory_binding),  # type: ignore[arg-type]
     )
 
 
@@ -114,7 +90,9 @@ def _binding(arguments: argparse.Namespace, family: str) -> ParticipantBinding:
         family=family,
         policy_identity=getattr(arguments, f"{family}_identity"),
         factory_binding=getattr(arguments, f"{family}_factory"),
+        implementation_source=getattr(arguments, f"{family}_source"),
         implementation_revision=getattr(arguments, f"{family}_revision"),
+        checkpoint_binding=getattr(arguments, f"{family}_checkpoint_binding"),
         checkpoint_identity=getattr(arguments, f"{family}_checkpoint"),
         checkpoint_digest=getattr(arguments, f"{family}_checkpoint_digest"),
     )
@@ -192,7 +170,11 @@ def _parser() -> argparse.ArgumentParser:
     for family in ("heuristic", "learning"):
         lock.add_argument(f"--{family}-identity", required=True)
         lock.add_argument(f"--{family}-factory", required=True)
+        lock.add_argument(
+            f"--{family}-source", required=True, choices=sorted(IMPLEMENTATION_SOURCES)
+        )
         lock.add_argument(f"--{family}-revision", required=True)
+        lock.add_argument(f"--{family}-checkpoint-binding", default=None)
         lock.add_argument(f"--{family}-checkpoint", default=None)
         lock.add_argument(f"--{family}-checkpoint-digest", default=None)
     lock.set_defaults(handler=_lock)

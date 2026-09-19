@@ -6,6 +6,7 @@ CIでactual 400-hanchan formal evaluationは実行しない。
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -37,6 +38,7 @@ from lisjong_arena.overall_champion_aabb.protocol import (
     SEAT_COUNT,
     SEED_BLOCK_COUNT,
     ParticipantBinding,
+    ServedCheckpoint,
 )
 from lisjong_arena.single_round_artifact import SingleRoundExecutionProvenance
 
@@ -46,9 +48,9 @@ LEARNING_IDENTITY = "learning-champion-fixture-v1"
 ARENA_REVISION = "a" * 40
 LISJONG_REVISION = "b" * 40
 LISJONG_ENGINE_REVISION = "c" * 40
-HEURISTIC_REVISION = "d" * 40
-LEARNING_REVISION = "e" * 40
-CHECKPOINT_DIGEST = "f" * 64
+CHECKPOINT_IDENTITY = "learning-champion-checkpoint-v1"
+CHECKPOINT_BYTES = b"synthetic learning champion weights"
+CHECKPOINT_DIGEST = hashlib.sha256(CHECKPOINT_BYTES).hexdigest()
 
 SCORE_BY_RANK = {1: 40_000, 2: 30_000, 3: 20_000, 4: 10_000}
 
@@ -83,12 +85,47 @@ def other_learning_policy() -> StubPolicy:
     return StubPolicy()
 
 
+_SERVED_CHECKPOINT: ServedCheckpoint | None = None
+
+
+def served_learning_checkpoint() -> ServedCheckpoint:
+    """Learning servingが「自分が読むcheckpoint」として申告するfact。
+
+    productionのserving実装と同じ形の1点であり、Arena側はここを呼ぶだけで
+    checkpointを探索しない。
+    """
+    if _SERVED_CHECKPOINT is None:
+        raise AssertionError("no fixture checkpoint is installed")
+    return _SERVED_CHECKPOINT
+
+
+def install_checkpoint(
+    directory: Path,
+    *,
+    identity: str = CHECKPOINT_IDENTITY,
+    payload: bytes = CHECKPOINT_BYTES,
+    name: str = "learning-champion.weights",
+) -> Path:
+    """servingが申告するcheckpoint fileを実際に置く。"""
+    global _SERVED_CHECKPOINT
+    path = directory / name
+    path.write_bytes(payload)
+    _SERVED_CHECKPOINT = ServedCheckpoint(identity=identity, path=path)
+    return path
+
+
+def clear_checkpoint() -> None:
+    global _SERVED_CHECKPOINT
+    _SERVED_CHECKPOINT = None
+
+
 def heuristic_binding(**overrides: object) -> ParticipantBinding:
     values: dict[str, object] = {
         "family": HEURISTIC_FAMILY,
         "policy_identity": HEURISTIC_IDENTITY,
-        "factory_binding": ("_overall_champion_aabb_fixtures:stub_heuristic_policy"),
-        "implementation_revision": HEURISTIC_REVISION,
+        "factory_binding": "_overall_champion_aabb_fixtures:stub_heuristic_policy",
+        "implementation_source": "lisjong",
+        "implementation_revision": LISJONG_REVISION,
     }
     values.update(overrides)
     return ParticipantBinding(**values)  # type: ignore[arg-type]
@@ -99,8 +136,12 @@ def learning_binding(**overrides: object) -> ParticipantBinding:
         "family": LEARNING_FAMILY,
         "policy_identity": LEARNING_IDENTITY,
         "factory_binding": "_overall_champion_aabb_fixtures:stub_learning_policy",
-        "implementation_revision": LEARNING_REVISION,
-        "checkpoint_identity": "learning-champion-checkpoint-v1",
+        "implementation_source": "lisjong-arena",
+        "implementation_revision": ARENA_REVISION,
+        "checkpoint_binding": (
+            "_overall_champion_aabb_fixtures:served_learning_checkpoint"
+        ),
+        "checkpoint_identity": CHECKPOINT_IDENTITY,
         "checkpoint_digest": CHECKPOINT_DIGEST,
     }
     values.update(overrides)
