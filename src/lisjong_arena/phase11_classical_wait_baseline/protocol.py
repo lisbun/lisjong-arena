@@ -44,12 +44,14 @@ RIICHI_TIMING_FORMULA = "riichi_junme / 18"
 
 SOLVER = {
     "family": "torch.optim.LBFGS full-batch logistic correction",
+    "objective": "unweighted binary log loss with frozen per-tile logit offset",
     "dtype": "float64",
     "initialization": "all-zero correction weights",
     "free_intercept": False,
     "learning_rate": 1.0,
     "max_iterations": 100,
     "max_evaluations": 125,
+    "history_size": 100,
     "tolerance_grad": 1e-9,
     "tolerance_change": 1e-12,
     "line_search": "strong_wolfe",
