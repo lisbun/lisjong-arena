@@ -4,11 +4,14 @@ import ast
 import inspect
 import unittest
 from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from lisjong_engine.public_state import PublicRiichiStatus
 from lisjong_engine.wind import Wind
 
 import lisjong_arena.phase11_classical_wait_baseline.data as classical_data
+from lisjong_arena.phase11_classical_wait_baseline.artifact import _read_json
 from lisjong_arena.phase5_belief_dataset.model import DatasetPartition
 from lisjong_arena.phase6_snapshot.feature import (
     OpponentSnapshotFeature,
@@ -219,6 +222,15 @@ class LockedProtocolTest(unittest.TestCase):
                 "--hpo",
             ):
                 self.assertNotIn(forbidden, options)
+
+
+class ArtifactStrictReadbackTest(unittest.TestCase):
+    def test_noncanonical_json_bytes_are_rejected(self):
+        with TemporaryDirectory() as temporary:
+            path = Path(temporary) / "artifact.json"
+            path.write_text('{"a": 1}', encoding="utf-8")
+            with self.assertRaisesRegex(ClassicalWaitError, "canonical JSON"):
+                _read_json(path, "fixture")
 
 
 class FeatureSemanticsTest(unittest.TestCase):
