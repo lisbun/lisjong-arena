@@ -17,6 +17,7 @@ from lisjong_arena.phase11_e160_offset_probe.data import (
 )
 from lisjong_arena.phase11_e160_offset_probe.evaluation import fit_train_prevalence
 from lisjong_arena.phase11_e160_offset_probe.model import (
+    create_probe_optimizer,
     fit_probe,
     predict_probability,
 )
@@ -103,6 +104,22 @@ class DeterministicProbeFitTest(unittest.TestCase):
             latent_fingerprint=self.fingerprint,
             frozen_model=frozen,
             frozen_snapshot=snapshot,
+        )
+
+    def test_optimizer_contains_only_standalone_probe_weights(self):
+        frozen, _snapshot = self._frozen()
+        weights = torch.zeros((3, 34, 128), dtype=torch.float64, requires_grad=True)
+        optimizer = create_probe_optimizer(weights, frozen)
+        parameters = tuple(
+            parameter
+            for group in optimizer.param_groups
+            for parameter in group["params"]
+        )
+        self.assertEqual(parameters, (weights,))
+        self.assertTrue(
+            {id(parameter) for parameter in parameters}.isdisjoint(
+                {id(parameter) for parameter in frozen.parameters()}
+            )
         )
 
     def test_fit_is_deterministic_bias_free_and_exact_shape(self):
