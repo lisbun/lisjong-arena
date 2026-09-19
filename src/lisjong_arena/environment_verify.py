@@ -31,18 +31,13 @@ def main(argv: list[str] | None = None) -> int:
     except EnvironmentIdentityError as exc:
         print("ENVIRONMENT MISMATCH")
         print(f"  {exc}")
-        print(
-            "  repair: recreate the virtualenv and reinstall this checkout"
-        )
+        print("  repair: recreate the virtualenv and reinstall this checkout")
         return 2
 
     if result.ok:
         print("ENVIRONMENT CONSISTENT")
         for identity in result.identities:
-            print(
-                f"  {identity.name:<14} "
-                f"{identity.revision} ({identity.version})"
-            )
+            print(f"  {identity.name:<14} {identity.revision} ({identity.version})")
         print("  pip check: OK")
         return 0
 
