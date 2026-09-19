@@ -13,6 +13,7 @@ from lisjong_arena.phase11_e160_offset_probe.__main__ import _parser
 from lisjong_arena.phase11_e160_offset_probe.artifact import _read_json
 from lisjong_arena.phase11_e160_offset_probe.data import (
     centered_latent,
+    centered_latent_summary,
     centering_receipt,
     coverage_value,
     latent_fingerprint,
@@ -198,6 +199,22 @@ class CenteringAndLatentTest(unittest.TestCase):
         validation = (_record(DatasetPartition.VALIDATION, 4, 99.0),)
         with self.assertRaisesRegex(E160OffsetProbeError, "TRAIN records only"):
             centering_receipt(validation)
+
+    def test_centered_latent_summary_is_partitioned_and_row_bound(self):
+        records = (
+            _record(DatasetPartition.TRAIN, 1, -1.0),
+            _record(DatasetPartition.TRAIN, 2, 1.0),
+        )
+        centering = centering_receipt(records)
+        summary = centered_latent_summary(records, centering)
+        self.assertEqual(summary["partition"], "train")
+        self.assertEqual(summary["overall"]["eligible_rows"], 6)
+        self.assertEqual(summary["overall"]["scalar_values"], 6 * LATENT_DIM)
+        self.assertEqual(
+            [row["eligible_rows"] for row in summary["per_output_row"]],
+            [2, 2, 2],
+        )
+        self.assertAlmostEqual(summary["overall"]["mean"], 0.0, places=15)
 
     def test_latent_fingerprint_changes_when_latent_changes(self):
         first = (_record(DatasetPartition.TRAIN, 1, 1.0),)
