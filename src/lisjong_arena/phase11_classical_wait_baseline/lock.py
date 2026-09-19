@@ -67,6 +67,8 @@ def _runtime() -> dict[str, object]:
 
     torch.use_deterministic_algorithms(True)
     torch.set_num_threads(1)
+    if torch.cuda.is_available():
+        raise ClassicalWaitError("Arena #222 requires the locked CPU-only runtime")
     return {
         "python": platform.python_version(),
         "torch": torch.__version__,
