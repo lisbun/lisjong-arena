@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from array import array
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import rmtree
@@ -248,7 +249,7 @@ def _align_scientific_prefix(
                         f"seed {seed} row {index} {name} mismatch: "
                         f"{retained_value!r} != {replayed_value!r}"
                     )
-            if dataset.feature_row(index).tobytes() != emission.row.feature_bytes():
+            if array("f", dataset.feature_row(index)).tobytes() != emission.row.feature_bytes():
                 raise StageA0ProtocolLockError(
                     f"seed {seed} row {index} feature bytes do not exact-align"
                 )
