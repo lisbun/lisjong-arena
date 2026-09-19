@@ -2,7 +2,8 @@
 
 Policyのbehaviorそのものは検証しない。catalogが``two-step`` /
 ``finite-horizon`` / ``combined`` / ``hand-value-aware`` /
-``extended-combined`` / ``yakuhai-call`` / ``mechanism-riichi-defense``の7つであること、catalog keyと
+``extended-combined`` / ``yakuhai-call`` / ``mechanism-riichi-defense`` /
+``targeted-honor-release-terminal-progression``の8つであること、catalog keyと
 ``PolicySpec.identity``が一致すること、factoryがtop-levelでfresh instanceを生成し
 spawn-safeであること、CLIが登録名を既存serial / parallel evaluation pathへ解決する
 ことだけを固定する。
@@ -21,12 +22,17 @@ from lisjong.policies import (
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
     MechanismRiichiDefenseYakuhaiCallPolicy,
+    TargetedHonorReleaseTerminalProgressionPolicy,
     TwoStepUkeirePolicy,
     YakuhaiCallGenbutsuDefenseFiniteHorizonHandValueAwarePolicy,
 )
 
 from lisjong_arena._parallel_execution import check_policy_spec_serializable
 from lisjong_arena.model import PolicySpec
+from lisjong_arena.overall_champion_aabb.protocol import (
+    factory_binding_of,
+    resolve_binding_callable,
+)
 from lisjong_arena.policy_catalog import (
     POLICY_CATALOG,
     create_combined,
@@ -34,6 +40,7 @@ from lisjong_arena.policy_catalog import (
     create_finite_horizon,
     create_hand_value_aware,
     create_mechanism_riichi_defense,
+    create_targeted_honor_release_terminal_progression,
     create_two_step,
     create_yakuhai_call,
 )
@@ -42,7 +49,7 @@ from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
 class CatalogContentsTest(unittest.TestCase):
-    def test_catalog_has_exactly_seven_registered_policies(self) -> None:
+    def test_catalog_has_exactly_eight_registered_policies(self) -> None:
         self.assertEqual(
             set(POLICY_CATALOG),
             {
@@ -53,6 +60,7 @@ class CatalogContentsTest(unittest.TestCase):
                 "extended-combined",
                 "yakuhai-call",
                 "mechanism-riichi-defense",
+                "targeted-honor-release-terminal-progression",
             },
         )
 
@@ -136,11 +144,13 @@ class HistoricalDependencyCompatibilityTest(unittest.TestCase):
 import lisjong.policies
 
 del lisjong.policies.MechanismRiichiDefenseYakuhaiCallPolicy
+del lisjong.policies.TargetedHonorReleaseTerminalProgressionPolicy
 
 from lisjong_arena.learned_policy_offline_q.artifact import provenance_document
 from lisjong_arena.policy_catalog import (
     POLICY_CATALOG,
     create_mechanism_riichi_defense,
+    create_targeted_honor_release_terminal_progression,
     create_yakuhai_call,
 )
 from lisjong_arena.stage_a0_tenpai_feasibility import __main__ as stage_a0_cli
@@ -158,6 +168,16 @@ else:
     raise AssertionError(
         "mechanism-riichi-defense must require its unavailable historical symbol "
         "only when selected"
+    )
+
+try:
+    create_targeted_honor_release_terminal_progression()
+except ImportError:
+    pass
+else:
+    raise AssertionError(
+        "targeted-honor-release-terminal-progression must require its unavailable "
+        "historical symbol only when selected"
     )
 """
         completed = subprocess.run(
@@ -208,6 +228,12 @@ class FactoryTest(unittest.TestCase):
             MechanismRiichiDefenseYakuhaiCallPolicy,
         )
 
+    def test_targeted_honor_release_factory_returns_intended_policy(self) -> None:
+        self.assertIsInstance(
+            create_targeted_honor_release_terminal_progression(),
+            TargetedHonorReleaseTerminalProgressionPolicy,
+        )
+
     def test_two_step_factory_returns_a_fresh_instance_each_call(self) -> None:
         self.assertIsNot(create_two_step(), create_two_step())
 
@@ -233,6 +259,28 @@ class FactoryTest(unittest.TestCase):
             create_mechanism_riichi_defense(), create_mechanism_riichi_defense()
         )
 
+    def test_targeted_honor_release_factory_returns_a_fresh_instance_each_call(
+        self,
+    ) -> None:
+        self.assertIsNot(
+            create_targeted_honor_release_terminal_progression(),
+            create_targeted_honor_release_terminal_progression(),
+        )
+
+    def test_targeted_honor_release_factory_satisfies_overall_binding(self) -> None:
+        binding = (
+            "lisjong_arena.policy_catalog:"
+            "create_targeted_honor_release_terminal_progression"
+        )
+        self.assertEqual(
+            factory_binding_of(create_targeted_honor_release_terminal_progression),
+            binding,
+        )
+        self.assertIs(
+            resolve_binding_callable(binding),
+            create_targeted_honor_release_terminal_progression,
+        )
+
     def test_catalog_factories_are_the_same_top_level_callables(self) -> None:
         self.assertIs(POLICY_CATALOG["two-step"].factory, create_two_step)
         self.assertIs(POLICY_CATALOG["finite-horizon"].factory, create_finite_horizon)
@@ -247,6 +295,10 @@ class FactoryTest(unittest.TestCase):
         self.assertIs(
             POLICY_CATALOG["mechanism-riichi-defense"].factory,
             create_mechanism_riichi_defense,
+        )
+        self.assertIs(
+            POLICY_CATALOG["targeted-honor-release-terminal-progression"].factory,
+            create_targeted_honor_release_terminal_progression,
         )
 
 
@@ -271,6 +323,11 @@ class SpawnSafetyTest(unittest.TestCase):
 
     def test_mechanism_riichi_defense_spec_is_process_serializable(self) -> None:
         check_policy_spec_serializable(POLICY_CATALOG["mechanism-riichi-defense"])
+
+    def test_targeted_honor_release_spec_is_process_serializable(self) -> None:
+        check_policy_spec_serializable(
+            POLICY_CATALOG["targeted-honor-release-terminal-progression"]
+        )
 
 
 class CliResolutionTest(unittest.TestCase):

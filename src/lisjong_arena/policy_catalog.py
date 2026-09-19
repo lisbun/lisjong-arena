@@ -2,7 +2,7 @@
 
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
 ``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call`` /
-``mechanism-riichi-defense``の7つだけである。
+``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression``の8つだけである。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
 
@@ -32,7 +32,10 @@ from lisjong.policies import (
 from lisjong_arena.model import PolicySpec
 
 if TYPE_CHECKING:
-    from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy
+    from lisjong.policies import (
+        MechanismRiichiDefenseYakuhaiCallPolicy,
+        TargetedHonorReleaseTerminalProgressionPolicy,
+    )
 
 
 def create_two_step() -> TwoStepUkeirePolicy:
@@ -71,6 +74,16 @@ def create_mechanism_riichi_defense() -> MechanismRiichiDefenseYakuhaiCallPolicy
     return MechanismRiichiDefenseYakuhaiCallPolicy()
 
 
+def create_targeted_honor_release_terminal_progression() -> (
+    TargetedHonorReleaseTerminalProgressionPolicy
+):
+    # Keep import lazy for historical retained environments that predate #174.
+    # Current formal serving resolves the exact public Policy only when selected.
+    from lisjong.policies import TargetedHonorReleaseTerminalProgressionPolicy
+
+    return TargetedHonorReleaseTerminalProgressionPolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "two-step": PolicySpec(identity="two-step", factory=create_two_step),
     "finite-horizon": PolicySpec(
@@ -87,6 +100,10 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
     "mechanism-riichi-defense": PolicySpec(
         identity="mechanism-riichi-defense", factory=create_mechanism_riichi_defense
     ),
+    "targeted-honor-release-terminal-progression": PolicySpec(
+        identity="targeted-honor-release-terminal-progression",
+        factory=create_targeted_honor_release_terminal_progression,
+    ),
 }
 """登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
 
@@ -98,6 +115,7 @@ __all__ = [
     "create_finite_horizon",
     "create_hand_value_aware",
     "create_mechanism_riichi_defense",
+    "create_targeted_honor_release_terminal_progression",
     "create_two_step",
     "create_yakuhai_call",
 ]
