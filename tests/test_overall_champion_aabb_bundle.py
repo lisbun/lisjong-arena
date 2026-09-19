@@ -46,6 +46,7 @@ from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_f
 from lisjong_arena._execution_safety import ExecutionSafetyError
 from lisjong_arena.model import ComparisonPlan, PolicySpec
 from lisjong_arena.overall_champion_aabb.experiment import (
+    OverallEvaluationOutcome,
     build_comparison_plan,
     run_overall_evaluation,
 )
@@ -1073,6 +1074,79 @@ class OperatorSurfaceTest(unittest.TestCase):
             comparison_artifact_path=self.directory.comparison,
         )
         save_overall_result(self.document, self.directory.result)
+
+    def test_run_progress_is_stderr_only_and_final_result_stays_on_stdout(self) -> None:
+        from lisjong_arena.overall_champion_aabb.__main__ import main
+
+        def fake_run_overall_evaluation(**kwargs):
+            progress_callback = kwargs["progress_callback"]
+            progress_callback(1, HANCHAN_COUNT)
+            progress_callback(HANCHAN_COUNT, HANCHAN_COUNT)
+            return OverallEvaluationOutcome(
+                worker_count=8,
+                comparison_artifact_path=self.directory.comparison,
+                overall_result_path=self.directory.result,
+                overall_result=self.document,
+            )
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch(
+                "lisjong_arena.overall_champion_aabb.__main__.run_overall_evaluation",
+                side_effect=fake_run_overall_evaluation,
+            ),
+            mock.patch("sys.stdout", new=stdout),
+            mock.patch("sys.stderr", new=stderr),
+        ):
+            code = main(
+                [
+                    "run",
+                    "--lock",
+                    str(self.directory.lock),
+                    "--progress",
+                ]
+            )
+
+        self.assertEqual(code, 0)
+        self.assertIn("0/400", stderr.getvalue())
+        self.assertIn("400/400", stderr.getvalue())
+        self.assertIn("ETA", stderr.getvalue())
+        self.assertIn("finish ~", stderr.getvalue())
+        self.assertNotIn("400/400", stdout.getvalue())
+        self.assertIn(f"result_identity={self.document['result_identity']}", stdout.getvalue())
+
+    def test_run_progress_line_closes_when_execution_fails(self) -> None:
+        from lisjong_arena.overall_champion_aabb.__main__ import main
+
+        def failing_run_overall_evaluation(**kwargs):
+            kwargs["progress_callback"](1, HANCHAN_COUNT)
+            raise OverallChampionResultError("boom")
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with (
+            mock.patch(
+                "lisjong_arena.overall_champion_aabb.__main__.run_overall_evaluation",
+                side_effect=failing_run_overall_evaluation,
+            ),
+            mock.patch("sys.stdout", new=stdout),
+            mock.patch("sys.stderr", new=stderr),
+        ):
+            code = main(
+                [
+                    "run",
+                    "--lock",
+                    str(self.directory.lock),
+                    "--progress",
+                ]
+            )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("1/400", stderr.getvalue())
+        self.assertIn(STOP_INVALID_LABEL, stderr.getvalue())
+        self.assertTrue(stderr.getvalue().endswith("\n"))
 
     def test_verify_reports_the_classification_for_valid_evidence(self) -> None:
         from lisjong_arena.overall_champion_aabb.__main__ import main
