@@ -85,9 +85,18 @@ def validate_feature_summary(
         if set(row) != {"name", "minimum", "maximum", "mean"}:
             raise ClassicalWaitError("feature summary row fields are not exact")
         numbers = (row["minimum"], row["maximum"], row["mean"])
-        if any(type(number) not in (int, float) or not math.isfinite(number) for number in numbers):
+        if any(
+            type(number) not in (int, float) or not math.isfinite(number)
+            for number in numbers
+        ):
             raise ClassicalWaitError("feature summary contains a non-finite value")
-        if not 0.0 <= row["minimum"] <= row["mean"] <= row["maximum"] <= 1.0:
+        if not (
+            0.0
+            <= row["minimum"]
+            <= row["mean"]
+            <= row["maximum"]
+            <= 1.0
+        ):
             raise ClassicalWaitError("feature summary values must remain in [0,1]")
     return value
 
@@ -114,11 +123,15 @@ def save_model(
 ) -> Path:
     destination = Path(directory)
     if destination.exists():
-        raise FileExistsError(f"classical model destination already exists: {destination}")
+        raise FileExistsError(
+            f"classical model destination already exists: {destination}"
+        )
     validate_model(value, execution_lock_identity, baseline)
+    payload = dict(value)
+    payload["model_identity"] = identity(value)
     destination.mkdir(parents=True, exist_ok=False)
     path = destination / MODEL_FILENAME
-    path.write_bytes(canonical_json_bytes(value))
+    path.write_bytes(canonical_json_bytes(payload))
     return path
 
 
@@ -127,8 +140,12 @@ def load_model(
     execution_lock_identity: str,
     baseline: dict,
 ) -> dict[str, object]:
-    value = _read_json(Path(directory) / MODEL_FILENAME, "classical model")
-    return validate_model(value, execution_lock_identity, baseline)
+    payload = _read_json(Path(directory) / MODEL_FILENAME, "classical model")
+    if "model_identity" not in payload:
+        raise ClassicalWaitError("classical model identity is missing")
+    recorded_identity = payload.pop("model_identity")
+    exact(recorded_identity, identity(payload), "classical model identity")
+    return validate_model(payload, execution_lock_identity, baseline)
 
 
 def save_result(path: str | Path, value: dict, lock: dict) -> Path:
