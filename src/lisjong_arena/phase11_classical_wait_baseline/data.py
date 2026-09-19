@@ -230,11 +230,12 @@ def feature_vector(
     if len(snapshot.remaining_tile_counts) != TILE_KIND_COUNT:
         raise ClassicalWaitError("remaining inventory must contain 34 base tile kinds")
     remaining = snapshot.remaining_tile_counts
+    suited = _suited_rank(tile_index)
     candidate_remaining = remaining[tile_index]
     if type(candidate_remaining) is not int or not 0 <= candidate_remaining <= 4:
         raise ClassicalWaitError("candidate unseen count must be an integer in 0..4")
     public_by_wind = {opponent.wind.value: opponent for opponent in snapshot.opponents}
-    if set(public_by_wind) != {value.wind.value for value in snapshot.opponents}:
+    if len(public_by_wind) != len(snapshot.opponents):
         raise ClassicalWaitError("public opponent Wind mapping is ambiguous")
     try:
         opponent = public_by_wind[target.wind]
@@ -247,7 +248,6 @@ def feature_vector(
             "opponent river counts must contain 34 base tile kinds"
         )
 
-    suited = _suited_rank(tile_index)
     penchan_req, kanchan_req, low_req, high_req = _requirements(suited)
     penchan_possible, penchan_support = _support(remaining, penchan_req)
     kanchan_possible, kanchan_support = _support(remaining, kanchan_req)
