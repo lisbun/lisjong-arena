@@ -184,9 +184,7 @@ def evaluate_probe(
                     games[(record.source_class, record.game_seed)],
                     tiles[tile_index],
                     output_rows[row_index],
-                    reliability["baseline"][
-                        min(int(baseline_probability * 10), 9)
-                    ],
+                    reliability["baseline"][min(int(baseline_probability * 10), 9)],
                     reliability["probe"][min(int(probe_probability * 10), 9)],
                     subgroups["riichi_declaration_turn"][
                         riichi_turn_bucket(target.riichi_junme)
@@ -216,12 +214,9 @@ def evaluate_probe(
             {"source_class": source_class, "game_seed": game_seed, **row}
             for (source_class, game_seed), row in sorted(games.items())
         ],
-        "per_tile": [
-            {"tile_index": index, **row} for index, row in enumerate(tiles)
-        ],
+        "per_tile": [{"tile_index": index, **row} for index, row in enumerate(tiles)],
         "per_output_row": [
-            {"output_row": index, **row}
-            for index, row in enumerate(output_rows)
+            {"output_row": index, **row} for index, row in enumerate(output_rows)
         ],
         "reliability": {
             name: [
@@ -236,9 +231,7 @@ def evaluate_probe(
             for name, rows in reliability.items()
         },
         "subgroups": {
-            name: [
-                {"group": key, **row} for key, row in sorted(groups.items())
-            ]
+            name: [{"group": key, **row} for key, row in sorted(groups.items())]
             for name, groups in subgroups.items()
         },
     }
@@ -267,9 +260,7 @@ def _scored_row(row: dict) -> dict[str, object]:
         "baseline_brier": _metric(
             row["baseline_brier_sum"], cells, "diagnostic baseline Brier"
         ),
-        "probe_brier": _metric(
-            row["probe_brier_sum"], cells, "diagnostic probe Brier"
-        ),
+        "probe_brier": _metric(row["probe_brier_sum"], cells, "diagnostic probe Brier"),
     }
 
 
@@ -277,20 +268,14 @@ def _weight_norms(model: dict) -> dict[str, object]:
     rows = []
     tiles = []
     for row_index, row in enumerate(model["weights"]):
-        row_square_sum = sum(
-            float(weight) ** 2 for vector in row for weight in vector
-        )
-        rows.append(
-            {"output_row": row_index, "l2_norm": math.sqrt(row_square_sum)}
-        )
+        row_square_sum = sum(float(weight) ** 2 for vector in row for weight in vector)
+        rows.append({"output_row": row_index, "l2_norm": math.sqrt(row_square_sum)})
         for tile_index, vector in enumerate(row):
             tiles.append(
                 {
                     "output_row": row_index,
                     "tile_index": tile_index,
-                    "l2_norm": math.sqrt(
-                        sum(float(weight) ** 2 for weight in vector)
-                    ),
+                    "l2_norm": math.sqrt(sum(float(weight) ** 2 for weight in vector)),
                 }
             )
     return {"per_output_row": rows, "per_output_row_tile": tiles}
@@ -328,9 +313,7 @@ def metrics_from_evidence(
             "probe Brier",
         ),
     }
-    result["delta_log_loss"] = (
-        result["baseline_log_loss"] - result["probe_log_loss"]
-    )
+    result["delta_log_loss"] = result["baseline_log_loss"] - result["probe_log_loss"]
     result["per_hanchan"] = [
         {
             "source_class": row["source_class"],
@@ -530,6 +513,11 @@ def validate_result(value: object, lock: dict) -> dict[str, object]:
         value["baseline"],
         centering,
         value["latent_fingerprint"],
+    )
+    exact(
+        identity(value["baseline"]),
+        lock["baseline_reference"]["baseline_identity"],
+        "result baseline identity",
     )
     exact(value["model_identity"], identity(value["model"]), "model identity")
     exact(
