@@ -105,6 +105,26 @@ def _grouped_training_tensors(records: tuple, centering: dict, baseline: dict):
     return tuple(grouped), offsets
 
 
+def create_probe_optimizer(weights, frozen_model):
+    """Create the locked optimizer and prove it contains no frozen E160 parameter."""
+    import torch
+
+    frozen_ids = {id(parameter) for parameter in frozen_model.parameters()}
+    optimizer = create_probe_optimizer(weights, frozen_model)
+    optimizer_parameters = tuple(
+        parameter
+        for group in optimizer.param_groups
+        for parameter in group["params"]
+    )
+    if optimizer_parameters != (weights,):
+        raise E160OffsetProbeError(
+            "probe optimizer must contain exactly the standalone correction weights"
+        )
+    if any(id(parameter) in frozen_ids for parameter in optimizer_parameters):
+        raise E160OffsetProbeError("probe optimizer contains a frozen E160 parameter")
+    return optimizer
+
+
 def fit_probe(
     records: tuple,
     baseline: dict,
@@ -303,6 +323,7 @@ def validate_model(
 
 __all__ = [
     "correction_logit",
+    "create_probe_optimizer",
     "fit_probe",
     "predict_probability",
     "validate_model",
