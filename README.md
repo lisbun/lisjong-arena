@@ -43,6 +43,7 @@ Arena内の文書は次から辿ってください。
 - [Architecture](docs/architecture.md) — responsibility / ownership
 - [Roadmap](docs/roadmap.md) — 長期的なArena capability
 - [Policy strength evaluation policy](docs/policy-strength-evaluation.md) — Policy比較の恒久的な評価規律
+- [Cross-repository environment identity](docs/environment-identity.md) — internal VCS pinとinstalled revisionのfail-closed検証
 
 **current work / next actionはGitHub Issues / PRsを正本**とし、READMEへ重複転記しません。
 
@@ -132,6 +133,11 @@ python -m lisjong_arena.durable_local_game_record_cli record \
 ### RiichiLab
 
 ranked / validation / continuous participation runtime integrationはArenaが所有します。
+network run / important smokeの前に、current checkoutのinternal VCS dependency identityを検証します。
+
+```powershell
+python -m lisjong_arena.environment_verify --project pyproject.toml
+```
 
 ```powershell
 python -m lisjong_arena.riichilab.ranked --profile lisjong-dev
@@ -254,6 +260,7 @@ Windows PowerShell:
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
+python -m lisjong_arena.environment_verify --project pyproject.toml
 ```
 
 ML experimentでは各experiment documentationが指定するextra / exact provenance requirementを優先します。formal / locked experimentではeditable local installを拒否する場合があります。

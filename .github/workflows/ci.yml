@@ -28,6 +28,9 @@ jobs:
       - name: Install package and development tools
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
 
+      - name: Verify internal VCS dependency identity
+        run: python -m lisjong_arena.environment_verify --project pyproject.toml
+
       - name: Check formatting
         run: python -m ruff format --check .
 
@@ -54,6 +57,9 @@ jobs:
 
       - name: Install package and development tools
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Verify internal VCS dependency identity
+        run: python -m lisjong_arena.environment_verify --project pyproject.toml
 
       - name: Install locked CPU PyTorch
         run: python -m pip install --disable-pip-version-check --index-url https://download.pytorch.org/whl/cpu "torch==2.13.0"
