@@ -107,6 +107,8 @@ def _grouped_training_tensors(records: tuple, centering: dict, baseline: dict):
 
 def create_probe_optimizer(weights, frozen_model):
     """Create the locked optimizer and prove it contains no frozen E160 parameter."""
+    import torch
+
     frozen_ids = {id(parameter) for parameter in frozen_model.parameters()}
     optimizer = create_probe_optimizer(weights, frozen_model)
     optimizer_parameters = tuple(
