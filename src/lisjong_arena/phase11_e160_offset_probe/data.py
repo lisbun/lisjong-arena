@@ -49,7 +49,6 @@ def coverage_value(records: tuple) -> dict[str, object]:
     all_zero_rows = 0
     eligible_games = set()
     per_output_row = [0] * OUTPUT_ROWS
-    per_tile_positives = [0] * TILE_KIND_COUNT
     for record in records:
         if len(record.targets) != OUTPUT_ROWS:
             raise E160OffsetProbeError("record must contain exactly three target rows")
@@ -68,10 +67,9 @@ def coverage_value(records: tuple) -> dict[str, object]:
             eligible_games.add((record.source_class, record.game_seed))
             if not any(target.mask):
                 all_zero_rows += 1
-            for tile_index, value in enumerate(target.mask):
+            for value in target.mask:
                 if type(value) is not int or value not in (0, 1):
                     raise E160OffsetProbeError("structural-wait label must be binary")
-                per_tile_positives[tile_index] += value
     return {
         "eligible_hanchan": len(eligible_games),
         "eligible_rows": eligible_rows,
@@ -79,7 +77,6 @@ def coverage_value(records: tuple) -> dict[str, object]:
         "unavailable_rows": unavailable_rows,
         "all_zero_rows": all_zero_rows,
         "eligible_rows_by_output_row": per_output_row,
-        "per_tile_positives": per_tile_positives,
     }
 
 
