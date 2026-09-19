@@ -115,7 +115,8 @@ class DeterministicProbeFitTest(unittest.TestCase):
             for group in optimizer.param_groups
             for parameter in group["params"]
         )
-        self.assertEqual(parameters, (weights,))
+        self.assertEqual(len(parameters), 1)
+        self.assertIs(parameters[0], weights)
         self.assertTrue(
             {id(parameter) for parameter in parameters}.isdisjoint(
                 {id(parameter) for parameter in frozen.parameters()}
