@@ -59,7 +59,9 @@ def coverage_value(records: tuple) -> dict[str, object]:
                 unavailable_rows += 1
                 continue
             if len(target.mask) != TILE_KIND_COUNT:
-                raise E160OffsetProbeError(\n                    "structural-wait mask must contain 34 values"\n                )
+                raise E160OffsetProbeError(
+                    "structural-wait mask must contain 34 values"
+                )
             eligible_rows += 1
             per_output_row[row_index] += 1
             eligible_games.add((record.source_class, record.game_seed))
