@@ -145,7 +145,6 @@ class CanonicalOrderTest(unittest.TestCase):
         self.assertEqual(serial_result.metrics_b, parallel_result.metrics_b)
 
 
-
 class ProgressCallbackTest(unittest.TestCase):
     def test_serial_runner_notifies_each_completed_hanchan(self) -> None:
         plan = _plan((11, 22))
