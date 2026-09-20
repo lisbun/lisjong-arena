@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import io
+import struct
 import json
 import math
 import platform
@@ -111,12 +111,34 @@ def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _hash_field(hasher, payload: bytes) -> None:
+    hasher.update(len(payload).to_bytes(8, "big"))
+    hasher.update(payload)
+
+
 def _state_fingerprint(state: dict[str, object]) -> str:
+    """Canonical semantic identity for a tensor state_dict.
+
+    Do not use torch.save bytes here: its container serialization is not a
+    canonical representation of equal tensor content.
+    """
     import torch
 
-    stream = io.BytesIO()
-    torch.save(state, stream)
-    return _sha256(stream.getvalue())
+    hasher = hashlib.sha256()
+    for name in sorted(state):
+        tensor = state[name]
+        if not isinstance(tensor, torch.Tensor):
+            raise StageA0ExecutionError("Policy state contains a non-tensor value")
+        canonical = tensor.detach().cpu().contiguous()
+        shape = struct.pack(">Q", canonical.dim()) + b"".join(
+            struct.pack(">q", int(size)) for size in canonical.shape
+        )
+        raw = bytes(canonical.reshape(-1).view(torch.uint8))
+        _hash_field(hasher, name.encode("utf-8"))
+        _hash_field(hasher, str(canonical.dtype).encode("ascii"))
+        _hash_field(hasher, shape)
+        _hash_field(hasher, raw)
+    return hasher.hexdigest()
 
 
 def _manifest_identity(manifest: dict[str, object]) -> str:
@@ -215,10 +237,53 @@ def _clone_state(state: dict[str, object]) -> dict[str, object]:
     return {name: tensor.detach().clone() for name, tensor in state.items()}
 
 
-def _train_arm_from_initial_state(
+def _assert_states_equal(
+    left: dict[str, object],
+    right: dict[str, object],
+    *,
+    label: str,
+) -> None:
+    import torch
+
+    if set(left) != set(right):
+        raise StageA0ExecutionError(f"{label} keys differ")
+    for name in sorted(left):
+        left_tensor = left[name]
+        right_tensor = right[name]
+        if not isinstance(left_tensor, torch.Tensor) or not isinstance(
+            right_tensor, torch.Tensor
+        ):
+            raise StageA0ExecutionError(f"{label} contains a non-tensor value")
+        if left_tensor.dtype != right_tensor.dtype:
+            raise StageA0ExecutionError(f"{label} dtype differs for {name}")
+        if tuple(left_tensor.shape) != tuple(right_tensor.shape):
+            raise StageA0ExecutionError(f"{label} shape differs for {name}")
+        if not torch.equal(left_tensor, right_tensor):
+            raise StageA0ExecutionError(f"{label} tensor value differs for {name}")
+
+
+def _materialize_initial_policy(
+    initial_state: dict[str, object],
+    *,
+    initial_fingerprint: str,
+):
+    model = create_model()
+    model.load_state_dict(_clone_state(initial_state), strict=True)
+    loaded_state = model.state_dict()
+    _assert_states_equal(
+        initial_state,
+        loaded_state,
+        label="loaded initial Policy state",
+    )
+    if _state_fingerprint(loaded_state) != initial_fingerprint:
+        raise StageA0ExecutionError("initial Policy semantic fingerprint drifted")
+    return model
+
+
+def _train_arm_from_initial_model(
     arm: Arm,
     seed: int,
-    initial_state: dict[str, object],
+    model,
     tensors: dict[Split, ScientificSplitTensors],
     *,
     initial_fingerprint: str,
@@ -229,8 +294,6 @@ def _train_arm_from_initial_state(
     runtime = _configure_runtime(seed)
     train = tensors[Split.TRAIN]
     validation = tensors[Split.VALIDATION]
-    model = create_model()
-    model.load_state_dict(_clone_state(initial_state), strict=True)
     if _state_fingerprint(model.state_dict()) != initial_fingerprint:
         raise StageA0ExecutionError("A/T initial Policy state fingerprint drifted")
     head = _create_auxiliary_head(seed) if arm is Arm.T else None
@@ -380,36 +443,41 @@ def train_seed_pair(
     seed: int,
     tensors: dict[Split, ScientificSplitTensors],
 ) -> tuple[TrainingResult, TrainingResult]:
-    """Train the locked A/T pair from one byte-identical Policy initialization."""
-    import torch
-
+    """Train the locked A/T pair from one content-identical Policy initialization."""
     training_seed_namespace(seed)
     _configure_runtime(seed)
     base_model = create_model()
     initial_state = _clone_state(base_model.state_dict())
     fingerprint = _state_fingerprint(initial_state)
 
-    a = _train_arm_from_initial_state(
+    a_model = _materialize_initial_policy(
+        initial_state,
+        initial_fingerprint=fingerprint,
+    )
+    t_model = _materialize_initial_policy(
+        initial_state,
+        initial_fingerprint=fingerprint,
+    )
+    _assert_states_equal(
+        a_model.state_dict(),
+        t_model.state_dict(),
+        label="A/T initial Policy state",
+    )
+
+    a = _train_arm_from_initial_model(
         Arm.A,
         seed,
-        initial_state,
+        a_model,
         tensors,
         initial_fingerprint=fingerprint,
     )
-    t = _train_arm_from_initial_state(
+    t = _train_arm_from_initial_model(
         Arm.T,
         seed,
-        initial_state,
+        t_model,
         tensors,
         initial_fingerprint=fingerprint,
     )
-    for name, tensor in initial_state.items():
-        # Recreate both arms at their initial boundary and assert the exact
-        # tensors rather than relying only on a textual seed identity.
-        left = tensor
-        right = initial_state[name]
-        if not torch.equal(left, right):
-            raise StageA0ExecutionError("A/T initialization is not byte-identical")
     if a.initial_policy_fingerprint != t.initial_policy_fingerprint:
         raise StageA0ExecutionError("A/T initialization fingerprints differ")
     return a, t
