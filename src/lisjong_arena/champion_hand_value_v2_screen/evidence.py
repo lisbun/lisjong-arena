@@ -82,9 +82,7 @@ def _record_to_dict(record: CompositionDecisionRecord) -> dict[str, object]:
         "champion_activation_stage": record.champion_activation_stage,
         "hand_value_v2_attempted": record.hand_value_v2_attempted,
         "action_changed_vs_champion": record.action_changed_vs_champion,
-        "action_changed_vs_former_parent": (
-            record.action_changed_vs_former_parent
-        ),
+        "action_changed_vs_former_parent": (record.action_changed_vs_former_parent),
     }
 
 
@@ -124,9 +122,7 @@ def _aggregate_to_dict(aggregate: CompositionAggregate) -> dict[str, object]:
         "action_changed_vs_former_parent_count": (
             aggregate.action_changed_vs_former_parent_count
         ),
-        "candidate_runtime_total_seconds": (
-            aggregate.candidate_runtime_total_seconds
-        ),
+        "candidate_runtime_total_seconds": (aggregate.candidate_runtime_total_seconds),
         "replay_wall_clock_seconds": aggregate.replay_wall_clock_seconds,
     }
 
@@ -164,9 +160,7 @@ def build_trace_artifact(
             "composition aggregate is not re-derived from game diagnostics"
         )
     expected = tuple(
-        (seed, rotation, rotation)
-        for seed in ordered
-        for rotation in range(4)
+        (seed, rotation, rotation) for seed in ordered for rotation in range(4)
     )
     actual = tuple(
         (game.seed, game.rotation, int(game.candidate_seat)) for game in games
@@ -181,12 +175,8 @@ def build_trace_artifact(
         "baseline_identity": BASELINE_IDENTITY,
         "ordered_seeds": list(ordered),
         "worker_count": worker_count,
-        "strength_artifact_digest": artifact_file_digest(
-            strength_artifact_path
-        ),
-        "provenance": execution_provenance_to_dict(
-            strength_artifact.provenance
-        ),
+        "strength_artifact_digest": artifact_file_digest(strength_artifact_path),
+        "provenance": execution_provenance_to_dict(strength_artifact.provenance),
         "games": [_game_to_dict(game) for game in games],
         "aggregate": _aggregate_to_dict(aggregate),
     }
@@ -195,9 +185,7 @@ def build_trace_artifact(
     return document
 
 
-def save_trace_artifact(
-    document: dict[str, object], path: str | Path
-) -> Path:
+def save_trace_artifact(document: dict[str, object], path: str | Path) -> Path:
     return _write_new("composition_trace", document, path)
 
 
@@ -205,9 +193,7 @@ def _require_exact_fields(
     raw: object, fields: set[str], context: str
 ) -> dict[str, object]:
     if type(raw) is not dict or set(raw) != fields:
-        raise ChampionHandValueV2EvidenceError(
-            f"{context} fields differ from contract"
-        )
+        raise ChampionHandValueV2EvidenceError(f"{context} fields differ from contract")
     return dict(raw)
 
 
@@ -265,9 +251,7 @@ def _parse_record(raw: object) -> CompositionDecisionRecord:
         champion_activation_stage=stage,
         hand_value_v2_attempted=value["hand_value_v2_attempted"],
         action_changed_vs_champion=value["action_changed_vs_champion"],
-        action_changed_vs_former_parent=(
-            value["action_changed_vs_former_parent"]
-        ),
+        action_changed_vs_former_parent=(value["action_changed_vs_former_parent"]),
     )
 
 
@@ -326,9 +310,7 @@ def _parse_game(raw: object) -> GameCompositionDiagnostics:
         discard_decision_count=value["discard_decision_count"],
         choice_discard_decision_count=value["choice_discard_decision_count"],
         forced_discard_decision_count=value["forced_discard_decision_count"],
-        candidate_runtime_total_seconds=float(
-            value["candidate_runtime_total_seconds"]
-        ),
+        candidate_runtime_total_seconds=float(value["candidate_runtime_total_seconds"]),
         game_wall_clock_seconds=float(value["game_wall_clock_seconds"]),
         records=tuple(_parse_record(item) for item in value["records"]),
     )
@@ -377,9 +359,7 @@ def load_trace_artifact(
         raise ChampionHandValueV2EvidenceError("trace aggregate is invalid")
     replay = aggregate_raw.get("replay_wall_clock_seconds")
     if type(replay) not in (int, float):
-        raise ChampionHandValueV2EvidenceError(
-            "trace replay wall clock is invalid"
-        )
+        raise ChampionHandValueV2EvidenceError("trace replay wall clock is invalid")
     rederived = aggregate_composition_diagnostics(
         games,
         replay_wall_clock_seconds=float(replay),
@@ -397,15 +377,11 @@ def load_trace_artifact(
         raise ChampionHandValueV2EvidenceError(
             "trace seeds differ from strength artifact"
         )
-    if raw["strength_artifact_digest"] != artifact_file_digest(
-        strength_artifact_path
-    ):
+    if raw["strength_artifact_digest"] != artifact_file_digest(strength_artifact_path):
         raise ChampionHandValueV2EvidenceError(
             "trace strength artifact digest mismatch"
         )
-    if raw["provenance"] != execution_provenance_to_dict(
-        strength.provenance
-    ):
+    if raw["provenance"] != execution_provenance_to_dict(strength.provenance):
         raise ChampionHandValueV2EvidenceError(
             "trace provenance differs from strength artifact"
         )
@@ -449,13 +425,9 @@ def build_result_document(
     worker_count: int,
 ) -> dict[str, object]:
     if strength_artifact.plan.candidate_identity != CANDIDATE_IDENTITY:
-        raise ChampionHandValueV2EvidenceError(
-            "result candidate identity drifted"
-        )
+        raise ChampionHandValueV2EvidenceError("result candidate identity drifted")
     if strength_artifact.plan.baseline_identity != BASELINE_IDENTITY:
-        raise ChampionHandValueV2EvidenceError(
-            "result baseline identity drifted"
-        )
+        raise ChampionHandValueV2EvidenceError("result baseline identity drifted")
     if len(strength_artifact.game_results) != TOTAL_GAMES:
         raise ChampionHandValueV2EvidenceError("result game count drifted")
     require_population(strength_artifact.plan.seeds)
@@ -478,9 +450,7 @@ def build_result_document(
     lower = stats.normal_approx_95_interval_lower
     upper = stats.normal_approx_95_interval_upper
     if lower is None or upper is None:
-        raise ChampionHandValueV2EvidenceError(
-            "primary interval is unavailable"
-        )
+        raise ChampionHandValueV2EvidenceError("primary interval is unavailable")
     label = classify_interval(lower, upper)
 
     baseline_round_stats = [
@@ -489,14 +459,10 @@ def build_result_document(
         for seat, stats_item in enumerate(game.seat_round_stats)
         if seat != int(game.candidate_seat)
     ]
-    baseline_mahjong = aggregate_seat_round_stats_metrics(
-        baseline_round_stats
-    )
+    baseline_mahjong = aggregate_seat_round_stats_metrics(baseline_round_stats)
     trace_aggregate = trace_document["aggregate"]
     if type(trace_aggregate) is not dict:
-        raise ChampionHandValueV2EvidenceError(
-            "trace aggregate is unavailable"
-        )
+        raise ChampionHandValueV2EvidenceError("trace aggregate is unavailable")
     choice_count = trace_aggregate["choice_discard_decision_count"]
     if type(choice_count) is not int or choice_count <= 0:
         raise ChampionHandValueV2EvidenceError(
@@ -509,13 +475,9 @@ def build_result_document(
         "baseline_identity": BASELINE_IDENTITY,
         "ordered_seeds": list(strength_artifact.plan.seeds),
         "worker_count": worker_count,
-        "strength_artifact_digest": artifact_file_digest(
-            strength_artifact_path
-        ),
+        "strength_artifact_digest": artifact_file_digest(strength_artifact_path),
         "composition_trace_digest": artifact_file_digest(trace_path),
-        "provenance": execution_provenance_to_dict(
-            strength_artifact.provenance
-        ),
+        "provenance": execution_provenance_to_dict(strength_artifact.provenance),
         "primary_summary": {
             "seed_block_count": stats.seed_block_count,
             "mean_delta": stats.mean_seed_block_delta,
@@ -530,8 +492,7 @@ def build_result_document(
         "classification": {
             "label": label,
             "rule": (
-                "lower > 0 => POSITIVE; upper < 0 => NEGATIVE; "
-                "otherwise INCONCLUSIVE"
+                "lower > 0 => POSITIVE; upper < 0 => NEGATIVE; otherwise INCONCLUSIVE"
             ),
         },
         "candidate_diagnostics": {
@@ -554,20 +515,16 @@ def build_result_document(
         "composition_diagnostics": {
             **trace_aggregate,
             "champion_targeted_preserved_rate": (
-                trace_aggregate["champion_targeted_preserved_count"]
-                / choice_count
+                trace_aggregate["champion_targeted_preserved_count"] / choice_count
             ),
             "hand_value_v2_attempted_rate": (
-                trace_aggregate["hand_value_v2_attempted_count"]
-                / choice_count
+                trace_aggregate["hand_value_v2_attempted_count"] / choice_count
             ),
             "action_changed_vs_champion_rate": (
-                trace_aggregate["action_changed_vs_champion_count"]
-                / choice_count
+                trace_aggregate["action_changed_vs_champion_count"] / choice_count
             ),
             "action_changed_vs_former_parent_rate": (
-                trace_aggregate["action_changed_vs_former_parent_count"]
-                / choice_count
+                trace_aggregate["action_changed_vs_former_parent_count"] / choice_count
             ),
             "optional_hand_value_reason_diagnostics": "unavailable",
             "optional_ukeire_sacrifice_distribution": "unavailable",
@@ -578,9 +535,7 @@ def build_result_document(
     return document
 
 
-def save_result_document(
-    document: dict[str, object], path: str | Path
-) -> Path:
+def save_result_document(document: dict[str, object], path: str | Path) -> Path:
     return _write_new("result", document, path)
 
 
@@ -639,12 +594,8 @@ def build_classified_result(
     result_path: str | Path,
 ) -> dict[str, object]:
     classification = result_document.get("classification")
-    if type(classification) is not dict or type(
-        classification.get("label")
-    ) is not str:
-        raise ChampionHandValueV2EvidenceError(
-            "result classification is invalid"
-        )
+    if type(classification) is not dict or type(classification.get("label")) is not str:
+        raise ChampionHandValueV2EvidenceError("result classification is invalid")
     payload: dict[str, object] = {
         "classified_version": CLASSIFIED_VERSION,
         "result_digest": artifact_file_digest(result_path),
@@ -657,9 +608,7 @@ def build_classified_result(
     return document
 
 
-def save_classified_result(
-    document: dict[str, object], path: str | Path
-) -> Path:
+def save_classified_result(document: dict[str, object], path: str | Path) -> Path:
     return _write_new("classified_result", document, path)
 
 
@@ -673,18 +622,12 @@ def load_classified_result(
     except ArtifactValidationError as exc:
         raise ChampionHandValueV2EvidenceError(str(exc)) from exc
     if type(raw) is not dict or raw.get("classified_version") != CLASSIFIED_VERSION:
-        raise ChampionHandValueV2EvidenceError(
-            "classified result is malformed"
-        )
+        raise ChampionHandValueV2EvidenceError("classified result is malformed")
     payload = {key: raw[key] for key in raw if key != "classified_identity"}
     if raw.get("classified_identity") != _identity(payload):
-        raise ChampionHandValueV2EvidenceError(
-            "classified result identity mismatch"
-        )
+        raise ChampionHandValueV2EvidenceError("classified result identity mismatch")
     if raw.get("result_digest") != artifact_file_digest(result_path):
-        raise ChampionHandValueV2EvidenceError(
-            "classified result digest mismatch"
-        )
+        raise ChampionHandValueV2EvidenceError("classified result digest mismatch")
     result = load_result_document(result_path)
     if raw.get("result_identity") != result["result_identity"]:
         raise ChampionHandValueV2EvidenceError(
