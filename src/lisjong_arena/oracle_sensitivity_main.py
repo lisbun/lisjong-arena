@@ -21,10 +21,10 @@ from lisjong.policies import TwoStepUkeirePolicy
 from lisjong.policies.experimental_hand_belief_sensitivity import (
     evaluate_hand_belief_sensitive_discard,
 )
-from lisjong.policies.two_step_ukeire import (
-    _DecisionShantenEvaluator,
-    _effective_tile_types,
-    _remove_one_matching_tile,
+from lisjong.structural_efficiency import (
+    StructuralShantenEvaluator as _DecisionShantenEvaluator,
+    effective_tile_types as _effective_tile_types,
+    post_discard_concealed_hand as _remove_one_matching_tile,
 )
 from lisjong.policy_contract import (
     DiscardAction,
