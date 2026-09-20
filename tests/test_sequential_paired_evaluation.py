@@ -88,7 +88,9 @@ class ProtocolLockTest(unittest.TestCase):
     def test_invalid_schedules_fail_closed(self) -> None:
         with self.assertRaisesRegex(SequentialPairedEvaluationError, "at least"):
             protocol(maximum=19, looks=(19,))
-        with self.assertRaisesRegex(SequentialPairedEvaluationError, "strictly increasing"):
+        with self.assertRaisesRegex(
+            SequentialPairedEvaluationError, "strictly increasing"
+        ):
             protocol(maximum=40, looks=(20, 20, 40))
         with self.assertRaisesRegex(SequentialPairedEvaluationError, "final look"):
             protocol(maximum=80, looks=(20, 40, 60))
@@ -107,7 +109,9 @@ class ProtocolLockTest(unittest.TestCase):
             )
 
     def test_invalid_alpha_delta_and_seed_population_fail_closed(self) -> None:
-        with self.assertRaisesRegex(SequentialPairedEvaluationError, "familywise_alpha"):
+        with self.assertRaisesRegex(
+            SequentialPairedEvaluationError, "familywise_alpha"
+        ):
             protocol(alpha=0.0)
         with self.assertRaisesRegex(SequentialPairedEvaluationError, "delta_min"):
             protocol(delta_min=0.0)
@@ -203,9 +207,7 @@ class DecisionSemanticsTest(unittest.TestCase):
 class ArtifactReplayTest(unittest.TestCase):
     def test_deterministic_replay_is_byte_for_byte_stable(self) -> None:
         locked = protocol(maximum=40, looks=(20, 40))
-        paired = units(
-            locked, tuple(-1.0 if index % 2 else 1.0 for index in range(20))
-        )
+        paired = units(locked, tuple(-1.0 if index % 2 else 1.0 for index in range(20)))
         first = build_sequential_result(locked, paired)
         second = build_sequential_result(locked, paired)
         self.assertEqual(first, second)
