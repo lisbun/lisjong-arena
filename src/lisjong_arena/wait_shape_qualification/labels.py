@@ -37,12 +37,14 @@ class WaitShapeAvailability(Enum):
 
     AVAILABLE = "AVAILABLE"
     NOT_ACCEPTED_RIICHI = "NOT_ACCEPTED_RIICHI"
+    RIICHI_BINDING_MISMATCH = "RIICHI_BINDING_MISMATCH"
     HIDDEN_HAND_UNAVAILABLE = "HIDDEN_HAND_UNAVAILABLE"
     MELD_STATE_UNAVAILABLE = "MELD_STATE_UNAVAILABLE"
     INVALID_PHYSICAL_INVENTORY = "INVALID_PHYSICAL_INVENTORY"
     NOT_STABLE_13_EQUIVALENT = "NOT_STABLE_13_EQUIVALENT"
+    CANONICAL_BUILDER_FAILURE = "CANONICAL_BUILDER_FAILURE"
+    INVALID_SEMANTIC_PROJECTION = "INVALID_SEMANTIC_PROJECTION"
     NO_STRUCTURAL_WAIT = "NO_STRUCTURAL_WAIT"
-    OTHER_FAIL_CLOSED = "OTHER_FAIL_CLOSED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,9 +195,7 @@ def build_wait_shape_target(
     if public_riichi is not PUBLIC_RIICHI_ELIGIBILITY:
         return unavailable(WaitShapeAvailability.NOT_ACCEPTED_RIICHI)
     if not privileged_riichi_declared:
-        raise WaitShapeQualificationError(
-            "public ACCEPTED riichi must bind to privileged riichi_declared=True"
-        )
+        return unavailable(WaitShapeAvailability.RIICHI_BINDING_MISMATCH)
     if concealed_tiles is None:
         return unavailable(WaitShapeAvailability.HIDDEN_HAND_UNAVAILABLE)
     if melds is None:
@@ -207,9 +207,13 @@ def build_wait_shape_target(
 
     try:
         belief = exact_hand_belief_with_waits(concealed_tiles, melds)
-        projection = project_exact_wait_shapes(belief)
     except ValueError:
-        return unavailable(WaitShapeAvailability.OTHER_FAIL_CLOSED)
+        return unavailable(WaitShapeAvailability.CANONICAL_BUILDER_FAILURE)
+
+    try:
+        projection = project_exact_wait_shapes(belief)
+    except WaitShapeQualificationError:
+        return unavailable(WaitShapeAvailability.INVALID_SEMANTIC_PROJECTION)
 
     if not projection.has_any_wait_shape:
         return unavailable(WaitShapeAvailability.NO_STRUCTURAL_WAIT)
