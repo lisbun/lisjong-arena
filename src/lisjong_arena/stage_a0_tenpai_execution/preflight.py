@@ -64,7 +64,7 @@ def run_preflight(
         raise StageA0PreflightError("training seed population drifted")
     if training["interactive_anchor_seed"] != locked.INTERACTIVE_ANCHOR_SEED:
         raise StageA0PreflightError("interactive anchor seed drifted")
-    if training["lambda_tenpai"] if "lambda_tenpai" in training else None:
+    if "lambda_tenpai" in training:
         raise StageA0PreflightError("unexpected legacy lambda field")
     if training["auxiliary_head"]["lambda_tenpai"] != locked.LAMBDA_TENPAI:
         raise StageA0PreflightError("lambda_tenpai drifted")
