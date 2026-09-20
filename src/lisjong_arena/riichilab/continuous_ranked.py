@@ -17,6 +17,8 @@
 - 各gameごとに`RuntimeProfile.policy_factory()`から生成したfresh Policy
   instance(cross-game reuseはしない)
 - `--games N`相当のcompleted-hanchan数によるbounded stop
+- monotonic elapsed timeによるgraceful duration bound。cutoff時に進行中の
+  hanchanは中断せず、完了後は新しいgameへrequeueしない
 - opt-in durable ranked record acquisition(Issue #168)のper-game composition
 - 停止要求後は新しいgameへrequeueしない graceful shutdown。
   `asyncio.CancelledError`はretryせずcatchもせずそのまま伝播させ、
@@ -196,6 +198,12 @@ async def run_continuous_ranked(
     countへ含めない。`record_dir`有効時はIssue #168のacquisitionがrecordを
     finalizeしてstrict-readbackまで成功した後だけcompletedへcountする。
 
+    `max_duration_seconds`はrunner開始時点からのmonotonic elapsed timeによる
+    boundである。cutoffは進行中のone-game primitiveをcancelせず、完了または
+    failureでcontrolがrunnerへ戻った後に新しいgame / retryを開始しない。
+    retry backoffよりdeadlineまでのremaining timeが短い場合はsleepをremaining
+    timeへcapして、deadline到達後にretryしない。
+
     `record_dir`とdiagnostic traceは同時利用しない。durable record自身が
     authoritativeなper-game protocol traceを持つため、二重trace semanticsを
     このrunnerへ導入しない。
@@ -331,7 +339,8 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     別profileへの暗黙fallbackは行わず、resolution failureはfail closed
     (retry loopへ入らず、non-zero exit)とする。
 
-    `--games N`未指定時はIssue #47のunbounded-until-stop behaviorを維持する。
+    `--games N` / `--duration-seconds N`未指定時はIssue #47の
+    unbounded-until-stop behaviorを維持する。
     `--record-dir`有効時は各completed hanchanをIssue #168の独立durable
     recordとして保存し、diagnostic traceとの同時利用はfail closedにする。
     """
