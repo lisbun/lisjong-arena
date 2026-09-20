@@ -98,11 +98,39 @@ jobs:
           mkdir -p "$out"
           cp "$RUNNER_TEMP/issue-279-ppi-lock/protocol.json" "$out/protocol.json"
           test -z "$(git status --porcelain)"
-          python -m lisjong_arena.finite_horizon_ppi_pilot run \
-            --lock "$RUNNER_TEMP/issue-279-ppi-lock/protocol.json" \
-            --out "$out/result.json" \
-            --report "$out/report.md" \
-            --workers 4
+
+          python - \
+            "$RUNNER_TEMP/issue-279-ppi-lock/protocol.json" \
+            "$out/result.json" \
+            "$out/report.md" <<'PY'
+          import multiprocessing as mp
+          import runpy
+          import sys
+
+          if "fork" not in mp.get_all_start_methods():
+              raise SystemExit("fork multiprocessing start method is unavailable")
+          mp.set_start_method("fork")
+          print(f"multiprocessing_start_method={mp.get_start_method()}", flush=True)
+
+          lock_path, result_path, report_path = sys.argv[1:4]
+          sys.argv = [
+              "lisjong_arena.finite_horizon_ppi_pilot",
+              "run",
+              "--lock",
+              lock_path,
+              "--out",
+              result_path,
+              "--report",
+              report_path,
+              "--workers",
+              "4",
+          ]
+          runpy.run_module(
+              "lisjong_arena.finite_horizon_ppi_pilot",
+              run_name="__main__",
+          )
+          PY
+
           test -z "$(git status --porcelain)"
 
       - name: Upload immutable pilot evidence
