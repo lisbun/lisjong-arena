@@ -404,7 +404,17 @@ def _mahjong_to_dict(metrics: object) -> dict[str, object]:
         "tenpai_reached_count",
         "mean_first_tenpai_turn",
     )
-    return {name: getattr(metrics, name) for name in names}
+    document = {name: getattr(metrics, name) for name in names}
+    round_count = document["round_count"]
+    tenpai_reached_count = document["tenpai_reached_count"]
+    if type(round_count) is not int or type(tenpai_reached_count) is not int:
+        raise ChampionHandValueV2EvidenceError(
+            "Mahjong round / tenpai counts must be exact ints"
+        )
+    document["tenpai_reached_rate"] = (
+        None if round_count == 0 else tenpai_reached_count / round_count
+    )
+    return document
 
 
 def classify_interval(lower: float, upper: float) -> str:
