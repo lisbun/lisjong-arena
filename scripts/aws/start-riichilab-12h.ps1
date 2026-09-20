@@ -14,14 +14,19 @@ param(
     [string]$ArenaRevision = "",
     [string]$OutputRoot = "",
     [Nullable[double]]$HourlyPriceUsd = $null,
-    [double]$PublicIpv4HourlyPriceUsd = 0.005
+    [double]$PublicIpv4HourlyPriceUsd = 0.005,
+    [switch]$PreflightOnly,
+    [switch]$SubmitOnly
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
-    throw "AWS profile is required. Pass -AwsProfile or set AWS_PROFILE after aws sso login."
+    throw "AWS profile is required. Pass -AwsProfile or set AWS_PROFILE after short-lived AWS CLI authentication."
+}
+if ($PreflightOnly -and $SubmitOnly) {
+    throw "PreflightOnly and SubmitOnly are mutually exclusive."
 }
 if ($DurationSeconds -le 0) {
     throw "DurationSeconds must be positive."
@@ -303,15 +308,72 @@ if ($amiId -notmatch "^ami-[0-9a-f]+$") {
     throw "Could not resolve the current Amazon Linux 2023 x86_64 AMI."
 }
 
-$runId = "$(Get-Date -AsUTC -Format 'yyyyMMddTHHmmssZ')-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+$runPrefix = $(if ($PreflightOnly) { "preflight-" } else { "" })
+$runId = "$runPrefix$(Get-Date -AsUTC -Format 'yyyyMMddTHHmmssZ')-$([guid]::NewGuid().ToString('N').Substring(0,8))"
 $runDir = Join-Path $OutputRoot $runId
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 $statePath = Join-Path $runDir "state.json"
 $completionPath = Join-Path $runDir "completion.json"
+$preflightPath = Join-Path $runDir "preflight.json"
+
+$preflightHourlyPrice = Get-HourlyPrice
+$preflightProjectedComputeCost = $null
+if ($null -ne $preflightHourlyPrice) {
+    $preflightProjectedComputeCost = [math]::Round(
+        ([double]$preflightHourlyPrice * $FailSafeHours),
+        4
+    )
+}
+$preflightProjectedPublicIpv4Cost = [math]::Round(
+    ($PublicIpv4HourlyPriceUsd * $FailSafeHours),
+    4
+)
+$preflightProjectedKnownCost = $null
+if ($null -ne $preflightProjectedComputeCost) {
+    $preflightProjectedKnownCost = [math]::Round(
+        ($preflightProjectedComputeCost + $preflightProjectedPublicIpv4Cost),
+        4
+    )
+}
+
+$preflightSummary = [ordered]@{
+    status = "PASS"
+    checked_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+    aws_profile = $AwsProfile
+    region = $Region
+    arena_revision = $ArenaRevision
+    role_name = $RoleName
+    instance_profile_name = $InstanceProfileName
+    security_group_id = $SecurityGroupId
+    security_group_inbound_rule_count = @($sg.IpPermissions).Count
+    security_group_egress_rule_count = @($sg.IpPermissionsEgress).Count
+    subnet_id = $SubnetId
+    ami_id = $amiId
+    instance_type = $InstanceType
+    secret_id = $SecretId
+    intended_secret_read_allowed = ($decisions[$secretArn] -eq "allowed")
+    deny_probe_secret_read_allowed = ($decisions[$denyProbeArn] -eq "allowed")
+    projected_cost_bound_hours = $FailSafeHours
+    hourly_compute_price_usd = $preflightHourlyPrice
+    projected_compute_cost_usd = $preflightProjectedComputeCost
+    public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
+    projected_public_ipv4_cost_usd = $preflightProjectedPublicIpv4Cost
+    projected_known_cost_usd = $preflightProjectedKnownCost
+    cost_note = "Projected known cost uses the independent fail-safe horizon as a conservative bound and includes EC2 compute when pricing lookup succeeds plus one in-use public IPv4 address. EBS/data transfer and T3 surplus CPU credits are excluded."
+    billable_resource_created = $false
+}
+Write-JsonFile -Value $preflightSummary -Path $preflightPath
 
 Write-Host "Issue #313 run id: $runId"
 Write-Host "Arena revision: $ArenaRevision"
 Write-Host "AMI: $amiId / subnet: $SubnetId / SG: $SecurityGroupId"
+
+if ($PreflightOnly) {
+    Write-Host "PASS: AWS PREFLIGHT ONLY"
+    Write-Host "No EC2 instance or other billable execution resource was created."
+    Write-Host "Preflight summary: $preflightPath"
+    return
+}
 
 $launchRequest = [ordered]@{
     ImageId = $amiId
@@ -381,6 +443,12 @@ try {
         arena_revision = $ArenaRevision
         region = $Region
         state = "launched"
+        launch_time_utc = $launchTimeUtc.ToUniversalTime().ToString("o")
+        ami_id = $amiId
+        instance_type = $InstanceType
+        secret_id = $SecretId
+        public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
+        hourly_price_usd = $HourlyPriceUsd
         fail_safe_hours = $FailSafeHours
     }) -Path $statePath
 
@@ -460,12 +528,26 @@ try {
         command_id = $commandId
         arena_revision = $ArenaRevision
         region = $Region
-        state = "running"
+        state = $(if ($SubmitOnly) { "submitted" } else { "running" })
+        launch_time_utc = $launchTimeUtc.ToUniversalTime().ToString("o")
+        ami_id = $amiId
+        instance_type = $InstanceType
+        secret_id = $SecretId
+        volume_ids = @($volumeIds)
+        public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
+        hourly_price_usd = $HourlyPriceUsd
         fail_safe_armed = $failsafeArmed
         fail_safe_hours = $FailSafeHours
     }) -Path $statePath
 
     Write-Host "12-hour graceful run submitted through SSM. Command id: $commandId"
+    if ($SubmitOnly) {
+        Write-Host "SUBMITTED: remote run is detached from this PowerShell session."
+        Write-Host "Recovery state: $statePath"
+        Write-Host "Collect later with: .\scripts\aws\collect-riichilab-12h.ps1 -AwsProfile $AwsProfile -StatePath '$statePath'"
+        return
+    }
+
     $lastStatus = ""
     while ($true) {
         $probe = Invoke-AwsTextAllowFailure -Arguments @(
@@ -490,136 +572,16 @@ try {
         Start-Sleep -Seconds 60
     }
 
-    if ([string]$invocation.Status -ne "Success") {
-        if (-not [string]::IsNullOrWhiteSpace([string]$invocation.StandardErrorContent)) {
-            Write-Warning ([string]$invocation.StandardErrorContent)
-        }
-        throw "Remote bounded run did not complete successfully: $($invocation.Status)"
+    $collectorPath = Join-Path $PSScriptRoot "collect-riichilab-12h.ps1"
+    $collectorArgs = @{
+        AwsProfile = $AwsProfile
+        StatePath = $statePath
+        PublicIpv4HourlyPriceUsd = $PublicIpv4HourlyPriceUsd
     }
-
-    $stdout = [string]$invocation.StandardOutputContent
-    $match = [regex]::Match($stdout, "LISJONG_COMPLETION_JSON_B64=([A-Za-z0-9+/=]+)")
-    if (-not $match.Success) {
-        throw "Secret-safe completion summary sentinel was not returned by SSM."
+    if ($null -ne $HourlyPriceUsd) {
+        $collectorArgs.HourlyPriceUsd = [double]$HourlyPriceUsd
     }
-    $remoteJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($match.Groups[1].Value))
-    $summary = $remoteJson | ConvertFrom-Json
-
-    # Persist the already-verified, secret-safe remote summary before any
-    # teardown API call. If local SSO expires at this point, completion evidence
-    # still survives the instance-side five-minute termination safety net.
-    Write-JsonFile -Value $summary -Path $completionPath
-    Write-JsonFile -Value ([ordered]@{
-        run_id = $runId
-        instance_id = $instanceId
-        command_id = $commandId
-        arena_revision = $ArenaRevision
-        region = $Region
-        state = "remote_verified_teardown_pending"
-        completion_path = $completionPath
-    }) -Path $statePath
-
-    $eip = Invoke-AwsJson -Arguments @(
-        "ec2", "describe-addresses",
-        "--filters", "Name=instance-id,Values=$instanceId"
-    )
-    $associatedEipCount = @($eip.Addresses).Count
-
-    $hourlyPrice = Get-HourlyPrice
-    $terminationRequested = Request-Termination -InstanceId $instanceId
-    $terminatedUtc = (Get-Date).ToUniversalTime()
-    $instanceRuntimeHours = ($terminatedUtc - $launchTimeUtc.ToUniversalTime()).TotalHours
-
-    $residueDeadline = (Get-Date).AddMinutes(5)
-    $volumeResidueCount = -1
-    do {
-        $volumesAfter = Invoke-AwsJson -Arguments @(
-            "ec2", "describe-volumes",
-            "--filters", "Name=tag:lisjong-run-id,Values=$runId"
-        )
-        $volumeResidueCount = @($volumesAfter.Volumes).Count
-        if ($volumeResidueCount -eq 0) {
-            break
-        }
-        Start-Sleep -Seconds 10
-    } while ((Get-Date) -lt $residueDeadline)
-
-    $snapshotsAfter = Invoke-AwsJson -Arguments @(
-        "ec2", "describe-snapshots",
-        "--owner-ids", "self",
-        "--filters", "Name=tag:lisjong-run-id,Values=$runId"
-    )
-    $snapshotResidueCount = @($snapshotsAfter.Snapshots).Count
-
-    $approximateComputeCost = $null
-    if ($null -ne $hourlyPrice) {
-        $approximateComputeCost = [math]::Round(([double]$hourlyPrice * $instanceRuntimeHours), 4)
-    }
-    $approximatePublicIpv4Cost = [math]::Round(
-        ($PublicIpv4HourlyPriceUsd * $instanceRuntimeHours),
-        4
-    )
-    $approximateKnownCost = $null
-    if ($null -ne $approximateComputeCost) {
-        $approximateKnownCost = [math]::Round(
-            ($approximateComputeCost + $approximatePublicIpv4Cost),
-            4
-        )
-    }
-
-    $teardownPass = $terminationRequested -and
-        $volumeResidueCount -eq 0 -and
-        $snapshotResidueCount -eq 0 -and
-        $associatedEipCount -eq 0
-
-    $summary | Add-Member -NotePropertyName aws_execution -NotePropertyValue ([ordered]@{
-        region = $Region
-        ami_id = $amiId
-        instance_type = $InstanceType
-        run_id = $runId
-        ssm_command_id = $commandId
-        fail_safe_hours = $FailSafeHours
-        normal_post_pass_teardown_timer_minutes = 5
-        instance_runtime_hours = [math]::Round($instanceRuntimeHours, 4)
-        hourly_compute_price_usd = $hourlyPrice
-        approximate_compute_cost_usd = $approximateComputeCost
-        public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
-        approximate_public_ipv4_cost_usd = $approximatePublicIpv4Cost
-        approximate_known_cost_usd = $approximateKnownCost
-        cost_note = "Known-cost estimate includes EC2 compute when pricing lookup succeeds plus one in-use public IPv4 address; EBS/data transfer and any T3 surplus CPU credits are excluded."
-        retained_recurring_cost_resources = @(
-            "Secrets Manager secret $SecretId (approximately USD 0.40/month unless removed)"
-        )
-    })
-    $summary | Add-Member -NotePropertyName teardown -NotePropertyValue ([ordered]@{
-        status = $(if ($teardownPass) { "PASS" } else { "FAIL" })
-        instance_terminated = $terminationRequested
-        tagged_ebs_volume_residue_count = $volumeResidueCount
-        tagged_snapshot_residue_count = $snapshotResidueCount
-        associated_elastic_ip_count_before_termination = $associatedEipCount
-        nat_gateway_created_by_automation = $false
-        load_balancer_created_by_automation = $false
-        rds_created_by_automation = $false
-        ecs_created_by_automation = $false
-    })
-
-    Write-JsonFile -Value $summary -Path $completionPath
-    Write-JsonFile -Value ([ordered]@{
-        run_id = $runId
-        instance_id = $instanceId
-        command_id = $commandId
-        arena_revision = $ArenaRevision
-        region = $Region
-        state = $(if ($teardownPass) { "completed" } else { "teardown_failed" })
-        completion_path = $completionPath
-    }) -Path $statePath
-
-    if (-not $teardownPass) {
-        throw "Run completed, but teardown verification failed. See $completionPath"
-    }
-
-    Write-Host "PASS: AWS 12H GRACEFUL CONTINUOUS RUN COMPLETE"
-    Write-Host "Completion summary: $completionPath"
+    & $collectorPath @collectorArgs
 } catch {
     if (-not [string]::IsNullOrWhiteSpace([string]$instanceId)) {
         if (-not $longCommandSubmitted -or $commandTerminal) {

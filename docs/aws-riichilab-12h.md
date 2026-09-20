@@ -7,15 +7,51 @@ This is an operational smoke, not a Policy-strength evaluation.
 
 ## Operator contract
 
-The normal operator flow is intentionally small:
+Use short-lived AWS CLI authentication. For the current single-account learning
+environment, the recommended local profile is `lisbun-admin` and authentication
+is performed with `aws login`; do not create a static access key.
+
+The recommended Issue #313 flow is deliberately staged:
 
 ```powershell
-aws sso login --profile <profile>
-.\scripts\aws\start-riichilab-12h.ps1 -AwsProfile <profile>
+aws login --profile lisbun-admin --region ap-northeast-1
+
+# 1. Read-only/live-resource validation. Creates no EC2 execution resource.
+.\scripts\aws\start-riichilab-12h.ps1 `
+  -AwsProfile lisbun-admin `
+  -PreflightOnly
+
+# 2. Launch, arm the independent cost fail-safe, submit SSM, then return.
+.\scripts\aws\start-riichilab-12h.ps1 `
+  -AwsProfile lisbun-admin `
+  -ArenaRevision <exact-full-sha> `
+  -SubmitOnly
+
+# 3. Later, re-authenticate if needed and collect using the emitted state path.
+aws login --profile lisbun-admin --region ap-northeast-1
+.\scripts\aws\collect-riichilab-12h.ps1 `
+  -AwsProfile lisbun-admin `
+  -StatePath <state.json>
 ```
+
+`-PreflightOnly` stops before `ec2 run-instances`, writes a secret-safe
+`preflight.json`, and records a conservative known-cost estimate using the
+independent fail-safe horizon. `-SubmitOnly` returns only after the EC2 instance is SSM
+managed, the independent approximately 14-hour cost fail-safe is armed, and the
+long-running SSM command has been accepted. It writes recovery identifiers to
+`state.json`.
+
+The collector is intentionally one-shot. If the SSM command is still
+`Pending`, `InProgress`, or `Delayed`, it reports status and takes no
+termination or teardown action. Run it again later. If the command has completed
+successfully, it recovers the verified secret-safe summary, persists it before
+teardown, and then verifies termination and residue cleanup.
 
 The launcher uses AWS CLI only. It does not require AWS Console automation,
 shared-browser control, SSH, a static access key, or a local RiichiLab token.
+The original synchronous mode (no staged switch) remains available, but the
+staged flow is preferred for the 12-hour run because local shell and login
+lifetime are no longer part of the remote execution path.
 
 Run this only after the automation PR containing these scripts has been merged.
 By default the launcher resolves the current `main` commit and the EC2 bootstrap
@@ -134,6 +170,8 @@ A successful launcher invocation writes a run directory below:
 
 The important files are:
 
+- `preflight.json`: live-resource validation result; preflight-only creates no
+  EC2 execution resource
 - `state.json`: instance / SSM command recovery identifiers, no secret values
 - `completion.json`: secret-safe run + verification + teardown summary
 - AWS CLI request JSON used by the launcher, containing configuration but no
@@ -144,18 +182,17 @@ anything to an Issue or PR.
 
 ## If local AWS authentication expires
 
-Modern AWS CLI IAM Identity Center `sso-session` profiles can refresh access
-tokens while the refresh token remains valid. A fully expired IAM Identity
-Center session requires another `aws sso login`.
+The staged flow does not require the local AWS login session or PowerShell
+process to remain alive for 12 hours. The remote SSM command and instance-side
+fail-safe continue independently after `-SubmitOnly` returns.
 
-If local polling loses authentication while the SSM command is still running,
-the launcher deliberately does **not** force-stop the remote run. The
-instance-side 14-hour fail-safe remains the billing safety boundary. After
-re-authenticating, use the instance ID and command ID in `state.json` to inspect
-the SSM invocation before taking any manual action.
+When it is time to inspect or collect the result, authenticate again with the
+same short-lived profile and run the collector against the saved `state.json`.
+Do not start a second Issue #313 instance merely because local authentication
+expired or the terminal was closed.
 
-Do not start a second Issue #313 instance merely because local polling was
-interrupted.
+The instance-side approximately 14-hour fail-safe remains the billing safety
+boundary even if collection is delayed.
 
 ## Cost notes
 

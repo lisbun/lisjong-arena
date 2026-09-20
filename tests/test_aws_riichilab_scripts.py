@@ -8,6 +8,7 @@ from pathlib import Path
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _BOOTSTRAP = _REPOSITORY_ROOT / "scripts" / "aws" / "bootstrap-riichilab-12h.sh"
 _LAUNCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "start-riichilab-12h.ps1"
+_COLLECTOR = _REPOSITORY_ROOT / "scripts" / "aws" / "collect-riichilab-12h.ps1"
 
 
 class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
@@ -23,22 +24,31 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
 
-    def test_launcher_has_valid_powershell_syntax_when_pwsh_is_available(self) -> None:
+    def test_powershell_scripts_have_valid_syntax_when_pwsh_is_available(self) -> None:
         pwsh = shutil.which("pwsh")
         if pwsh is None:
             self.skipTest("pwsh is unavailable")
-        path = str(_LAUNCHER).replace("'", "''")
-        command = (
-            f"$content = Get-Content -Raw -LiteralPath '{path}'; "
-            "[scriptblock]::Create($content) | Out-Null"
-        )
-        result = subprocess.run(
-            [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(0, result.returncode, result.stderr)
+        for script in (_LAUNCHER, _COLLECTOR):
+            with self.subTest(script=script.name):
+                path = str(script).replace("'", "''")
+                command = (
+                    f"$content = Get-Content -Raw -LiteralPath '{path}'; "
+                    "[scriptblock]::Create($content) | Out-Null"
+                )
+                result = subprocess.run(
+                    [
+                        pwsh,
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        command,
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
 
     def test_launcher_keeps_aws_access_and_teardown_invariants(self) -> None:
         text = _LAUNCHER.read_text(encoding="utf-8")
@@ -48,8 +58,34 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertIn("executionTimeout", text)
         self.assertIn("lisjong-cost-failsafe", text)
         self.assertIn("terminate-instances", text)
-        self.assertIn('state = "remote_verified_teardown_pending"', text)
+        self.assertIn("collect-riichilab-12h.ps1", text)
+        self.assertNotIn("--user-data", text)
+        self.assertNotIn("authorize-security-group-ingress", text.lower())
+
+    def test_launcher_supports_non_billable_preflight_and_detached_submit(self) -> None:
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("[switch]$PreflightOnly", text)
+        self.assertIn("[switch]$SubmitOnly", text)
+        self.assertIn('Write-Host "PASS: AWS PREFLIGHT ONLY"', text)
+        self.assertIn("projected_known_cost_usd", text)
+        self.assertLess(
+            text.index("if ($PreflightOnly)"), text.index('"ec2", "run-instances"')
+        )
+        self.assertIn('Write-Host "SUBMITTED: remote run is detached', text)
+        self.assertLess(text.index("if ($SubmitOnly)"), text.index('$lastStatus = ""'))
+        self.assertIn("collect-riichilab-12h.ps1", text)
+
+    def test_collector_preserves_remote_run_and_teardown_invariants(self) -> None:
+        text = _COLLECTOR.read_text(encoding="utf-8")
+        self.assertIn('"ssm", "get-command-invocation"', text)
+        self.assertIn('if ($status -in @("Pending", "InProgress", "Delayed"))', text)
+        self.assertIn("No termination or teardown action was taken.", text)
+        self.assertIn("LISJONG_COMPLETION_JSON_B64=", text)
         self.assertIn("approximate_public_ipv4_cost_usd", text)
+        self.assertIn('state" -Value "remote_verified_teardown_pending"', text)
+        self.assertIn('"ec2", "terminate-instances"', text)
+        self.assertIn('"ec2", "describe-volumes"', text)
+        self.assertIn('"ec2", "describe-snapshots"', text)
         self.assertNotIn("--user-data", text)
         self.assertNotIn("authorize-security-group-ingress", text.lower())
 
