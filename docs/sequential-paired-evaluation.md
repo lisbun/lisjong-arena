@@ -95,6 +95,9 @@ Before the first result-bearing look, `SequentialPairedProtocol` binds:
 - estimand id;
 - sign convention;
 - paired statistical-unit id;
+- fixed two-sided inference;
+- runtime requirements id;
+- provenance requirements id;
 - exact ordered seed population;
 - exact look schedule;
 - maximum paired-unit count;
@@ -107,9 +110,9 @@ Before the first result-bearing look, `SequentialPairedProtocol` binds:
 - the explicit absence of a futility rule.
 
 The canonical protocol document is SHA-256 hashed into
-`protocol_identity`.  Changing `delta_min`, the look schedule, the paired
-unit, the seed population, or any boundary parameter changes or invalidates
-that identity.
+`protocol_identity`.  Changing `delta_min`, the look schedule, the paired unit, sidedness, runtime
+or provenance requirements, the seed population, or any boundary parameter
+changes or invalidates that identity.
 
 ## Paired unit and execution order
 
@@ -156,7 +159,8 @@ Every look records:
 - stopping flag and reason; and
 - remaining maximum budget.
 
-Strict readback reconstructs the protocol, replays every allowed look from the
+Strict readback reconstructs the protocol, including its runtime/provenance
+requirements and fixed two-sided semantics, replays every allowed look from the
 stored ordered paired units, and compares the entire document with the
 deterministically re-derived result.  The reader therefore rejects missing or
 duplicated looks, reordered units, changed boundaries, changed
