@@ -49,6 +49,7 @@ NUMERIC_IMPLEMENTATION_ID = (
     "cpython-3.14-statistics.NormalDist.inv_cdf+math.fsum+sample-sd-n-minus-1-v1"
 )
 FUTILITY_RULE_ID = "none-v1"
+SIDEDNESS = "two-sided"
 MIN_LOOK_BLOCK_COUNT = 20
 
 DECISION_CONTINUE = "CONTINUE"
@@ -85,6 +86,8 @@ class SequentialPairedProtocol:
     estimand_id: str
     sign_convention: str
     paired_unit_id: str
+    runtime_requirements_id: str
+    provenance_requirements_id: str
     ordered_seeds: tuple[int, ...]
     look_block_counts: tuple[int, ...]
     familywise_alpha: float
@@ -96,6 +99,8 @@ class SequentialPairedProtocol:
             (self.estimand_id, "estimand_id"),
             (self.sign_convention, "sign_convention"),
             (self.paired_unit_id, "paired_unit_id"),
+            (self.runtime_requirements_id, "runtime_requirements_id"),
+            (self.provenance_requirements_id, "provenance_requirements_id"),
         ):
             _require_non_empty_string(value, context)
 
@@ -171,6 +176,9 @@ class SequentialPairedProtocol:
             "ordered_seeds": list(self.ordered_seeds),
             "paired_unit_id": self.paired_unit_id,
             "per_look_alpha": self.per_look_alpha,
+            "provenance_requirements_id": self.provenance_requirements_id,
+            "runtime_requirements_id": self.runtime_requirements_id,
+            "sidedness": SIDEDNESS,
             "protocol_id": self.protocol_id,
             "sign_convention": self.sign_convention,
         }
@@ -374,7 +382,10 @@ def _protocol_from_document(value: object) -> SequentialPairedProtocol:
             "ordered_seeds",
             "paired_unit_id",
             "per_look_alpha",
+            "provenance_requirements_id",
             "protocol_id",
+            "runtime_requirements_id",
+            "sidedness",
             "sign_convention",
         },
         "protocol",
@@ -390,6 +401,8 @@ def _protocol_from_document(value: object) -> SequentialPairedProtocol:
         )
     if expect_str(raw["futility_rule_id"], "protocol.futility_rule_id") != FUTILITY_RULE_ID:
         raise SequentialPairedEvaluationError("sequential futility rule drifted")
+    if expect_str(raw["sidedness"], "protocol.sidedness") != SIDEDNESS:
+        raise SequentialPairedEvaluationError("sequential sidedness drifted")
 
     ordered_seeds = tuple(
         expect_int(seed, f"protocol.ordered_seeds[{index}]")
@@ -410,6 +423,12 @@ def _protocol_from_document(value: object) -> SequentialPairedProtocol:
             raw["sign_convention"], "protocol.sign_convention"
         ),
         paired_unit_id=expect_str(raw["paired_unit_id"], "protocol.paired_unit_id"),
+        runtime_requirements_id=expect_str(
+            raw["runtime_requirements_id"], "protocol.runtime_requirements_id"
+        ),
+        provenance_requirements_id=expect_str(
+            raw["provenance_requirements_id"], "protocol.provenance_requirements_id"
+        ),
         ordered_seeds=ordered_seeds,
         look_block_counts=look_block_counts,
         familywise_alpha=expect_float(
@@ -569,6 +588,7 @@ __all__ = [
     "MIN_LOOK_BLOCK_COUNT",
     "NUMERIC_IMPLEMENTATION_ID",
     "SCHEMA",
+    "SIDEDNESS",
     "SequentialLookResult",
     "SequentialPairedEvaluationError",
     "SequentialPairedProtocol",
