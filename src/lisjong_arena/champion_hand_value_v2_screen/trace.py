@@ -165,9 +165,9 @@ class _Recorder:
         self.discard_decision_count += 1
         if len(discard_actions) == 1:
             self.forced_discard_decision_count += 1
-            return selected
+        else:
+            self.choice_discard_decision_count += 1
 
-        self.choice_discard_decision_count += 1
         analysis = trace.analysis
         if not isinstance(analysis, HandValueTradeoffTargetedHonorReleaseAnalysis):
             raise ChampionHandValueV2TraceError(
@@ -430,11 +430,11 @@ def run_candidate_screen_parallel(
         frozen_diagnostics,
         replay_wall_clock_seconds=wall_clock,
     )
-    if aggregate.choice_discard_decision_count != sum(
+    if aggregate.discard_decision_count != sum(
         len(game.records) for game in frozen_diagnostics
     ):
         raise ChampionHandValueV2TraceError(
-            "every candidate choice discard must have one composition record"
+            "every candidate ordinary discard must have one composition record"
         )
     return CandidateScreenResult(
         evaluation_result=evaluation,
