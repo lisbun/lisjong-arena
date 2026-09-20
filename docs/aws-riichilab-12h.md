@@ -34,8 +34,9 @@ aws login --profile lisbun-admin --region ap-northeast-1
   -StatePath <state.json>
 ```
 
-`-PreflightOnly` stops before `ec2 run-instances` and writes a secret-safe
-`preflight.json`. `-SubmitOnly` returns only after the EC2 instance is SSM
+`-PreflightOnly` stops before `ec2 run-instances`, writes a secret-safe
+`preflight.json`, and records a conservative known-cost estimate using the
+independent fail-safe horizon. `-SubmitOnly` returns only after the EC2 instance is SSM
 managed, the independent approximately 14-hour cost fail-safe is armed, and the
 long-running SSM command has been accepted. It writes recovery identifiers to
 `state.json`.
