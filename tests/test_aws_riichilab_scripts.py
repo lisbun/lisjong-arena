@@ -5,7 +5,6 @@ import subprocess
 import unittest
 from pathlib import Path
 
-
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _BOOTSTRAP = _REPOSITORY_ROOT / "scripts" / "aws" / "bootstrap-riichilab-12h.sh"
 _LAUNCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "start-riichilab-12h.ps1"
