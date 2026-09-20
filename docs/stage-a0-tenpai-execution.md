@@ -16,6 +16,25 @@ redesign the experiment.
 - downstream ordered seeds: 37700..37905
 - downstream budget: 206 paired blocks / 1,648 games
 
+## Dedicated locked environment
+
+Current `main` may pin a newer lisjong revision than the #259 downstream lock.
+Do not change Lock B to follow `main`. Create a dedicated #262 virtual
+environment, install the merged Arena checkout, and then override only lisjong
+to the exact locked downstream revision:
+
+```powershell
+py -3.14 -m venv .venv-262
+.\.venv-262\Scripts\Activate.ps1
+python -m pip install -e ".[ml,dev]"
+python -m pip install --no-deps --force-reinstall `
+  "lisjong @ git+https://github.com/lisbun/lisjong.git@f29d129c67e5232d06563c6e457754377734ed14"
+```
+
+Do not run `pip install -e .` again in that environment afterward, because it
+would restore the current repository pin. Phase E0 verifies the installed
+lisjong, lisjong-engine and RiichiEnv identities before any model training.
+
 ## One-shot execution
 
 Run only after the implementation is merged and the local checkout is clean at
