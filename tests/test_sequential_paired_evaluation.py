@@ -62,9 +62,7 @@ def units(
             parent_mean=0.0,
             delta=float(value),
         )
-        for seed, value in zip(
-            locked.ordered_seeds[: len(values)], values, strict=True
-        )
+        for seed, value in zip(locked.ordered_seeds[: len(values)], values, strict=True)
     )
 
 
