@@ -23,7 +23,7 @@ from .evidence import (
     build_result_document,
     build_trace_artifact,
     load_classified_result,
-    load_result_document,
+    verify_result_document,
     load_trace_artifact,
     save_classified_result,
     save_result_document,
@@ -122,7 +122,13 @@ def run_screen(
         worker_count=worker_count,
     )
     save_result_document(result_document, destinations["result"])
-    verified_result = load_result_document(destinations["result"])
+    verified_result = verify_result_document(
+        destinations["result"],
+        strength_artifact_path=destinations["strength_artifact"],
+        trace_path=destinations["composition_trace"],
+        locked_provenance=live,
+        worker_count=worker_count,
+    )
     if verified_result["strength_artifact_digest"] != artifact_file_digest(
         destinations["strength_artifact"]
     ):
