@@ -209,9 +209,7 @@ class _Recorder:
             discard_decision_count=self.discard_decision_count,
             choice_discard_decision_count=self.choice_discard_decision_count,
             forced_discard_decision_count=self.forced_discard_decision_count,
-            candidate_runtime_total_seconds=float(
-                self.candidate_runtime_total_seconds
-            ),
+            candidate_runtime_total_seconds=float(self.candidate_runtime_total_seconds),
             game_wall_clock_seconds=float(game_wall_clock_seconds),
             records=tuple(self.records),
         )
@@ -285,8 +283,7 @@ def _run_game_job(job: _CandidateJob) -> _CandidateJobOutcome:
             rotation=job.rotation,
             result=None,
             error_text=(
-                "Champion + HandValue v2 screen game failed:\n"
-                + traceback.format_exc()
+                "Champion + HandValue v2 screen game failed:\n" + traceback.format_exc()
             ),
             diagnostic=None,
         )
