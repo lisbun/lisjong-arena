@@ -454,7 +454,9 @@ class Phase9ProtocolTest(unittest.TestCase):
             ):
                 verify_current_checkout_revision(revision)
 
-    def test_historical_arena_verification_does_not_require_live_archive_ref(self) -> None:
+    def test_historical_arena_verification_does_not_require_live_archive_ref(
+        self,
+    ) -> None:
         revision = HISTORICAL_REVISIONS["lisjong_arena"]
         tree = HISTORICAL_TREES["lisjong_arena"]
         repository_state = {
