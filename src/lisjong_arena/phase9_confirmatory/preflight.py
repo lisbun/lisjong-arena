@@ -282,32 +282,6 @@ def _verify_historical_arena(repo: str | Path) -> dict[str, str]:
         HISTORICAL_REVISIONS["lisjong_arena"],
         HISTORICAL_TREES["lisjong_arena"],
     )
-    candidates = (
-        f"refs/remotes/origin/{HISTORICAL_ARENA_REF}",
-        f"refs/heads/{HISTORICAL_ARENA_REF}",
-    )
-    matching = tuple(
-        reference
-        for reference in candidates
-        if subprocess.run(
-            (
-                "git",
-                "-c",
-                f"safe.directory={repo.as_posix()}",
-                "-C",
-                str(repo),
-                "show-ref",
-                "--verify",
-                "--quiet",
-                reference,
-            ),
-            check=False,
-        ).returncode
-        == 0
-        and _git(repo, "rev-parse", reference) == HISTORICAL_REVISIONS["lisjong_arena"]
-    )
-    if not matching:
-        raise RuntimeError("preserved historical Arena ref is unavailable or differs")
     pyproject = _git(
         repo,
         "show",
@@ -320,8 +294,10 @@ def _verify_historical_arena(repo: str | Path) -> dict[str, str]:
     )
     if any(value not in pyproject for value in required):
         raise RuntimeError("historical Arena dependency pins differ")
+    # Retain the historical acquisition label in provenance, but do not require the
+    # old archive branch to remain live after the completed Phase 9 experiment.
     state["acquisition_ref"] = HISTORICAL_ARENA_REF
-    state["resolved_acquisition_ref"] = matching[0]
+    state["resolved_acquisition_ref"] = HISTORICAL_REVISIONS["lisjong_arena"]
     return state
 
 

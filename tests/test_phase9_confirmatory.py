@@ -41,6 +41,7 @@ from lisjong_arena.phase9_confirmatory.data import (
     validate_holdout_dataset,
 )
 from lisjong_arena.phase9_confirmatory.preflight import (
+    _verify_historical_arena,
     artifact_file_state,
     generation_report_value,
     require_formal_execution_authorization,
@@ -58,7 +59,9 @@ from lisjong_arena.phase9_confirmatory.protocol import (
     EVALUATION_REVISIONS,
     EVALUATION_RIICHIENV_VERSION,
     EVALUATION_TORCH_VERSION,
+    HISTORICAL_ARENA_REF,
     HISTORICAL_REVISIONS,
+    HISTORICAL_RIICHIENV_VERSION,
     HISTORICAL_TREES,
     HOLDOUT_GAME_COUNT,
     HOLDOUT_ROLE,
@@ -451,6 +454,43 @@ class Phase9ProtocolTest(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "tracked or staged"),
             ):
                 verify_current_checkout_revision(revision)
+
+    def test_historical_arena_verification_does_not_require_live_archive_ref(
+        self,
+    ) -> None:
+        revision = HISTORICAL_REVISIONS["lisjong_arena"]
+        tree = HISTORICAL_TREES["lisjong_arena"]
+        repository_state = {
+            "declared_revision": revision,
+            "resolved_revision": revision,
+            "tree": tree,
+            "checkout_revision": revision,
+            "checkout_tree": tree,
+            "origin": "https://github.com/lisbun/lisjong-arena.git",
+            "acquisition_method": "verified local git object from recorded origin",
+        }
+        pyproject = "\n".join(
+            (
+                HISTORICAL_REVISIONS["lisjong"],
+                HISTORICAL_REVISIONS["lisjong_engine"],
+                f"riichienv=={HISTORICAL_RIICHIENV_VERSION}",
+            )
+        )
+        with (
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight._repository_state",
+                return_value=repository_state,
+            ),
+            patch(
+                "lisjong_arena.phase9_confirmatory.preflight._git",
+                return_value=pyproject,
+            ) as git,
+        ):
+            state = _verify_historical_arena(".")
+
+        self.assertEqual(state["acquisition_ref"], HISTORICAL_ARENA_REF)
+        self.assertEqual(state["resolved_acquisition_ref"], revision)
+        git.assert_called_once()
 
     def test_every_formal_stage_revalidates_preflight_checkout(self) -> None:
         revision = "a" * 40

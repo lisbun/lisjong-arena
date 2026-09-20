@@ -39,6 +39,8 @@ HISTORICAL_TREES = {
     "lisjong_engine": "2ce97010c59b123705a74467a9672fd63b1654db",
     "lisjong_arena": "2686d4a279a79dcd0fc01e960e97ec5316667759",
 }
+# Historical acquisition label retained for Phase 9 provenance compatibility.
+# The corresponding live branch is not required after the completed experiment.
 HISTORICAL_ARENA_REF = "archive/handbelief-phase5-e667890"
 HISTORICAL_RIICHIENV_VERSION = "0.4.8"
 HISTORICAL_POLICY_POPULATION = "TwoStepUkeirePolicy x4"
