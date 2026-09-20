@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -99,6 +100,33 @@ def _validate_max_completed_games(max_completed_games: int | None) -> None:
         raise ValueError("max_completed_games must be a positive integer or None")
 
 
+def _positive_duration_seconds(value: str) -> int:
+    """CLIの`--duration-seconds`をstrictなpositive integerへ変換する。"""
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "--duration-seconds must be a positive integer"
+        ) from error
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(
+            "--duration-seconds must be a positive integer"
+        )
+    return parsed
+
+
+def _validate_max_duration_seconds(max_duration_seconds: int | None) -> None:
+    """library APIでもbool-like / non-positive durationをfail closedにする。"""
+    if max_duration_seconds is None:
+        return
+    if isinstance(max_duration_seconds, bool) or not isinstance(
+        max_duration_seconds, int
+    ):
+        raise ValueError("max_duration_seconds must be a positive integer or None")
+    if max_duration_seconds < 1:
+        raise ValueError("max_duration_seconds must be a positive integer or None")
+
+
 async def _acquire_ranked_record(
     policy: Policy,
     token: str,
@@ -139,6 +167,7 @@ class ContinuousRunSummary:
     last_failure_type: str | None
     stopped_reason: str
     requested_completed_games: int | None = None
+    requested_duration_seconds: int | None = None
     records_enabled: bool = False
 
 
@@ -150,8 +179,10 @@ async def run_continuous_ranked(
     trace_path: str | os.PathLike | None = None,
     record_dir: str | os.PathLike | None = None,
     max_completed_games: int | None = None,
+    max_duration_seconds: int | None = None,
     stop_requested: Callable[[], bool] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
     failure_budget: int = _FAILURE_BUDGET,
 ) -> ContinuousRunSummary:
     """one-game ranked primitiveを繰り返すresilient / bounded-capable loop。
@@ -180,6 +211,7 @@ async def run_continuous_ranked(
     含むその他unexpected exception)はcatch-allせずそのまま伝播させる。
     """
     _validate_max_completed_games(max_completed_games)
+    _validate_max_duration_seconds(max_duration_seconds)
     if record_dir is not None and trace_path is not None:
         raise ValueError(
             "durable record acquisition cannot be combined with trace output"
@@ -193,10 +225,18 @@ async def run_continuous_ranked(
     last_failure_type: str | None = None
     stopped_reason = "stop_requested"
     records_enabled = record_dir is not None
+    deadline = (
+        monotonic() + max_duration_seconds
+        if max_duration_seconds is not None
+        else None
+    )
 
     while True:
         if max_completed_games is not None and completed_games >= max_completed_games:
             stopped_reason = "target_completed_games_reached"
+            break
+        if deadline is not None and monotonic() >= deadline:
+            stopped_reason = "duration_reached"
             break
         if stop_requested is not None and stop_requested():
             stopped_reason = "stop_requested"
@@ -227,7 +267,18 @@ async def run_continuous_ranked(
             if consecutive_failures >= failure_budget:
                 stopped_reason = "failure_budget_exhausted"
                 break
-            await sleep(_backoff_seconds(consecutive_failures))
+
+            backoff = _backoff_seconds(consecutive_failures)
+            if deadline is not None:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    stopped_reason = "duration_reached"
+                    break
+                if remaining < backoff:
+                    await sleep(remaining)
+                    stopped_reason = "duration_reached"
+                    break
+            await sleep(backoff)
             continue
 
         completed_games += 1
@@ -241,6 +292,7 @@ async def run_continuous_ranked(
         last_failure_type=last_failure_type,
         stopped_reason=stopped_reason,
         requested_completed_games=max_completed_games,
+        requested_duration_seconds=max_duration_seconds,
         records_enabled=records_enabled,
     )
 
@@ -252,10 +304,16 @@ def format_continuous_summary(summary: ContinuousRunSummary) -> str:
         if summary.requested_completed_games is not None
         else "unbounded"
     )
+    requested_duration = (
+        str(summary.requested_duration_seconds)
+        if summary.requested_duration_seconds is not None
+        else "unbounded"
+    )
     return "\n".join(
         [
             f"profile: {summary.profile}",
             f"requested completed games: {requested}",
+            f"requested duration seconds: {requested_duration}",
             f"completed games: {summary.completed_games}",
             f"failed games: {summary.failed_games}",
             f"consecutive failures: {summary.consecutive_failures}",
@@ -291,6 +349,16 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
             "stop要求までcontinuous participationを継続する"
         ),
     )
+    parser.add_argument(
+        "--duration-seconds",
+        type=_positive_duration_seconds,
+        default=None,
+        metavar="N",
+        help=(
+            "runner開始からN秒後、新しいhanchanへrequeueせず正常終了する。"
+            "cutoff時に進行中のhanchanは完了してから停止する"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -318,6 +386,10 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         print(f"trace path: {trace_path}")
     print(f"records: {'on' if args.record_dir is not None else 'off'}")
     print(f"requested completed games: {args.games or 'unbounded'}")
+    print(
+        "requested duration seconds: "
+        f"{args.duration_seconds or 'unbounded'}"
+    )
 
     try:
         summary = asyncio.run(
@@ -327,6 +399,7 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
                 trace_path=trace_path,
                 record_dir=args.record_dir,
                 max_completed_games=args.games,
+                max_duration_seconds=args.duration_seconds,
             )
         )
     except DurableRankedGameRecordError as error:
