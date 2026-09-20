@@ -128,6 +128,7 @@ jobs:
           runpy.run_module(
               "lisjong_arena.finite_horizon_ppi_pilot",
               run_name="__main__",
+              alter_sys=True,
           )
           PY
 
