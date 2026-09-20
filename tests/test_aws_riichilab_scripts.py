@@ -86,7 +86,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
             text.index('if ($decisions[$secretArn] -ne "allowed")'),
         )
         self.assertNotIn(
-            '$decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision\n'
+            "$decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision\n"
             'if ($decisions[$secretArn] -ne "allowed")',
             text,
         )
