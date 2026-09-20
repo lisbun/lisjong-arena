@@ -34,13 +34,13 @@ from .data import ScientificData, ScientificSplitTensors
 from .errors import StageA0CheckpointError, StageA0ExecutionError
 from .protocol import (
     AUXILIARY_PARAMETER_COUNT,
-    Arm,
     CHECKPOINT_SCHEMA_VERSION,
     EXECUTION_PROTOCOL_ID,
     EXPECTED_LOCK_B_IDENTITY,
     EXPECTED_PUBLIC_KEYS_IDENTITY,
     EXPECTED_SCIENTIFIC_SIDECAR_IDENTITY,
     POLICY_PARAMETER_COUNT,
+    Arm,
     auxiliary_seed_namespace,
     require_arm,
     training_seed_namespace,
