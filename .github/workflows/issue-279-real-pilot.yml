@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   real-pilot:
@@ -16,49 +17,51 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
+    env:
+      LOCKED_ARENA_REVISION: baa7c84f49b63ad096cb0e265ffa18e80bed1a81
+      LOCKED_PROTOCOL_IDENTITY: 527d8ea30032657ec70963c1703326d4cbade2dd481057c707d97c358f3e2ab6
+      SOURCE_RUN_ID: "35489777951"
+
     steps:
-      - name: Check out merged main
+      - name: Check out the exact locked Arena revision
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ env.LOCKED_ARENA_REVISION }}
           fetch-depth: 0
 
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: pip
-
-      - name: Install locked Arena environment
-        run: python -m pip install --disable-pip-version-check -e ".[dev]"
-
-      - name: Verify environment and clean merged revision
+      - name: Materialize local main ancestry without changing locked HEAD
         shell: bash
         run: |
-          python -m lisjong_arena.environment_verify --project pyproject.toml
+          git fetch origin main:refs/remotes/origin/main
+          git branch --force main origin/main
+          test "$(git rev-parse HEAD)" = "$LOCKED_ARENA_REVISION"
+          git merge-base --is-ancestor "$LOCKED_ARENA_REVISION" main
           test -z "$(git status --porcelain)"
-          test "$(git branch --show-current)" = "main"
-          git rev-parse HEAD
 
-      - name: Recheck Issue 279 implementation tests
-        run: python -m unittest tests.test_finite_horizon_ppi_pilot -v
+      - name: Restore the exact pre-exposure protocol artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: issue-279-ppi-evidence
+          path: ${{ runner.temp }}/issue-279-ppi-lock
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: lisbun/lisjong-arena
+          run-id: ${{ env.SOURCE_RUN_ID }}
 
-      - name: Lock timing-calibrated protocol
-        shell: bash
-        run: |
-          mkdir -p artifacts/issue-279-ppi
-          python -m lisjong_arena.finite_horizon_ppi_pilot lock \
-            --out artifacts/issue-279-ppi/protocol.json \
-            --total-budget-hours 8
-
-      - name: Show locked protocol only
+      - name: Verify restored protocol identity before execution
         shell: bash
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
-          p = json.loads(Path("artifacts/issue-279-ppi/protocol.json").read_text())
+          path = Path(os.environ["RUNNER_TEMP"]) / "issue-279-ppi-lock" / "protocol.json"
+          p = json.loads(path.read_text())
+          assert p["protocol_identity"] == os.environ["LOCKED_PROTOCOL_IDENTITY"]
+          assert p["environment_identity"]["arena_revision"] == os.environ["LOCKED_ARENA_REVISION"]
+          assert p["reference_measurement_budget"]["labeled_hanchans_max"] == 138
+          assert p["cheap_sample_size"] == 552
+          assert p["labeled_budget_grid"] == [17, 34, 69, 138]
           print("protocol_identity=", p["protocol_identity"])
           print("arena_revision=", p["environment_identity"]["arena_revision"])
           print("L_max=", p["reference_measurement_budget"]["labeled_hanchans_max"])
@@ -66,20 +69,47 @@ jobs:
           print("budget_grid=", p["labeled_budget_grid"])
           print("predicted_total_seconds=", p["compute_plan"]["predicted_total_seconds"])
           PY
+          test -z "$(git status --porcelain)"
 
-      - name: Run exact locked real pilot
+      - name: Set up the locked Python version
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.7"
+          cache: pip
+
+      - name: Install locked Arena environment
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Verify environment and clean locked revision
+        shell: bash
         run: |
+          python -m lisjong_arena.environment_verify --project pyproject.toml
+          test "$(git rev-parse HEAD)" = "$LOCKED_ARENA_REVISION"
+          git merge-base --is-ancestor "$LOCKED_ARENA_REVISION" main
+          test -z "$(git status --porcelain)"
+
+      - name: Recheck Issue 279 implementation tests
+        run: python -m unittest tests.test_finite_horizon_ppi_pilot -v
+
+      - name: Run the exact previously locked real pilot
+        shell: bash
+        run: |
+          out="$RUNNER_TEMP/issue-279-ppi-run"
+          mkdir -p "$out"
+          cp "$RUNNER_TEMP/issue-279-ppi-lock/protocol.json" "$out/protocol.json"
+          test -z "$(git status --porcelain)"
           python -m lisjong_arena.finite_horizon_ppi_pilot run \
-            --lock artifacts/issue-279-ppi/protocol.json \
-            --out artifacts/issue-279-ppi/result.json \
-            --report artifacts/issue-279-ppi/report.md \
+            --lock "$RUNNER_TEMP/issue-279-ppi-lock/protocol.json" \
+            --out "$out/result.json" \
+            --report "$out/report.md" \
             --workers 4
+          test -z "$(git status --porcelain)"
 
       - name: Upload immutable pilot evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: issue-279-ppi-evidence
-          path: artifacts/issue-279-ppi/
+          name: issue-279-ppi-evidence-resumed
+          path: ${{ runner.temp }}/issue-279-ppi-run/
           if-no-files-found: warn
           retention-days: 90
