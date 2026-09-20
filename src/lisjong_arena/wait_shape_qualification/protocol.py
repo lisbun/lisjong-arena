@@ -94,7 +94,9 @@ class WaitShapeProtocolError(ValueError):
     """The #322 result-independent protocol lock is internally inconsistent."""
 
 
-def _require_contiguous(values: tuple[int, ...], *, expected_count: int, name: str) -> None:
+def _require_contiguous(
+    values: tuple[int, ...], *, expected_count: int, name: str
+) -> None:
     if len(values) != expected_count:
         raise WaitShapeProtocolError(
             f"{name} must contain exactly {expected_count} seeds"
