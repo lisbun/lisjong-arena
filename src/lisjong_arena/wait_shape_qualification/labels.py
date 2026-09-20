@@ -139,12 +139,8 @@ def project_exact_wait_shapes(belief: HandBelief) -> WaitShapeProjection:
     shanpon = _exact_binary_table(belief, "shanpon_wait_probability_raw")
     kanchan = _exact_binary_table(belief, "kanchan_wait_probability_raw")
     penchan = _exact_binary_table(belief, "penchan_wait_probability_raw")
-    ryanmen_low = _exact_binary_table(
-        belief, "ryanmen_low_side_probability_raw"
-    )
-    ryanmen_high = _exact_binary_table(
-        belief, "ryanmen_high_side_probability_raw"
-    )
+    ryanmen_low = _exact_binary_table(belief, "ryanmen_low_side_probability_raw")
+    ryanmen_high = _exact_binary_table(belief, "ryanmen_high_side_probability_raw")
     kokushi = _exact_binary_table(belief, "kokushi_wait_probability_raw")
 
     mechanisms = (
