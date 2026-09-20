@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from lisjong_arena.riichilab.durable_ranked_game_record import (
-    DurableRankedGameRecordError,
     UNRESOLVED_PROVENANCE_VALUE,
+    DurableRankedGameRecordError,
     load_ranked_game_record,
 )
 
