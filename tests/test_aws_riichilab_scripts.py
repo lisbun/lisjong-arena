@@ -36,7 +36,14 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
                     "[scriptblock]::Create($content) | Out-Null"
                 )
                 result = subprocess.run(
-                    [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+                    [
+                        pwsh,
+                        "-NoLogo",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        command,
+                    ],
                     check=False,
                     capture_output=True,
                     text=True,
@@ -51,8 +58,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertIn("executionTimeout", text)
         self.assertIn("lisjong-cost-failsafe", text)
         self.assertIn("terminate-instances", text)
-        self.assertIn('state = "remote_verified_teardown_pending"', text)
-        self.assertIn("approximate_public_ipv4_cost_usd", text)
+        self.assertIn("collect-riichilab-12h.ps1", text)
         self.assertNotIn("--user-data", text)
         self.assertNotIn("authorize-security-group-ingress", text.lower())
 
@@ -61,7 +67,9 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertIn("[switch]$PreflightOnly", text)
         self.assertIn("[switch]$SubmitOnly", text)
         self.assertIn('Write-Host "PASS: AWS PREFLIGHT ONLY"', text)
-        self.assertLess(text.index("if ($PreflightOnly)"), text.index('"ec2", "run-instances"'))
+        self.assertLess(
+            text.index("if ($PreflightOnly)"), text.index('"ec2", "run-instances"')
+        )
         self.assertIn('Write-Host "SUBMITTED: remote run is detached', text)
         self.assertLess(text.index("if ($SubmitOnly)"), text.index('$lastStatus = ""'))
         self.assertIn("collect-riichilab-12h.ps1", text)
