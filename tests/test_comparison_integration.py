@@ -101,13 +101,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # MechanismRiichiDefenseYakuhaiCallPolicyを含むrevisionへ、Arena #252で
         # exact #169/#170 progression generationへ、Arena #256でlisjong #172の
         # supported offensive-efficiency diagnostic seamを含むrevisionへ、Arena #263で
-        # lisjong #174 targeted honor-release generationを含むrevisionへ更新した。
+        # lisjong #174 targeted honor-release generationを含むrevisionへ、Arena #297で
+        # exact Champion + HandValue-v2 compositionを含むrevisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "f29d129c67e5232d06563c6e457754377734ed14",
+            "15799e5f0fe47f2e2b2c39060de804d99c51492d",
         )
 
 
