@@ -234,9 +234,7 @@ async def run_continuous_ranked(
     stopped_reason = "stop_requested"
     records_enabled = record_dir is not None
     deadline = (
-        monotonic() + max_duration_seconds
-        if max_duration_seconds is not None
-        else None
+        monotonic() + max_duration_seconds if max_duration_seconds is not None else None
     )
 
     while True:
@@ -395,10 +393,7 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
         print(f"trace path: {trace_path}")
     print(f"records: {'on' if args.record_dir is not None else 'off'}")
     print(f"requested completed games: {args.games or 'unbounded'}")
-    print(
-        "requested duration seconds: "
-        f"{args.duration_seconds or 'unbounded'}"
-    )
+    print(f"requested duration seconds: {args.duration_seconds or 'unbounded'}")
 
     try:
         summary = asyncio.run(
