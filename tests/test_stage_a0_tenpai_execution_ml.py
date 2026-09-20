@@ -7,9 +7,9 @@ import importlib.util
 import io
 import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from lisjong_arena.learned_policy_offline_q.artifact import (
     feature_block,
