@@ -13,7 +13,8 @@ param(
     [int]$FailSafeHours = 14,
     [string]$ArenaRevision = "",
     [string]$OutputRoot = "",
-    [Nullable[double]]$HourlyPriceUsd = $null
+    [Nullable[double]]$HourlyPriceUsd = $null,
+    [double]$PublicIpv4HourlyPriceUsd = 0.005
 )
 
 Set-StrictMode -Version Latest
@@ -504,6 +505,20 @@ try {
     $remoteJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($match.Groups[1].Value))
     $summary = $remoteJson | ConvertFrom-Json
 
+    # Persist the already-verified, secret-safe remote summary before any
+    # teardown API call. If local SSO expires at this point, completion evidence
+    # still survives the instance-side five-minute termination safety net.
+    Write-JsonFile -Value $summary -Path $completionPath
+    Write-JsonFile -Value ([ordered]@{
+        run_id = $runId
+        instance_id = $instanceId
+        command_id = $commandId
+        arena_revision = $ArenaRevision
+        region = $Region
+        state = "remote_verified_teardown_pending"
+        completion_path = $completionPath
+    }) -Path $statePath
+
     $eip = Invoke-AwsJson -Arguments @(
         "ec2", "describe-addresses",
         "--filters", "Name=instance-id,Values=$instanceId"
@@ -540,6 +555,17 @@ try {
     if ($null -ne $hourlyPrice) {
         $approximateComputeCost = [math]::Round(([double]$hourlyPrice * $instanceRuntimeHours), 4)
     }
+    $approximatePublicIpv4Cost = [math]::Round(
+        ($PublicIpv4HourlyPriceUsd * $instanceRuntimeHours),
+        4
+    )
+    $approximateKnownCost = $null
+    if ($null -ne $approximateComputeCost) {
+        $approximateKnownCost = [math]::Round(
+            ($approximateComputeCost + $approximatePublicIpv4Cost),
+            4
+        )
+    }
 
     $teardownPass = $terminationRequested -and
         $volumeResidueCount -eq 0 -and
@@ -557,7 +583,10 @@ try {
         instance_runtime_hours = [math]::Round($instanceRuntimeHours, 4)
         hourly_compute_price_usd = $hourlyPrice
         approximate_compute_cost_usd = $approximateComputeCost
-        cost_note = "EC2 compute estimate only; EBS/data transfer and any T3 surplus CPU credits are excluded."
+        public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
+        approximate_public_ipv4_cost_usd = $approximatePublicIpv4Cost
+        approximate_known_cost_usd = $approximateKnownCost
+        cost_note = "Known-cost estimate includes EC2 compute when pricing lookup succeeds plus one in-use public IPv4 address; EBS/data transfer and any T3 surplus CPU credits are excluded."
         retained_recurring_cost_resources = @(
             "Secrets Manager secret $SecretId (approximately USD 0.40/month unless removed)"
         )
