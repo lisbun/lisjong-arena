@@ -30,12 +30,12 @@ from lisjong_arena.stage_a0_tenpai_protocol_lock import protocol as locked
 from .errors import StageA0DownstreamError
 from .gate import load_gate
 from .protocol import (
-    Arm,
     DOWNSTREAM_INCONCLUSIVE,
     DOWNSTREAM_NEGATIVE,
     DOWNSTREAM_POSITIVE,
     EXPECTED_LOCK_B_IDENTITY,
     GATE_PASS,
+    Arm,
     policy_identity,
 )
 from .training import load_checkpoint
