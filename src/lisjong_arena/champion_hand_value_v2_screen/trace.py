@@ -323,7 +323,14 @@ def aggregate_composition_diagnostics(
         forced_discard_decision_count=sum(
             game.forced_discard_decision_count for game in games
         ),
-        selection_source_counts=dict(sorted(selection_sources.items())),
+        selection_source_counts={
+            name: selection_sources.get(name, 0)
+            for name in (
+                "CHAMPION_TARGETED_HONOR_RELEASE",
+                "HAND_VALUE_V2",
+                "SHARED_ACTION",
+            )
+        },
         champion_activation_stage_counts=dict(sorted(activation_stages.items())),
         champion_targeted_preserved_count=selection_sources.get(
             "CHAMPION_TARGETED_HONOR_RELEASE", 0
