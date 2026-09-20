@@ -88,10 +88,7 @@ def policy_identity(arm: Arm | str, seed: int, checkpoint_identity: str) -> str:
     training_seed_namespace(seed)
     if type(checkpoint_identity) is not str or len(checkpoint_identity) != 64:
         raise ValueError("checkpoint_identity must be a sha256 digest")
-    return (
-        f"stage-a0-tenpai-{arm.value.lower()}-seed{seed}:"
-        f"{checkpoint_identity}"
-    )
+    return f"stage-a0-tenpai-{arm.value.lower()}-seed{seed}:{checkpoint_identity}"
 
 
 __all__ = [
