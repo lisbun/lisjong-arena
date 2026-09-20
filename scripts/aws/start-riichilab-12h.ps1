@@ -244,7 +244,25 @@ $simulation = Invoke-AwsJson -Arguments @(
 )
 $decisions = @{}
 foreach ($entry in @($simulation.EvaluationResults)) {
-    $decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision
+    $resourceResults = @($entry.ResourceSpecificResults)
+    if ($resourceResults.Count -gt 0) {
+        foreach ($resourceResult in $resourceResults) {
+            $decisions[[string]$resourceResult.EvalResourceName] = [string]$resourceResult.EvalResourceDecision
+        }
+        continue
+    }
+
+    # Backward-compatible fallback for older IAM simulator response shapes.
+    # Current AWS responses place per-resource decisions in ResourceSpecificResults.
+    if (-not [string]::IsNullOrWhiteSpace([string]$entry.EvalResourceName)) {
+        $decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision
+    }
+}
+if (-not $decisions.ContainsKey($secretArn)) {
+    throw "IAM simulation did not return a resource-specific result for the intended RiichiLab secret."
+}
+if (-not $decisions.ContainsKey($denyProbeArn)) {
+    throw "IAM simulation did not return a resource-specific result for the deny-probe secret ARN."
 }
 if ($decisions[$secretArn] -ne "allowed") {
     throw "Instance role is not allowed to read the intended RiichiLab secret."
