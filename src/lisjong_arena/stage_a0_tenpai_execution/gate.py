@@ -66,9 +66,7 @@ def _predict(checkpoint: LoadedCheckpoint, tensors: ScientificSplitTensors):
         for start in range(0, tensors.row_count, locked.BATCH_SIZE):
             stop = min(start + locked.BATCH_SIZE, tensors.row_count)
             features = tensors.features[start:stop]
-            hidden = checkpoint.model.network[1](
-                checkpoint.model.network[0](features)
-            )
+            hidden = checkpoint.model.network[1](checkpoint.model.network[0](features))
             logits = checkpoint.auxiliary_head(hidden)
             probabilities = torch.sigmoid(logits)
             if not bool(torch.isfinite(probabilities).all()):
@@ -287,9 +285,7 @@ def evaluate_gate(
                 "support": len(values["targets"]),
                 "observed_prevalence": _mean(values["targets"]),
                 "anchor_mean_prediction": _mean(values["predictions"]),
-                "anchor_brier_score": _brier(
-                    values["targets"], values["predictions"]
-                ),
+                "anchor_brier_score": _brier(values["targets"], values["predictions"]),
             }
         return output
 
