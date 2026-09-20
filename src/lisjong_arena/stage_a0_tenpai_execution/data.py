@@ -68,6 +68,16 @@ def _cell_key(cell) -> tuple[int, int, int, int, int]:
     )
 
 
+def _public_cell_key(record) -> tuple[int, int, int, int, int]:
+    return (
+        record.seed,
+        record.step_ordinal,
+        record.decision_ordinal,
+        record.actor_seat,
+        record.relative_offset,
+    )
+
+
 def load_scientific_data(
     *,
     lock_b_path,
@@ -121,6 +131,16 @@ def load_scientific_data(
     if dataset_rows != sidecar_rows or dataset_rows != public_rows:
         raise StageA0PreflightError(
             "dataset, privileged sidecar and player-safe public keys are not row-aligned"
+        )
+    sidecar_cells = {_cell_key(cell) for cell in sidecar.cells}
+    public_cells = {_public_cell_key(record) for record in public_keys.records}
+    if len(sidecar_cells) != len(sidecar.cells):
+        raise StageA0PreflightError("scientific sidecar contains duplicate cell keys")
+    if len(public_cells) != len(public_keys.records):
+        raise StageA0PreflightError("public-key artifact contains duplicate cell keys")
+    if sidecar_cells != public_cells:
+        raise StageA0PreflightError(
+            "privileged sidecar and player-safe public keys are not cell-aligned"
         )
     if len(sidecar.cells) != len(dataset.rows) * 3:
         raise StageA0PreflightError(
