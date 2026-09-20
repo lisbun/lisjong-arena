@@ -117,9 +117,12 @@ record and checks:
 - `Authorization` material is not present
 - AWS static credential material is not present
 
-Only a secret-safe JSON summary is returned through SSM stdout. Raw durable
-records remain ephemeral for Issue #313 and are lost when EC2 is terminated.
-S3 retention is intentionally outside this issue.
+Only a secret-safe JSON summary is returned through SSM stdout. The Windows
+launcher writes that verified summary to `completion.json` **before** issuing
+teardown API calls, so an SSO expiry after remote PASS does not erase the
+already-recovered completion evidence. Raw durable records remain ephemeral for
+Issue #313 and are lost when EC2 is terminated. S3 retention is intentionally
+outside this issue.
 
 ## Local evidence
 
@@ -161,8 +164,13 @@ Linux on-demand hourly price and records an approximate EC2 compute cost.
 If the caller lacks Pricing API access, the run can still proceed and the price
 field is left unavailable unless `-HourlyPriceUsd` is supplied.
 
-The estimate is not a billing statement. It excludes EBS/data-transfer details
-and any applicable T-family surplus CPU credit charges.
+The launcher also accounts for the one in-use public IPv4 address attached to
+the temporary EC2 instance. The default is `0.005 USD/hour`, matching the AWS
+public IPv4 price at the time this automation was introduced; it can be
+overridden with `-PublicIpv4HourlyPriceUsd` if AWS changes the price.
+
+The estimate is not a billing statement. It still excludes EBS/data-transfer
+details and any applicable T-family surplus CPU credit charges.
 
 The reused Secrets Manager secret is intentionally retained by default and has
 its own recurring charge. IAM roles and security groups themselves do not incur
