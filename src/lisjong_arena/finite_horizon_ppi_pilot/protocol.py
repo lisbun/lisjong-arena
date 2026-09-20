@@ -186,6 +186,12 @@ def create_protocol_document(
             "end": l_seeds[-1],
             "count": len(l_seeds),
         },
+        "decision_opportunity_definition": (
+            "source decision with at least two legal DiscardAction candidates and "
+            "a DiscardAction selected by the locked source two-step policy; the fixed "
+            "candidate is evaluated on the same DecisionContext and must also return "
+            "a DiscardAction or execution fails closed"
+        ),
         "hanchan_aggregation_semantics": (
             "one observation per source hanchan; mean over predefined choice-discard "
             "opportunities; same candidate/reference action contributes 0; a hanchan "
@@ -224,7 +230,8 @@ def create_protocol_document(
             "cheap_multiplier": cheap_multiplier,
             "predicted_unlabeled_hanchan_seconds": unlabeled_cost,
             "predicted_labeled_hanchan_seconds": labeled_cost,
-            "predicted_total_seconds": cheap_sample_size * unlabeled_cost + n_max * labeled_cost,
+            "predicted_total_seconds": cheap_sample_size * unlabeled_cost
+            + n_max * labeled_cost,
         },
         "interpretation_guardrails": [
             "diagnostic local counterfactual estimand, not candidate-vs-reference match strength",
@@ -288,5 +295,7 @@ def require_current_protocol(document: object) -> dict[str, object]:
     if type(environment) is not dict or environment.get("arena_revision") != revision:
         raise PpiPilotProtocolError("current Arena revision does not match the lock")
     if validated.get("dependency_versions") != provenance:
-        raise PpiPilotProtocolError("current dependency provenance does not match the lock")
+        raise PpiPilotProtocolError(
+            "current dependency provenance does not match the lock"
+        )
     return validated
