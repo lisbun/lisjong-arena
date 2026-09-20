@@ -26,7 +26,9 @@ from .protocol import (
 
 
 def _identity(document: dict[str, object]) -> str:
-    logical = {key: value for key, value in document.items() if key != "preflight_identity"}
+    logical = {
+        key: value for key, value in document.items() if key != "preflight_identity"
+    }
     return hashlib.sha256(canonical_json_text(logical).encode("utf-8")).hexdigest()
 
 
@@ -51,9 +53,13 @@ def run_preflight(
         raise StageA0PreflightError("TRAIN and VALIDATION seed populations overlap")
     if set(locked.SCIENTIFIC_SEEDS) & set(locked.PROTECTED_TEST_SEEDS):
         raise StageA0PreflightError("scientific seeds overlap protected TEST")
-    technical_smoke = tuple(lock_b["contract"]["route"]["technical_smoke_seeds_excluded"])
+    technical_smoke = tuple(
+        lock_b["contract"]["route"]["technical_smoke_seeds_excluded"]
+    )
     if set(technical_smoke) & set(locked.SCIENTIFIC_SEEDS):
-        raise StageA0PreflightError("technical smoke population entered scientific data")
+        raise StageA0PreflightError(
+            "technical smoke population entered scientific data"
+        )
 
     baseline = validate_train_baseline_parameters(lock_b["baseline_parameters"])
     if baseline["train_seeds"] != list(locked.TRAIN_SEEDS):
@@ -68,7 +74,10 @@ def run_preflight(
         raise StageA0PreflightError("unexpected legacy lambda field")
     if training["auxiliary_head"]["lambda_tenpai"] != locked.LAMBDA_TENPAI:
         raise StageA0PreflightError("lambda_tenpai drifted")
-    if training["auxiliary_head"]["class_treatment"] != locked.CLASS_IMBALANCE_TREATMENT:
+    if (
+        training["auxiliary_head"]["class_treatment"]
+        != locked.CLASS_IMBALANCE_TREATMENT
+    ):
         raise StageA0PreflightError("class treatment drifted")
 
     downstream = lock_b["contract"]["downstream"]
