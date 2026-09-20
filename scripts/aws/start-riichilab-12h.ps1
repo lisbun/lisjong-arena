@@ -515,11 +515,19 @@ try {
     $terminatedUtc = (Get-Date).ToUniversalTime()
     $instanceRuntimeHours = ($terminatedUtc - $launchTimeUtc.ToUniversalTime()).TotalHours
 
-    $volumesAfter = Invoke-AwsJson -Arguments @(
-        "ec2", "describe-volumes",
-        "--filters", "Name=tag:lisjong-run-id,Values=$runId"
-    )
-    $volumeResidueCount = @($volumesAfter.Volumes).Count
+    $residueDeadline = (Get-Date).AddMinutes(5)
+    $volumeResidueCount = -1
+    do {
+        $volumesAfter = Invoke-AwsJson -Arguments @(
+            "ec2", "describe-volumes",
+            "--filters", "Name=tag:lisjong-run-id,Values=$runId"
+        )
+        $volumeResidueCount = @($volumesAfter.Volumes).Count
+        if ($volumeResidueCount -eq 0) {
+            break
+        }
+        Start-Sleep -Seconds 10
+    } while ((Get-Date) -lt $residueDeadline)
 
     $snapshotsAfter = Invoke-AwsJson -Arguments @(
         "ec2", "describe-snapshots",
