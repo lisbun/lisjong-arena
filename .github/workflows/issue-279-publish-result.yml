@@ -1,0 +1,110 @@
+name: Publish Issue 279 PPI pilot result
+
+on:
+  workflow_run:
+    workflows:
+      - "Issue 279 real PPI pilot"
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+jobs:
+  publish:
+    if: github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Record failed or cancelled pilot run
+        if: github.event.workflow_run.conclusion != 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        shell: bash
+        run: |
+          body="$(mktemp)"
+          cat > "$body" <<EOF
+          ### Issue #279 real-pilot runner did not complete successfully
+
+          - workflow run: `$RUN_ID`
+          - conclusion: `$CONCLUSION`
+          - trigger head SHA: `$HEAD_SHA`
+          - run: $RUN_URL
+
+          No statistical interpretation is recorded from this run. Issue #279 remains open.
+          EOF
+          gh issue comment 279 --repo lisbun/lisjong-arena --body-file "$body"
+
+      - name: Download resumed pilot evidence
+        if: github.event.workflow_run.conclusion == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: issue-279-ppi-evidence-resumed
+          path: ${{ runner.temp }}/issue-279-ppi-evidence
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: lisbun/lisjong-arena
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Validate and publish completed pilot report
+        if: github.event.workflow_run.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        shell: bash
+        run: |
+          evidence="$RUNNER_TEMP/issue-279-ppi-evidence"
+          test -f "$evidence/protocol.json"
+          test -f "$evidence/result.json"
+          test -f "$evidence/report.md"
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "issue-279-ppi-evidence"
+          protocol = json.loads((root / "protocol.json").read_text())
+          result = json.loads((root / "result.json").read_text())
+          report = (root / "report.md").read_text().strip()
+
+          expected_protocol = "527d8ea30032657ec70963c1703326d4cbade2dd481057c707d97c358f3e2ab6"
+          expected_revision = "baa7c84f49b63ad096cb0e265ffa18e80bed1a81"
+
+          assert protocol["protocol_identity"] == expected_protocol
+          assert protocol["environment_identity"]["arena_revision"] == expected_revision
+          assert protocol["reference_measurement_budget"]["labeled_hanchans_max"] == 138
+          assert protocol["cheap_sample_size"] == 552
+          assert protocol["labeled_budget_grid"] == [17, 34, 69, 138]
+
+          result_text = json.dumps(result, sort_keys=True)
+          assert expected_protocol in result_text, "result artifact does not bind to locked protocol identity"
+
+          header = f"""### Issue #279 real PPI pilot completed
+
+          - workflow run: `{os.environ['RUN_ID']}`
+          - trigger head SHA: `{os.environ['HEAD_SHA']}`
+          - locked Arena revision: `{expected_revision}`
+          - protocol identity: `{expected_protocol}`
+          - evidence artifact: `issue-279-ppi-evidence-resumed`
+          - run: {os.environ['RUN_URL']}
+
+          The following report is emitted from the immutable result artifact produced by the exact pre-exposure protocol.
+
+          """
+
+          body = header + report
+          if len(body) > 60000:
+              body = body[:59000] + "\n\n[report truncated in issue comment; full report remains in the Actions artifact]\n"
+
+          (root / "issue-comment.md").write_text(body)
+          PY
+
+          gh issue comment 279 --repo lisbun/lisjong-arena --body-file "$evidence/issue-comment.md"
