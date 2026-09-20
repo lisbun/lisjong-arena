@@ -75,6 +75,23 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertLess(text.index("if ($SubmitOnly)"), text.index('$lastStatus = ""'))
         self.assertIn("collect-riichilab-12h.ps1", text)
 
+
+    def test_launcher_uses_resource_specific_iam_simulator_results(self) -> None:
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("ResourceSpecificResults", text)
+        self.assertIn("EvalResourceDecision", text)
+        self.assertIn("ContainsKey($secretArn)", text)
+        self.assertIn("ContainsKey($denyProbeArn)", text)
+        self.assertLess(
+            text.index("ResourceSpecificResults"),
+            text.index('if ($decisions[$secretArn] -ne "allowed")'),
+        )
+        self.assertNotIn(
+            '$decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision\n'
+            'if ($decisions[$secretArn] -ne "allowed")',
+            text,
+        )
+
     def test_collector_preserves_remote_run_and_teardown_invariants(self) -> None:
         text = _COLLECTOR.read_text(encoding="utf-8")
         self.assertIn('"ssm", "get-command-invocation"', text)
