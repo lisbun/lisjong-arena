@@ -225,9 +225,9 @@ def evaluate_downstream(
             **summary.to_document(),
             "classification": classification,
             "seed_delta_identity": hashlib.sha256(
-                canonical_json_text(
-                    [item.to_document() for item in deltas]
-                ).encode("utf-8")
+                canonical_json_text([item.to_document() for item in deltas]).encode(
+                    "utf-8"
+                )
             ).hexdigest(),
         },
         "protected_test_evaluated": False,
@@ -252,13 +252,12 @@ def load_downstream(path) -> dict[str, object]:
         raise StageA0DownstreamError("downstream result is not canonical JSON")
     identity = document.get("downstream_identity")
     logical = {
-        name: value
-        for name, value in document.items()
-        if name != "downstream_identity"
+        name: value for name, value in document.items() if name != "downstream_identity"
     }
-    if identity != hashlib.sha256(
-        canonical_json_text(logical).encode("utf-8")
-    ).hexdigest():
+    if (
+        identity
+        != hashlib.sha256(canonical_json_text(logical).encode("utf-8")).hexdigest()
+    ):
         raise StageA0DownstreamError("downstream result identity mismatch")
     if document.get("protected_test_evaluated") is not False:
         raise StageA0DownstreamError("downstream result claims protected TEST exposure")
