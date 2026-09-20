@@ -99,6 +99,7 @@ class ArtifactClass(Enum):
 
     STAGE2_RETAINED = "STAGE2_RETAINED"
     STAGE3_FIXTURE = "STAGE3_FIXTURE"
+    STAGE_A0_TENPAI = "STAGE_A0_TENPAI"
 
 
 class Stage3Outcome(Enum):

@@ -342,11 +342,49 @@ def load_serving_checkpoint(path: str | Path) -> ServingCheckpoint:
     path = Path(path)
     if not path.is_dir():
         raise Stage3ArtifactError("checkpoint path is not a directory")
-    if {item.name for item in path.iterdir()} != {MANIFEST_FILENAME, WEIGHTS_FILENAME}:
-        raise Stage3ArtifactError("checkpoint contains missing or extra files")
 
     manifest = _read_manifest(path)
     schema = manifest.get("checkpoint_schema_version")
+
+    # #262 keeps the existing Stage 3 serving Policy/runtime semantics while
+    # introducing a separate strict checkpoint schema. Delegate validation to
+    # the owning execution package rather than weakening the historical Stage
+    # 2 / Stage 3 identity checks below. T checkpoints may carry an additional
+    # auxiliary_weights.pt file; the delegated loader validates and discards
+    # that head for serving.
+    from lisjong_arena.stage_a0_tenpai_execution.protocol import (
+        CHECKPOINT_SCHEMA_VERSION as STAGE_A0_TENPAI_CHECKPOINT_SCHEMA_VERSION,
+    )
+
+    if schema == STAGE_A0_TENPAI_CHECKPOINT_SCHEMA_VERSION:
+        from lisjong_arena.stage_a0_tenpai_execution.errors import (
+            StageA0CheckpointError,
+        )
+        from lisjong_arena.stage_a0_tenpai_execution.training import (
+            load_checkpoint as load_stage_a0_checkpoint,
+        )
+
+        try:
+            checkpoint = load_stage_a0_checkpoint(path)
+        except StageA0CheckpointError as error:
+            raise Stage3ArtifactError(
+                "Stage A0 Tenpai checkpoint strict load failed"
+            ) from error
+        _require_model_shapes(checkpoint.model)
+        artifact_bytes = sum(item.stat().st_size for item in path.iterdir())
+        return ServingCheckpoint(
+            path=path,
+            manifest=checkpoint.manifest,
+            model=checkpoint.model,
+            artifact_class=ArtifactClass.STAGE_A0_TENPAI,
+            artifact_bytes=artifact_bytes,
+            load_wall_clock_seconds=time.perf_counter() - wall_start,
+            load_cpu_seconds=time.process_time() - cpu_start,
+        )
+
+    if {item.name for item in path.iterdir()} != {MANIFEST_FILENAME, WEIGHTS_FILENAME}:
+        raise Stage3ArtifactError("checkpoint contains missing or extra files")
+
     artifact_class = _ARTIFACT_CLASS_BY_SCHEMA.get(schema)
     if artifact_class is None:
         raise Stage3ArtifactError(f"unsupported checkpoint schema version: {schema!r}")
