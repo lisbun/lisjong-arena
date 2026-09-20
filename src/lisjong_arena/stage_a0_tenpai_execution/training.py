@@ -14,7 +14,10 @@ from shutil import rmtree
 from tempfile import mkdtemp
 
 from lisjong_arena._artifact_io import canonical_json_text
-from lisjong_arena.learned_policy_offline_q.artifact import feature_block, vocabulary_block
+from lisjong_arena.learned_policy_offline_q.artifact import (
+    feature_block,
+    vocabulary_block,
+)
 from lisjong_arena.learned_policy_offline_q.protocol import Split
 from lisjong_arena.learned_policy_stage2.network import (
     create_model,
@@ -144,7 +147,10 @@ def _create_auxiliary_head(seed: int):
 
     torch.manual_seed(auxiliary_seed_namespace(seed))
     head = torch.nn.Linear(locked.HIDDEN_WIDTH, 3)
-    if sum(parameter.numel() for parameter in head.parameters()) != AUXILIARY_PARAMETER_COUNT:
+    if (
+        sum(parameter.numel() for parameter in head.parameters())
+        != AUXILIARY_PARAMETER_COUNT
+    ):
         raise StageA0ExecutionError("auxiliary head parameter count drifted")
     return head
 
@@ -289,7 +295,9 @@ def _train_arm_from_initial_state(
                 )
                 eligible_count = int(tenpai_eligible.sum())
                 if eligible_count:
-                    auxiliary_loss = auxiliary_losses[tenpai_eligible].sum() / eligible_count
+                    auxiliary_loss = (
+                        auxiliary_losses[tenpai_eligible].sum() / eligible_count
+                    )
                     loss = loss + locked.LAMBDA_TENPAI * auxiliary_loss
                     auxiliary_sum += float(
                         auxiliary_losses[tenpai_eligible].detach().sum()
@@ -309,9 +317,7 @@ def _train_arm_from_initial_state(
             raise StageA0ExecutionError("T epoch has zero eligible TRAIN Tenpai cells")
 
         validation_metric = _policy_ce(model, validation)
-        train_auxiliary = (
-            None if head is None else auxiliary_sum / auxiliary_count
-        )
+        train_auxiliary = None if head is None else auxiliary_sum / auxiliary_count
         history.append(
             EpochRecord(
                 epoch=epoch,
@@ -544,7 +550,9 @@ def load_checkpoint(path) -> LoadedCheckpoint:
         arm = require_arm(manifest.get("arm"))
         seed = training_seed_namespace(manifest.get("training_seed"))
     except (TypeError, ValueError) as error:
-        raise StageA0CheckpointError("checkpoint arm/training seed is invalid") from error
+        raise StageA0CheckpointError(
+            "checkpoint arm/training seed is invalid"
+        ) from error
     if manifest.get("dataset_identity") != locked.RETAINED_DATASET_IDENTITY:
         raise StageA0CheckpointError("checkpoint retained dataset identity drifted")
     if (
@@ -617,7 +625,10 @@ def load_checkpoint(path) -> LoadedCheckpoint:
             raise StageA0CheckpointError(
                 "auxiliary state_dict strict load failed"
             ) from error
-        if sum(parameter.numel() for parameter in head.parameters()) != AUXILIARY_PARAMETER_COUNT:
+        if (
+            sum(parameter.numel() for parameter in head.parameters())
+            != AUXILIARY_PARAMETER_COUNT
+        ):
             raise StageA0CheckpointError("loaded auxiliary parameter count drifted")
         for parameter in head.parameters():
             if not bool(torch.isfinite(parameter).all()):
