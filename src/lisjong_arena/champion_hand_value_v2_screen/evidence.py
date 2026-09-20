@@ -473,10 +473,10 @@ def build_result_document(
     trace_aggregate = trace_document["aggregate"]
     if type(trace_aggregate) is not dict:
         raise ChampionHandValueV2EvidenceError("trace aggregate is unavailable")
-    choice_count = trace_aggregate["choice_discard_decision_count"]
-    if type(choice_count) is not int or choice_count <= 0:
+    discard_count = trace_aggregate["discard_decision_count"]
+    if type(discard_count) is not int or discard_count <= 0:
         raise ChampionHandValueV2EvidenceError(
-            "composition choice-discard count must be positive"
+            "composition ordinary-discard count must be positive"
         )
 
     payload: dict[str, object] = {
@@ -525,16 +525,16 @@ def build_result_document(
         "composition_diagnostics": {
             **trace_aggregate,
             "champion_targeted_preserved_rate": (
-                trace_aggregate["champion_targeted_preserved_count"] / choice_count
+                trace_aggregate["champion_targeted_preserved_count"] / discard_count
             ),
             "hand_value_v2_attempted_rate": (
-                trace_aggregate["hand_value_v2_attempted_count"] / choice_count
+                trace_aggregate["hand_value_v2_attempted_count"] / discard_count
             ),
             "action_changed_vs_champion_rate": (
-                trace_aggregate["action_changed_vs_champion_count"] / choice_count
+                trace_aggregate["action_changed_vs_champion_count"] / discard_count
             ),
             "action_changed_vs_former_parent_rate": (
-                trace_aggregate["action_changed_vs_former_parent_count"] / choice_count
+                trace_aggregate["action_changed_vs_former_parent_count"] / discard_count
             ),
             "optional_hand_value_reason_diagnostics": "unavailable",
             "optional_ukeire_sacrifice_distribution": "unavailable",
