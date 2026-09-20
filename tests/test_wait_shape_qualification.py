@@ -221,14 +221,18 @@ class PublicRiichiTargetTest(unittest.TestCase):
         )
         self.assertIsNone(target.projection)
 
-    def test_accepted_riichi_requires_privileged_binding(self) -> None:
-        with self.assertRaises(WaitShapeQualificationError):
-            build_wait_shape_target(
-                public_riichi=RiichiState.ACCEPTED,
-                privileged_riichi_declared=False,
-                concealed_tiles=None,
-                melds=None,
-            )
+    def test_accepted_riichi_binding_mismatch_is_reason_coded(self) -> None:
+        target = build_wait_shape_target(
+            public_riichi=RiichiState.ACCEPTED,
+            privileged_riichi_declared=False,
+            concealed_tiles=None,
+            melds=None,
+        )
+        self.assertIs(
+            target.availability,
+            WaitShapeAvailability.RIICHI_BINDING_MISMATCH,
+        )
+        self.assertIsNone(target.projection)
 
 
 if __name__ == "__main__":
