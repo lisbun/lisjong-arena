@@ -12,7 +12,6 @@ from lisjong_arena._execution_safety import (
 )
 from lisjong_arena.paired_evaluation import artifact_file_digest
 from lisjong_arena.single_round_artifact import (
-    SingleRoundStrengthArtifact,
     load_single_round_artifact,
     save_single_round_artifact,
 )
@@ -23,11 +22,11 @@ from .evidence import (
     build_result_document,
     build_trace_artifact,
     load_classified_result,
-    verify_result_document,
     load_trace_artifact,
     save_classified_result,
     save_result_document,
     save_trace_artifact,
+    verify_result_document,
 )
 from .lock import (
     load_lock_document,
