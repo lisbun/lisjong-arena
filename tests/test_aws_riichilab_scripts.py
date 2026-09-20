@@ -67,6 +67,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertIn("[switch]$PreflightOnly", text)
         self.assertIn("[switch]$SubmitOnly", text)
         self.assertIn('Write-Host "PASS: AWS PREFLIGHT ONLY"', text)
+        self.assertIn("projected_known_cost_usd", text)
         self.assertLess(
             text.index("if ($PreflightOnly)"), text.index('"ec2", "run-instances"')
         )
@@ -80,6 +81,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertIn('if ($status -in @("Pending", "InProgress", "Delayed"))', text)
         self.assertIn("No termination or teardown action was taken.", text)
         self.assertIn("LISJONG_COMPLETION_JSON_B64=", text)
+        self.assertIn("approximate_public_ipv4_cost_usd", text)
         self.assertIn('state" -Value "remote_verified_teardown_pending"', text)
         self.assertIn('"ec2", "terminate-instances"', text)
         self.assertIn('"ec2", "describe-volumes"', text)
