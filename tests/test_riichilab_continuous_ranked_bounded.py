@@ -518,7 +518,6 @@ class BoundedCliTest(unittest.TestCase):
         self.assertIn("records: on", stdout.getvalue())
         self.assertNotIn("secret-token", stdout.getvalue())
 
-
     def test_cli_forwards_duration_seconds(self) -> None:
         captured: dict[str, object] = {}
 
