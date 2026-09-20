@@ -64,7 +64,9 @@ class ProtocolLockTest(unittest.TestCase):
         self.assertEqual(SCIENTIFIC_TRAIN_SEEDS, tuple(range(2100, 2196)))
         self.assertEqual(SCIENTIFIC_SELECT_SEEDS, tuple(range(2196, 2220)))
         self.assertEqual(SCIENTIFIC_EVAL_SEEDS, tuple(range(2220, 2260)))
-        self.assertEqual(PRIMARY_SHAPES, ("TANKI", "SHANPON", "KANCHAN", "PENCHAN", "RYANMEN"))
+        self.assertEqual(
+            PRIMARY_SHAPES, ("TANKI", "SHANPON", "KANCHAN", "PENCHAN", "RYANMEN")
+        )
         self.assertIs(PUBLIC_RIICHI_ELIGIBILITY, RiichiState.ACCEPTED)
         self.assertEqual(
             TEACHER_LISJONG_REVISION,
@@ -179,7 +181,9 @@ class PublicRiichiTargetTest(unittest.TestCase):
         self.assertEqual(target.projection.ordinary, (1, 0, 0, 0, 0))
         self.assertEqual(target.projection.kokushi, 0)
 
-    def test_kokushi_only_is_valid_even_when_five_ordinary_shapes_are_zero(self) -> None:
+    def test_kokushi_only_is_valid_even_when_five_ordinary_shapes_are_zero(
+        self,
+    ) -> None:
         concealed = (
             _tile(TileCategory.MANZU, 1),
             _tile(TileCategory.MANZU, 9),
@@ -202,7 +206,9 @@ class PublicRiichiTargetTest(unittest.TestCase):
         self.assertEqual(target.projection.kokushi, 1)
         self.assertTrue(target.projection.is_kokushi_only)
 
-    def test_non_accepted_riichi_is_masked_before_hidden_truth_is_required(self) -> None:
+    def test_non_accepted_riichi_is_masked_before_hidden_truth_is_required(
+        self,
+    ) -> None:
         target = build_wait_shape_target(
             public_riichi=RiichiState.DECLARED,
             privileged_riichi_declared=True,
