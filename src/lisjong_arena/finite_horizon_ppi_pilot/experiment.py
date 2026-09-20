@@ -97,9 +97,7 @@ def _completion_probability_delta(
         for evaluation in analysis.candidate_evaluations
     }
     denominator = analysis.sequence_denominator
-    return (
-        by_action[candidate_action] - by_action[reference_action]
-    ) / denominator
+    return (by_action[candidate_action] - by_action[reference_action]) / denominator
 
 
 def measure_hanchan(seed: int, *, include_reference: bool) -> HanchanMeasurement:
@@ -130,9 +128,8 @@ def measure_hanchan(seed: int, *, include_reference: bool) -> HanchanMeasurement
                 action for action in legal_actions if isinstance(action, DiscardAction)
             )
             reference_action = observation.decision_trace.selected_action
-            if (
-                len(discard_actions) < 2
-                or not isinstance(reference_action, DiscardAction)
+            if len(discard_actions) < 2 or not isinstance(
+                reference_action, DiscardAction
             ):
                 continue
 
@@ -141,7 +138,10 @@ def measure_hanchan(seed: int, *, include_reference: bool) -> HanchanMeasurement
             candidate_action = candidate.choose_action(context)
             candidate_seconds += time.perf_counter() - started
             if not isinstance(candidate_action, DiscardAction):
-                continue
+                raise RuntimeError(
+                    "fixed candidate left the predefined source choice-discard "
+                    "opportunity"
+                )
 
             eligible += 1
             if candidate_action == reference_action:
@@ -180,9 +180,7 @@ def measure_hanchan(seed: int, *, include_reference: bool) -> HanchanMeasurement
     cheap_score = sum(cheap_deltas) / eligible if eligible else 0.0
     reference_score = None
     if include_reference:
-        reference_score = (
-            sum(reference_deltas) / eligible if eligible else 0.0
-        )
+        reference_score = sum(reference_deltas) / eligible if eligible else 0.0
         if len(reference_deltas) != eligible:
             raise RuntimeError(
                 "reference measurement count does not match eligible decisions"
@@ -193,9 +191,7 @@ def measure_hanchan(seed: int, *, include_reference: bool) -> HanchanMeasurement
     return HanchanMeasurement(
         seed=seed,
         cheap_score=float(cheap_score),
-        reference_score=(
-            None if reference_score is None else float(reference_score)
-        ),
+        reference_score=(None if reference_score is None else float(reference_score)),
         source_decision_count=source_decisions,
         eligible_decision_count=eligible,
         same_action_count=same,
