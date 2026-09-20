@@ -100,7 +100,9 @@ def load_scientific_data(
     if public_keys.identity != lock_b["data"]["public_keys_identity"]:
         raise StageA0PreflightError("public-key artifact identity differs from Lock B")
     if public_keys.manifest["sidecar_identity"] != sidecar.identity:
-        raise StageA0PreflightError("public keys are not bound to the scientific sidecar")
+        raise StageA0PreflightError(
+            "public keys are not bound to the scientific sidecar"
+        )
 
     dataset_rows = {_row_key(row) for row in dataset.rows}
     sidecar_rows = {
@@ -121,7 +123,9 @@ def load_scientific_data(
             "dataset, privileged sidecar and player-safe public keys are not row-aligned"
         )
     if len(sidecar.cells) != len(dataset.rows) * 3:
-        raise StageA0PreflightError("scientific sidecar must contain three cells per row")
+        raise StageA0PreflightError(
+            "scientific sidecar must contain three cells per row"
+        )
     if len(public_keys.records) != len(dataset.rows) * 3:
         raise StageA0PreflightError("public keys must contain three cells per row")
 
@@ -168,7 +172,9 @@ def build_scientific_split_tensors(
         bytearray(feature_payload), dtype=torch.float32
     ).reshape(row_count, locked.FEATURE_DIMENSION)
     if not bool(torch.isfinite(features).all()):
-        raise StageA0PreflightError("scientific public features contain non-finite values")
+        raise StageA0PreflightError(
+            "scientific public features contain non-finite values"
+        )
     legal_mask = (
         torch.frombuffer(bytearray(mask_payload), dtype=torch.uint8)
         .reshape(row_count, locked.VOCABULARY_SIZE)
@@ -191,7 +197,9 @@ def build_scientific_split_tensors(
         for relative_offset in (1, 2, 3):
             cell = cells.get((*base, relative_offset))
             if cell is None:
-                raise StageA0PreflightError("scientific row is missing an opponent cell")
+                raise StageA0PreflightError(
+                    "scientific row is missing an opponent cell"
+                )
             target_index = relative_offset - 1
             if cell.availability is TargetAvailability.AVAILABLE:
                 if cell.target.tenpai not in (0, 1):
@@ -232,9 +240,7 @@ def build_scientific_split_tensors(
         selector = torch.tensor(indices, dtype=torch.long)
         if (
             int(
-                result[Split.VALIDATION]
-                .tenpai_eligible.index_select(0, selector)
-                .sum()
+                result[Split.VALIDATION].tenpai_eligible.index_select(0, selector).sum()
             )
             <= 0
         ):
