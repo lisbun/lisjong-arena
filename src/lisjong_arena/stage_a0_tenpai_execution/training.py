@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-import struct
 import json
 import math
 import platform
+import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
