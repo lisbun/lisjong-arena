@@ -1,0 +1,85 @@
+name: Issue 279 real PPI pilot
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/issue-279-real-pilot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  real-pilot:
+    name: issue-279-real-pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out merged main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install locked Arena environment
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Verify environment and clean merged revision
+        shell: bash
+        run: |
+          python -m lisjong_arena.environment_verify --project pyproject.toml
+          test -z "$(git status --porcelain)"
+          test "$(git branch --show-current)" = "main"
+          git rev-parse HEAD
+
+      - name: Recheck Issue 279 implementation tests
+        run: python -m unittest tests.test_finite_horizon_ppi_pilot -v
+
+      - name: Lock timing-calibrated protocol
+        shell: bash
+        run: |
+          mkdir -p artifacts/issue-279-ppi
+          python -m lisjong_arena.finite_horizon_ppi_pilot lock \
+            --out artifacts/issue-279-ppi/protocol.json \
+            --total-budget-hours 8
+
+      - name: Show locked protocol only
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = json.loads(Path("artifacts/issue-279-ppi/protocol.json").read_text())
+          print("protocol_identity=", p["protocol_identity"])
+          print("arena_revision=", p["environment_identity"]["arena_revision"])
+          print("L_max=", p["reference_measurement_budget"]["labeled_hanchans_max"])
+          print("U=", p["cheap_sample_size"])
+          print("budget_grid=", p["labeled_budget_grid"])
+          print("predicted_total_seconds=", p["compute_plan"]["predicted_total_seconds"])
+          PY
+
+      - name: Run exact locked real pilot
+        run: |
+          python -m lisjong_arena.finite_horizon_ppi_pilot run \
+            --lock artifacts/issue-279-ppi/protocol.json \
+            --out artifacts/issue-279-ppi/result.json \
+            --report artifacts/issue-279-ppi/report.md \
+            --workers 4
+
+      - name: Upload immutable pilot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-279-ppi-evidence
+          path: artifacts/issue-279-ppi/
+          if-no-files-found: warn
+          retention-days: 90
