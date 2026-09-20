@@ -19,6 +19,7 @@ from .protocol import (
     OUTCOME_NO_DENSE_SIGNAL,
     OUTCOME_POLICY_NOT_ESTABLISHED,
     OUTCOME_REPRESENTATION_NOT_POWERED,
+    OUTCOME_STOP_INVALID,
     OUTCOME_SUPERVISION_VALUE,
     RESULT_SCHEMA_VERSION,
 )
@@ -154,6 +155,42 @@ def build_result(
     return document
 
 
+def build_invalid_result(
+    *,
+    stage: str,
+    error: Exception,
+    preflight: dict | None,
+) -> dict[str, object]:
+    """Build the terminal STOP / INVALID artifact after a scientific failure."""
+    if type(stage) is not str or not stage:
+        raise StageA0ExecutionError("invalid-result stage must be a non-empty string")
+    document: dict[str, object] = {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "execution_protocol_id": EXECUTION_PROTOCOL_ID,
+        "issue": ISSUE_IDENTITY,
+        "parent_issue": "lisbun/lisjong-arena#255",
+        "prerequisite_issue": "lisbun/lisjong-arena#258",
+        "protocol_lock_issue": "lisbun/lisjong-arena#259",
+        "project_issue": "lisbun/lisjong-project#57",
+        "lock_b_identity": EXPECTED_LOCK_B_IDENTITY,
+        "protocol_identity": locked.PROTOCOL_ID,
+        "execution_revision": (
+            None
+            if preflight is None
+            else preflight["execution_provenance"]["lisjong_arena_revision"]
+        ),
+        "failure": {
+            "stage": stage,
+            "error_type": type(error).__name__,
+            "message": str(error),
+        },
+        "primary_outcome": OUTCOME_STOP_INVALID,
+        "protected_test_evaluated": False,
+    }
+    document["result_identity"] = _identity(document)
+    return document
+
+
 def validate_result(document: object) -> dict[str, object]:
     if type(document) is not dict:
         raise StageA0ExecutionError("completion result must be an object")
@@ -167,6 +204,22 @@ def validate_result(document: object) -> dict[str, object]:
         raise StageA0ExecutionError("completion claims protected TEST exposure")
     if document.get("result_identity") != _identity(document):
         raise StageA0ExecutionError("completion result identity mismatch")
+
+    if document.get("primary_outcome") == OUTCOME_STOP_INVALID:
+        failure = document.get("failure")
+        if type(failure) is not dict:
+            raise StageA0ExecutionError("STOP / INVALID result needs a failure block")
+        if set(failure) != {"stage", "error_type", "message"}:
+            raise StageA0ExecutionError("STOP / INVALID failure fields are invalid")
+        if any(type(failure[name]) is not str for name in failure):
+            raise StageA0ExecutionError("STOP / INVALID failure values must be strings")
+        if not failure["stage"] or not failure["error_type"]:
+            raise StageA0ExecutionError("STOP / INVALID failure identity is empty")
+        if "gate" in document or "downstream" in document:
+            raise StageA0ExecutionError(
+                "STOP / INVALID must not fabricate gate/downstream completion"
+            )
+        return document
 
     gate = document.get("gate")
     downstream = document.get("downstream")
@@ -201,4 +254,10 @@ def load_result(path) -> dict[str, object]:
     return validate_result(document)
 
 
-__all__ = ["build_result", "load_result", "save_result", "validate_result"]
+__all__ = [
+    "build_invalid_result",
+    "build_result",
+    "load_result",
+    "save_result",
+    "validate_result",
+]
