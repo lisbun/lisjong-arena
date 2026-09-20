@@ -244,7 +244,31 @@ $simulation = Invoke-AwsJson -Arguments @(
 )
 $decisions = @{}
 foreach ($entry in @($simulation.EvaluationResults)) {
-    $decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision
+    $resourceResultsProperty = $entry.PSObject.Properties["ResourceSpecificResults"]
+    $resourceResults = @()
+    if ($null -ne $resourceResultsProperty) {
+        $resourceResults = @($resourceResultsProperty.Value)
+    }
+    if ($resourceResults.Count -gt 0) {
+        foreach ($resourceResult in $resourceResults) {
+            $decisions[[string]$resourceResult.EvalResourceName] = [string]$resourceResult.EvalResourceDecision
+        }
+        continue
+    }
+
+    # Backward-compatible fallback for older IAM simulator response shapes.
+    # Current AWS responses place per-resource decisions in ResourceSpecificResults.
+    $evalResourceNameProperty = $entry.PSObject.Properties["EvalResourceName"]
+    if ($null -ne $evalResourceNameProperty -and
+        -not [string]::IsNullOrWhiteSpace([string]$evalResourceNameProperty.Value)) {
+        $decisions[[string]$evalResourceNameProperty.Value] = [string]$entry.EvalDecision
+    }
+}
+if (-not $decisions.ContainsKey($secretArn)) {
+    throw "IAM simulation did not return a resource-specific result for the intended RiichiLab secret."
+}
+if (-not $decisions.ContainsKey($denyProbeArn)) {
+    throw "IAM simulation did not return a resource-specific result for the deny-probe secret ARN."
 }
 if ($decisions[$secretArn] -ne "allowed") {
     throw "Instance role is not allowed to read the intended RiichiLab secret."

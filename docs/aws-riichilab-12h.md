@@ -73,8 +73,10 @@ live resources before starting a ranked run.
 
 The security group must have zero inbound rules. The instance role must be able
 to read the intended secret and must not pass the launcher's deny-probe secret
-simulation. The resulting EC2 instance requires IMDSv2 and uses SSM instead of
-inbound SSH.
+simulation. The launcher reads IAM simulator per-resource decisions from
+`ResourceSpecificResults`, matching the current AWS response contract for
+multi-resource simulation. The resulting EC2 instance requires IMDSv2 and uses
+SSM instead of inbound SSH.
 
 ## Normal stop versus cost fail-safe
 
