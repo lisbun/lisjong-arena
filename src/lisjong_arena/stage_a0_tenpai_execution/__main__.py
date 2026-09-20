@@ -99,9 +99,7 @@ def execute(arguments: argparse.Namespace) -> int:
                 )
 
         # Freeze all six identities before the first Gate A0.5 inference.
-        frozen = tuple(
-            load_checkpoint(checkpoint.path) for checkpoint in checkpoints
-        )
+        frozen = tuple(load_checkpoint(checkpoint.path) for checkpoint in checkpoints)
         t_checkpoints = tuple(
             checkpoint for checkpoint in frozen if checkpoint.arm.value == "T"
         )
@@ -125,12 +123,8 @@ def execute(arguments: argparse.Namespace) -> int:
             }
             downstream = evaluate_downstream(
                 gate_path=root / "gate-a0.5.json",
-                a_checkpoint_path=indexed[
-                    ("A", locked.INTERACTIVE_ANCHOR_SEED)
-                ].path,
-                t_checkpoint_path=indexed[
-                    ("T", locked.INTERACTIVE_ANCHOR_SEED)
-                ].path,
+                a_checkpoint_path=indexed[("A", locked.INTERACTIVE_ANCHOR_SEED)].path,
+                t_checkpoint_path=indexed[("T", locked.INTERACTIVE_ANCHOR_SEED)].path,
                 output_root=root / "downstream",
                 workers=arguments.workers,
                 progress_callback=_progress("downstream"),
@@ -155,9 +149,7 @@ def execute(arguments: argparse.Namespace) -> int:
                 {
                     "result_identity": completion["result_identity"],
                     "primary_outcome": completion["primary_outcome"],
-                    "protected_test_evaluated": completion[
-                        "protected_test_evaluated"
-                    ],
+                    "protected_test_evaluated": completion["protected_test_evaluated"],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -180,9 +172,7 @@ def execute(arguments: argparse.Namespace) -> int:
                     "result_identity": invalid["result_identity"],
                     "primary_outcome": invalid["primary_outcome"],
                     "failure": invalid["failure"],
-                    "protected_test_evaluated": invalid[
-                        "protected_test_evaluated"
-                    ],
+                    "protected_test_evaluated": invalid["protected_test_evaluated"],
                 },
                 ensure_ascii=False,
                 indent=2,
