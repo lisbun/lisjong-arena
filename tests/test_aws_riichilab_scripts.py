@@ -48,6 +48,8 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertIn("executionTimeout", text)
         self.assertIn("lisjong-cost-failsafe", text)
         self.assertIn("terminate-instances", text)
+        self.assertIn('state = "remote_verified_teardown_pending"', text)
+        self.assertIn("approximate_public_ipv4_cost_usd", text)
         self.assertNotIn("--user-data", text)
         self.assertNotIn("authorize-security-group-ingress", text.lower())
 
