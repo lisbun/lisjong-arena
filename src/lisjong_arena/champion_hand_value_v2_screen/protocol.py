@@ -34,15 +34,11 @@ RIICHIENV_VERSION = "0.4.10"
 
 CANDIDATE_IDENTITY = "champion-plus-hand-value-v2"
 CANDIDATE_CLASS_NAME = "HandValueTradeoffTargetedHonorReleasePolicy"
-CANDIDATE_SOURCE_MODULE = (
-    "lisjong.policies.hand_value_tradeoff_targeted_honor_release"
-)
+CANDIDATE_SOURCE_MODULE = "lisjong.policies.hand_value_tradeoff_targeted_honor_release"
 
 BASELINE_IDENTITY = "targeted-honor-release-terminal-progression"
 BASELINE_CLASS_NAME = "TargetedHonorReleaseTerminalProgressionPolicy"
-BASELINE_SOURCE_MODULE = (
-    "lisjong.policies.targeted_honor_release_terminal_progression"
-)
+BASELINE_SOURCE_MODULE = "lisjong.policies.targeted_honor_release_terminal_progression"
 
 CLASSIFICATION_RULE_ID = "seed-block-normal-approx-95-direct-abbb-v1"
 POSITIVE_LABEL = "CHAMPION + HAND VALUE V2 POSITIVE SIGNAL"
