@@ -16,12 +16,12 @@ from lisjong_arena.stage_a0_tenpai_feasibility.sidecar import (
     LoadedSidecar,
     load_sidecar,
 )
+from lisjong_arena.stage_a0_tenpai_protocol_lock import protocol as locked
 from lisjong_arena.stage_a0_tenpai_protocol_lock.artifact import load_lock_b
 from lisjong_arena.stage_a0_tenpai_protocol_lock.materialize import (
     LoadedPublicKeys,
     load_public_keys,
 )
-from lisjong_arena.stage_a0_tenpai_protocol_lock import protocol as locked
 
 from .errors import StageA0PreflightError
 from .protocol import EXPECTED_LOCK_B_IDENTITY
