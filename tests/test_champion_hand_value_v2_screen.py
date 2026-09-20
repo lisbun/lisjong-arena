@@ -87,15 +87,26 @@ class CompositionAggregationTest(unittest.TestCase):
                 action_changed_vs_champion=True,
                 action_changed_vs_former_parent=True,
             ),
+            CompositionDecisionRecord(
+                seed=52_200,
+                rotation=0,
+                ordinal=6,
+                candidate_seat=Seat(0),
+                selection_source="SHARED_ACTION",
+                champion_activation_stage=None,
+                hand_value_v2_attempted=True,
+                action_changed_vs_champion=False,
+                action_changed_vs_former_parent=False,
+            ),
         )
         game = GameCompositionDiagnostics(
             seed=52_200,
             rotation=0,
             candidate_seat=Seat(0),
-            focal_decision_count=6,
-            discard_decision_count=4,
+            focal_decision_count=7,
+            discard_decision_count=3,
             choice_discard_decision_count=2,
-            forced_discard_decision_count=2,
+            forced_discard_decision_count=1,
             candidate_runtime_total_seconds=1.0,
             game_wall_clock_seconds=2.0,
             records=records,
@@ -105,14 +116,14 @@ class CompositionAggregationTest(unittest.TestCase):
             replay_wall_clock_seconds=2.0,
         )
         self.assertEqual(aggregate.champion_targeted_preserved_count, 1)
-        self.assertEqual(aggregate.hand_value_v2_attempted_count, 1)
+        self.assertEqual(aggregate.hand_value_v2_attempted_count, 2)
         self.assertEqual(aggregate.action_changed_vs_champion_count, 1)
         self.assertEqual(
             aggregate.selection_source_counts,
             {
                 "CHAMPION_TARGETED_HONOR_RELEASE": 1,
                 "HAND_VALUE_V2": 1,
-                "SHARED_ACTION": 0,
+                "SHARED_ACTION": 1,
             },
         )
 
