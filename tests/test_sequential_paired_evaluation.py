@@ -18,6 +18,7 @@ from lisjong_arena.sequential_paired_evaluation import (
     FUTILITY_RULE_ID,
     METHOD_ID,
     MIN_LOOK_BLOCK_COUNT,
+    SIDEDNESS,
     SequentialPairedEvaluationError,
     SequentialPairedProtocol,
     build_sequential_result,
@@ -41,6 +42,8 @@ def protocol(
         estimand_id="mean(candidate-parent)",
         sign_convention="positive means candidate is better",
         paired_unit_id="one immutable paired seed-block summary",
+        runtime_requirements_id="single-process deterministic synthetic runtime",
+        provenance_requirements_id="exact source revision and paired-summary producer",
         ordered_seeds=tuple(range(10_000, 10_000 + maximum)),
         look_block_counts=looks,
         familywise_alpha=alpha,
@@ -71,6 +74,8 @@ class ProtocolLockTest(unittest.TestCase):
         self.assertEqual(document["method_id"], METHOD_ID)
         self.assertEqual(document["futility_rule_id"], FUTILITY_RULE_ID)
         self.assertEqual(FUTILITY_RULE_ID, "none-v1")
+        self.assertEqual(document["sidedness"], SIDEDNESS)
+        self.assertEqual(SIDEDNESS, "two-sided")
         self.assertEqual(locked.per_look_alpha, 0.05 / 4)
         self.assertGreater(locked.critical_value, 1.96)
 
@@ -93,6 +98,8 @@ class ProtocolLockTest(unittest.TestCase):
                 estimand_id="x",
                 sign_convention="x",
                 paired_unit_id="x",
+                runtime_requirements_id="x",
+                provenance_requirements_id="x",
                 ordered_seeds=(),
                 look_block_counts=(),
                 familywise_alpha=0.05,
@@ -112,6 +119,8 @@ class ProtocolLockTest(unittest.TestCase):
                 estimand_id=base.estimand_id,
                 sign_convention=base.sign_convention,
                 paired_unit_id=base.paired_unit_id,
+                runtime_requirements_id=base.runtime_requirements_id,
+                provenance_requirements_id=base.provenance_requirements_id,
                 ordered_seeds=(1,) * 20,
                 look_block_counts=(20,),
                 familywise_alpha=0.05,
