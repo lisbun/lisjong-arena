@@ -151,20 +151,25 @@ def _shared_hidden(model, features):
 
 
 def _policy_ce(model, tensors: ScientificSplitTensors) -> float:
+    """Locked choice-row masked Policy CE used for checkpoint selection."""
     import torch
 
+    selector = tensors.legal_mask.sum(dim=1) >= 2
+    count = int(selector.sum())
+    if count <= 0:
+        raise StageA0ExecutionError("Policy CE requires at least one choice row")
+    features = tensors.features[selector]
+    legal_mask = tensors.legal_mask[selector]
+    behavior = tensors.behavior_action_index[selector]
     model.eval()
     total = 0.0
-    count = tensors.row_count
-    if count <= 0:
-        raise StageA0ExecutionError("Policy CE requires at least one row")
     with torch.no_grad():
         for start in range(0, count, locked.BATCH_SIZE):
             stop = min(start + locked.BATCH_SIZE, count)
             losses = masked_cross_entropy(
-                model(tensors.features[start:stop]),
-                tensors.legal_mask[start:stop],
-                tensors.behavior_action_index[start:stop],
+                model(features[start:stop]),
+                legal_mask[start:stop],
+                behavior[start:stop],
             )
             total += float(losses.sum())
     return total / count
