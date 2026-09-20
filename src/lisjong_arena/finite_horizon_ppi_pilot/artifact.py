@@ -52,9 +52,13 @@ def _check_measurements(
     if any(not isinstance(item, HanchanMeasurement) for item in items):
         raise TypeError("measurements must contain HanchanMeasurement values")
     if tuple(item.seed for item in items) != expected_seeds:
-        raise PpiPilotArtifactError("measurement seeds do not match the locked schedule")
+        raise PpiPilotArtifactError(
+            "measurement seeds do not match the locked schedule"
+        )
     if labeled and any(item.reference_score is None for item in items):
-        raise PpiPilotArtifactError("labeled measurements must contain reference scores")
+        raise PpiPilotArtifactError(
+            "labeled measurements must contain reference scores"
+        )
     if not labeled and any(item.reference_score is not None for item in items):
         raise PpiPilotArtifactError("U measurements must not contain reference scores")
     return items
@@ -66,10 +70,18 @@ def _runtime_summary(
 ) -> dict[str, object]:
     all_items = unlabeled + labeled
     return {
-        "source_generation_seconds": sum(item.source_generation_seconds for item in all_items),
-        "candidate_selection_seconds": sum(item.candidate_selection_seconds for item in all_items),
-        "cheap_evaluation_seconds": sum(item.cheap_evaluation_seconds for item in all_items),
-        "reference_evaluation_seconds": sum(item.reference_evaluation_seconds for item in labeled),
+        "source_generation_seconds": sum(
+            item.source_generation_seconds for item in all_items
+        ),
+        "candidate_selection_seconds": sum(
+            item.candidate_selection_seconds for item in all_items
+        ),
+        "cheap_evaluation_seconds": sum(
+            item.cheap_evaluation_seconds for item in all_items
+        ),
+        "reference_evaluation_seconds": sum(
+            item.reference_evaluation_seconds for item in labeled
+        ),
         "unlabeled_hanchan_count": len(unlabeled),
         "labeled_hanchan_count": len(labeled),
         "total_measured_worker_seconds": sum(item.total_seconds for item in all_items),
