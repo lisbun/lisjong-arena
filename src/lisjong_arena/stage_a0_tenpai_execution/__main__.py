@@ -11,10 +11,10 @@ from lisjong_arena.stage_a0_tenpai_protocol_lock import protocol as locked
 
 from .data import build_scientific_split_tensors, load_scientific_data
 from .downstream import evaluate_downstream
-from .gate import evaluate_gate, save_gate
+from .gate import evaluate_gate, load_gate, save_gate
 from .preflight import run_preflight, save_preflight
 from .protocol import GATE_PASS
-from .result import build_invalid_result, build_result, save_result
+from .result import build_invalid_result, build_result, load_result, save_result
 from .training import load_checkpoint, save_checkpoint, train_seed_pair
 
 
@@ -110,7 +110,9 @@ def execute(arguments: argparse.Namespace) -> int:
             tensors=tensors,
             t_checkpoints=t_checkpoints,
         )
-        save_gate(gate, root / "gate-a0.5.json")
+        gate_path = root / "gate-a0.5.json"
+        save_gate(gate, gate_path)
+        gate = load_gate(gate_path)
         gate_label = gate["classification"]["label"]
         print(gate_label, flush=True)
 
@@ -143,7 +145,9 @@ def execute(arguments: argparse.Namespace) -> int:
             gate=gate,
             downstream=downstream,
         )
-        save_result(completion, root / "result.json")
+        result_path = root / "result.json"
+        save_result(completion, result_path)
+        completion = load_result(result_path)
         print(
             json.dumps(
                 {
@@ -166,6 +170,7 @@ def execute(arguments: argparse.Namespace) -> int:
         if invalid_path.exists():
             raise
         save_result(invalid, invalid_path)
+        invalid = load_result(invalid_path)
         print(
             json.dumps(
                 {
