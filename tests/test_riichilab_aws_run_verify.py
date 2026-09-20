@@ -16,7 +16,6 @@ from lisjong_arena.riichilab.durable_ranked_game_record import (
     RankedRecordProvenance,
 )
 
-
 _ARENA_REVISION = "2" * 40
 _TOKEN = "test-runtime-token-value-that-must-never-be-persisted"
 
