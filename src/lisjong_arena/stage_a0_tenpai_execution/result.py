@@ -27,7 +27,9 @@ from .training import LoadedCheckpoint
 
 
 def _identity(document: dict[str, object]) -> str:
-    logical = {key: value for key, value in document.items() if key != "result_identity"}
+    logical = {
+        key: value for key, value in document.items() if key != "result_identity"
+    }
     return hashlib.sha256(canonical_json_text(logical).encode("utf-8")).hexdigest()
 
 
@@ -67,14 +69,17 @@ def build_result(
     if len(checkpoints) != 6:
         raise StageA0ExecutionError("completion requires exactly six checkpoints")
 
-    indexed = {(checkpoint.arm.value, checkpoint.seed): checkpoint for checkpoint in checkpoints}
+    indexed = {
+        (checkpoint.arm.value, checkpoint.seed): checkpoint
+        for checkpoint in checkpoints
+    }
     expected_keys = {
-        (arm, seed)
-        for arm in ("A", "T")
-        for seed in locked.TRAINING_SEEDS
+        (arm, seed) for arm in ("A", "T") for seed in locked.TRAINING_SEEDS
     }
     if set(indexed) != expected_keys:
-        raise StageA0ExecutionError("completion checkpoint population is not A/T x 0/1/2")
+        raise StageA0ExecutionError(
+            "completion checkpoint population is not A/T x 0/1/2"
+        )
     for seed in locked.TRAINING_SEEDS:
         if (
             indexed[("A", seed)].manifest["initial_policy_fingerprint"]
