@@ -244,7 +244,11 @@ $simulation = Invoke-AwsJson -Arguments @(
 )
 $decisions = @{}
 foreach ($entry in @($simulation.EvaluationResults)) {
-    $resourceResults = @($entry.ResourceSpecificResults)
+    $resourceResultsProperty = $entry.PSObject.Properties["ResourceSpecificResults"]
+    $resourceResults = @()
+    if ($null -ne $resourceResultsProperty) {
+        $resourceResults = @($resourceResultsProperty.Value)
+    }
     if ($resourceResults.Count -gt 0) {
         foreach ($resourceResult in $resourceResults) {
             $decisions[[string]$resourceResult.EvalResourceName] = [string]$resourceResult.EvalResourceDecision
@@ -254,8 +258,10 @@ foreach ($entry in @($simulation.EvaluationResults)) {
 
     # Backward-compatible fallback for older IAM simulator response shapes.
     # Current AWS responses place per-resource decisions in ResourceSpecificResults.
-    if (-not [string]::IsNullOrWhiteSpace([string]$entry.EvalResourceName)) {
-        $decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision
+    $evalResourceNameProperty = $entry.PSObject.Properties["EvalResourceName"]
+    if ($null -ne $evalResourceNameProperty -and
+        -not [string]::IsNullOrWhiteSpace([string]$evalResourceNameProperty.Value)) {
+        $decisions[[string]$evalResourceNameProperty.Value] = [string]$entry.EvalDecision
     }
 }
 if (-not $decisions.ContainsKey($secretArn)) {
