@@ -112,6 +112,7 @@ class CompositionAggregationTest(unittest.TestCase):
             {
                 "CHAMPION_TARGETED_HONOR_RELEASE": 1,
                 "HAND_VALUE_V2": 1,
+                "SHARED_ACTION": 0,
             },
         )
 
