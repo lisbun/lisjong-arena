@@ -103,12 +103,8 @@ class ProtocolTest(unittest.TestCase):
 
 class ExperimentIsolationTest(unittest.TestCase):
     def test_unlabeled_path_never_computes_h3(self) -> None:
-        m3 = DiscardAction(
-            Seat.SEAT_0, Tile(TileType(TileCategory.MANZU, 3)), False
-        )
-        m4 = DiscardAction(
-            Seat.SEAT_0, Tile(TileType(TileCategory.MANZU, 4)), False
-        )
+        m3 = DiscardAction(Seat.SEAT_0, Tile(TileType(TileCategory.MANZU, 3)), False)
+        m4 = DiscardAction(Seat.SEAT_0, Tile(TileType(TileCategory.MANZU, 4)), False)
         observation = SimpleNamespace(
             decision_trace=SimpleNamespace(
                 legal_actions=(m3, m4),
@@ -117,9 +113,7 @@ class ExperimentIsolationTest(unittest.TestCase):
             policy_input=object(),
         )
         inspection = SimpleNamespace(
-            step_observations=(
-                SimpleNamespace(seat_decisions=(observation,)),
-            )
+            step_observations=(SimpleNamespace(seat_decisions=(observation,)),)
         )
         horizons: list[int] = []
 
