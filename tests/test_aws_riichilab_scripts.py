@@ -75,7 +75,6 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertLess(text.index("if ($SubmitOnly)"), text.index('$lastStatus = ""'))
         self.assertIn("collect-riichilab-12h.ps1", text)
 
-
     def test_launcher_uses_resource_specific_iam_simulator_results(self) -> None:
         text = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn("ResourceSpecificResults", text)
