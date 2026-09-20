@@ -29,16 +29,22 @@ jobs:
         shell: bash
         run: |
           body="$(mktemp)"
-          cat > "$body" <<EOF
-          ### Issue #279 real-pilot runner did not complete successfully
+          python - "$body" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
 
-          - workflow run: `$RUN_ID`
-          - conclusion: `$CONCLUSION`
-          - trigger head SHA: `$HEAD_SHA`
-          - run: $RUN_URL
+          text = f"""### Issue #279 real-pilot runner did not complete successfully
 
-          No statistical interpretation is recorded from this run. Issue #279 remains open.
-          EOF
+- workflow run: `{os.environ["RUN_ID"]}`
+- conclusion: `{os.environ["CONCLUSION"]}`
+- trigger head SHA: `{os.environ["HEAD_SHA"]}`
+- run: {os.environ["RUN_URL"]}
+
+No statistical interpretation is recorded from this run. Issue #279 remains open.
+"""
+          Path(sys.argv[1]).write_text(text)
+          PY
           gh issue comment 279 --repo lisbun/lisjong-arena --body-file "$body"
 
       - name: Download resumed pilot evidence
@@ -83,26 +89,28 @@ jobs:
           assert protocol["reference_measurement_budget"]["labeled_hanchans_max"] == 138
           assert protocol["cheap_sample_size"] == 552
           assert protocol["labeled_budget_grid"] == [17, 34, 69, 138]
+          assert result["protocol"]["protocol_identity"] == expected_protocol
+          assert result["protocol"]["environment_identity"]["arena_revision"] == expected_revision
+          assert result["result_exposure_state"] == "EXPOSED"
 
-          result_text = json.dumps(result, sort_keys=True)
-          assert expected_protocol in result_text, "result artifact does not bind to locked protocol identity"
-
-          header = f"""### Issue #279 real PPI pilot completed
-
-          - workflow run: `{os.environ['RUN_ID']}`
-          - trigger head SHA: `{os.environ['HEAD_SHA']}`
-          - locked Arena revision: `{expected_revision}`
-          - protocol identity: `{expected_protocol}`
-          - evidence artifact: `issue-279-ppi-evidence-resumed`
-          - run: {os.environ['RUN_URL']}
-
-          The following report is emitted from the immutable result artifact produced by the exact pre-exposure protocol.
-
-          """
+          header = (
+              "### Issue #279 real PPI pilot completed\n\n"
+              f"- workflow run: `{os.environ['RUN_ID']}`\n"
+              f"- trigger head SHA: `{os.environ['HEAD_SHA']}`\n"
+              f"- locked Arena revision: `{expected_revision}`\n"
+              f"- protocol identity: `{expected_protocol}`\n"
+              "- evidence artifact: `issue-279-ppi-evidence-resumed`\n"
+              f"- run: {os.environ['RUN_URL']}\n\n"
+              "The following report is emitted from the immutable result artifact "
+              "produced by the exact pre-exposure protocol.\n\n"
+          )
 
           body = header + report
           if len(body) > 60000:
-              body = body[:59000] + "\n\n[report truncated in issue comment; full report remains in the Actions artifact]\n"
+              body = body[:59000] + (
+                  "\n\n[report truncated in issue comment; "
+                  "full report remains in the Actions artifact]\n"
+              )
 
           (root / "issue-comment.md").write_text(body)
           PY
