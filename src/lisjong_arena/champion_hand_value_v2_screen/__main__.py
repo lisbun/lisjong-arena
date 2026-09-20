@@ -28,9 +28,7 @@ def _parse_seed_range(raw: str) -> tuple[int, ...]:
             "seed range endpoints must be integers"
         ) from None
     if start < 0 or end < start:
-        raise argparse.ArgumentTypeError(
-            "seed range must be non-negative and ordered"
-        )
+        raise argparse.ArgumentTypeError("seed range must be non-negative and ordered")
     return tuple(range(start, end + 1))
 
 
