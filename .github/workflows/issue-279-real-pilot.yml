@@ -98,11 +98,14 @@ jobs:
           mkdir -p "$out"
           cp "$RUNNER_TEMP/issue-279-ppi-lock/protocol.json" "$out/protocol.json"
           test -z "$(git status --porcelain)"
-          python -m lisjong_arena.finite_horizon_ppi_pilot run \
+
+          python -c 'from lisjong_arena.finite_horizon_ppi_pilot.__main__ import main; raise SystemExit(main())' \
+            run \
             --lock "$RUNNER_TEMP/issue-279-ppi-lock/protocol.json" \
             --out "$out/result.json" \
             --report "$out/report.md" \
             --workers 4
+
           test -z "$(git status --porcelain)"
 
       - name: Upload immutable pilot evidence
