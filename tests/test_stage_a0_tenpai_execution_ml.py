@@ -33,9 +33,11 @@ from lisjong_arena.stage_a0_tenpai_protocol_lock import protocol as locked
 class StageA0CheckpointServingTest(unittest.TestCase):
     def _scientific(self):
         return SimpleNamespace(
-            lock_b={"lock_identity": (
-                "a7f1c471a8c2f983c5efab9147651eb48b8788eecb1aa296222e21fd9418e93e"
-            )},
+            lock_b={
+                "lock_identity": (
+                    "a7f1c471a8c2f983c5efab9147651eb48b8788eecb1aa296222e21fd9418e93e"
+                )
+            },
             dataset=SimpleNamespace(
                 identity=locked.RETAINED_DATASET_IDENTITY,
                 manifest={
@@ -50,9 +52,7 @@ class StageA0CheckpointServingTest(unittest.TestCase):
     def _result(self, arm: Arm) -> TrainingResult:
         torch.manual_seed(0)
         model = create_model()
-        auxiliary = (
-            torch.nn.Linear(locked.HIDDEN_WIDTH, 3) if arm is Arm.T else None
-        )
+        auxiliary = torch.nn.Linear(locked.HIDDEN_WIDTH, 3) if arm is Arm.T else None
         return TrainingResult(
             arm=arm,
             seed=0,
