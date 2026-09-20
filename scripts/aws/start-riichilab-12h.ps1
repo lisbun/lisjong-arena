@@ -316,6 +316,26 @@ $statePath = Join-Path $runDir "state.json"
 $completionPath = Join-Path $runDir "completion.json"
 $preflightPath = Join-Path $runDir "preflight.json"
 
+$preflightHourlyPrice = Get-HourlyPrice
+$preflightProjectedComputeCost = $null
+if ($null -ne $preflightHourlyPrice) {
+    $preflightProjectedComputeCost = [math]::Round(
+        ([double]$preflightHourlyPrice * $FailSafeHours),
+        4
+    )
+}
+$preflightProjectedPublicIpv4Cost = [math]::Round(
+    ($PublicIpv4HourlyPriceUsd * $FailSafeHours),
+    4
+)
+$preflightProjectedKnownCost = $null
+if ($null -ne $preflightProjectedComputeCost) {
+    $preflightProjectedKnownCost = [math]::Round(
+        ($preflightProjectedComputeCost + $preflightProjectedPublicIpv4Cost),
+        4
+    )
+}
+
 $preflightSummary = [ordered]@{
     status = "PASS"
     checked_at_utc = (Get-Date).ToUniversalTime().ToString("o")
@@ -333,6 +353,13 @@ $preflightSummary = [ordered]@{
     secret_id = $SecretId
     intended_secret_read_allowed = ($decisions[$secretArn] -eq "allowed")
     deny_probe_secret_read_allowed = ($decisions[$denyProbeArn] -eq "allowed")
+    projected_cost_bound_hours = $FailSafeHours
+    hourly_compute_price_usd = $preflightHourlyPrice
+    projected_compute_cost_usd = $preflightProjectedComputeCost
+    public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
+    projected_public_ipv4_cost_usd = $preflightProjectedPublicIpv4Cost
+    projected_known_cost_usd = $preflightProjectedKnownCost
+    cost_note = "Projected known cost uses the independent fail-safe horizon as a conservative bound and includes EC2 compute when pricing lookup succeeds plus one in-use public IPv4 address. EBS/data transfer and T3 surplus CPU credits are excluded."
     billable_resource_created = $false
 }
 Write-JsonFile -Value $preflightSummary -Path $preflightPath
