@@ -245,12 +245,10 @@ def _train_arm_from_initial_state(
     )
     generator = torch.Generator()
     generator.manual_seed(seed)
+    # Shuffle row indices, not privileged payload tensors. This keeps A/T row
+    # order identical while the A arm never reads Tenpai targets at all.
     dataset = torch.utils.data.TensorDataset(
-        train.features,
-        train.legal_mask,
-        train.behavior_action_index,
-        train.tenpai_targets,
-        train.tenpai_eligible,
+        torch.arange(train.row_count, dtype=torch.long)
     )
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -278,8 +276,11 @@ def _train_arm_from_initial_state(
         auxiliary_sum = 0.0
         auxiliary_count = 0
 
-        for features, legal_mask, behavior, tenpai_targets, tenpai_eligible in loader:
+        for (row_indices,) in loader:
             optimizer.zero_grad(set_to_none=True)
+            features = train.features.index_select(0, row_indices)
+            legal_mask = train.legal_mask.index_select(0, row_indices)
+            behavior = train.behavior_action_index.index_select(0, row_indices)
             hidden = _shared_hidden(model, features)
             logits = model.network[2](hidden)
             policy_losses = masked_cross_entropy(logits, legal_mask, behavior)
@@ -287,6 +288,8 @@ def _train_arm_from_initial_state(
             loss = policy_loss
 
             if head is not None:
+                tenpai_targets = train.tenpai_targets.index_select(0, row_indices)
+                tenpai_eligible = train.tenpai_eligible.index_select(0, row_indices)
                 auxiliary_logits = head(hidden)
                 auxiliary_losses = torch.nn.functional.binary_cross_entropy_with_logits(
                     auxiliary_logits,
@@ -309,7 +312,7 @@ def _train_arm_from_initial_state(
             loss.backward()
             optimizer.step()
             policy_sum += float(policy_losses.detach().sum())
-            policy_count += int(behavior.shape[0])
+            policy_count += int(row_indices.shape[0])
 
         if policy_count != train.row_count:
             raise StageA0ExecutionError("training epoch did not visit every TRAIN row")
