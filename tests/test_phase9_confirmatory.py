@@ -41,8 +41,8 @@ from lisjong_arena.phase9_confirmatory.data import (
     validate_holdout_dataset,
 )
 from lisjong_arena.phase9_confirmatory.preflight import (
-    artifact_file_state,
     _verify_historical_arena,
+    artifact_file_state,
     generation_report_value,
     require_formal_execution_authorization,
     verify_artifact_state,
@@ -61,6 +61,7 @@ from lisjong_arena.phase9_confirmatory.protocol import (
     EVALUATION_TORCH_VERSION,
     HISTORICAL_ARENA_REF,
     HISTORICAL_REVISIONS,
+    HISTORICAL_RIICHIENV_VERSION,
     HISTORICAL_TREES,
     HOLDOUT_GAME_COUNT,
     HOLDOUT_ROLE,
