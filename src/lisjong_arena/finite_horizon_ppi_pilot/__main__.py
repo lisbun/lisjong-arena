@@ -62,7 +62,9 @@ def _parser() -> argparse.ArgumentParser:
     synthetic.add_argument("--out", type=Path, required=True)
     synthetic.add_argument("--replications", type=int, default=500)
 
-    lock = sub.add_parser("lock", help="timing-calibrate and write the real protocol lock")
+    lock = sub.add_parser(
+        "lock", help="timing-calibrate and write the real protocol lock"
+    )
     lock.add_argument("--out", type=Path, required=True)
     lock.add_argument("--total-budget-hours", type=float, required=True)
     lock.add_argument("--cheap-multiplier", type=int, default=4)
@@ -120,13 +122,9 @@ def main(argv: list[str] | None = None) -> int:
     l_seeds = _seed_spec(protocol, "L_seed_specification")
 
     print(f"running_U={len(u_seeds)} workers={args.workers}", flush=True)
-    unlabeled = _measure_many(
-        u_seeds, include_reference=False, workers=args.workers
-    )
+    unlabeled = _measure_many(u_seeds, include_reference=False, workers=args.workers)
     print(f"running_L={len(l_seeds)} workers={args.workers}", flush=True)
-    labeled = _measure_many(
-        l_seeds, include_reference=True, workers=args.workers
-    )
+    labeled = _measure_many(l_seeds, include_reference=True, workers=args.workers)
     result = build_result_artifact(
         protocol=protocol,
         unlabeled_measurements=unlabeled,
