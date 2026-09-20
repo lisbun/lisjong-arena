@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-
-import torch
 
 from lisjong_arena.learned_policy_offline_q.artifact import (
     feature_block,
@@ -29,7 +28,10 @@ from lisjong_arena.stage_a0_tenpai_execution.training import (
 )
 from lisjong_arena.stage_a0_tenpai_protocol_lock import protocol as locked
 
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class StageA0CheckpointServingTest(unittest.TestCase):
     def _scientific(self):
         return SimpleNamespace(
@@ -50,6 +52,8 @@ class StageA0CheckpointServingTest(unittest.TestCase):
         )
 
     def _result(self, arm: Arm) -> TrainingResult:
+        import torch
+
         torch.manual_seed(0)
         model = create_model()
         auxiliary = torch.nn.Linear(locked.HIDDEN_WIDTH, 3) if arm is Arm.T else None
@@ -82,6 +86,8 @@ class StageA0CheckpointServingTest(unittest.TestCase):
         )
 
     def test_t_checkpoint_strict_loads_and_serves_as_policy_only(self) -> None:
+        import torch
+
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "t"
             saved = save_checkpoint(path, self._scientific(), self._result(Arm.T))
