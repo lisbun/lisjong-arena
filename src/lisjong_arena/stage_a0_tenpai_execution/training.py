@@ -14,6 +14,7 @@ from shutil import rmtree
 from tempfile import mkdtemp
 
 from lisjong_arena._artifact_io import canonical_json_text
+from lisjong_arena.learned_policy_offline_q.artifact import feature_block, vocabulary_block
 from lisjong_arena.learned_policy_offline_q.protocol import Split
 from lisjong_arena.learned_policy_stage2.network import (
     create_model,
@@ -34,6 +35,8 @@ from .protocol import (
     CHECKPOINT_SCHEMA_VERSION,
     EXECUTION_PROTOCOL_ID,
     EXPECTED_LOCK_B_IDENTITY,
+    EXPECTED_PUBLIC_KEYS_IDENTITY,
+    EXPECTED_SCIENTIFIC_SIDECAR_IDENTITY,
     POLICY_PARAMETER_COUNT,
     auxiliary_seed_namespace,
     require_arm,
@@ -544,6 +547,17 @@ def load_checkpoint(path) -> LoadedCheckpoint:
         raise StageA0CheckpointError("checkpoint arm/training seed is invalid") from error
     if manifest.get("dataset_identity") != locked.RETAINED_DATASET_IDENTITY:
         raise StageA0CheckpointError("checkpoint retained dataset identity drifted")
+    if (
+        manifest.get("scientific_sidecar_identity")
+        != EXPECTED_SCIENTIFIC_SIDECAR_IDENTITY
+    ):
+        raise StageA0CheckpointError("checkpoint scientific sidecar identity drifted")
+    if manifest.get("public_keys_identity") != EXPECTED_PUBLIC_KEYS_IDENTITY:
+        raise StageA0CheckpointError("checkpoint public-key identity drifted")
+    if manifest.get("feature") != feature_block():
+        raise StageA0CheckpointError("checkpoint feature schema identity drifted")
+    if manifest.get("vocabulary") != vocabulary_block():
+        raise StageA0CheckpointError("checkpoint action vocabulary identity drifted")
     if manifest.get("parameter_count") != POLICY_PARAMETER_COUNT:
         raise StageA0CheckpointError("checkpoint Policy parameter count drifted")
     if manifest.get("auxiliary_parameter_count") != (
