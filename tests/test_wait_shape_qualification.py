@@ -103,11 +103,11 @@ class CanonicalProjectionTest(unittest.TestCase):
 
         wait[0] = SCALE
         wait[1] = SCALE
-        wait[2] = SCALE
+        wait[3] = SCALE
         tanki[0] = SCALE
         shanpon[0] = SCALE
         ryanmen_low[1] = SCALE
-        ryanmen_high[2] = SCALE
+        ryanmen_high[3] = SCALE
 
         projection = project_exact_wait_shapes(
             _exact_belief(
