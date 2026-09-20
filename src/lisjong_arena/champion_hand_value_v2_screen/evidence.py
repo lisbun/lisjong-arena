@@ -604,6 +604,35 @@ def load_result_document(path: str | Path) -> dict[str, object]:
     return dict(raw)
 
 
+def verify_result_document(
+    path: str | Path,
+    *,
+    strength_artifact_path: str | Path,
+    trace_path: str | Path,
+    locked_provenance: SingleRoundExecutionProvenance,
+    worker_count: int,
+) -> dict[str, object]:
+    loaded = load_result_document(path)
+    strength = load_single_round_artifact(strength_artifact_path)
+    trace = load_trace_artifact(
+        trace_path,
+        strength_artifact_path=strength_artifact_path,
+    )
+    rederived = build_result_document(
+        strength_artifact=strength,
+        strength_artifact_path=strength_artifact_path,
+        trace_document=trace,
+        trace_path=trace_path,
+        locked_provenance=locked_provenance,
+        worker_count=worker_count,
+    )
+    if loaded != rederived:
+        raise ChampionHandValueV2EvidenceError(
+            "persisted result differs from strict re-derivation from raw evidence"
+        )
+    return loaded
+
+
 def build_classified_result(
     *,
     result_document: dict[str, object],
@@ -684,4 +713,5 @@ __all__ = [
     "save_classified_result",
     "save_result_document",
     "save_trace_artifact",
+    "verify_result_document",
 ]
