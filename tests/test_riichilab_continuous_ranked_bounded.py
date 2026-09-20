@@ -152,6 +152,26 @@ class BoundedCompletedGamesTest(unittest.TestCase):
 
 
 class DurationBoundTest(unittest.TestCase):
+    def test_cutoff_before_first_game_starts_zero_games(self) -> None:
+        created: list[object] = []
+        ticks = iter([0.0, 10.0])
+
+        profile = _make_profile(created=created)
+        summary = asyncio.run(
+            run_continuous_ranked(
+                profile,
+                "token",
+                max_duration_seconds=10,
+                sleep=_no_sleep,
+                monotonic=lambda: next(ticks),
+            )
+        )
+
+        self.assertEqual(created, [])
+        self.assertEqual(summary.completed_games, 0)
+        self.assertEqual(summary.failed_games, 0)
+        self.assertEqual(summary.stopped_reason, "duration_reached")
+
     def test_cutoff_after_in_progress_game_stops_without_requeue(self) -> None:
         clock = _FakeClock()
         calls = 0
