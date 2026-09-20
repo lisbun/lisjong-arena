@@ -9,11 +9,18 @@ from types import SimpleNamespace
 
 import torch
 
-from lisjong_arena.learned_policy_offline_q.artifact import feature_block, vocabulary_block
+from lisjong_arena.learned_policy_offline_q.artifact import (
+    feature_block,
+    vocabulary_block,
+)
 from lisjong_arena.learned_policy_stage2.network import create_model
 from lisjong_arena.learned_policy_stage3.artifact import load_serving_checkpoint
 from lisjong_arena.learned_policy_stage3.protocol import ArtifactClass
-from lisjong_arena.stage_a0_tenpai_execution.protocol import Arm
+from lisjong_arena.stage_a0_tenpai_execution.protocol import (
+    EXPECTED_PUBLIC_KEYS_IDENTITY,
+    EXPECTED_SCIENTIFIC_SIDECAR_IDENTITY,
+    Arm,
+)
 from lisjong_arena.stage_a0_tenpai_execution.training import (
     EpochRecord,
     TrainingResult,
@@ -36,8 +43,8 @@ class StageA0CheckpointServingTest(unittest.TestCase):
                     "vocabulary": vocabulary_block(),
                 },
             ),
-            sidecar=SimpleNamespace(identity="1" * 64),
-            public_keys=SimpleNamespace(identity="2" * 64),
+            sidecar=SimpleNamespace(identity=EXPECTED_SCIENTIFIC_SIDECAR_IDENTITY),
+            public_keys=SimpleNamespace(identity=EXPECTED_PUBLIC_KEYS_IDENTITY),
         )
 
     def _result(self, arm: Arm) -> TrainingResult:
