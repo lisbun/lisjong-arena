@@ -50,6 +50,22 @@ async def _no_sleep(_delay: float) -> None:
     return None
 
 
+class _FakeClock:
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+    async def sleep(self, delay: float) -> None:
+        self.sleeps.append(delay)
+        self.now += delay
+
+
 class BoundedCompletedGamesTest(unittest.TestCase):
     def test_target_stops_after_exact_completed_count_without_extra_policy(
         self,
@@ -133,6 +149,201 @@ class BoundedCompletedGamesTest(unittest.TestCase):
                         )
                     )
                 self.assertEqual(created, [])
+
+
+class DurationBoundTest(unittest.TestCase):
+    def test_cutoff_before_first_game_starts_zero_games(self) -> None:
+        created: list[object] = []
+        ticks = iter([0.0, 10.0])
+
+        profile = _make_profile(created=created)
+        summary = asyncio.run(
+            run_continuous_ranked(
+                profile,
+                "token",
+                max_duration_seconds=10,
+                sleep=_no_sleep,
+                monotonic=lambda: next(ticks),
+            )
+        )
+
+        self.assertEqual(created, [])
+        self.assertEqual(summary.completed_games, 0)
+        self.assertEqual(summary.failed_games, 0)
+        self.assertEqual(summary.stopped_reason, "duration_reached")
+
+    def test_cutoff_after_in_progress_game_stops_without_requeue(self) -> None:
+        clock = _FakeClock()
+        calls = 0
+        created: list[object] = []
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            nonlocal calls
+            calls += 1
+            clock.advance(12.0)
+
+        profile = _make_profile(created=created)
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    profile,
+                    "token",
+                    max_duration_seconds=10,
+                    sleep=clock.sleep,
+                    monotonic=clock.monotonic,
+                )
+            )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(summary.completed_games, 1)
+        self.assertEqual(summary.failed_games, 0)
+        self.assertEqual(summary.requested_duration_seconds, 10)
+        self.assertEqual(summary.stopped_reason, "duration_reached")
+
+    def test_retry_backoff_is_capped_at_duration_and_does_not_retry(self) -> None:
+        clock = _FakeClock()
+        calls = 0
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            nonlocal calls
+            calls += 1
+            clock.advance(8.0)
+            raise TransportError("temporary")
+
+        profile = _make_profile()
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    profile,
+                    "token",
+                    max_duration_seconds=10,
+                    sleep=clock.sleep,
+                    monotonic=clock.monotonic,
+                    failure_budget=5,
+                )
+            )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(clock.sleeps, [2.0])
+        self.assertEqual(summary.completed_games, 0)
+        self.assertEqual(summary.failed_games, 1)
+        self.assertEqual(summary.stopped_reason, "duration_reached")
+
+    def test_transport_failure_after_cutoff_does_not_sleep_or_retry(self) -> None:
+        clock = _FakeClock()
+        calls = 0
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            nonlocal calls
+            calls += 1
+            clock.advance(11.0)
+            raise TransportError("temporary")
+
+        profile = _make_profile()
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    profile,
+                    "token",
+                    max_duration_seconds=10,
+                    sleep=clock.sleep,
+                    monotonic=clock.monotonic,
+                    failure_budget=5,
+                )
+            )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(clock.sleeps, [])
+        self.assertEqual(summary.failed_games, 1)
+        self.assertEqual(summary.stopped_reason, "duration_reached")
+
+    def test_completed_game_target_can_win_before_duration(self) -> None:
+        clock = _FakeClock()
+        calls = 0
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            nonlocal calls
+            calls += 1
+            clock.advance(1.0)
+
+        profile = _make_profile()
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    profile,
+                    "token",
+                    max_completed_games=1,
+                    max_duration_seconds=100,
+                    sleep=clock.sleep,
+                    monotonic=clock.monotonic,
+                )
+            )
+
+        self.assertEqual(calls, 1)
+        self.assertEqual(summary.completed_games, 1)
+        self.assertEqual(summary.stopped_reason, "target_completed_games_reached")
+
+    def test_invalid_library_durations_fail_before_policy_creation(self) -> None:
+        for invalid in (0, -1, True, 1.5):
+            with self.subTest(invalid=invalid):
+                created: list[object] = []
+                profile = _make_profile(created=created)
+                with self.assertRaises(ValueError):
+                    asyncio.run(
+                        run_continuous_ranked(
+                            profile,
+                            "token",
+                            max_duration_seconds=invalid,  # type: ignore[arg-type]
+                            sleep=_no_sleep,
+                        )
+                    )
+                self.assertEqual(created, [])
+
+    def test_duration_stop_after_durable_finalization_counts_completed_game(
+        self,
+    ) -> None:
+        clock = _FakeClock()
+        attempts = 0
+
+        async def _fake_acquire(policy, token, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            clock.advance(12.0)
+            return object()
+
+        profile = _make_profile()
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked._acquire_ranked_record",
+            _fake_acquire,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    profile,
+                    "token",
+                    record_dir="record-root",
+                    max_duration_seconds=10,
+                    sleep=clock.sleep,
+                    monotonic=clock.monotonic,
+                )
+            )
+
+        self.assertEqual(attempts, 1)
+        self.assertEqual(summary.completed_games, 1)
+        self.assertTrue(summary.records_enabled)
+        self.assertEqual(summary.stopped_reason, "duration_reached")
 
 
 class DurableAcquisitionTest(unittest.TestCase):
@@ -306,6 +517,64 @@ class BoundedCliTest(unittest.TestCase):
         self.assertIn("requested completed games: 2", stdout.getvalue())
         self.assertIn("records: on", stdout.getvalue())
         self.assertNotIn("secret-token", stdout.getvalue())
+
+    def test_cli_forwards_duration_seconds(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def _fake_continuous(profile, token, **kwargs):
+            captured.update(kwargs)
+            return ContinuousRunSummary(
+                profile=profile.name,
+                completed_games=1,
+                failed_games=0,
+                consecutive_failures=0,
+                last_failure_type=None,
+                stopped_reason="duration_reached",
+                requested_duration_seconds=43200,
+                records_enabled=True,
+            )
+
+        stdout = io.StringIO()
+        with patch.dict(os.environ, {_DEV_TOKEN_VAR: "secret-token"}, clear=True):
+            with patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_continuous_ranked",
+                _fake_continuous,
+            ):
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = _run_cli(
+                        [
+                            "--profile",
+                            "lisjong-dev",
+                            "--duration-seconds",
+                            "43200",
+                            "--record-dir",
+                            "record-root",
+                        ]
+                    )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["max_duration_seconds"], 43200)
+        self.assertIn("requested duration seconds: 43200", stdout.getvalue())
+        self.assertNotIn("secret-token", stdout.getvalue())
+
+    def test_cli_rejects_non_positive_duration(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                _run_cli(
+                    [
+                        "--profile",
+                        "lisjong-dev",
+                        "--duration-seconds",
+                        "0",
+                    ]
+                )
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn(
+            "--duration-seconds must be a positive integer",
+            stderr.getvalue(),
+        )
 
     def test_record_dir_conflicts_with_trace_environment_before_execution(self) -> None:
         called = False

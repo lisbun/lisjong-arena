@@ -18,6 +18,33 @@ python -m lisjong_arena.riichilab.continuous_ranked `
 
 When `--games` is omitted, the existing unbounded-until-stop behavior is preserved.
 
+## Graceful duration bound
+
+Use `--duration-seconds N` to stop starting new hanchan after `N` seconds of monotonic elapsed runtime:
+
+```bash
+python -m lisjong_arena.riichilab.continuous_ranked \
+  --profile lisjong-dev \
+  --duration-seconds 43200 \
+  --record-dir /path/to/ranked-records
+```
+
+`N` must be a positive integer. The duration starts when the continuous runner begins. The cutoff is checked only at safe orchestration boundaries: an in-progress hanchan is **not** cancelled. If the cutoff arrives while a hanchan is running, that hanchan finishes normally; with `--record-dir`, its durable record is finalized and strict-read before the runner stops. Therefore actual process runtime can exceed the requested duration by roughly the remainder of one hanchan plus finalization time.
+
+After the cutoff, the runner does not create a fresh Policy, open a new ranked connection, start a new hanchan, or begin a retry. If the cutoff falls during retry backoff, the wait is capped at the remaining duration rather than sleeping the full backoff interval.
+
+A duration stop reports:
+
+```text
+stopped reason: duration_reached
+```
+
+and exits normally.
+
+`--games` and `--duration-seconds` may be combined. The first observed bound stops the runner; if both are satisfied at the same safe boundary, the existing completed-game target check keeps precedence.
+
+When `--duration-seconds` is omitted, the existing unbounded-until-stop behavior is preserved. This option is a graceful orchestration bound, not a process-kill timeout and not an absolute-time scheduler.
+
 ## Per-hanchan durable records
 
 Use `--record-dir` to acquire each completed hanchan through the existing Issue #168 durable ranked game record contract:
