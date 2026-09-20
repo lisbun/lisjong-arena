@@ -231,9 +231,7 @@ def _validate_paired_units(
     paired_units: tuple[PairedSeedDelta, ...],
 ) -> None:
     if type(paired_units) is not tuple or not paired_units:
-        raise SequentialPairedEvaluationError(
-            "paired_units must be a non-empty tuple"
-        )
+        raise SequentialPairedEvaluationError("paired_units must be a non-empty tuple")
     if len(paired_units) > protocol.maximum_block_count:
         raise SequentialPairedEvaluationError(
             "paired_units exceed the locked maximum sample size"
@@ -393,13 +391,18 @@ def _protocol_from_document(value: object) -> SequentialPairedProtocol:
     if expect_str(raw["method_id"], "protocol.method_id") != METHOD_ID:
         raise SequentialPairedEvaluationError("sequential method id drifted")
     if (
-        expect_str(raw["numeric_implementation_id"], "protocol.numeric_implementation_id")
+        expect_str(
+            raw["numeric_implementation_id"], "protocol.numeric_implementation_id"
+        )
         != NUMERIC_IMPLEMENTATION_ID
     ):
         raise SequentialPairedEvaluationError(
             "sequential numeric implementation id drifted"
         )
-    if expect_str(raw["futility_rule_id"], "protocol.futility_rule_id") != FUTILITY_RULE_ID:
+    if (
+        expect_str(raw["futility_rule_id"], "protocol.futility_rule_id")
+        != FUTILITY_RULE_ID
+    ):
         raise SequentialPairedEvaluationError("sequential futility rule drifted")
     if expect_str(raw["sidedness"], "protocol.sidedness") != SIDEDNESS:
         raise SequentialPairedEvaluationError("sequential sidedness drifted")
@@ -419,9 +422,7 @@ def _protocol_from_document(value: object) -> SequentialPairedProtocol:
     protocol = SequentialPairedProtocol(
         protocol_id=expect_str(raw["protocol_id"], "protocol.protocol_id"),
         estimand_id=expect_str(raw["estimand_id"], "protocol.estimand_id"),
-        sign_convention=expect_str(
-            raw["sign_convention"], "protocol.sign_convention"
-        ),
+        sign_convention=expect_str(raw["sign_convention"], "protocol.sign_convention"),
         paired_unit_id=expect_str(raw["paired_unit_id"], "protocol.paired_unit_id"),
         runtime_requirements_id=expect_str(
             raw["runtime_requirements_id"], "protocol.runtime_requirements_id"
@@ -436,17 +437,20 @@ def _protocol_from_document(value: object) -> SequentialPairedProtocol:
         ),
         delta_min=expect_float(raw["delta_min"], "protocol.delta_min"),
     )
-    if expect_int(
-        raw["maximum_block_count"], "protocol.maximum_block_count"
-    ) != protocol.maximum_block_count:
+    if (
+        expect_int(raw["maximum_block_count"], "protocol.maximum_block_count")
+        != protocol.maximum_block_count
+    ):
         raise SequentialPairedEvaluationError("maximum sample size drifted")
-    if expect_float(
-        raw["per_look_alpha"], "protocol.per_look_alpha"
-    ) != protocol.per_look_alpha:
+    if (
+        expect_float(raw["per_look_alpha"], "protocol.per_look_alpha")
+        != protocol.per_look_alpha
+    ):
         raise SequentialPairedEvaluationError("per-look alpha drifted")
-    if expect_float(
-        raw["critical_value"], "protocol.critical_value"
-    ) != protocol.critical_value:
+    if (
+        expect_float(raw["critical_value"], "protocol.critical_value")
+        != protocol.critical_value
+    ):
         raise SequentialPairedEvaluationError("critical boundary drifted")
     if raw != protocol.to_document():
         raise SequentialPairedEvaluationError("protocol document drifted")
@@ -462,9 +466,7 @@ def _paired_unit_from_document(value: object, index: int) -> PairedSeedDelta:
     )
     return PairedSeedDelta(
         seed=expect_int(raw["seed"], f"{context}.seed"),
-        candidate_mean=expect_float(
-            raw["candidate_mean"], f"{context}.candidate_mean"
-        ),
+        candidate_mean=expect_float(raw["candidate_mean"], f"{context}.candidate_mean"),
         parent_mean=expect_float(raw["parent_mean"], f"{context}.parent_mean"),
         delta=expect_float(raw["delta"], f"{context}.delta"),
     )
@@ -489,12 +491,12 @@ def parse_sequential_result(value: object) -> dict[str, object]:
             "sequential_result",
         )
         if expect_str(raw["schema"], "sequential_result.schema") != SCHEMA:
-            raise SequentialPairedEvaluationError("unsupported sequential result schema")
+            raise SequentialPairedEvaluationError(
+                "unsupported sequential result schema"
+            )
         protocol = _protocol_from_document(raw["protocol"])
         if (
-            expect_str(
-                raw["protocol_identity"], "sequential_result.protocol_identity"
-            )
+            expect_str(raw["protocol_identity"], "sequential_result.protocol_identity")
             != protocol.identity
         ):
             raise SequentialPairedEvaluationError("protocol identity mismatch")
@@ -509,9 +511,7 @@ def parse_sequential_result(value: object) -> dict[str, object]:
         expect_list(raw["looks"], "sequential_result.looks")
         expect_bool(raw["stopped"], "sequential_result.stopped")
         if raw["terminal_decision"] is not None:
-            expect_str(
-                raw["terminal_decision"], "sequential_result.terminal_decision"
-            )
+            expect_str(raw["terminal_decision"], "sequential_result.terminal_decision")
         expect_str(raw["result_identity"], "sequential_result.result_identity")
 
         expected = build_sequential_result(protocol, paired_units)
@@ -524,9 +524,7 @@ def parse_sequential_result(value: object) -> dict[str, object]:
         raise SequentialPairedEvaluationError(str(exc)) from exc
 
 
-def save_sequential_result(
-    document: dict[str, object], path: str | Path
-) -> Path:
+def save_sequential_result(document: dict[str, object], path: str | Path) -> Path:
     """Persist one immutable result-bearing look snapshot."""
     parsed = parse_sequential_result(document)
     destination = Path(path)
