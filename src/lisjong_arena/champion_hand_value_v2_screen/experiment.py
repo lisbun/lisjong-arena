@@ -132,9 +132,7 @@ def run_screen(
     if verified_result["strength_artifact_digest"] != artifact_file_digest(
         destinations["strength_artifact"]
     ):
-        raise ChampionHandValueV2EvidenceError(
-            "result strength digest mismatch"
-        )
+        raise ChampionHandValueV2EvidenceError("result strength digest mismatch")
     if verified_result["composition_trace_digest"] != artifact_file_digest(
         destinations["composition_trace"]
     ):
