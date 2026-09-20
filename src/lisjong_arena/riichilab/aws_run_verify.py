@@ -37,7 +37,9 @@ def _parse_utc(value: str, field_name: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise AwsRunVerificationError(\n            f"{field_name} is not valid ISO-8601 UTC"\n        ) from exc
+        raise AwsRunVerificationError(
+            f"{field_name} is not valid ISO-8601 UTC"
+        ) from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise AwsRunVerificationError(f"{field_name} must include a timezone")
     return parsed
@@ -99,7 +101,9 @@ def _scan_paths(
     token: str,
 ) -> dict[str, bool]:
     if not token:
-        raise AwsRunVerificationError(\n            "runtime token is unavailable for exact-byte scan"\n        )
+        raise AwsRunVerificationError(
+            "runtime token is unavailable for exact-byte scan"
+        )
     token_bytes = token.encode("utf-8")
     paths = [runner_log]
     paths.extend(path for path in record_dir.rglob("*") if path.is_file())
@@ -164,9 +168,13 @@ def verify_run(
     if runner["records"] != "on":
         raise AwsRunVerificationError("durable records were not enabled")
     if runner["stopped reason"] != "duration_reached":
-        raise AwsRunVerificationError(\n            "runner did not stop because duration was reached"\n        )
+        raise AwsRunVerificationError(
+            "runner did not stop because duration was reached"
+        )
     if runner["requested duration seconds"] != str(expected_duration_seconds):
-        raise AwsRunVerificationError(\n            "runner duration does not match expected duration"\n        )
+        raise AwsRunVerificationError(
+            "runner duration does not match expected duration"
+        )
 
     completed_games = _parse_nonnegative_int(
         runner["completed games"], "completed games"
@@ -232,7 +240,9 @@ def verify_run(
     if stop < cutoff:
         raise AwsRunVerificationError("stop UTC precedes the graceful cutoff")
     if elapsed_seconds + 1 < expected_duration_seconds:
-        raise AwsRunVerificationError(\n            "elapsed runtime is shorter than requested duration"\n        )
+        raise AwsRunVerificationError(
+            "elapsed runtime is shorter than requested duration"
+        )
 
     credential_scan = _scan_paths(
         record_dir=record_dir,
