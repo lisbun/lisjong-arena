@@ -15,7 +15,7 @@ def _values(values: object, name: str, *, minimum: int = 2) -> tuple[float, ...]
         raise TypeError(f"{name} must be a numeric sequence")
     try:
         result = tuple(float(value) for value in values)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise TypeError(f"{name} must be a numeric sequence") from None
     if len(result) < minimum:
         raise ValueError(f"{name} must contain at least {minimum} values")
@@ -38,9 +38,9 @@ def _sample_covariance(left: tuple[float, ...], right: tuple[float, ...]) -> flo
         raise ValueError("paired sequences must have the same length")
     left_mean = _mean(left)
     right_mean = _mean(right)
-    return sum(
-        (x - left_mean) * (y - right_mean) for x, y in zip(left, right)
-    ) / (len(left) - 1)
+    return sum((x - left_mean) * (y - right_mean) for x, y in zip(left, right)) / (
+        len(left) - 1
+    )
 
 
 def _interval(
@@ -68,10 +68,9 @@ def _estimate_for_lambda(
     )
     transformed_unlabeled = tuple(lam * value for value in unlabeled_predictions)
     estimate = _mean(transformed_unlabeled) + _mean(residuals)
-    variance = (
-        _sample_variance(transformed_unlabeled) / len(transformed_unlabeled)
-        + _sample_variance(residuals) / len(residuals)
-    )
+    variance = _sample_variance(transformed_unlabeled) / len(
+        transformed_unlabeled
+    ) + _sample_variance(residuals) / len(residuals)
     standard_error = math.sqrt(max(variance, 0.0))
     interval = _interval(estimate, standard_error, confidence_level)
     return {
