@@ -21,8 +21,11 @@ $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
     throw "AWS profile is required. Pass -AwsProfile or set AWS_PROFILE."
 }
-if ($FailSafeHours -lt 4) {
-    throw "FailSafeHours must be at least 4."
+if ($InstanceType -ne "t3.small") {
+    throw "Issue #326 locks bounded compute to t3.small."
+}
+if ($FailSafeHours -lt 4 -or $FailSafeHours -gt 8) {
+    throw "FailSafeHours must be between 4 and 8 inclusive."
 }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
