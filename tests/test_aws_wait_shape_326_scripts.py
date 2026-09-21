@@ -64,7 +64,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
             text,
         )
         preflight_guard = (
-            'if ($PreflightOnly) {\n'
+            "if ($PreflightOnly) {\n"
             '    Write-Host "PASS: ISSUE #326 AWS PREFLIGHT ONLY"'
         )
         self.assertLess(
