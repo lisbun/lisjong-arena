@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -151,6 +152,10 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("it was not terminated or resubmitted", launcher)
 
     def test_preflight_executes_without_billable_aws_mutation(self):
+        if os.name != "nt":
+            self.skipTest(
+                "PowerShell launcher preflight uses the Windows operator path"
+            )
         pwsh = shutil.which("pwsh")
         if pwsh is None:
             self.skipTest("pwsh is unavailable")
