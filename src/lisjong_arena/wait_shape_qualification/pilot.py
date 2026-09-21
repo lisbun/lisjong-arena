@@ -48,6 +48,11 @@ from lisjong_arena._execution_safety import (
     require_new_artifact_destinations,
 )
 from lisjong_arena.aws_execution_observability import ProgressTracker, write_progress
+from lisjong_arena.durable_seed_checkpoint import (
+    DurableSeedCheckpointError,
+    publish_seed_checkpoint,
+    verify_seed_checkpoint_set,
+)
 from lisjong_arena.environment_identity import (
     EnvironmentIdentityError,
     verify_environment,
@@ -172,6 +177,10 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def _is_full_commit_id(value: object) -> bool:
     return (
         type(value) is str
@@ -266,6 +275,7 @@ def _destinations(output_root: Path) -> dict[str, Path]:
         "f1": output_root / "f1.json",
         "f2": output_root / "f2.json",
         "qualification": output_root / "qualification.json",
+        "checkpoints": output_root / "checkpoints",
     }
 
 
@@ -522,7 +532,8 @@ def _validate_lock_document(document: object) -> dict[str, object]:
     destinations = document["artifact_destinations"]
     _require(
         type(destinations) is dict
-        and set(destinations) == {"lock", "raw", "f1", "f2", "qualification"}
+        and set(destinations)
+        == {"lock", "raw", "f1", "f2", "qualification", "checkpoints"}
         and all(type(value) is str and value for value in destinations.values()),
         "artifact destination lock is invalid",
     )
@@ -1495,20 +1506,36 @@ def _collect_observations(
     max_workers: int,
     *,
     progress_callback: Callable[[int, int], None] | None = None,
+    checkpoint: Callable[
+        [int, dict[str, object], tuple[dict[str, object], ...], str, str], None
+    ]
+    | None = None,
 ) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
     if max_workers == 1:
         completed_by_seed = {}
         for completed, seed in enumerate(PILOT_SEEDS, start=1):
-            completed_by_seed[seed] = _run_seed(seed)
+            started_at = _timestamp(datetime.now(UTC))
+            outcome = _run_seed(seed)
+            completed_at = _timestamp(datetime.now(UTC))
+            completed_by_seed[seed] = outcome
+            if checkpoint is not None:
+                checkpoint(seed, outcome[0], outcome[1], started_at, completed_at)
             if progress_callback is not None:
                 progress_callback(completed, len(PILOT_SEEDS))
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            submitted_at = {seed: _timestamp(datetime.now(UTC)) for seed in PILOT_SEEDS}
             futures = {executor.submit(_run_seed, seed): seed for seed in PILOT_SEEDS}
             completed_by_seed = {}
             for completed, future in enumerate(as_completed(futures), start=1):
                 seed = futures[future]
-                completed_by_seed[seed] = future.result()
+                outcome = future.result()
+                completed_at = _timestamp(datetime.now(UTC))
+                completed_by_seed[seed] = outcome
+                if checkpoint is not None:
+                    checkpoint(
+                        seed, outcome[0], outcome[1], submitted_at[seed], completed_at
+                    )
                 if progress_callback is not None:
                     progress_callback(completed, len(PILOT_SEEDS))
     per_seed = [completed_by_seed[seed] for seed in PILOT_SEEDS]
@@ -1591,9 +1618,47 @@ def run_pilot(
 
         progress_callback = persist_progress
 
+    checkpoint_dir = destinations["checkpoints"]
+    checkpoint_run_id = str(lock["lock_identity"])
+    checkpoint_protocol_identity = str(lock["protocol_lock_identity"])
+
+    def durable_checkpoint(
+        seed: int,
+        game_receipt: dict[str, object],
+        seed_observations: tuple[dict[str, object], ...],
+        started_at: str,
+        completed_at: str,
+    ) -> None:
+        try:
+            publish_seed_checkpoint(
+                checkpoint_dir,
+                run_id=checkpoint_run_id,
+                seed=seed,
+                protocol_identity=checkpoint_protocol_identity,
+                payload={
+                    "game_receipt": game_receipt,
+                    "observations": list(seed_observations),
+                },
+                started_at=started_at,
+                completed_at=completed_at,
+            )
+        except DurableSeedCheckpointError as exc:
+            raise WaitShapePilotError(str(exc)) from exc
+
     game_receipts, observations = _collect_observations(
-        max_workers, progress_callback=progress_callback
+        max_workers,
+        progress_callback=progress_callback,
+        checkpoint=durable_checkpoint,
     )
+    try:
+        verify_seed_checkpoint_set(
+            checkpoint_dir,
+            run_id=checkpoint_run_id,
+            protocol_identity=checkpoint_protocol_identity,
+            expected_seeds=PILOT_SEEDS,
+        )
+    except DurableSeedCheckpointError as exc:
+        raise WaitShapePilotError(str(exc)) from exc
     raw = write_raw_artifact(
         destinations["raw"],
         game_receipts=game_receipts,
