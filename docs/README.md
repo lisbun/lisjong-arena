@@ -14,6 +14,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 | [Roadmap](roadmap.md) | 長期的なArena capability。current Issue trackerではない |
 | [Policy strength evaluation policy](policy-strength-evaluation.md) | Policy比較の恒久的な評価規律 / measurement source-of-truth |
 | [Learned Policy input schema](learned-policy-input-schema.md) | current experiment-local player-safe input / tensor contract |
+| [Offense Foundation O0 prerequisites](offense-foundation.md) | #331 P0/P1 qualification and canonical corpus generator; #332 execution handoff |
 | [Durable local game record](durable-local-game-record.md) | RiichiEnv local record schema / writer / loader / integrity / limitation |
 | [Durable ranked game record](durable-ranked-game-record.md) | RiichiLab ranked completed-hanchan raw record schema / loader / integrity / limitation |
 | [Automated Strength Evaluation](automated-strength-evaluation.md) | machine-readable locked evaluation orchestration contract |
