@@ -153,6 +153,22 @@ class WaitShapePilotTest(unittest.TestCase):
         )
         self.assertEqual(f1["summary"]["all_six_channel_zero_anchors"], 1)
 
+    def test_non_zero_channel_unavailable_reason_is_not_counted_as_zero_anchor(self):
+        record = observation(0)
+        record["accepted_opponents"][0] = {
+            "opponent_seat": 1,
+            "availability": "HIDDEN_HAND_UNAVAILABLE",
+            "projection": None,
+        }
+        raw = LoadedPilotRaw(
+            path=Path("."),
+            manifest={"raw_identity": "e" * 64},
+            observations=(record,),
+        )
+        f1 = summarize_f1(raw)
+        self.assertEqual(f1["outcome"], "STOP / INVALID")
+        self.assertEqual(f1["summary"]["all_six_channel_zero_anchors"], 0)
+
     def test_final_route_requires_both_f1_and_f2(self):
         raw = raw_with()
         f1 = summarize_f1(raw)
