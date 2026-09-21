@@ -258,6 +258,57 @@ class SourceRecordTest(unittest.TestCase):
                     source_path, expected_lock=lock, corpus_path=corpus_path
                 )
 
+    def _reseal_first_game_payload(self, source_path, payload):
+        manifest_path = source_path / "manifest.json"
+        manifest = read_document(manifest_path)
+        game = {
+            key: value
+            for key, value in manifest["games"][0].items()
+            if key != "identity"
+        }
+        game["files"] = {
+            source_record.SOURCE_FILENAME: source_record._file_info(payload)
+        }
+        body = {key: value for key, value in manifest.items() if key != "identity"}
+        body["games"][0] = seal(game)
+        manifest_path.unlink()
+        write_document(manifest_path, seal(body))
+
+    def test_duplicate_missing_and_extra_decisions_are_rejected(self):
+        mutations = {
+            "missing": lambda lines: lines[1:],
+            "extra": lambda lines: [*lines, lines[-1]],
+            "duplicate": lambda lines: [lines[0], lines[0], *lines[1:]],
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                lock, _, corpus_path, source_path = self.generate_fixture(Path(tmp))
+                payload = source_path / "game-000" / source_record.SOURCE_FILENAME
+                lines = payload.read_text(encoding="utf-8").splitlines()
+                mutated = mutate(lines)
+                payload.write_text(
+                    "\n".join(mutated) + "\n", encoding="utf-8", newline="\n"
+                )
+                self._reseal_first_game_payload(source_path, payload)
+                with self.assertRaises(OffenseError):
+                    source_record.read_source_record(
+                        source_path, expected_lock=lock, corpus_path=corpus_path
+                    )
+
+    def test_resealed_provenance_identity_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock, _, corpus_path, source_path = self.generate_fixture(Path(tmp))
+            manifest_path = source_path / "manifest.json"
+            manifest = read_document(manifest_path)
+            body = {key: value for key, value in manifest.items() if key != "identity"}
+            body["lock_identity"] = "0" * 64
+            manifest_path.unlink()
+            write_document(manifest_path, seal(body))
+            with self.assertRaisesRegex(OffenseError, "schema/provenance identity mismatch"):
+                source_record.read_source_record(
+                    source_path, expected_lock=lock, corpus_path=corpus_path
+                )
+
     def test_schema_extra_file_and_cli_readback_fail_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             lock, _, corpus_path, source_path = self.generate_fixture(Path(tmp))
