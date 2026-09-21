@@ -102,7 +102,9 @@ if (
     [string]$summary.run_id -ne $RunId -or
     [string]$summary.phase -ne $phase -or
     [string]$summary.output_artifact_volume_id -ne $outputVolumeId -or
-    [string]$summary.strict_readback -ne "PASS"
+    [string]$summary.strict_readback -ne "PASS" -or
+    [string]$summary.source_record_strict_readback -ne "PASS" -or
+    [string]$summary.source_record_identity -notmatch "^[0-9a-f]{64}$"
 ) { throw "Remote completion summary provenance differs from AWS run resources." }
 if ($phase -eq "A" -and [string]$summary.p2_outcome -notin @("OFFENSE SUPPORT QUALIFIED", "OFFENSE SUPPORT NOT QUALIFIED")) {
     throw "Phase A did not produce a valid final P2 outcome."
@@ -138,6 +140,7 @@ if (
 $completionTags = @(
     "Key=lisjong-phase-complete,Value=true", "Key=lisjong-strict-readback,Value=PASS",
     "Key=lisjong-corpus-identity,Value=$($summary.corpus_identity)",
+    "Key=lisjong-source-record-identity,Value=$($summary.source_record_identity)",
     "Key=lisjong-protocol-lock-identity,Value=$($summary.protocol_lock_identity)",
     "Key=lisjong-scientific-runtime-sec,Value=$($summary.elapsed_seconds)",
     "Key=lisjong-arena-revision,Value=$($summary.arena_revision)",
