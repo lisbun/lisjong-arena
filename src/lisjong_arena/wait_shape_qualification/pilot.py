@@ -1088,7 +1088,6 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
             episode = _episode_key(record, int(cell["opponent_seat"]))
             episode_seeds[episode] = int(record["seed"])
             episode_first_availability.setdefault(episode, availability)
-            episode_availabilities[episode].append(availability)
             if availability is WaitShapeAvailability.AVAILABLE:
                 projection = cell["projection"]
                 assert isinstance(projection, dict)
