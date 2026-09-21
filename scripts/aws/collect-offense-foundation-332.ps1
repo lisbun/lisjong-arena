@@ -260,6 +260,7 @@ if ($phase -eq "B") {
         @($phaseAInputVolume.Attachments).Count -ne 0
     ) { throw "Phase A input volume failed post-teardown detachment/encryption verification." }
     $phaseAInputCurrentRunId = Get-TagValue $phaseAInputVolume "lisjong-run-id"
+    $phaseAInputSourceRecordIdentity = Get-TagValue $phaseAInputVolume "lisjong-source-record-identity"
     if (
         (Get-TagValue $phaseAInputVolume "Issue") -ne "332" -or
         (Get-TagValue $phaseAInputVolume "Purpose") -ne "offense-foundation-output" -or
@@ -267,6 +268,7 @@ if ($phase -eq "B") {
         (Get-TagValue $phaseAInputVolume "lisjong-phase-complete") -ne "true" -or
         (Get-TagValue $phaseAInputVolume "lisjong-strict-readback") -ne "PASS" -or
         (Get-TagValue $phaseAInputVolume "lisjong-p2-outcome") -ne "OFFENSE SUPPORT QUALIFIED" -or
+        $phaseAInputSourceRecordIdentity -notmatch "^[0-9a-f]{64}$" -or
         $phaseAInputCurrentRunId -ne $phaseAInputRunId
     ) { throw "Phase A input volume provenance tags differ from its original Phase A completion evidence." }
     if ($phaseAInputCurrentRunId -eq $RunId) {
@@ -278,6 +280,7 @@ if ($phase -eq "B") {
         encrypted = [bool]$phaseAInputVolume.Encrypted
         volume_type = [string]$phaseAInputVolume.VolumeType; size_gib = [int]$phaseAInputVolume.Size
         phase_a_run_id = $phaseAInputCurrentRunId
+        source_record_identity = $phaseAInputSourceRecordIdentity
         provenance_verified = $true; retagged_to_phase_b_run_id = $false
         retained_billing_continues = $true
     }
