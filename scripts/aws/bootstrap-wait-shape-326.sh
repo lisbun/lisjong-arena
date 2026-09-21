@@ -248,6 +248,12 @@ summary = {
             "multiple_riichi_opponent_count"
         ],
         "defense_diagnostic_status": f2["summary"]["defense_diagnostic_status"],
+        "production_defensive_branch_counts": f2["summary"][
+            "production_defensive_branch_counts"
+        ],
+        "production_defensive_branch_unavailable_count": f2["summary"][
+            "production_defensive_branch_unavailable_count"
+        ],
     },
     "qualification": {
         "outcome": qualification["outcome"],
