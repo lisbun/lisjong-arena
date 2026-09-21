@@ -1,38 +1,39 @@
 # lisjong-arena
 
-lisjong ecosystem向けの、reproducibleなexecution / observation / research experimentation / Policy evaluation arenaです。
+lisjong ecosystem向けの、reproducibleなexecution / observation / Policy evaluation arenaです。
 
 > [!IMPORTANT]
 > `lisjong-arena` は [lisbun](https://github.com/lisbun) が開発する独立した個人の日本式麻雀AI projectの一部です。他のLisJong / lisjong名称のprojectとは関係ありません。
 
 ## 概要
 
-Arenaは次の3責務を分離します。
+Arenaのtarget responsibilityは次の2つです。
 
 ```text
 Execution / Observation
     what happened
         |
         v
-objective execution data
+player-safe / objective evidence
         |
         +------------------------------+
         |                              |
         v                              v
-Experiment-local Research          Evaluation
-bounded dataset / training        matchup / seeds / rotation
-analysis / model artifact         metrics / artifact / provenance
-        |                              ^
-        v                              |
-research candidate -------------------+
+lisjong Learning                  Evaluation
+candidate generation             matchup / seeds / rotation
+feature / dataset / training     metrics / artifact / provenance
 ```
+
+新しいcanonical Learning semantics / feature / dataset / teacher / trainer /
+model / inferenceは`lisjong`が所有します。Arena内の既存Learning実装は、
+historical / already-locked experimentのpreservation / referenceとして残せます。
 
 重要な境界は次です。
 
 ```text
-experiment-local model / feature / checkpoint
-!= stable lisjong Policy semantics
-!= production Policy
+Arena execution host / historical Learning code
+!= canonical Learning ownership
+!= production Policy promotion
 ```
 
 project-wideなrepository responsibility / long-term directionは [`lisjong-project`](https://github.com/lisbun/lisjong-project) を正本とします。
