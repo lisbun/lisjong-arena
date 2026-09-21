@@ -442,6 +442,30 @@ try {
     if ([string]$live.MetadataOptions.HttpTokens -ne "required") {
         throw "IMDSv2 is not required on the launched instance."
     }
+    $rootVolumeIds = @()
+    foreach ($mapping in @($live.BlockDeviceMappings)) {
+        if (
+            $null -ne $mapping.Ebs -and
+            -not [string]::IsNullOrWhiteSpace([string]$mapping.Ebs.VolumeId)
+        ) {
+            if ($mapping.Ebs.DeleteOnTermination -ne $true) {
+                throw "An instance EBS volume is not DeleteOnTermination=true."
+            }
+            $rootVolumeIds += [string]$mapping.Ebs.VolumeId
+        }
+    }
+    if ($rootVolumeIds.Count -lt 1) {
+        throw "No instance EBS volume was discovered."
+    }
+
+    $shutdown = Invoke-AwsJson -Arguments @(
+        "ec2", "describe-instance-attribute",
+        "--instance-id", $instanceId,
+        "--attribute", "instanceInitiatedShutdownBehavior"
+    )
+    if ([string]$shutdown.InstanceInitiatedShutdownBehavior.Value -ne "terminate") {
+        throw "Instance-initiated shutdown behavior is not terminate."
+    }
 
     [void](Invoke-AwsText -Arguments @(
         "ec2", "attach-volume",
