@@ -10,6 +10,12 @@ param(
     [string]$InstanceType = "t3.small",
     [int]$FailSafeHours = 8,
     [ValidateSet(1, 2)][int]$MaxWorkers = 2,
+    [Nullable[double]]$HourlyPriceUsd = $null,
+    [Nullable[double]]$PredictedRuntimeMinHours = $null,
+    [Nullable[double]]$PredictedRuntimeMaxHours = $null,
+    [string]$RuntimeEstimateBasis = "",
+    [Nullable[double]]$RetainedEbsEstimateUsd = $null,
+    [switch]$AllowWorkerOversubscription,
     [string]$ArenaRevision = "",
     [string]$OutputRoot = "",
     [switch]$PreflightOnly
@@ -139,6 +145,53 @@ function Send-SsmCommand {
     return [string]$response.Command.CommandId
 }
 
+function Get-InstancePrice {
+    param([Parameter(Mandatory = $true)][string]$Location)
+    $checkedAt = (Get-Date).ToUniversalTime().ToString("o")
+    if ($null -ne $HourlyPriceUsd) {
+        if ([double]$HourlyPriceUsd -lt 0) {
+            throw "HourlyPriceUsd must be non-negative."
+        }
+        return [pscustomobject]@{
+            Rate = [double]$HourlyPriceUsd
+            Source = "explicit-injection"
+            CheckedAt = $checkedAt
+        }
+    }
+    try {
+        $pricing = Invoke-AwsJson -CallRegion "us-east-1" -Arguments @(
+            "pricing", "get-products",
+            "--service-code", "AmazonEC2",
+            "--max-results", "1",
+            "--filters",
+            "Type=TERM_MATCH,Field=instanceType,Value=$InstanceType",
+            "Type=TERM_MATCH,Field=location,Value=$Location",
+            "Type=TERM_MATCH,Field=operatingSystem,Value=Linux",
+            "Type=TERM_MATCH,Field=tenancy,Value=Shared",
+            "Type=TERM_MATCH,Field=preInstalledSw,Value=NA",
+            "Type=TERM_MATCH,Field=capacitystatus,Value=Used"
+        )
+        if (@($pricing.PriceList).Count -lt 1) {
+            throw "Pricing API returned no matching EC2 product."
+        }
+        $product = $pricing.PriceList[0] | ConvertFrom-Json
+        $term = $product.terms.OnDemand.PSObject.Properties | Select-Object -First 1
+        $dimension = $term.Value.priceDimensions.PSObject.Properties | Select-Object -First 1
+        return [pscustomobject]@{
+            Rate = [double]$dimension.Value.pricePerUnit.USD
+            Source = "AWS Pricing API"
+            CheckedAt = $checkedAt
+        }
+    } catch {
+        Write-Warning "Could not resolve current EC2 hourly price: $($_.Exception.Message)"
+        return [pscustomobject]@{
+            Rate = $null
+            Source = "AWS Pricing API unavailable"
+            CheckedAt = $checkedAt
+        }
+    }
+}
+
 function Request-Termination {
     param([Parameter(Mandatory = $true)][string]$InstanceId)
     try {
@@ -163,6 +216,28 @@ if ($null -eq $caller) {
     throw "AWS authentication preflight failed."
 }
 
+$instanceTypeResponse = Invoke-AwsJson -Arguments @(
+    "ec2", "describe-instance-types", "--instance-types", $InstanceType
+)
+$instanceTypeDetails = @($instanceTypeResponse.InstanceTypes)[0]
+$instanceVcpu = [int]$instanceTypeDetails.VCpuInfo.DefaultVCpus
+$instanceMemoryMiB = [int]$instanceTypeDetails.MemoryInfo.SizeInMiB
+if ($instanceVcpu -le 0 -or $instanceMemoryMiB -le 0) {
+    throw "Could not resolve instance vCPU and memory."
+}
+if ($MaxWorkers -gt $instanceVcpu -and -not $AllowWorkerOversubscription) {
+    throw "MaxWorkers exceeds instance vCPU count; pass -AllowWorkerOversubscription explicitly to proceed."
+}
+$regionLongName = Invoke-AwsJson -Arguments @(
+    "ssm", "get-parameter",
+    "--name", "/aws/service/global-infrastructure/regions/$Region/longName"
+)
+$pricingLocation = [string]$regionLongName.Parameter.Value
+if ([string]::IsNullOrWhiteSpace($pricingLocation)) {
+    throw "Could not resolve AWS Pricing location for $Region."
+}
+$price = Get-InstancePrice -Location $pricingLocation
+
 if ([string]::IsNullOrWhiteSpace($ArenaRevision)) {
     $remote = & git ls-remote "https://github.com/lisbun/lisjong-arena.git" "refs/heads/main" 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -172,6 +247,10 @@ if ([string]::IsNullOrWhiteSpace($ArenaRevision)) {
 }
 if ($ArenaRevision -notmatch "^[0-9a-f]{40}$") {
     throw "ArenaRevision must resolve to a full lowercase commit SHA."
+}
+$historical326Revision = "13317bd85bc2f80a575d487cae9dda1bebd7f5f0"
+if ($ArenaRevision -eq $historical326Revision) {
+    throw "Historical Issue #326 revision must not be restarted or instrumented. Use a reviewed newer revision for future observable execution."
 }
 
 $role = Invoke-AwsJson -Arguments @("iam", "get-role", "--role-name", $RoleName)
@@ -267,6 +346,7 @@ New-Item -ItemType Directory -Path $runDir -Force | Out-Null
 $statePath = Join-Path $runDir "state.json"
 $completionPath = Join-Path $runDir "completion.json"
 $preflightPath = Join-Path $runDir "preflight.json"
+$planPath = Join-Path $runDir "plan.json"
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\\.."))
 $localPython = Join-Path $repoRoot ".venv\\Scripts\\python.exe"
@@ -316,6 +396,8 @@ $preflightSummary = [ordered]@{
     availability_zone = $availabilityZone
     ami_id = $amiId
     instance_type = $InstanceType
+    instance_vcpu = $instanceVcpu
+    instance_memory_mib = $instanceMemoryMiB
     max_workers = $MaxWorkers
     fail_safe_hours = $FailSafeHours
     executor_preflight_status = [string]$pilotPreflight.status
@@ -330,15 +412,77 @@ $preflightSummary = [ordered]@{
 }
 Write-JsonFile -Value $preflightSummary -Path $preflightPath
 
+$hasRuntimeRange = (
+    $null -ne $PredictedRuntimeMinHours -and
+    $null -ne $PredictedRuntimeMaxHours -and
+    [double]$PredictedRuntimeMinHours -gt 0 -and
+    [double]$PredictedRuntimeMaxHours -ge [double]$PredictedRuntimeMinHours -and
+    -not [string]::IsNullOrWhiteSpace($RuntimeEstimateBasis)
+)
+$invariant = [Globalization.CultureInfo]::InvariantCulture
+$planArguments = @(
+    "-m", "lisjong_arena.aws_execution_observability", "plan",
+    "--output-path", $planPath,
+    "--run-id", $runId,
+    "--unit-kind", "hanchan",
+    "--total-units", "96",
+    "--instance-type", $InstanceType,
+    "--vcpu", [string]$instanceVcpu,
+    "--memory-mib", [string]$instanceMemoryMiB,
+    "--worker-count", [string]$MaxWorkers,
+    "--fail-safe-seconds", [string]($FailSafeHours * 3600),
+    "--known-other-charge", "one retained encrypted 1 GiB gp3 EBS volume",
+    "--unknown-variable-charge", "T-family surplus credits: unknown / not hard-bounded",
+    "--unknown-variable-charge", "public IPv4: unknown / not hard-bounded",
+    "--unknown-variable-charge", "data transfer: unknown / not hard-bounded"
+)
+$planArguments += @(
+    "--pricing-source", [string]$price.Source,
+    "--pricing-checked-at", [string]$price.CheckedAt,
+    "--pricing-region", $Region
+)
+if ($null -ne $price.Rate) {
+    $planArguments += @(
+        "--instance-hourly-rate-usd", ([double]$price.Rate).ToString($invariant)
+    )
+}
+if ($hasRuntimeRange) {
+    $planArguments += @(
+        "--predicted-runtime-min-seconds", ([double]$PredictedRuntimeMinHours * 3600).ToString($invariant),
+        "--predicted-runtime-max-seconds", ([double]$PredictedRuntimeMaxHours * 3600).ToString($invariant),
+        "--estimate-basis", $RuntimeEstimateBasis
+    )
+}
+if ($null -ne $RetainedEbsEstimateUsd) {
+    $planArguments += @(
+        "--retained-ebs-estimate-usd", ([double]$RetainedEbsEstimateUsd).ToString($invariant)
+    )
+}
+$planText = (& $localPython @planArguments 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Operational PLAN generation failed: $planText"
+}
+$plan = Get-Content -Raw -LiteralPath $planPath | ConvertFrom-Json
+
 Write-Host "Issue #326 run id: $runId"
 Write-Host "Arena revision: $ArenaRevision"
 Write-Host "AMI: $amiId / subnet: $SubnetId / SG: $SecurityGroupId"
+Write-Host "PLAN: $planPath"
+Write-Host "Instance: $InstanceType / vCPU: $instanceVcpu / memory MiB: $instanceMemoryMiB / workers: $MaxWorkers"
+Write-Host "Runtime confidence: $($plan.runtime_estimate.confidence) / pricing source: $($price.Source)"
 
 if ($PreflightOnly) {
     Write-Host "PASS: ISSUE #326 AWS PREFLIGHT ONLY"
     Write-Host "No EC2 instance, EBS artifact volume, or other billable execution resource was created."
     Write-Host "Preflight summary: $preflightPath"
     return
+}
+
+if (-not $hasRuntimeRange) {
+    throw "Billable execution requires a numeric calibrated runtime range and explicit RuntimeEstimateBasis. PLAN was saved before resource creation."
+}
+if ($null -eq $price.Rate) {
+    throw "Billable execution requires EC2 pricing provenance and an hourly rate. PLAN was saved before resource creation."
 }
 
 $artifactVolumeId = $null
@@ -349,6 +493,13 @@ $commandTerminal = $false
 $failsafeArmed = $false
 
 try {
+    $remoteProgressPath = "/mnt/lisjong-326-artifacts/issue-326/operational/progress.json"
+    $failSafeDeadlineUtc = (Get-Date).ToUniversalTime().AddHours($FailSafeHours).ToString("o")
+    $predictedRuntimeMinSeconds = [int][math]::Round([double]$PredictedRuntimeMinHours * 3600)
+    $predictedRuntimeMaxSeconds = [int][math]::Round([double]$PredictedRuntimeMaxHours * 3600)
+    $hourlyRateText = ([double]$price.Rate).ToString(
+        [Globalization.CultureInfo]::InvariantCulture
+    )
     $volume = Invoke-AwsJson -Arguments @(
         "ec2", "create-volume",
         "--availability-zone", $availabilityZone,
@@ -371,6 +522,14 @@ try {
         artifact_volume_id = $artifactVolumeId
         artifact_volume_retained = $true
         max_workers = $MaxWorkers
+        instance_type = $InstanceType
+        instance_vcpu = $instanceVcpu
+        instance_memory_mib = $instanceMemoryMiB
+        operational_progress_path = $remoteProgressPath
+        fail_safe_deadline_utc = $failSafeDeadlineUtc
+        pricing_source = [string]$price.Source
+        pricing_checked_at = [string]$price.CheckedAt
+        instance_hourly_rate_usd = [double]$price.Rate
         fail_safe_hours = $FailSafeHours
     }) -Path $statePath
 
@@ -403,7 +562,20 @@ try {
                     @{ Key = "Project"; Value = "lisjong" },
                     @{ Key = "ManagedBy"; Value = "lisjong-arena" },
                     @{ Key = "Issue"; Value = "326" },
-                    @{ Key = "lisjong-run-id"; Value = $runId }
+                    @{ Key = "lisjong-run-id"; Value = $runId },
+                    @{ Key = "lisjong-progress-path"; Value = $remoteProgressPath },
+                    @{ Key = "lisjong-worker-count"; Value = [string]$MaxWorkers },
+                    @{ Key = "lisjong-failsafe-deadline"; Value = $failSafeDeadlineUtc }
+                )
+            },
+            [ordered]@{
+                ResourceType = "volume"
+                Tags = @(
+                    @{ Key = "Project"; Value = "lisjong" },
+                    @{ Key = "ManagedBy"; Value = "lisjong-arena" },
+                    @{ Key = "Issue"; Value = "326" },
+                    @{ Key = "lisjong-run-id"; Value = $runId },
+                    @{ Key = "Purpose"; Value = "instance-root" }
                 )
             }
         )
@@ -428,6 +600,14 @@ try {
         artifact_volume_id = $artifactVolumeId
         artifact_volume_retained = $true
         max_workers = $MaxWorkers
+        instance_type = $InstanceType
+        instance_vcpu = $instanceVcpu
+        instance_memory_mib = $instanceMemoryMiB
+        operational_progress_path = $remoteProgressPath
+        fail_safe_deadline_utc = $failSafeDeadlineUtc
+        pricing_source = [string]$price.Source
+        pricing_checked_at = [string]$price.CheckedAt
+        instance_hourly_rate_usd = [double]$price.Rate
         fail_safe_hours = $FailSafeHours
     }) -Path $statePath
 
@@ -518,11 +698,16 @@ try {
     $failsafeArmed = $true
 
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-wait-shape-326.sh"
-    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-326.sh; chmod 700 /tmp/lisjong-bootstrap-326.sh; exec /tmp/lisjong-bootstrap-326.sh --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' --max-workers '$MaxWorkers'"
+    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-326.sh; chmod 700 /tmp/lisjong-bootstrap-326.sh; exec /tmp/lisjong-bootstrap-326.sh --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' --max-workers '$MaxWorkers' --run-id '$runId' --instance-type '$InstanceType' --vcpu '$instanceVcpu' --pricing-source '$($price.Source)' --pricing-checked-at '$($price.CheckedAt)' --pricing-region '$Region' --instance-hourly-rate-usd '$hourlyRateText' --predicted-runtime-min-seconds '$predictedRuntimeMinSeconds' --predicted-runtime-max-seconds '$predictedRuntimeMaxSeconds'"
     $runRequestPath = Join-Path $runDir "ssm-run.json"
     $executionTimeout = ($FailSafeHours * 3600) + 1800
     $commandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds $executionTimeout -RequestPath $runRequestPath -Commands @($remoteCommand)
     $pilotSubmitted = $true
+    [void](Invoke-AwsText -Arguments @(
+        "ec2", "create-tags",
+        "--resources", $instanceId,
+        "--tags", "Key=lisjong-scientific-command-id,Value=$commandId"
+    ))
 
     Write-JsonFile -Value ([ordered]@{
         run_id = $runId
@@ -535,6 +720,14 @@ try {
         artifact_volume_id = $artifactVolumeId
         artifact_volume_retained = $true
         max_workers = $MaxWorkers
+        instance_type = $InstanceType
+        instance_vcpu = $instanceVcpu
+        instance_memory_mib = $instanceMemoryMiB
+        operational_progress_path = $remoteProgressPath
+        fail_safe_deadline_utc = $failSafeDeadlineUtc
+        pricing_source = [string]$price.Source
+        pricing_checked_at = [string]$price.CheckedAt
+        instance_hourly_rate_usd = [double]$price.Rate
         fail_safe_armed = $failsafeArmed
         fail_safe_hours = $FailSafeHours
     }) -Path $statePath

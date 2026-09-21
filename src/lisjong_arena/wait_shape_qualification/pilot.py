@@ -17,8 +17,10 @@ import json
 import platform
 import sys
 from collections import Counter, defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -45,6 +47,7 @@ from lisjong_arena._execution_safety import (
     require_merged_arena_revision,
     require_new_artifact_destinations,
 )
+from lisjong_arena.aws_execution_observability import ProgressTracker, write_progress
 from lisjong_arena.environment_identity import (
     EnvironmentIdentityError,
     verify_environment,
@@ -1490,12 +1493,25 @@ def verify_output_root(output_root: str | Path) -> dict[str, object]:
 
 def _collect_observations(
     max_workers: int,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
     if max_workers == 1:
-        per_seed = [_run_seed(seed) for seed in PILOT_SEEDS]
+        completed_by_seed = {}
+        for completed, seed in enumerate(PILOT_SEEDS, start=1):
+            completed_by_seed[seed] = _run_seed(seed)
+            if progress_callback is not None:
+                progress_callback(completed, len(PILOT_SEEDS))
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            per_seed = list(executor.map(_run_seed, PILOT_SEEDS))
+            futures = {executor.submit(_run_seed, seed): seed for seed in PILOT_SEEDS}
+            completed_by_seed = {}
+            for completed, future in enumerate(as_completed(futures), start=1):
+                seed = futures[future]
+                completed_by_seed[seed] = future.result()
+                if progress_callback is not None:
+                    progress_callback(completed, len(PILOT_SEEDS))
+    per_seed = [completed_by_seed[seed] for seed in PILOT_SEEDS]
     receipts = tuple(receipt for receipt, _ in per_seed)
     observations = tuple(
         record for _, seed_records in per_seed for record in seed_records
@@ -1510,6 +1526,8 @@ def run_pilot(
     repository_collision_audit_pass: bool,
     private_collision_audit_pass: bool,
     no_prior_result_exposure_confirmed: bool,
+    operational_progress_path: str | Path | None = None,
+    operational_run_id: str | None = None,
 ) -> dict[str, object]:
     """Lock, generate exactly 96 pilot hanchan once, derive F1/F2, and verify."""
 
@@ -1538,7 +1556,44 @@ def run_pilot(
     destinations = _destinations(root)
     _write_lock(lock, destinations["lock"])
 
-    game_receipts, observations = _collect_observations(max_workers)
+    progress_path = (
+        None if operational_progress_path is None else Path(operational_progress_path)
+    )
+    if (progress_path is None) != (operational_run_id is None):
+        raise WaitShapePilotError(
+            "operational progress path and run id must be provided together"
+        )
+    progress_callback = None
+    if progress_path is not None:
+        expected_progress_path = root / "operational" / "progress.json"
+        if progress_path.resolve(strict=False) != expected_progress_path.resolve(
+            strict=False
+        ):
+            raise WaitShapePilotError(
+                "operational progress must use <output-root>/operational/progress.json"
+            )
+        tracker = ProgressTracker(
+            run_id=str(operational_run_id),
+            unit_kind="hanchan",
+            total_units=len(PILOT_SEEDS),
+            worker_count=max_workers,
+            started_at=datetime.now(UTC),
+        )
+        write_progress(progress_path, tracker.snapshot(0, now=tracker.started_at))
+
+        def persist_progress(completed: int, total: int) -> None:
+            if total != len(PILOT_SEEDS):
+                raise WaitShapePilotError("operational progress total drifted")
+            write_progress(
+                progress_path,
+                tracker.snapshot(completed, now=datetime.now(UTC)),
+            )
+
+        progress_callback = persist_progress
+
+    game_receipts, observations = _collect_observations(
+        max_workers, progress_callback=progress_callback
+    )
     raw = write_raw_artifact(
         destinations["raw"],
         game_receipts=game_receipts,
@@ -1605,6 +1660,9 @@ def _parser() -> argparse.ArgumentParser:
         child.add_argument("--repository-collision-audit-pass", action="store_true")
         child.add_argument("--private-collision-audit-pass", action="store_true")
         child.add_argument("--no-prior-result-exposure-confirmed", action="store_true")
+        if name == "run":
+            child.add_argument("--operational-progress-path")
+            child.add_argument("--operational-run-id")
     verify = sub.add_parser("verify")
     verify.add_argument("--output-root", required=True)
     return parser
@@ -1629,6 +1687,8 @@ def main(argv: list[str] | None = None) -> int:
             repository_collision_audit_pass=args.repository_collision_audit_pass,
             private_collision_audit_pass=args.private_collision_audit_pass,
             no_prior_result_exposure_confirmed=args.no_prior_result_exposure_confirmed,
+            operational_progress_path=args.operational_progress_path,
+            operational_run_id=args.operational_run_id,
         )
     print(canonical_json_text(result), end="")
     return 0

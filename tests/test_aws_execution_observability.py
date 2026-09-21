@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +15,7 @@ from lisjong_arena.aws_execution_observability import (
     build_calibration,
     build_execution_plan,
     calculate_compute_cost,
+    main,
     pricing_provenance,
     validate_progress_document,
     validate_progress_transition,
@@ -146,6 +149,31 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             plan["runtime_estimate"]["reason"], "no matching historical evidence"
         )
 
+    def test_unavailable_rate_retains_pricing_check_provenance(self) -> None:
+        unavailable = pricing_provenance(
+            source="AWS Pricing API unavailable",
+            checked_at=datetime(2026, 9, 21, tzinfo=UTC),
+            region="ap-northeast-1",
+            instance_hourly_rate_usd=None,
+        )
+        plan = build_execution_plan(
+            run_id="run-1",
+            unit_kind="hanchan",
+            total_units=96,
+            instance_type="t3.small",
+            vcpu=2,
+            memory_mib=2048,
+            worker_count=2,
+            fail_safe_seconds=8 * 3600,
+            pricing=unavailable,
+            predicted_runtime_seconds=None,
+            estimate_basis=None,
+            retained_ebs_estimate_usd=None,
+        )
+        self.assertEqual(plan["pricing"], unavailable)
+        self.assertIsNone(plan["predicted_ec2_cost"])
+        self.assertIsNone(plan["estimated_fail_safe_cost_exposure"])
+
     def test_unknown_charges_are_explicit(self) -> None:
         plan = build_execution_plan(
             run_id="run-1",
@@ -190,6 +218,54 @@ class AwsExecutionPlanningTest(unittest.TestCase):
         self.assertFalse(
             calibration["estimated_realized_cost"]["is_finalized_aws_invoice"]
         )
+
+    def test_plan_cli_writes_the_pure_core_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "plan.json"
+            with redirect_stdout(StringIO()):
+                exit_code = main(
+                    [
+                        "plan",
+                        "--output-path",
+                        str(path),
+                        "--run-id",
+                        "run-1",
+                        "--unit-kind",
+                        "hanchan",
+                        "--total-units",
+                        "96",
+                        "--instance-type",
+                        "t3.small",
+                        "--vcpu",
+                        "2",
+                        "--memory-mib",
+                        "2048",
+                        "--worker-count",
+                        "2",
+                        "--fail-safe-seconds",
+                        "28800",
+                        "--pricing-source",
+                        "injected test rate",
+                        "--pricing-checked-at",
+                        "2026-09-21T00:00:00Z",
+                        "--pricing-region",
+                        "ap-northeast-1",
+                        "--instance-hourly-rate-usd",
+                        "0.1",
+                        "--predicted-runtime-min-seconds",
+                        "3600",
+                        "--predicted-runtime-max-seconds",
+                        "5400",
+                        "--estimate-basis",
+                        "matching prior run",
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            plan = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                plan["runtime_estimate"]["range_seconds"], [3600.0, 5400.0]
+            )
+            self.assertEqual(plan["predicted_ec2_cost"]["range_usd"], [0.1, 0.15])
 
 
 if __name__ == "__main__":

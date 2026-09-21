@@ -4,6 +4,15 @@ set -euo pipefail
 ARENA_REVISION=""
 ARTIFACT_VOLUME_ID=""
 MAX_WORKERS="2"
+RUN_ID=""
+INSTANCE_TYPE=""
+VCPU=""
+PRICING_SOURCE=""
+PRICING_CHECKED_AT=""
+PRICING_REGION=""
+INSTANCE_HOURLY_RATE_USD=""
+PREDICTED_RUNTIME_MIN_SECONDS=""
+PREDICTED_RUNTIME_MAX_SECONDS=""
 WORK_ROOT="/var/lib/lisjong-wait-shape-326"
 REPOSITORY_URL="https://github.com/lisbun/lisjong-arena.git"
 
@@ -19,6 +28,42 @@ while (($#)); do
             ;;
         --max-workers)
             MAX_WORKERS="$2"
+            shift 2
+            ;;
+        --run-id)
+            RUN_ID="$2"
+            shift 2
+            ;;
+        --instance-type)
+            INSTANCE_TYPE="$2"
+            shift 2
+            ;;
+        --vcpu)
+            VCPU="$2"
+            shift 2
+            ;;
+        --pricing-source)
+            PRICING_SOURCE="$2"
+            shift 2
+            ;;
+        --pricing-checked-at)
+            PRICING_CHECKED_AT="$2"
+            shift 2
+            ;;
+        --pricing-region)
+            PRICING_REGION="$2"
+            shift 2
+            ;;
+        --instance-hourly-rate-usd)
+            INSTANCE_HOURLY_RATE_USD="$2"
+            shift 2
+            ;;
+        --predicted-runtime-min-seconds)
+            PREDICTED_RUNTIME_MIN_SECONDS="$2"
+            shift 2
+            ;;
+        --predicted-runtime-max-seconds)
+            PREDICTED_RUNTIME_MAX_SECONDS="$2"
             shift 2
             ;;
         --work-root)
@@ -42,6 +87,22 @@ if [[ ! "$ARTIFACT_VOLUME_ID" =~ ^vol-[0-9a-f]+$ ]]; then
 fi
 if [[ "$MAX_WORKERS" != "1" && "$MAX_WORKERS" != "2" ]]; then
     echo "--max-workers must be 1 or 2" >&2
+    exit 2
+fi
+if [[ -z "$RUN_ID" || -z "$INSTANCE_TYPE" || ! "$VCPU" =~ ^[1-9][0-9]*$ ]]; then
+    echo "operational run / instance metadata is required" >&2
+    exit 2
+fi
+if [[ -z "$PRICING_SOURCE" || -z "$PRICING_CHECKED_AT" || -z "$PRICING_REGION" ]]; then
+    echo "pricing provenance is required" >&2
+    exit 2
+fi
+if [[ ! "$INSTANCE_HOURLY_RATE_USD" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "instance hourly rate must be non-negative" >&2
+    exit 2
+fi
+if [[ ! "$PREDICTED_RUNTIME_MIN_SECONDS" =~ ^[1-9][0-9]*$ || ! "$PREDICTED_RUNTIME_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "calibrated runtime bounds are required" >&2
     exit 2
 fi
 if [[ "$(id -u)" != "0" ]]; then
@@ -107,6 +168,9 @@ mount "$ARTIFACT_DEVICE" "$MOUNT_ROOT"
 chmod 700 "$MOUNT_ROOT"
 
 ARTIFACT_ROOT="$MOUNT_ROOT/issue-326"
+OPERATIONAL_ROOT="$ARTIFACT_ROOT/operational"
+PROGRESS_PATH="$OPERATIONAL_ROOT/progress.json"
+CALIBRATION_PATH="$OPERATIONAL_ROOT/calibration.json"
 if [[ -e "$ARTIFACT_ROOT" ]]; then
     echo "artifact root already exists; refusing overwrite" >&2
     exit 1
@@ -146,13 +210,30 @@ START_EPOCH="$(date +%s)"
 START_UTC="$(date -u -d "@$START_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 echo "run: start_utc=$START_UTC seeds=2000..2095 max_workers=$MAX_WORKERS"
 
-"$PYTHON" -m lisjong_arena.wait_shape_qualification.pilot run     "${PILOT_ARGS[@]}" >"$WORK_ROOT/pilot-run-summary.json"
+"$PYTHON" -m lisjong_arena.wait_shape_qualification.pilot run     "${PILOT_ARGS[@]}"     --operational-progress-path "$PROGRESS_PATH"     --operational-run-id "$RUN_ID" >"$WORK_ROOT/pilot-run-summary.json"
 
 "$PYTHON" -m lisjong_arena.wait_shape_qualification.pilot verify     --output-root "$ARTIFACT_ROOT" >"$WORK_ROOT/pilot-verify-summary.json"
 
 STOP_EPOCH="$(date +%s)"
 STOP_UTC="$(date -u -d "@$STOP_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 ELAPSED_SECONDS="$((STOP_EPOCH - START_EPOCH))"
+
+"$PYTHON" -m lisjong_arena.aws_execution_observability calibration \
+    --output-path "$CALIBRATION_PATH" \
+    --run-id "$RUN_ID" \
+    --unit-kind hanchan \
+    --completed-units 96 \
+    --actual-runtime-seconds "$ELAPSED_SECONDS" \
+    --predicted-runtime-min-seconds "$PREDICTED_RUNTIME_MIN_SECONDS" \
+    --predicted-runtime-max-seconds "$PREDICTED_RUNTIME_MAX_SECONDS" \
+    --instance-type "$INSTANCE_TYPE" \
+    --vcpu "$VCPU" \
+    --worker-count "$MAX_WORKERS" \
+    --pricing-source "$PRICING_SOURCE" \
+    --pricing-checked-at "$PRICING_CHECKED_AT" \
+    --pricing-region "$PRICING_REGION" \
+    --instance-hourly-rate-usd "$INSTANCE_HOURLY_RATE_USD" \
+    >"$WORK_ROOT/calibration-summary.json"
 
 sync
 RAW_BYTES="$(stat -c '%s' "$ARTIFACT_ROOT/pilot-raw/observations.jsonl")"

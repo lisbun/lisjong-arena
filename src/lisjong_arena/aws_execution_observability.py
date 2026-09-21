@@ -288,7 +288,11 @@ def write_progress(path: str | Path, document: object) -> None:
 
 
 def pricing_provenance(
-    *, source: str, checked_at: datetime, region: str, instance_hourly_rate_usd: float
+    *,
+    source: str,
+    checked_at: datetime,
+    region: str,
+    instance_hourly_rate_usd: float | None,
 ) -> dict[str, object]:
     _require(bool(source.strip()), "pricing source must be non-empty")
     _require(bool(region.strip()), "pricing region must be non-empty")
@@ -296,8 +300,12 @@ def pricing_provenance(
         "source": source,
         "checked_at": _timestamp(checked_at),
         "region": region,
-        "instance_hourly_rate_usd": _non_negative_number(
-            instance_hourly_rate_usd, "instance_hourly_rate_usd"
+        "instance_hourly_rate_usd": (
+            None
+            if instance_hourly_rate_usd is None
+            else _non_negative_number(
+                instance_hourly_rate_usd, "instance_hourly_rate_usd"
+            )
         ),
     }
 
@@ -351,7 +359,7 @@ def build_execution_plan(
             "basis": estimate_basis,
             "reason": None,
         }
-        if pricing is not None:
+        if pricing is not None and pricing.get("instance_hourly_rate_usd") is not None:
             rate = _non_negative_number(
                 pricing.get("instance_hourly_rate_usd"), "instance hourly rate"
             )
@@ -364,7 +372,7 @@ def build_execution_plan(
             }
 
     fail_safe_exposure = None
-    if pricing is not None:
+    if pricing is not None and pricing.get("instance_hourly_rate_usd") is not None:
         rate = _non_negative_number(
             pricing.get("instance_hourly_rate_usd"), "instance hourly rate"
         )
@@ -479,9 +487,35 @@ def write_calibration(path: str | Path, document: dict[str, object]) -> None:
     atomic_replace(destination, canonical_json_bytes(document))
 
 
+def write_plan(path: str | Path, document: dict[str, object]) -> None:
+    destination = Path(path)
+    _require(not destination.exists(), "plan destination already exists")
+    atomic_replace(destination, canonical_json_bytes(document))
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+    plan = subparsers.add_parser("plan")
+    plan.add_argument("--output-path", required=True)
+    plan.add_argument("--run-id", required=True)
+    plan.add_argument("--unit-kind", required=True)
+    plan.add_argument("--total-units", type=int, required=True)
+    plan.add_argument("--instance-type", required=True)
+    plan.add_argument("--vcpu", type=int, required=True)
+    plan.add_argument("--memory-mib", type=int, required=True)
+    plan.add_argument("--worker-count", type=int, required=True)
+    plan.add_argument("--fail-safe-seconds", type=float, required=True)
+    plan.add_argument("--pricing-source")
+    plan.add_argument("--pricing-checked-at")
+    plan.add_argument("--pricing-region")
+    plan.add_argument("--instance-hourly-rate-usd", type=float)
+    plan.add_argument("--predicted-runtime-min-seconds", type=float)
+    plan.add_argument("--predicted-runtime-max-seconds", type=float)
+    plan.add_argument("--estimate-basis")
+    plan.add_argument("--retained-ebs-estimate-usd", type=float)
+    plan.add_argument("--known-other-charge", action="append", default=[])
+    plan.add_argument("--unknown-variable-charge", action="append", default=[])
     calibration = subparsers.add_parser("calibration")
     calibration.add_argument("--output-path", required=True)
     calibration.add_argument("--run-id", required=True)
@@ -516,6 +550,45 @@ def main(argv: list[str] | None = None) -> int:
             args.predicted_runtime_min_seconds,
             args.predicted_runtime_max_seconds,
         )
+    if args.command == "plan":
+        pricing_values = (
+            args.pricing_source,
+            args.pricing_checked_at,
+            args.pricing_region,
+        )
+        pricing = None
+        if any(value is not None for value in pricing_values):
+            _require(
+                all(value is not None for value in pricing_values),
+                "complete pricing provenance is required",
+            )
+            pricing = pricing_provenance(
+                source=args.pricing_source,
+                checked_at=_parse_timestamp(
+                    args.pricing_checked_at, "pricing_checked_at"
+                ),
+                region=args.pricing_region,
+                instance_hourly_rate_usd=args.instance_hourly_rate_usd,
+            )
+        document = build_execution_plan(
+            run_id=args.run_id,
+            unit_kind=args.unit_kind,
+            total_units=args.total_units,
+            instance_type=args.instance_type,
+            vcpu=args.vcpu,
+            memory_mib=args.memory_mib,
+            worker_count=args.worker_count,
+            fail_safe_seconds=args.fail_safe_seconds,
+            pricing=pricing,
+            predicted_runtime_seconds=predicted,
+            estimate_basis=args.estimate_basis,
+            retained_ebs_estimate_usd=args.retained_ebs_estimate_usd,
+            known_other_charges=tuple(args.known_other_charge),
+            unknown_variable_charges=tuple(args.unknown_variable_charge),
+        )
+        write_plan(args.output_path, document)
+        print(json.dumps(document, sort_keys=True, separators=(",", ":")))
+        return 0
     checked_at = _parse_timestamp(args.pricing_checked_at, "pricing_checked_at")
     pricing = pricing_provenance(
         source=args.pricing_source,
@@ -556,5 +629,6 @@ __all__ = [
     "validate_progress_document",
     "validate_progress_transition",
     "write_calibration",
+    "write_plan",
     "write_progress",
 ]
