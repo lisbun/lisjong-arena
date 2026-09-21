@@ -88,7 +88,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
             text,
         )
         self.assertIn(
-            'if ($FailSafeHours -lt 4 -or $FailSafeHours -gt 8) {',
+            "if ($FailSafeHours -lt 4 -or $FailSafeHours -gt 8) {",
             text,
         )
 
