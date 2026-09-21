@@ -208,7 +208,12 @@ class SourceRecordTest(unittest.TestCase):
             for index, line in enumerate(lines):
                 row = json.loads(line)
                 if len(row["legal_actions"]) >= 2:
-                    row["teacher_selected_action"] = copy.deepcopy(row["legal_actions"][1])
+                    replacement = next(
+                        action
+                        for action in row["legal_actions"]
+                        if action != row["teacher_selected_action"]
+                    )
+                    row["teacher_selected_action"] = copy.deepcopy(replacement)
                     lines[index] = source_record._canonical_line(row).rstrip("\n")
                     changed = True
                     break
