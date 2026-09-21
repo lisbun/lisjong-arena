@@ -134,7 +134,9 @@ def write_game(
             previous_seat = -1
             for observation in step.seat_decisions:
                 if int(observation.seat) <= previous_seat:
-                    raise OffenseError("source-record noncanonical execution seat order")
+                    raise OffenseError(
+                        "source-record noncanonical execution seat order"
+                    )
                 previous_seat = int(observation.seat)
                 row = encode_observation(
                     observation,
@@ -313,7 +315,9 @@ def _read_game(
                 or step not in (last_step, last_step + 1)
                 or (step == last_step and seat <= last_seat)
             ):
-                raise OffenseError("source-record decision ordering/accounting mismatch")
+                raise OffenseError(
+                    "source-record decision ordering/accounting mismatch"
+                )
             last_step, last_seat = step, seat
 
             scientific = parse_json_text(scientific_line)
