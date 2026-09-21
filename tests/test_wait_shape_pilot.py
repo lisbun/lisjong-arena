@@ -180,6 +180,52 @@ class WaitShapePilotTest(unittest.TestCase):
         self.assertEqual(completed[0], (1, len(PILOT_SEEDS)))
         self.assertEqual(completed[-1], (len(PILOT_SEEDS), len(PILOT_SEEDS)))
 
+    def test_checkpoint_callback_fires_per_seed_in_completion_order(self):
+        class Future:
+            def __init__(self, seed):
+                self.seed = seed
+
+            def result(self):
+                return ({"seed": self.seed}, ({"seed": self.seed},))
+
+        class Executor:
+            def __init__(self, *, max_workers):
+                self.max_workers = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def submit(self, function, seed):
+                return Future(seed)
+
+        def reverse_completion(futures):
+            return sorted(futures, key=lambda future: future.seed, reverse=True)
+
+        checkpointed = []
+
+        def checkpoint(seed, game_receipt, observations, started_at, completed_at):
+            checkpointed.append(seed)
+            self.assertEqual(game_receipt, {"seed": seed})
+            self.assertEqual(observations, ({"seed": seed},))
+            self.assertTrue(started_at.endswith("Z"))
+            self.assertTrue(completed_at.endswith("Z"))
+
+        with (
+            patch(
+                "lisjong_arena.wait_shape_qualification.pilot.ProcessPoolExecutor",
+                Executor,
+            ),
+            patch(
+                "lisjong_arena.wait_shape_qualification.pilot.as_completed",
+                reverse_completion,
+            ),
+        ):
+            _collect_observations(2, checkpoint=checkpoint)
+        self.assertEqual(checkpointed, list(reversed(PILOT_SEEDS)))
+
     def test_synthetic_locked_support_passes_f1_f2(self):
         raw = raw_with()
         f1 = summarize_f1(raw)
@@ -343,6 +389,7 @@ class WaitShapePilotTest(unittest.TestCase):
         )
         self.assertFalse(lock["result_exposed"])
         self.assertTrue(lock["pilot"]["scientific_reuse_forbidden"])
+        self.assertIn("checkpoints", lock["artifact_destinations"])
 
     def test_execution_lock_rejects_f2_operationalization_tampering(self):
         with tempfile.TemporaryDirectory() as temp:
