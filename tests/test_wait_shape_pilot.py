@@ -16,6 +16,7 @@ from lisjong_arena.wait_shape_qualification.pilot import (
     _validate_observation,
     build_execution_lock,
     build_pilot_teacher_population,
+    preflight,
     qualification_document,
     summarize_f1,
     summarize_f2,
@@ -254,6 +255,23 @@ class WaitShapePilotTest(unittest.TestCase):
         non_discard_selected["teacher_action_index"] = 50
         with self.assertRaises(WaitShapePilotError):
             _validate_observation(non_discard_selected, "record")
+
+    def test_preflight_leaves_no_probe_output_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "probe"
+            with patch(
+                "lisjong_arena.wait_shape_qualification.pilot._verify_locked_environment",
+                return_value=fake_execution(),
+            ):
+                result = preflight(
+                    root,
+                    max_workers=2,
+                    repository_collision_audit_pass=True,
+                    private_collision_audit_pass=True,
+                    no_prior_result_exposure_confirmed=True,
+                )
+            self.assertEqual(result["status"], "PASS")
+            self.assertFalse(root.exists())
 
     def test_execution_lock_binds_preexposure_gates_and_exact_protocol(self):
         with tempfile.TemporaryDirectory() as temp:
