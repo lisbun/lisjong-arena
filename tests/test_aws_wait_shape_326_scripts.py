@@ -80,6 +80,18 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
             text.index('"ec2", "run-instances"'),
         )
 
+    def test_launcher_rejects_unbounded_instance_type_and_failsafe(self) -> None:
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('if ($InstanceType -ne "t3.small") {', text)
+        self.assertIn(
+            'throw "Issue #326 locks bounded compute to t3.small."',
+            text,
+        )
+        self.assertIn(
+            'if ($FailSafeHours -lt 4 -or $FailSafeHours -gt 8) {',
+            text,
+        )
+
     def test_launcher_keeps_bounded_compute_and_teardown_invariants(self) -> None:
         text = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn('[string]$InstanceType = "t3.small"', text)
