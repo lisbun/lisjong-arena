@@ -288,7 +288,7 @@ if ($Phase -eq "B") {
         (Get-TagValue $phaseAVolume "lisjong-p2-outcome") -ne "OFFENSE SUPPORT QUALIFIED" -or
         [string]::IsNullOrWhiteSpace($phaseARunId) -or
         $phaseASourceRecordIdentity -notmatch "^[0-9a-f]{64}$"
-    ) { throw "Phase B gate requires completed Phase A corpus/source strict-read PASS and OFFENSE SUPPORT QUALIFIED." }
+    ) { throw "Phase B gate requires completed Phase A strict-read PASS, source-record identity, and OFFENSE SUPPORT QUALIFIED." }
     if ($phaseAArenaRevision -notmatch "^[0-9a-f]{40}$") {
         throw "Phase A retained volume is missing its Arena revision tag; Phase B cannot bind to it."
     }
