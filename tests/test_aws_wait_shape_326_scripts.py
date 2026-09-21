@@ -98,6 +98,8 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         self.assertIn("[ValidateSet(1, 2)][int]$MaxWorkers = 2", text)
         self.assertIn('HttpTokens = "required"', text)
         self.assertIn('InstanceInitiatedShutdownBehavior = "terminate"', text)
+        self.assertIn("DeleteOnTermination -ne $true", text)
+        self.assertIn("instanceInitiatedShutdownBehavior", text)
         self.assertIn("lisjong-cost-failsafe", text)
         self.assertIn('"ec2", "terminate-instances"', text)
         self.assertIn('"ec2", "wait", "instance-terminated"', text)
