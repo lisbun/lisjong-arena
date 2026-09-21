@@ -261,6 +261,8 @@ if ($MaxWorkers -gt $instanceVcpu -and -not $AllowWorkerOversubscription) {
 
 $phaseAVolume = $null
 $phaseARunId = ""
+$phaseAArenaRevision = ""
+$phaseAQualificationIdentity = ""
 $requiredAvailabilityZone = ""
 if ($Phase -eq "B") {
     $phaseAVolumeResponse = Invoke-AwsJson -Arguments @("ec2", "describe-volumes", "--volume-ids", $PhaseAArtifactVolumeId)
@@ -273,6 +275,8 @@ if ($Phase -eq "B") {
         @($phaseAVolume.Attachments).Count -ne 0
     ) { throw "Phase A retained volume is not an available detached encrypted 8 GiB gp3 volume." }
     $phaseARunId = Get-TagValue -Resource $phaseAVolume -Key "lisjong-run-id"
+    $phaseAArenaRevision = Get-TagValue -Resource $phaseAVolume -Key "lisjong-arena-revision"
+    $phaseAQualificationIdentity = Get-TagValue -Resource $phaseAVolume -Key "lisjong-remote-qualification-identity"
     if (
         (Get-TagValue $phaseAVolume "Issue") -ne "332" -or
         (Get-TagValue $phaseAVolume "Purpose") -ne "offense-foundation-output" -or
@@ -282,6 +286,9 @@ if ($Phase -eq "B") {
         (Get-TagValue $phaseAVolume "lisjong-p2-outcome") -ne "OFFENSE SUPPORT QUALIFIED" -or
         [string]::IsNullOrWhiteSpace($phaseARunId)
     ) { throw "Phase B gate requires completed Phase A strict-read PASS and OFFENSE SUPPORT QUALIFIED." }
+    if ($phaseAArenaRevision -notmatch "^[0-9a-f]{40}$") {
+        throw "Phase A retained volume is missing its Arena revision tag; Phase B cannot bind to it."
+    }
     $requiredAvailabilityZone = [string]$phaseAVolume.AvailabilityZone
 }
 
@@ -294,6 +301,9 @@ if ([string]::IsNullOrWhiteSpace($ArenaRevision)) {
     $ArenaRevision = (($remote | Out-String).Trim() -split "\s+")[0]
 }
 if ($ArenaRevision -notmatch "^[0-9a-f]{40}$") { throw "ArenaRevision must be a full lowercase commit SHA." }
+if ($Phase -eq "B" -and $ArenaRevision -ne $phaseAArenaRevision) {
+    throw "Phase B Arena revision '$ArenaRevision' must exactly match the Phase A retained Arena revision '$phaseAArenaRevision'. No billable resource was created."
+}
 
 $role = Invoke-AwsJson -Arguments @("iam", "get-role", "--role-name", $RoleName)
 if ([string]::IsNullOrWhiteSpace([string]$role.Role.Arn)) { throw "Could not resolve instance role." }
@@ -355,6 +365,8 @@ $requestValidationText = (& $localPython -m lisjong_arena.offense_foundation val
         --request $RequestPath --phase $expectedRequestPhase 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw "Canonical population request validation failed: $requestValidationText" }
 $qualificationIdentity = ""
+$qualificationContractPath = ""
+$qualificationContractB64 = ""
 if ($Phase -eq "A") {
     $phaseLockPath = Join-Path $runDir "phase-a-protocol-lock.json"
     $lockText = (& $localPython -m lisjong_arena.offense_foundation lock `
@@ -367,6 +379,17 @@ if ($Phase -eq "A") {
     }
     $qualificationIdentity = [string]$phaseLock.qualification.identity
     if ($qualificationIdentity -notmatch "^[0-9a-f]{64}$") { throw "Qualification identity is invalid." }
+    # The local pre-billing qualification is retained as evidence and as a
+    # required prerequisite, but only its #332 scientific/runtime contract
+    # fields (not its full platform-dependent identity) gate the AWS-generated
+    # qualification that is actually embedded in the Phase A protocol lock.
+    $qualificationContractPath = Join-Path $runDir "local-qualification-contract.json"
+    $contractText = (& $localPython -m lisjong_arena.offense_foundation qualification-contract `
+            --qualification $QualificationPath --output $qualificationContractPath 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Local qualification scientific contract derivation failed: $contractText" }
+    $qualificationContractB64 = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath $qualificationContractPath))
+    )
 }
 
 $hasScientificRuntimeRange = (
@@ -413,17 +436,23 @@ Write-JsonFile -Path $planPath -Value ([ordered]@{
         issue = "332"; phase = $Phase; run_id = $runId; total_units = $totalUnits
         phase_a_input_volume_id = $(if ($Phase -eq "B") { $PhaseAArtifactVolumeId } else { $null })
         phase_a_input_run_id = $(if ($Phase -eq "B") { $phaseARunId } else { $null })
+        phase_a_arena_revision = $(if ($Phase -eq "B") { $phaseAArenaRevision } else { $null })
+        phase_a_qualification_identity = $(if ($Phase -eq "B") { $phaseAQualificationIdentity } else { $null })
         output_volume_size_gib = 8; output_volume_type = "gp3"; output_volume_encrypted = $true
         operational_plan = $operationalPlan
     })
 Write-JsonFile -Path $preflightPath -Value ([ordered]@{
         status = "PASS"; issue = "332"; phase = $Phase; checked_at_utc = (Get-Date).ToUniversalTime().ToString("o")
         arena_revision = $ArenaRevision; request_phase = $expectedRequestPhase; total_units = $totalUnits
-        qualification_identity = $(if ($Phase -eq "A") { $qualificationIdentity } else { $null })
+        local_qualification_identity = $(if ($Phase -eq "A") { $qualificationIdentity } else { $null })
+        local_qualification_contract_path = $(if ($Phase -eq "A") { $qualificationContractPath } else { $null })
         instance_type = $InstanceType; instance_vcpu = $instanceVcpu; instance_memory_mib = $instanceMemoryMiB
         max_workers = $MaxWorkers; subnet_id = $SubnetId; availability_zone = $availabilityZone
         phase_a_gate_pass = ($Phase -eq "A" -or $null -ne $phaseAVolume)
         phase_a_input_volume_id = $(if ($Phase -eq "B") { $PhaseAArtifactVolumeId } else { $null })
+        phase_a_arena_revision = $(if ($Phase -eq "B") { $phaseAArenaRevision } else { $null })
+        phase_a_arena_revision_match = $(if ($Phase -eq "B") { $true } else { $null })
+        phase_a_qualification_identity = $(if ($Phase -eq "B") { $phaseAQualificationIdentity } else { $null })
         output_volume_size_gib = 8; billable_resource_created = $false; scientific_ssm_submitted = $false
     })
 
@@ -532,7 +561,7 @@ try {
     $phaseArguments = if ($Phase -eq "B") {
         "--phase-a-volume-id '$PhaseAArtifactVolumeId' --phase-a-run-id '$phaseARunId'"
     } else {
-        "--expected-qualification-identity '$qualificationIdentity'"
+        "--local-qualification-identity '$qualificationIdentity' --expected-qualification-contract-b64 '$qualificationContractB64'"
     }
     $oversubscriptionArgument = if ($AllowWorkerOversubscription) { "--allow-worker-oversubscription" } else { "" }
     $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-332.sh; chmod 700 /tmp/lisjong-bootstrap-332.sh; exec /tmp/lisjong-bootstrap-332.sh --phase '$Phase' --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' $phaseArguments --max-workers '$MaxWorkers' $oversubscriptionArgument --run-id '$runId' --request-json-b64 '$requestJsonB64' --instance-type '$InstanceType' --vcpu '$instanceVcpu' --pricing-source '$($price.Source)' --pricing-checked-at '$($price.CheckedAt)' --pricing-region '$Region' --instance-hourly-rate-usd '$hourlyRateText'"

@@ -6,7 +6,8 @@ ARENA_REVISION=""
 ARTIFACT_VOLUME_ID=""
 PHASE_A_VOLUME_ID=""
 PHASE_A_RUN_ID=""
-EXPECTED_QUALIFICATION_IDENTITY=""
+LOCAL_QUALIFICATION_IDENTITY=""
+EXPECTED_QUALIFICATION_CONTRACT_B64=""
 MAX_WORKERS=""
 ALLOW_WORKER_OVERSUBSCRIPTION="0"
 RUN_ID=""
@@ -27,7 +28,8 @@ while (($#)); do
         --artifact-volume-id) ARTIFACT_VOLUME_ID="$2"; shift 2 ;;
         --phase-a-volume-id) PHASE_A_VOLUME_ID="$2"; shift 2 ;;
         --phase-a-run-id) PHASE_A_RUN_ID="$2"; shift 2 ;;
-        --expected-qualification-identity) EXPECTED_QUALIFICATION_IDENTITY="$2"; shift 2 ;;
+        --local-qualification-identity) LOCAL_QUALIFICATION_IDENTITY="$2"; shift 2 ;;
+        --expected-qualification-contract-b64) EXPECTED_QUALIFICATION_CONTRACT_B64="$2"; shift 2 ;;
         --max-workers) MAX_WORKERS="$2"; shift 2 ;;
         --allow-worker-oversubscription) ALLOW_WORKER_OVERSUBSCRIPTION="1"; shift ;;
         --run-id) RUN_ID="$2"; shift 2 ;;
@@ -60,8 +62,12 @@ if [[ "$PHASE" == "A" ]]; then
         echo "Phase A must not consume Phase A evidence" >&2
         exit 2
     fi
-    if [[ ! "$EXPECTED_QUALIFICATION_IDENTITY" =~ ^[0-9a-f]{64}$ ]]; then
-        echo "Phase A requires the pre-billing final qualification identity" >&2
+    if [[ ! "$LOCAL_QUALIFICATION_IDENTITY" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "Phase A requires the pre-billing local qualification identity" >&2
+        exit 2
+    fi
+    if [[ -z "$EXPECTED_QUALIFICATION_CONTRACT_B64" ]]; then
+        echo "Phase A requires the pre-billing local qualification scientific contract" >&2
         exit 2
     fi
     EXPECTED_GAMES=20
@@ -194,14 +200,20 @@ START_EPOCH="$(date +%s)"
 START_UTC="$(date -u -d "@$START_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 if [[ "$PHASE" == "A" ]]; then
     QUALIFICATION="$ARTIFACT_ROOT/qualification.json"
+    REMOTE_CONTRACT="$OPERATIONAL_ROOT/remote-qualification-contract.json"
+    EXPECTED_CONTRACT="$OPERATIONAL_ROOT/local-qualification-contract.json"
     LOCK="$ARTIFACT_ROOT/p2-lock.json"
     CORPUS="$ARTIFACT_ROOT/p2-corpus"
     "$PYTHON" -m lisjong_arena.offense_foundation qualify --output "$QUALIFICATION" >>"$BOOTSTRAP_LOG" 2>&1
-    ACTUAL_QUALIFICATION_IDENTITY="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["identity"])' "$QUALIFICATION")"
-    if [[ "$ACTUAL_QUALIFICATION_IDENTITY" != "$EXPECTED_QUALIFICATION_IDENTITY" ]]; then
-        echo "remote qualification differs from the pre-billing final qualification" >&2
-        exit 1
-    fi
+    "$PYTHON" -m lisjong_arena.offense_foundation qualification-contract \
+        --qualification "$QUALIFICATION" --output "$REMOTE_CONTRACT" >>"$BOOTSTRAP_LOG" 2>&1
+    printf '%s' "$EXPECTED_QUALIFICATION_CONTRACT_B64" | base64 -d >"$EXPECTED_CONTRACT"
+    # Full qualification identity also binds platform-dependent representation
+    # (Python patch version, imported-source byte digest) that legitimately
+    # differs between the local operator environment and Amazon Linux; only
+    # the #332 scientific/runtime contract fields are required to match.
+    "$PYTHON" -m lisjong_arena.offense_foundation require-qualification-contract-match \
+        --local "$EXPECTED_CONTRACT" --remote "$REMOTE_CONTRACT" >>"$BOOTSTRAP_LOG" 2>&1
     "$PYTHON" -m lisjong_arena.offense_foundation lock \
         --request "$INPUT_ROOT/request.json" \
         --qualification "$QUALIFICATION" \
@@ -247,7 +259,8 @@ sync
 SUMMARY_JSON="$(
     "$PYTHON" - "$PHASE" "$CORPUS" "$LOCK" "$ARTIFACT_VOLUME_ID" \
         "$PHASE_A_VOLUME_ID" "$PHASE_A_RUN_ID" "$ARENA_REVISION" "$RUN_ID" \
-        "$START_UTC" "$STOP_UTC" "$ELAPSED_SECONDS" "$EXPECTED_GAMES" <<'PY'
+        "$START_UTC" "$STOP_UTC" "$ELAPSED_SECONDS" "$EXPECTED_GAMES" \
+        "$LOCAL_QUALIFICATION_IDENTITY" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -268,6 +281,7 @@ from lisjong_arena.offense_foundation.qualification import P2_PASS, read_documen
     completed_at,
     elapsed_seconds,
     expected_games,
+    local_qualification_identity,
 ) = sys.argv[1:]
 manifest = read_corpus(corpus_path, expected_lock=read_document(lock_path))
 if len(manifest["games"]) != int(expected_games):
@@ -289,6 +303,11 @@ summary = {
     "phase_a_input_run_id": phase_a_run_id or None,
     "corpus_identity": manifest["identity"],
     "protocol_lock_identity": manifest["lock"]["identity"],
+    # Actual execution qualification embedded in this phase's own protocol
+    # lock; this is the qualification that scientifically binds this corpus,
+    # not the local pre-billing qualification (tracked separately below).
+    "remote_qualification_identity": manifest["lock"]["qualification"]["identity"],
+    "local_qualification_identity": local_qualification_identity or None,
     "hanchan_count": len(manifest["games"]),
     "strict_readback": "PASS",
     "p2_outcome": manifest["p2_outcome"],

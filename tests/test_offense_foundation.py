@@ -32,8 +32,10 @@ from lisjong_arena.offense_foundation.qualification import (
     P1_PASS,
     P2_PASS,
     SCHEMA,
+    qualification_contract,
     qualify,
     read_document,
+    require_matching_qualification_contract,
     seal,
     write_document,
 )
@@ -168,6 +170,84 @@ class SemanticTest(unittest.TestCase):
         self.assertEqual(len(features), 8204 * 4)
         self.assertEqual(len(mask), 802)
         self.assertEqual(counts["choice_rows"], 1)
+
+
+def synthetic_binding(**overrides):
+    # Shape matches lisjong_arena.offense_foundation.qualification.runtime_binding().
+    base = {
+        "arena_revision": "a" * 40,
+        "dependencies": {"lisjong": "b" * 40, "lisjong-engine": "c" * 40},
+        "lisjong_source_digest": "d" * 64,
+        "teacher": "lisjong.policies.TwoStepUkeirePolicy",
+        "feature_fingerprint": "e" * 16,
+        "vocabulary_fingerprint": "f" * 16,
+        "feature_dimension": 8204,
+        "vocabulary_size": 802,
+        "python": "3.14.0",
+        "riichienv": "0.4.10",
+    }
+    base.update(overrides)
+    return base
+
+
+class QualificationContractTest(unittest.TestCase):
+    """#332 Blocker 1: cross-platform qualification identity equality removal."""
+
+    def test_platform_only_differences_are_permitted(self):
+        local = qualification_contract(qualify(synthetic_binding()))
+        remote = qualification_contract(
+            qualify(
+                synthetic_binding(
+                    python="3.14.1",
+                    lisjong_source_digest="9" * 64,
+                )
+            )
+        )
+        self.assertEqual(local, remote)
+        require_matching_qualification_contract(local, remote)  # must not raise
+
+    def test_scientific_field_mismatches_are_rejected(self):
+        local = qualification_contract(qualify(synthetic_binding()))
+        mismatches = {
+            "arena_revision": synthetic_binding(arena_revision="9" * 40),
+            "lisjong_revision": synthetic_binding(
+                dependencies={"lisjong": "9" * 40, "lisjong-engine": "c" * 40}
+            ),
+            "lisjong_engine_revision": synthetic_binding(
+                dependencies={"lisjong": "b" * 40, "lisjong-engine": "9" * 40}
+            ),
+            "riichienv_version": synthetic_binding(riichienv="0.4.11"),
+            "teacher": synthetic_binding(teacher="other.Teacher"),
+            "feature_dimension": synthetic_binding(feature_dimension=1),
+            "feature_fingerprint": synthetic_binding(feature_fingerprint="0" * 16),
+            "vocabulary_size": synthetic_binding(vocabulary_size=1),
+            "vocabulary_fingerprint": synthetic_binding(
+                vocabulary_fingerprint="0" * 16
+            ),
+        }
+        for field, altered_binding in mismatches.items():
+            with self.subTest(field=field):
+                remote = qualification_contract(qualify(altered_binding))
+                self.assertNotEqual(local, remote)
+                with self.assertRaises(OffenseError):
+                    require_matching_qualification_contract(local, remote)
+
+    def test_p0_or_p1_failure_is_rejected_before_comparison(self):
+        original = TwoStepUkeirePolicy._decide
+
+        def bad(policy, context):
+            from lisjong.policy_contract import PolicyDecision
+
+            kan = next(
+                (a for a in context.legal_actions if isinstance(a, AnkanAction)), None
+            )
+            return PolicyDecision(kan) if kan else original(policy, context)
+
+        with patch.object(TwoStepUkeirePolicy, "_decide", bad):
+            failed = qualify(synthetic_binding())
+        self.assertNotEqual(failed["p0"], P0_PASS)
+        with self.assertRaises(OffenseError):
+            qualification_contract(failed)
 
 
 class CorpusTest(unittest.TestCase):

@@ -139,10 +139,15 @@ $completionTags = @(
     "Key=lisjong-phase-complete,Value=true", "Key=lisjong-strict-readback,Value=PASS",
     "Key=lisjong-corpus-identity,Value=$($summary.corpus_identity)",
     "Key=lisjong-protocol-lock-identity,Value=$($summary.protocol_lock_identity)",
-    "Key=lisjong-scientific-runtime-sec,Value=$($summary.elapsed_seconds)"
+    "Key=lisjong-scientific-runtime-sec,Value=$($summary.elapsed_seconds)",
+    "Key=lisjong-arena-revision,Value=$($summary.arena_revision)",
+    "Key=lisjong-remote-qualification-identity,Value=$($summary.remote_qualification_identity)"
 )
 if ($phase -eq "A") {
     $completionTags += "Key=lisjong-p2-outcome,Value=$($summary.p2_outcome)"
+    if (-not [string]::IsNullOrWhiteSpace([string]$summary.local_qualification_identity)) {
+        $completionTags += "Key=lisjong-local-qualification-identity,Value=$($summary.local_qualification_identity)"
+    }
 } else {
     $completionTags += "Key=lisjong-scientific-corpus,Value=GENERATED-AND-RETAINED"
     $completionTags += "Key=lisjong-phase-a-input-volume,Value=$($summary.phase_a_input_volume_id)"
@@ -231,6 +236,49 @@ foreach ($rootVolumeId in $rootVolumeIds) {
     $probe = Invoke-AwsTextAllowFailure -Arguments @("ec2", "describe-volumes", "--volume-ids", $rootVolumeId, "--output", "json")
     if ($probe.ExitCode -eq 0) { $rootStorageDeleted = $false }
 }
+
+# The Phase A retained corpus volume was attached read-only to this Phase B
+# instance and remains a separate retained billable resource after Phase B
+# terminates. It is verified, never deleted, and never retagged to the
+# Phase B run-id.
+$phaseAInputVerification = $null
+if ($phase -eq "B") {
+    $phaseAInputRunId = [string]$summary.phase_a_input_run_id
+    if ([string]::IsNullOrWhiteSpace($phaseAInputVolumeId) -or [string]::IsNullOrWhiteSpace($phaseAInputRunId)) {
+        throw "Phase B completion summary is missing Phase A input volume/run provenance."
+    }
+    [void](Invoke-AwsText -Arguments @("ec2", "wait", "volume-available", "--volume-ids", $phaseAInputVolumeId))
+    $phaseAInputVolume = @((Invoke-AwsJson -Arguments @("ec2", "describe-volumes", "--volume-ids", $phaseAInputVolumeId)).Volumes)[0]
+    if (
+        [string]$phaseAInputVolume.State -ne "available" -or
+        [string]$phaseAInputVolume.VolumeType -ne "gp3" -or
+        [int]$phaseAInputVolume.Size -ne 8 -or
+        $phaseAInputVolume.Encrypted -ne $true -or
+        @($phaseAInputVolume.Attachments).Count -ne 0
+    ) { throw "Phase A input volume failed post-teardown detachment/encryption verification." }
+    $phaseAInputCurrentRunId = Get-TagValue $phaseAInputVolume "lisjong-run-id"
+    if (
+        (Get-TagValue $phaseAInputVolume "Issue") -ne "332" -or
+        (Get-TagValue $phaseAInputVolume "Purpose") -ne "offense-foundation-output" -or
+        (Get-TagValue $phaseAInputVolume "lisjong-phase") -ne "A" -or
+        (Get-TagValue $phaseAInputVolume "lisjong-phase-complete") -ne "true" -or
+        (Get-TagValue $phaseAInputVolume "lisjong-strict-readback") -ne "PASS" -or
+        (Get-TagValue $phaseAInputVolume "lisjong-p2-outcome") -ne "OFFENSE SUPPORT QUALIFIED" -or
+        $phaseAInputCurrentRunId -ne $phaseAInputRunId
+    ) { throw "Phase A input volume provenance tags differ from its original Phase A completion evidence." }
+    if ($phaseAInputCurrentRunId -eq $RunId) {
+        throw "Phase A input volume must not carry the Phase B run id."
+    }
+    $phaseAInputVerification = [ordered]@{
+        status = "PASS"; phase_a_input_volume_id = $phaseAInputVolumeId
+        detached_confirmed = $true; state = [string]$phaseAInputVolume.State
+        encrypted = [bool]$phaseAInputVolume.Encrypted
+        volume_type = [string]$phaseAInputVolume.VolumeType; size_gib = [int]$phaseAInputVolume.Size
+        phase_a_run_id = $phaseAInputCurrentRunId
+        provenance_verified = $true; retagged_to_phase_b_run_id = $false
+        retained_billing_continues = $true
+    }
+}
 $snapshotResponse = Invoke-AwsJson -Arguments @("ec2", "describe-snapshots", "--owner-ids", "self", "--filters", "Name=tag:lisjong-run-id,Values=$RunId")
 $addressResponse = Invoke-AwsJson -Arguments @("ec2", "describe-addresses", "--filters", "Name=tag:lisjong-run-id,Values=$RunId")
 $summary | Add-Member -NotePropertyName aws_execution -NotePropertyValue ([ordered]@{
@@ -243,6 +291,7 @@ $summary | Add-Member -NotePropertyName teardown -NotePropertyValue ([ordered]@{
         retained_output_volume_encrypted = [bool]$retained.Encrypted; retained_output_volume_attachment_count = @($retained.Attachments).Count
         unintended_snapshot_count = @($snapshotResponse.Snapshots).Count; unintended_eip_count = @($addressResponse.Addresses).Count
         retained_storage_billing_continues = $true
+        phase_a_input_volume = $phaseAInputVerification
     }) -Force
 $summary | Add-Member -NotePropertyName operational_calibration -NotePropertyValue $calibration -Force
 Write-JsonFile -Value $summary -Path $completionPath
@@ -252,6 +301,9 @@ Write-JsonFile -Path $statePath -Value ([ordered]@{
         termination_confirmed_at_utc = $terminationTime.ToString("o"); completion_path = $completionPath; calibration_path = $calibrationPath
     })
 Write-Host "Retained encrypted 8 GiB gp3 artifact volume: $outputVolumeId (billing continues: true)"
+if ($null -ne $phaseAInputVerification) {
+    Write-Host "Retained Phase A input volume verified detached/provenance-intact: $phaseAInputVolumeId (billing continues: true)"
+}
 if ($phase -eq "A" -and [string]$summary.p2_outcome -eq "OFFENSE SUPPORT NOT QUALIFIED") {
     Write-Host "COMPLETE: ISSUE #332 PHASE A / OFFENSE SUPPORT NOT QUALIFIED"
     Write-Host "Phase B remains forbidden. No extension or replacement is authorized."

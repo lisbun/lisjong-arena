@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,19 @@ _ROOT = Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "scripts" / "aws" / "start-offense-foundation-332.ps1"
 _BOOTSTRAP = _ROOT / "scripts" / "aws" / "bootstrap-offense-foundation-332.sh"
 _COLLECTOR = _ROOT / "scripts" / "aws" / "collect-offense-foundation-332.ps1"
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def _normalize_console_output(text):
+    """Strip ANSI styling/line-wrap gutters so PowerShell error text is substring-searchable.
+
+    PowerShell's terminal error renderer wraps long `throw` messages across
+    lines with a `NNN | `/`| ` gutter prefix on each wrapped line; stripping
+    that (after removing ANSI escapes) reconstructs the original message text.
+    """
+    plain = _ANSI_ESCAPE.sub("", text)
+    plain = re.sub(r"(?m)^\s*(?:\d+\s*)?\|\s?", " ", plain)
+    return " ".join(plain.split())
 
 
 class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
@@ -77,6 +91,12 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("retained_storage_billing_continues = $true", collector)
         self.assertIn("lisjong-phase-a-input-volume", collector)
         self.assertIn("lisjong-phase-a-input-run", collector)
+        # Blocker 3: the retained Phase A input volume is never retagged to
+        # the Phase B run-id anywhere in the collector.
+        self.assertNotIn(
+            '"ec2", "create-tags", "--resources", $phaseAInputVolumeId',
+            collector,
+        )
 
     def test_phase_b_gate_precedes_billable_mutation(self):
         text = _LAUNCHER.read_text(encoding="utf-8")
@@ -102,8 +122,81 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertLess(text.index(required), text.index('"ec2", "create-volume"'))
         self.assertLess(text.index(lock), text.index('"ec2", "create-volume"'))
         bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn("EXPECTED_QUALIFICATION_IDENTITY", bootstrap)
-        self.assertIn("remote qualification differs from the pre-billing", bootstrap)
+        self.assertIn("LOCAL_QUALIFICATION_IDENTITY", bootstrap)
+        self.assertIn("EXPECTED_QUALIFICATION_CONTRACT_B64", bootstrap)
+
+    def test_qualification_contract_replaces_full_identity_equality_across_platforms(
+        self,
+    ):
+        # Blocker 1: full cross-platform qualification identity equality
+        # (which also binds platform-dependent representation such as exact
+        # Python patch version and imported-source byte digest) must not be
+        # required. Only the #332 scientific/runtime contract is compared,
+        # and only after the local pre-billing qualification already passed.
+        bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertNotIn("EXPECTED_QUALIFICATION_IDENTITY", bootstrap)
+        self.assertNotIn("remote qualification differs from the pre-billing", bootstrap)
+        self.assertIn("offense_foundation qualification-contract", bootstrap)
+        self.assertIn(
+            "offense_foundation require-qualification-contract-match", bootstrap
+        )
+        # The AWS-generated qualification is the one actually embedded in the
+        # Phase A protocol lock/corpus, not the local pre-billing artifact.
+        contract_match = bootstrap.index("require-qualification-contract-match")
+        lock_call = bootstrap.index("offense_foundation lock", contract_match)
+        self.assertLess(contract_match, lock_call)
+        self.assertIn('--qualification "$QUALIFICATION"', bootstrap)
+        launcher = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("qualification-contract", launcher)
+        self.assertIn("local-qualification-contract.json", launcher)
+        self.assertIn("--local-qualification-identity", launcher)
+        self.assertIn("--expected-qualification-contract-b64", launcher)
+        self.assertNotIn("--expected-qualification-identity", launcher)
+
+    def test_phase_b_arena_revision_bound_before_billable_mutation(self):
+        # Blocker 2: Phase B must bind to the exact Phase A Arena revision
+        # before any billable AWS resource is created.
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        gate = "Phase B Arena revision"
+        self.assertIn(gate, text)
+        must_match = "must exactly match the Phase A retained Arena revision"
+        self.assertIn(must_match, text)
+        self.assertLess(text.index(must_match), text.index('"ec2", "create-volume"'))
+        self.assertLess(text.index(must_match), text.index('"ec2", "run-instances"'))
+        missing_tag = "Phase A retained volume is missing its Arena revision tag"
+        self.assertIn(missing_tag, text)
+        self.assertLess(text.index(missing_tag), text.index('"ec2", "create-volume"'))
+        collector = _COLLECTOR.read_text(encoding="utf-8")
+        self.assertIn(
+            "lisjong-arena-revision,Value=$($summary.arena_revision)", collector
+        )
+        self.assertIn(
+            "lisjong-remote-qualification-identity,Value=$($summary.remote_qualification_identity)",
+            collector,
+        )
+        bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn("remote_qualification_identity", bootstrap)
+
+    def test_phase_b_teardown_verifies_phase_a_input_volume(self):
+        # Blocker 3: Phase B teardown must explicitly verify the retained
+        # Phase A input volume, never delete it, and never retag it.
+        collector = _COLLECTOR.read_text(encoding="utf-8")
+        self.assertIn("phaseAInputVerification", collector)
+        for needle in (
+            "Phase A input volume failed post-teardown detachment",
+            "Phase A input volume provenance tags differ",
+            "Phase A input volume must not carry the Phase B run id",
+            "retagged_to_phase_b_run_id = $false",
+            "retained_billing_continues = $true",
+        ):
+            self.assertIn(needle, collector)
+        self.assertIn("phase_a_input_volume = $phaseAInputVerification", collector)
+        self.assertNotIn("delete-volume", collector)
+        # No code path retags the Phase A input volume to the Phase B run-id.
+        self.assertNotIn(
+            '"ec2", "create-tags", "--resources", $phaseAInputVolumeId',
+            collector,
+        )
 
     def test_bootstrap_reuses_canonical_generator_and_exact_runtime_contract(self):
         text = _BOOTSTRAP.read_text(encoding="utf-8")
@@ -151,14 +244,13 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("if ($monitorDetached) { throw }", launcher)
         self.assertIn("it was not terminated or resubmitted", launcher)
 
-    def test_preflight_executes_without_billable_aws_mutation(self):
-        if os.name != "nt":
-            self.skipTest(
-                "PowerShell launcher preflight uses the Windows operator path"
-            )
-        pwsh = shutil.which("pwsh")
-        if pwsh is None:
-            self.skipTest("pwsh is unavailable")
+    def _run_phase_b_preflight(self, arena_revision, phase_a_arena_revision_tag=None):
+        """Run the real PowerShell Phase B preflight against a mocked `aws` CLI.
+
+        ``phase_a_arena_revision_tag`` is the ``lisjong-arena-revision`` tag
+        value on the mocked retained Phase A volume; omit it to simulate a
+        volume with no such tag at all (Blocker 2 missing-tag case).
+        """
         request = {
             "phase": "SCIENTIFIC",
             "populations": {
@@ -169,134 +261,187 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             "known_used_seeds": [],
             "freshness_evidence": ["synthetic preflight fixture only"],
         }
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            request_path = root / "request.json"
-            request_path.write_text(json.dumps(request), encoding="utf-8")
-            wrapper = root / "preflight.ps1"
-            calls = root / "aws-calls.txt"
-            payloads = {
-                "get-caller-identity": {"Account": "1"},
-                "describe-instance-types": {
-                    "InstanceTypes": [
-                        {
-                            "VCpuInfo": {"DefaultVCpus": 32},
-                            "MemoryInfo": {"SizeInMiB": 65536},
-                        }
-                    ]
-                },
-                "describe-volumes": {
-                    "Volumes": [
-                        {
-                            "VolumeId": "vol-a1",
-                            "State": "available",
-                            "VolumeType": "gp3",
-                            "Size": 8,
-                            "Encrypted": True,
-                            "Attachments": [],
-                            "AvailabilityZone": "ap-northeast-1a",
-                            "Tags": [
-                                {"Key": "Issue", "Value": "332"},
-                                {
-                                    "Key": "Purpose",
-                                    "Value": "offense-foundation-output",
-                                },
-                                {"Key": "lisjong-phase", "Value": "A"},
-                                {"Key": "lisjong-phase-complete", "Value": "true"},
-                                {"Key": "lisjong-strict-readback", "Value": "PASS"},
-                                {
-                                    "Key": "lisjong-p2-outcome",
-                                    "Value": "OFFENSE SUPPORT QUALIFIED",
-                                },
-                                {"Key": "lisjong-run-id", "Value": "phase-a-run"},
-                            ],
-                        }
-                    ]
-                },
-                "global-infrastructure": {
-                    "Parameter": {"Value": "Asia Pacific (Tokyo)"}
-                },
-                "get-role": {"Role": {"Arn": "arn:aws:iam::1:role/test"}},
-                "list-instance-profiles": {
-                    "InstanceProfiles": [{"InstanceProfileName": "test-profile"}]
-                },
-                "describe-security-groups": {
-                    "SecurityGroups": [
-                        {
-                            "GroupId": "sg-1",
-                            "VpcId": "vpc-1",
-                            "IpPermissions": [],
-                            "IpPermissionsEgress": [{}],
-                        }
-                    ]
-                },
-                "describe-subnets": {
-                    "Subnets": [
-                        {
-                            "SubnetId": "subnet-1",
-                            "VpcId": "vpc-1",
-                            "AvailabilityZone": "ap-northeast-1a",
-                            "MapPublicIpOnLaunch": True,
-                        }
-                    ]
-                },
-                "ami-amazon-linux": {"Parameter": {"Value": "ami-1234abcd"}},
-            }
-            lines = [
-                "$global:calls = [Collections.Generic.List[string]]::new()",
-                "function global:aws {",
-                "  $joined = $args -join ' '",
-                "  $global:calls.Add($joined)",
-                "  $global:LASTEXITCODE = 0",
-                "  if ($joined -eq '--version') { 'aws-cli/2.test'; return }",
-            ]
-            for needle, payload in payloads.items():
-                encoded = json.dumps(payload, separators=(",", ":")).replace("'", "''")
-                lines.extend(
-                    [
-                        f"  if ($joined.Contains('{needle}')) {{",
-                        f"    '{encoded}'",
-                        "    return",
-                        "  }",
-                    ]
-                )
+        temp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp, True)
+        root = Path(temp)
+        request_path = root / "request.json"
+        request_path.write_text(json.dumps(request), encoding="utf-8")
+        wrapper = root / "preflight.ps1"
+        calls = root / "aws-calls.txt"
+        phase_a_tags = [
+            {"Key": "Issue", "Value": "332"},
+            {"Key": "Purpose", "Value": "offense-foundation-output"},
+            {"Key": "lisjong-phase", "Value": "A"},
+            {"Key": "lisjong-phase-complete", "Value": "true"},
+            {"Key": "lisjong-strict-readback", "Value": "PASS"},
+            {"Key": "lisjong-p2-outcome", "Value": "OFFENSE SUPPORT QUALIFIED"},
+            {"Key": "lisjong-run-id", "Value": "phase-a-run"},
+        ]
+        if phase_a_arena_revision_tag is not None:
+            phase_a_tags.append(
+                {"Key": "lisjong-arena-revision", "Value": phase_a_arena_revision_tag}
+            )
+        payloads = {
+            "get-caller-identity": {"Account": "1"},
+            "describe-instance-types": {
+                "InstanceTypes": [
+                    {
+                        "VCpuInfo": {"DefaultVCpus": 32},
+                        "MemoryInfo": {"SizeInMiB": 65536},
+                    }
+                ]
+            },
+            "describe-volumes": {
+                "Volumes": [
+                    {
+                        "VolumeId": "vol-a1",
+                        "State": "available",
+                        "VolumeType": "gp3",
+                        "Size": 8,
+                        "Encrypted": True,
+                        "Attachments": [],
+                        "AvailabilityZone": "ap-northeast-1a",
+                        "Tags": phase_a_tags,
+                    }
+                ]
+            },
+            "global-infrastructure": {"Parameter": {"Value": "Asia Pacific (Tokyo)"}},
+            "get-role": {"Role": {"Arn": "arn:aws:iam::1:role/test"}},
+            "list-instance-profiles": {
+                "InstanceProfiles": [{"InstanceProfileName": "test-profile"}]
+            },
+            "describe-security-groups": {
+                "SecurityGroups": [
+                    {
+                        "GroupId": "sg-1",
+                        "VpcId": "vpc-1",
+                        "IpPermissions": [],
+                        "IpPermissionsEgress": [{}],
+                    }
+                ]
+            },
+            "describe-subnets": {
+                "Subnets": [
+                    {
+                        "SubnetId": "subnet-1",
+                        "VpcId": "vpc-1",
+                        "AvailabilityZone": "ap-northeast-1a",
+                        "MapPublicIpOnLaunch": True,
+                    }
+                ]
+            },
+            "ami-amazon-linux": {"Parameter": {"Value": "ami-1234abcd"}},
+        }
+        lines = [
+            "$global:calls = [Collections.Generic.List[string]]::new()",
+            "function global:aws {",
+            "  $joined = $args -join ' '",
+            "  $global:calls.Add($joined)",
+            "  $global:LASTEXITCODE = 0",
+            "  if ($joined -eq '--version') { 'aws-cli/2.test'; return }",
+        ]
+        for needle, payload in payloads.items():
+            encoded = json.dumps(payload, separators=(",", ":")).replace("'", "''")
             lines.extend(
                 [
-                    "  $global:LASTEXITCODE = 51",
-                    '  throw "unexpected AWS call: $joined"',
-                    "}",
-                    (
-                        f"& '{str(_LAUNCHER).replace("'", "''")}' -Phase B "
-                        f"-RequestPath '{str(request_path).replace("'", "''")}' "
-                        "-PhaseAArtifactVolumeId 'vol-a1' "
-                        "-AwsProfile fake -PreflightOnly -HourlyPriceUsd 1.0 "
-                        f"-ArenaRevision '{'a' * 40}' -OutputRoot '{str(root).replace("'", "''")}'"
-                    ),
-                    f"$global:calls | Set-Content -LiteralPath '{str(calls).replace("'", "''")}'",
+                    f"  if ($joined.Contains('{needle}')) {{",
+                    f"    '{encoded}'",
+                    "    return",
+                    "  }",
                 ]
             )
-            wrapper.write_text("\n".join(lines), encoding="utf-8")
-            result = subprocess.run(
-                [
-                    pwsh,
-                    "-NoLogo",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-File",
-                    str(wrapper),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-                cwd=_ROOT,
+        lines.extend(
+            [
+                "  $global:LASTEXITCODE = 51",
+                '  throw "unexpected AWS call: $joined"',
+                "}",
+                (
+                    f"& '{str(_LAUNCHER).replace("'", "''")}' -Phase B "
+                    f"-RequestPath '{str(request_path).replace("'", "''")}' "
+                    "-PhaseAArtifactVolumeId 'vol-a1' "
+                    "-AwsProfile fake -PreflightOnly -HourlyPriceUsd 1.0 "
+                    f"-ArenaRevision '{arena_revision}' -OutputRoot '{str(root).replace("'", "''")}'"
+                ),
+                f"$global:calls | Set-Content -LiteralPath '{str(calls).replace("'", "''")}'",
+            ]
+        )
+        wrapper.write_text("\n".join(lines), encoding="utf-8")
+        result = subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                str(wrapper),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=_ROOT,
+        )
+        aws_calls = calls.read_text(encoding="utf-8") if calls.exists() else ""
+        return result, aws_calls
+
+    def test_preflight_executes_without_billable_aws_mutation(self):
+        if os.name != "nt":
+            self.skipTest(
+                "PowerShell launcher preflight uses the Windows operator path"
             )
-            output = result.stdout + result.stderr
-            self.assertEqual(0, result.returncode, output)
-            self.assertIn("PREFLIGHT ONLY", output)
-            aws_calls = calls.read_text(encoding="utf-8")
-            self.assertNotIn("create-volume", aws_calls)
-            self.assertNotIn("run-instances", aws_calls)
-            self.assertNotIn("send-command", aws_calls)
+        if shutil.which("pwsh") is None:
+            self.skipTest("pwsh is unavailable")
+        arena_revision = "a" * 40
+        result, aws_calls = self._run_phase_b_preflight(
+            arena_revision, phase_a_arena_revision_tag=arena_revision
+        )
+        output = result.stdout + result.stderr
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("PREFLIGHT ONLY", output)
+        self.assertNotIn("create-volume", aws_calls)
+        self.assertNotIn("run-instances", aws_calls)
+        self.assertNotIn("send-command", aws_calls)
+
+    def test_phase_b_preflight_rejects_arena_revision_mismatch(self):
+        # Blocker 2: a Phase B revision that differs from the Phase A
+        # retained tag must fail before any billable resource is created.
+        if os.name != "nt":
+            self.skipTest(
+                "PowerShell launcher preflight uses the Windows operator path"
+            )
+        if shutil.which("pwsh") is None:
+            self.skipTest("pwsh is unavailable")
+        result, aws_calls = self._run_phase_b_preflight(
+            "a" * 40, phase_a_arena_revision_tag="b" * 40
+        )
+        output = result.stdout + result.stderr
+        normalized = _normalize_console_output(output)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn(
+            "must exactly match the Phase A retained Arena revision", normalized
+        )
+        self.assertNotIn("create-volume", aws_calls)
+        self.assertNotIn("run-instances", aws_calls)
+        self.assertNotIn("send-command", aws_calls)
+
+    def test_phase_b_preflight_rejects_missing_phase_a_arena_revision_tag(self):
+        # Blocker 2: a Phase A retained volume without the Arena revision tag
+        # must fail before any billable resource is created.
+        if os.name != "nt":
+            self.skipTest(
+                "PowerShell launcher preflight uses the Windows operator path"
+            )
+        if shutil.which("pwsh") is None:
+            self.skipTest("pwsh is unavailable")
+        result, aws_calls = self._run_phase_b_preflight(
+            "a" * 40, phase_a_arena_revision_tag=None
+        )
+        output = result.stdout + result.stderr
+        normalized = _normalize_console_output(output)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("missing its Arena revision tag", normalized)
+        self.assertNotIn("create-volume", aws_calls)
+        self.assertNotIn("run-instances", aws_calls)
+        self.assertNotIn("send-command", aws_calls)
 
 
 if __name__ == "__main__":

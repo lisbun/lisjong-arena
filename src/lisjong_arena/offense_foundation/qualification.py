@@ -264,3 +264,77 @@ def require_qualification(report, binding):
         )
     if report["p0"] != P0_PASS or report["p1"] != P1_PASS:
         raise OffenseError(f"{report['p0']}; {report['p1']}")
+
+
+# Fields #332 actually binds across a local preflight environment and a
+# remote AWS execution environment. Deliberately excludes platform-dependent
+# runtime representation (exact Python patch version, imported-source byte
+# digest, full dependency identity set) that can legitimately differ between
+# operating systems even when scientific semantics are identical.
+CONTRACT_FIELDS = (
+    "arena_revision",
+    "lisjong_revision",
+    "lisjong_engine_revision",
+    "riichienv_version",
+    "teacher",
+    "feature_dimension",
+    "feature_fingerprint",
+    "vocabulary_size",
+    "vocabulary_fingerprint",
+    "p0",
+    "p1",
+)
+
+
+def qualification_contract(report):
+    """Derive the cross-platform scientific/runtime contract from a qualification.
+
+    This is the fail-closed comparison surface between a local pre-billing
+    qualification and a remote AWS execution qualification: only these fields
+    are required to match. The full qualification identity (which also binds
+    platform-dependent representation) is never required to match across
+    environments.
+    """
+    validate_qualification(report)
+    binding = report["binding"]
+    if type(binding) is not dict:
+        raise OffenseError("qualification binding is missing")
+    dependencies = binding.get("dependencies")
+    if (
+        type(dependencies) is not dict
+        or "lisjong" not in dependencies
+        or "lisjong-engine" not in dependencies
+    ):
+        raise OffenseError("qualification binding is missing dependency revisions")
+    try:
+        return {
+            "arena_revision": binding["arena_revision"],
+            "lisjong_revision": dependencies["lisjong"],
+            "lisjong_engine_revision": dependencies["lisjong-engine"],
+            "riichienv_version": binding["riichienv"],
+            "teacher": binding["teacher"],
+            "feature_dimension": binding["feature_dimension"],
+            "feature_fingerprint": binding["feature_fingerprint"],
+            "vocabulary_size": binding["vocabulary_size"],
+            "vocabulary_fingerprint": binding["vocabulary_fingerprint"],
+            "p0": report["p0"],
+            "p1": report["p1"],
+        }
+    except KeyError as error:
+        raise OffenseError(
+            f"qualification binding is missing field: {error}"
+        ) from error
+
+
+def require_matching_qualification_contract(local_contract, remote_contract):
+    """Fail closed unless every scientific/runtime contract field matches."""
+    if local_contract != remote_contract:
+        mismatched = sorted(
+            field
+            for field in CONTRACT_FIELDS
+            if local_contract.get(field) != remote_contract.get(field)
+        )
+        raise OffenseError(
+            "local/remote qualification scientific contract mismatch: "
+            + ", ".join(mismatched)
+        )

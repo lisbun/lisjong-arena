@@ -7,7 +7,11 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from lisjong_arena._artifact_io import parse_json_text
+from lisjong_arena._artifact_io import (
+    canonical_json_text,
+    parse_json_text,
+    write_new_artifact_file,
+)
 from lisjong_arena.aws_execution_observability import ProgressTracker, write_progress
 
 from .corpus import generate, read_corpus
@@ -15,8 +19,10 @@ from .protocol import make_lock, validate_request
 from .qualification import (
     P0_PASS,
     P1_PASS,
+    qualification_contract,
     qualify,
     read_document,
+    require_matching_qualification_contract,
     require_qualification,
     runtime_binding,
     write_document,
@@ -38,6 +44,18 @@ def main(argv=None):
     request_validation.add_argument(
         "--phase", choices=("P2", "SCIENTIFIC"), required=True
     )
+    contract = commands.add_parser(
+        "qualification-contract",
+        help="derive the cross-platform scientific/runtime contract fields",
+    )
+    contract.add_argument("--qualification", required=True)
+    contract.add_argument("--output", required=True)
+    contract_match = commands.add_parser(
+        "require-qualification-contract-match",
+        help="fail closed unless a local and remote qualification contract match",
+    )
+    contract_match.add_argument("--local", required=True)
+    contract_match.add_argument("--remote", required=True)
     lock = commands.add_parser(
         "lock", help="bind operator-supplied fresh population before generation"
     )
@@ -76,6 +94,22 @@ def main(argv=None):
             if request["phase"] != args.phase:
                 raise ValueError("population request phase differs from expected phase")
             print(json.dumps({"phase": args.phase, "status": "PASS"}))
+            return 0
+        if args.command == "qualification-contract":
+            report = read_document(args.qualification)
+            contract = qualification_contract(report)
+            write_new_artifact_file(Path(args.output), canonical_json_text(contract))
+            print(json.dumps(contract, sort_keys=True))
+            return 0
+        if args.command == "require-qualification-contract-match":
+            local_contract = parse_json_text(
+                Path(args.local).read_text(encoding="utf-8")
+            )
+            remote_contract = parse_json_text(
+                Path(args.remote).read_text(encoding="utf-8")
+            )
+            require_matching_qualification_contract(local_contract, remote_contract)
+            print(json.dumps({"status": "PASS"}))
             return 0
         if args.command == "lock":
             report = read_document(args.qualification)
