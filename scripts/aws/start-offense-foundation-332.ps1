@@ -263,6 +263,7 @@ $phaseAVolume = $null
 $phaseARunId = ""
 $phaseAArenaRevision = ""
 $phaseAQualificationIdentity = ""
+$phaseASourceRecordIdentity = ""
 $requiredAvailabilityZone = ""
 if ($Phase -eq "B") {
     $phaseAVolumeResponse = Invoke-AwsJson -Arguments @("ec2", "describe-volumes", "--volume-ids", $PhaseAArtifactVolumeId)
@@ -277,6 +278,7 @@ if ($Phase -eq "B") {
     $phaseARunId = Get-TagValue -Resource $phaseAVolume -Key "lisjong-run-id"
     $phaseAArenaRevision = Get-TagValue -Resource $phaseAVolume -Key "lisjong-arena-revision"
     $phaseAQualificationIdentity = Get-TagValue -Resource $phaseAVolume -Key "lisjong-remote-qualification-identity"
+    $phaseASourceRecordIdentity = Get-TagValue -Resource $phaseAVolume -Key "lisjong-source-record-identity"
     if (
         (Get-TagValue $phaseAVolume "Issue") -ne "332" -or
         (Get-TagValue $phaseAVolume "Purpose") -ne "offense-foundation-output" -or
@@ -284,8 +286,9 @@ if ($Phase -eq "B") {
         (Get-TagValue $phaseAVolume "lisjong-phase-complete") -ne "true" -or
         (Get-TagValue $phaseAVolume "lisjong-strict-readback") -ne "PASS" -or
         (Get-TagValue $phaseAVolume "lisjong-p2-outcome") -ne "OFFENSE SUPPORT QUALIFIED" -or
-        [string]::IsNullOrWhiteSpace($phaseARunId)
-    ) { throw "Phase B gate requires completed Phase A strict-read PASS and OFFENSE SUPPORT QUALIFIED." }
+        [string]::IsNullOrWhiteSpace($phaseARunId) -or
+        $phaseASourceRecordIdentity -notmatch "^[0-9a-f]{64}$"
+    ) { throw "Phase B gate requires completed Phase A corpus/source strict-read PASS and OFFENSE SUPPORT QUALIFIED." }
     if ($phaseAArenaRevision -notmatch "^[0-9a-f]{40}$") {
         throw "Phase A retained volume is missing its Arena revision tag; Phase B cannot bind to it."
     }
