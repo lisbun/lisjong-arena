@@ -215,6 +215,9 @@ summary = {
         "accepted_riichi_opponent_cells": f1["summary"][
             "accepted_riichi_opponent_cells"
         ],
+        "unavailable_accepted_riichi_cells": f1["summary"][
+            "unavailable_accepted_riichi_cells"
+        ],
         "eligible_labelled_cells": f1["summary"][
             "eligible_labelled_accepted_riichi_cells"
         ],
