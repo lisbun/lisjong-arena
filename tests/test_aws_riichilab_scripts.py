@@ -9,6 +9,7 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _BOOTSTRAP = _REPOSITORY_ROOT / "scripts" / "aws" / "bootstrap-riichilab-12h.sh"
 _LAUNCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "start-riichilab-12h.ps1"
 _COLLECTOR = _REPOSITORY_ROOT / "scripts" / "aws" / "collect-riichilab-12h.ps1"
+_MONITOR = _REPOSITORY_ROOT / "scripts" / "aws" / "ssm-monitor.ps1"
 
 
 class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
@@ -28,7 +29,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
             self.skipTest("pwsh is unavailable")
-        for script in (_LAUNCHER, _COLLECTOR):
+        for script in (_LAUNCHER, _COLLECTOR, _MONITOR):
             with self.subTest(script=script.name):
                 path = str(script).replace("'", "''")
                 command = (
@@ -57,6 +58,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertIn('"AWS-RunShellScript"', text)
         self.assertIn("executionTimeout", text)
         self.assertIn("lisjong-cost-failsafe", text)
+        self.assertIn("lisjong-scientific-command-id", text)
         self.assertIn("terminate-instances", text)
         self.assertIn("collect-riichilab-12h.ps1", text)
         self.assertNotIn("--user-data", text)
@@ -72,7 +74,10 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
             text.index("if ($PreflightOnly)"), text.index('"ec2", "run-instances"')
         )
         self.assertIn('Write-Host "SUBMITTED: remote run is detached', text)
-        self.assertLess(text.index("if ($SubmitOnly)"), text.index('$lastStatus = ""'))
+        self.assertLess(
+            text.index("if ($SubmitOnly)"),
+            text.index("Wait-SsmLongRunningInvocation"),
+        )
         self.assertIn("collect-riichilab-12h.ps1", text)
 
     def test_launcher_uses_resource_specific_iam_simulator_results(self) -> None:
