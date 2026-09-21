@@ -205,6 +205,8 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("lisjong_arena.offense_foundation lock", text)
         self.assertIn("lisjong_arena.offense_foundation generate", text)
         self.assertIn("lisjong_arena.offense_foundation readback", text)
+        self.assertIn("lisjong_arena.offense_foundation source-readback", text)
+        self.assertIn('--source-record-output "$SOURCE_RECORD"', text)
         self.assertIn('--workers "$MAX_WORKERS"', text)
         self.assertIn('--operational-progress-path "$PROGRESS_PATH"', text)
         launcher = _LAUNCHER.read_text(encoding="utf-8")
@@ -276,6 +278,7 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             {"Key": "lisjong-strict-readback", "Value": "PASS"},
             {"Key": "lisjong-p2-outcome", "Value": "OFFENSE SUPPORT QUALIFIED"},
             {"Key": "lisjong-run-id", "Value": "phase-a-run"},
+            {"Key": "lisjong-source-record-identity", "Value": "c" * 64},
         ]
         if phase_a_arena_revision_tag is not None:
             phase_a_tags.append(
