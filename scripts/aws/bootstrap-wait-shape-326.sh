@@ -170,7 +170,6 @@ chmod 700 "$MOUNT_ROOT"
 ARTIFACT_ROOT="$MOUNT_ROOT/issue-326"
 OPERATIONAL_ROOT="$ARTIFACT_ROOT/operational"
 PROGRESS_PATH="$OPERATIONAL_ROOT/progress.json"
-CALIBRATION_PATH="$OPERATIONAL_ROOT/calibration.json"
 if [[ -e "$ARTIFACT_ROOT" ]]; then
     echo "artifact root already exists; refusing overwrite" >&2
     exit 1
@@ -217,23 +216,6 @@ echo "run: start_utc=$START_UTC seeds=2000..2095 max_workers=$MAX_WORKERS"
 STOP_EPOCH="$(date +%s)"
 STOP_UTC="$(date -u -d "@$STOP_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 ELAPSED_SECONDS="$((STOP_EPOCH - START_EPOCH))"
-
-"$PYTHON" -m lisjong_arena.aws_execution_observability calibration \
-    --output-path "$CALIBRATION_PATH" \
-    --run-id "$RUN_ID" \
-    --unit-kind hanchan \
-    --completed-units 96 \
-    --actual-runtime-seconds "$ELAPSED_SECONDS" \
-    --predicted-runtime-min-seconds "$PREDICTED_RUNTIME_MIN_SECONDS" \
-    --predicted-runtime-max-seconds "$PREDICTED_RUNTIME_MAX_SECONDS" \
-    --instance-type "$INSTANCE_TYPE" \
-    --vcpu "$VCPU" \
-    --worker-count "$MAX_WORKERS" \
-    --pricing-source "$PRICING_SOURCE" \
-    --pricing-checked-at "$PRICING_CHECKED_AT" \
-    --pricing-region "$PRICING_REGION" \
-    --instance-hourly-rate-usd "$INSTANCE_HOURLY_RATE_USD" \
-    >"$WORK_ROOT/calibration-summary.json"
 
 sync
 RAW_BYTES="$(stat -c '%s' "$ARTIFACT_ROOT/pilot-raw/observations.jsonl")"

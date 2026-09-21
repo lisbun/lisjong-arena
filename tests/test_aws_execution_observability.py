@@ -202,7 +202,8 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             run_id="run-1",
             unit_kind="hanchan",
             completed_units=96,
-            actual_runtime_seconds=6000,
+            scientific_runtime_seconds=6000,
+            ec2_billable_runtime_seconds=7200,
             predicted_runtime_seconds=(3600, 5400),
             instance_type="t3.small",
             vcpu=2,
@@ -210,7 +211,11 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             pricing=self.pricing,
         )
         self.assertEqual(calibration["runtime_prediction_error_seconds"], 600.0)
-        self.assertEqual(calibration["cost_prediction_error_usd"], 0.016667)
+        self.assertEqual(calibration["cost_prediction_error_usd"], 0.05)
+        self.assertEqual(calibration["scientific_runtime_seconds"], 6000.0)
+        self.assertEqual(calibration["ec2_billable_runtime_seconds"], 7200.0)
+        self.assertEqual(calibration["actual_throughput_per_hour"], 57.6)
+        self.assertEqual(calibration["estimated_realized_cost"]["ec2_compute_usd"], 0.2)
         self.assertEqual(
             calibration["estimated_realized_cost"]["kind"],
             "estimated realized cost",
@@ -218,6 +223,24 @@ class AwsExecutionPlanningTest(unittest.TestCase):
         self.assertFalse(
             calibration["estimated_realized_cost"]["is_finalized_aws_invoice"]
         )
+
+    def test_calibration_rejects_billable_runtime_shorter_than_science(self) -> None:
+        with self.assertRaisesRegex(
+            AwsExecutionObservabilityError,
+            "billable runtime cannot be shorter",
+        ):
+            build_calibration(
+                run_id="run-1",
+                unit_kind="hanchan",
+                completed_units=96,
+                scientific_runtime_seconds=6000,
+                ec2_billable_runtime_seconds=5999,
+                predicted_runtime_seconds=(3600, 5400),
+                instance_type="t3.small",
+                vcpu=2,
+                worker_count=2,
+                pricing=self.pricing,
+            )
 
     def test_plan_cli_writes_the_pure_core_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

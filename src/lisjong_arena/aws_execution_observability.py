@@ -429,21 +429,31 @@ def build_calibration(
     run_id: str,
     unit_kind: str,
     completed_units: int,
-    actual_runtime_seconds: float,
+    scientific_runtime_seconds: float,
+    ec2_billable_runtime_seconds: float,
     predicted_runtime_seconds: tuple[float, float] | None,
     instance_type: str,
     vcpu: int,
     worker_count: int,
     pricing: dict[str, object],
 ) -> dict[str, object]:
-    runtime = _positive_number(actual_runtime_seconds, "actual_runtime_seconds")
+    scientific_runtime = _positive_number(
+        scientific_runtime_seconds, "scientific_runtime_seconds"
+    )
+    billable_runtime = _positive_number(
+        ec2_billable_runtime_seconds, "ec2_billable_runtime_seconds"
+    )
+    _require(
+        billable_runtime >= scientific_runtime,
+        "EC2 billable runtime cannot be shorter than scientific runtime",
+    )
     _require(
         type(completed_units) is int and completed_units > 0, "invalid completed_units"
     )
     rate = _non_negative_number(
         pricing.get("instance_hourly_rate_usd"), "instance hourly rate"
     )
-    actual_cost = calculate_compute_cost(runtime, rate)
+    actual_cost = calculate_compute_cost(billable_runtime, rate)
     predicted_cost_range = None
     if predicted_runtime_seconds is not None:
         predicted_cost_range = (
@@ -460,8 +470,11 @@ def build_calibration(
             if predicted_runtime_seconds is None
             else list(predicted_runtime_seconds)
         ),
-        "actual_runtime_seconds": runtime,
-        "actual_throughput_per_hour": round(completed_units * 3600 / runtime, 3),
+        "scientific_runtime_seconds": scientific_runtime,
+        "ec2_billable_runtime_seconds": billable_runtime,
+        "actual_throughput_per_hour": round(
+            completed_units * 3600 / scientific_runtime, 3
+        ),
         "predicted_cost_range_usd": (
             None if predicted_cost_range is None else list(predicted_cost_range)
         ),
@@ -475,7 +488,7 @@ def build_calibration(
         "worker_count": worker_count,
         "pricing": pricing,
         "runtime_prediction_error_seconds": _range_error(
-            runtime, predicted_runtime_seconds
+            scientific_runtime, predicted_runtime_seconds
         ),
         "cost_prediction_error_usd": _range_error(actual_cost, predicted_cost_range),
     }
@@ -521,7 +534,10 @@ def _parser() -> argparse.ArgumentParser:
     calibration.add_argument("--run-id", required=True)
     calibration.add_argument("--unit-kind", required=True)
     calibration.add_argument("--completed-units", type=int, required=True)
-    calibration.add_argument("--actual-runtime-seconds", type=float, required=True)
+    calibration.add_argument("--scientific-runtime-seconds", type=float, required=True)
+    calibration.add_argument(
+        "--ec2-billable-runtime-seconds", type=float, required=True
+    )
     calibration.add_argument("--predicted-runtime-min-seconds", type=float)
     calibration.add_argument("--predicted-runtime-max-seconds", type=float)
     calibration.add_argument("--instance-type", required=True)
@@ -600,7 +616,8 @@ def main(argv: list[str] | None = None) -> int:
         run_id=args.run_id,
         unit_kind=args.unit_kind,
         completed_units=args.completed_units,
-        actual_runtime_seconds=args.actual_runtime_seconds,
+        scientific_runtime_seconds=args.scientific_runtime_seconds,
+        ec2_billable_runtime_seconds=args.ec2_billable_runtime_seconds,
         predicted_runtime_seconds=predicted,
         instance_type=args.instance_type,
         vcpu=args.vcpu,

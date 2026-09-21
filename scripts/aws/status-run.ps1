@@ -49,7 +49,13 @@ function Invoke-AwsJson {
 
 function Get-TagValue {
     param($Tags, [Parameter(Mandatory = $true)][string]$Key)
-    $match = @($Tags | Where-Object { [string]$_.Key -eq $Key })
+    $match = @(
+        $Tags | Where-Object {
+            $null -ne $_ -and
+            $null -ne $_.PSObject.Properties["Key"] -and
+            [string]$_.Key -eq $Key
+        }
+    )
     if ($match.Count -eq 1) {
         return [string]$match[0].Value
     }
@@ -62,6 +68,14 @@ function Get-CachedValue {
         return $Cache.$Name
     }
     return $null
+}
+
+function ConvertTo-InvariantNumber {
+    param([Parameter(Mandatory = $true)]$Value)
+    return [double]::Parse(
+        [string]$Value,
+        [Globalization.CultureInfo]::InvariantCulture
+    )
 }
 
 function Read-ProgressThroughSsm {
@@ -144,6 +158,20 @@ $volumeResponse = Invoke-AwsJson -Arguments @(
     "--filters", "Name=tag:lisjong-run-id,Values=$RunId"
 )
 $volumes = @($volumeResponse.Volumes)
+$retainedVolumes = @(
+    $volumes | Where-Object {
+        $volumeTags = @($_.Tags)
+        (Get-TagValue -Tags $volumeTags -Key "Purpose") -eq "wait-shape-pilot-artifact" -or
+        -not [string]::IsNullOrWhiteSpace(
+            (Get-TagValue -Tags $volumeTags -Key "lisjong-ec2-billable-runtime-sec")
+        )
+    }
+)
+if ($retainedVolumes.Count -gt 1) {
+    throw "RunId rediscovery found more than one retained artifact volume."
+}
+$retainedVolume = $(if ($retainedVolumes.Count -eq 1) { $retainedVolumes[0] } else { $null })
+$retainedTags = $(if ($null -ne $retainedVolume) { @($retainedVolume.Tags) } else { @() })
 
 $instance = $(if ($instances.Count -eq 1) { $instances[0] } else { $null })
 $instanceId = $(if ($null -ne $instance) {
@@ -164,12 +192,30 @@ if ([string]::IsNullOrWhiteSpace($progressPath)) {
 }
 $workers = Get-TagValue -Tags $tags -Key "lisjong-worker-count"
 if ([string]::IsNullOrWhiteSpace($workers)) {
+    $workers = Get-TagValue -Tags $retainedTags -Key "lisjong-worker-count"
+}
+if ([string]::IsNullOrWhiteSpace($workers)) {
     $workers = [string](Get-CachedValue -Cache $cache -Name "max_workers")
 }
 $failSafeDeadline = Get-TagValue -Tags $tags -Key "lisjong-failsafe-deadline"
 if ([string]::IsNullOrWhiteSpace($failSafeDeadline)) {
+    $failSafeDeadline = Get-TagValue -Tags $retainedTags -Key "lisjong-failsafe-deadline"
+}
+if ([string]::IsNullOrWhiteSpace($failSafeDeadline)) {
     $failSafeDeadline = [string](Get-CachedValue -Cache $cache -Name "fail_safe_deadline_utc")
 }
+$hourlyRate = Get-TagValue -Tags $tags -Key "lisjong-instance-hourly-rate-usd"
+if ([string]::IsNullOrWhiteSpace($hourlyRate)) {
+    $hourlyRate = Get-TagValue -Tags $retainedTags -Key "lisjong-instance-hourly-rate-usd"
+}
+if ([string]::IsNullOrWhiteSpace($hourlyRate)) {
+    $hourlyRate = [string](Get-CachedValue -Cache $cache -Name "instance_hourly_rate_usd")
+}
+$launchTime = $(if ($null -ne $instance) {
+    [string]$instance.LaunchTime
+} else {
+    [string](Get-CachedValue -Cache $cache -Name "launch_time_utc")
+})
 
 $vcpu = $null
 $memoryMiB = $null
@@ -185,7 +231,11 @@ if (-not [string]::IsNullOrWhiteSpace($instanceType)) {
 $ssmPing = "not-found"
 $scientificCommandState = "unknown"
 $progress = $null
-if (-not [string]::IsNullOrWhiteSpace($instanceId)) {
+if (
+    $null -ne $instance -and
+    $instanceState -notin @("stopped", "terminated") -and
+    -not [string]::IsNullOrWhiteSpace($instanceId)
+) {
     $ssm = Invoke-AwsJson -Arguments @(
         "ssm", "describe-instance-information",
         "--filters", "Key=InstanceIds,Values=$instanceId"
@@ -210,13 +260,63 @@ if (-not [string]::IsNullOrWhiteSpace($instanceId)) {
     }
 }
 
-$computeBillingContinues = $instanceState -in @("pending", "running")
+$calibration = $null
+if (-not [string]::IsNullOrWhiteSpace($StatePath)) {
+    $calibrationPath = Join-Path (Split-Path -Parent $resolvedStatePath) "calibration.json"
+    if (Test-Path -LiteralPath $calibrationPath -PathType Leaf) {
+        $calibration = Get-Content -Raw -LiteralPath $calibrationPath | ConvertFrom-Json
+        if ([string]$calibration.run_id -ne $RunId) {
+            throw "Local calibration belongs to a different RunId."
+        }
+    }
+}
+if ($null -eq $calibration -and $null -ne $retainedVolume) {
+    $scientificRuntime = Get-TagValue -Tags $retainedTags -Key "lisjong-scientific-runtime-sec"
+    $billableRuntime = Get-TagValue -Tags $retainedTags -Key "lisjong-ec2-billable-runtime-sec"
+    if (
+        -not [string]::IsNullOrWhiteSpace($scientificRuntime) -and
+        -not [string]::IsNullOrWhiteSpace($billableRuntime)
+    ) {
+        $calibration = [pscustomobject]@{
+            run_id = $RunId
+            scientific_runtime_seconds = ConvertTo-InvariantNumber $scientificRuntime
+            ec2_billable_runtime_seconds = ConvertTo-InvariantNumber $billableRuntime
+            actual_throughput_per_hour = ConvertTo-InvariantNumber (Get-TagValue -Tags $retainedTags -Key "lisjong-throughput-per-hour")
+            estimated_realized_cost = [pscustomobject]@{
+                ec2_compute_usd = ConvertTo-InvariantNumber (Get-TagValue -Tags $retainedTags -Key "lisjong-realized-cost-usd")
+                is_finalized_aws_invoice = $false
+            }
+            runtime_prediction_error_seconds = Get-TagValue -Tags $retainedTags -Key "lisjong-runtime-error-sec"
+            cost_prediction_error_usd = Get-TagValue -Tags $retainedTags -Key "lisjong-cost-error-usd"
+        }
+    }
+}
+
+$computeBillingContinues = $instanceState -in @("pending", "running", "stopping", "shutting-down")
+$phase = $(if ($null -ne $calibration) {
+    "COMPLETE"
+} elseif ($instanceState -in @("pending", "running", "stopping")) {
+    "RUN"
+} elseif ($instanceState -eq "terminated") {
+    "TEARDOWN"
+} else {
+    "UNKNOWN"
+})
 Write-Output "RunId: $RunId"
+Write-Output "Phase: $phase"
 Write-Output "EC2: $instanceId / state=$instanceState / compute billing continues=$computeBillingContinues"
 Write-Output "SSM: ping=$ssmPing / scientific command state=$scientificCommandState"
 Write-Output "Instance: type=$instanceType / vCPU=$vcpu / memory MiB=$memoryMiB / workers=$workers"
 if ($null -ne $progress) {
-    Write-Output "Progress: $($progress.completed_units)/$($progress.total_units) $($progress.unit_kind)"
+    $completedUnits = [int]$progress.completed_units
+    $totalUnits = [int]$progress.total_units
+    if ($totalUnits -le 0 -or $completedUnits -lt 0 -or $completedUnits -gt $totalUnits) {
+        throw "Progress counts are invalid."
+    }
+    $percent = (100.0 * $completedUnits / $totalUnits).ToString(
+        "0.0", [Globalization.CultureInfo]::InvariantCulture
+    )
+    Write-Output "Progress: $completedUnits/$totalUnits $($progress.unit_kind) ($percent%)"
     Write-Output "Elapsed seconds: $($progress.elapsed_seconds) / throughput per hour: $($progress.throughput_per_hour)"
     Write-Output "ETA: $($progress.eta_status) / seconds=$($progress.eta_seconds) / estimated finish=$($progress.estimated_finish_at)"
 } else {
@@ -224,10 +324,43 @@ if ($null -ne $progress) {
 }
 if (-not [string]::IsNullOrWhiteSpace($failSafeDeadline)) {
     $deadline = [datetime]$failSafeDeadline
-    $remaining = [math]::Round(($deadline.ToUniversalTime() - (Get-Date).ToUniversalTime()).TotalSeconds)
+    $now = (Get-Date).ToUniversalTime()
+    $remaining = [math]::Round(($deadline.ToUniversalTime() - $now).TotalSeconds)
     Write-Output "Fail-safe deadline: $failSafeDeadline / remaining seconds=$remaining"
+    if (
+        -not [string]::IsNullOrWhiteSpace($hourlyRate) -and
+        -not [string]::IsNullOrWhiteSpace($launchTime)
+    ) {
+        $rate = ConvertTo-InvariantNumber $hourlyRate
+        $launch = ([datetime]$launchTime).ToUniversalTime()
+        $horizonSeconds = [math]::Max(0, ($deadline.ToUniversalTime() - $launch).TotalSeconds)
+        $remainingSeconds = [math]::Max(0, ($deadline.ToUniversalTime() - $now).TotalSeconds)
+        $horizonCost = ($horizonSeconds / 3600.0 * $rate).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+        $remainingCost = ($remainingSeconds / 3600.0 * $rate).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+        Write-Output "Estimated fail-safe EC2 cost exposure: USD $horizonCost / remaining exposure: USD $remainingCost"
+    } else {
+        Write-Output "Estimated fail-safe EC2 cost exposure: unavailable"
+    }
+    if ($null -ne $progress -and -not [string]::IsNullOrWhiteSpace([string]$progress.estimated_finish_at)) {
+        $estimatedFinish = ([datetime]$progress.estimated_finish_at).ToUniversalTime()
+        $headroom = [math]::Round(($deadline.ToUniversalTime() - $estimatedFinish).TotalSeconds)
+        Write-Output "ETA fail-safe headroom seconds: $headroom"
+        if ($headroom -le 0) {
+            Write-Warning "Estimated finish reaches or exceeds the fail-safe deadline."
+        } elseif ($headroom -le 900) {
+            Write-Warning "Estimated finish is within 15 minutes of the fail-safe deadline."
+        }
+    }
 } else {
     Write-Output "Fail-safe deadline: unavailable"
+    Write-Output "Estimated fail-safe EC2 cost exposure: unavailable"
+}
+
+if ($null -ne $calibration) {
+    Write-Output "Calibration: scientific runtime seconds=$($calibration.scientific_runtime_seconds) / EC2 billable runtime seconds=$($calibration.ec2_billable_runtime_seconds)"
+    Write-Output "Calibration throughput per hour: $($calibration.actual_throughput_per_hour)"
+    Write-Output "Estimated realized EC2 cost: USD $($calibration.estimated_realized_cost.ec2_compute_usd) / finalized AWS invoice=$($calibration.estimated_realized_cost.is_finalized_aws_invoice)"
+    Write-Output "Prediction error: runtime seconds=$($calibration.runtime_prediction_error_seconds) / cost USD=$($calibration.cost_prediction_error_usd)"
 }
 
 $rootVolumeIds = @()

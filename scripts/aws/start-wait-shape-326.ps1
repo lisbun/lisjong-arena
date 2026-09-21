@@ -24,6 +24,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# The Issue #326 seed allocation and no-prior-exposure attestation are historical
+# scientific state, not properties that a new source revision can reset. Keep the
+# implementation below for auditability, but fail before credentials, discovery,
+# PLAN, or resource creation. A new study needs its own reviewed executor and
+# allocation while reusing the observability core and status command.
+throw "Issue #326 historical scientific allocation is closed after result exposure. This launcher cannot create or preflight a new scientific run. Use status-run.ps1 for observation and a future purpose-specific executor for a new allocation."
+
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
     throw "AWS profile is required. Pass -AwsProfile or set AWS_PROFILE."
 }
@@ -248,11 +255,6 @@ if ([string]::IsNullOrWhiteSpace($ArenaRevision)) {
 if ($ArenaRevision -notmatch "^[0-9a-f]{40}$") {
     throw "ArenaRevision must resolve to a full lowercase commit SHA."
 }
-$historical326Revision = "13317bd85bc2f80a575d487cae9dda1bebd7f5f0"
-if ($ArenaRevision -eq $historical326Revision) {
-    throw "Historical Issue #326 revision must not be restarted or instrumented. Use a reviewed newer revision for future observable execution."
-}
-
 $role = Invoke-AwsJson -Arguments @("iam", "get-role", "--role-name", $RoleName)
 $roleArn = [string]$role.Role.Arn
 if ([string]::IsNullOrWhiteSpace($roleArn)) {
@@ -494,7 +496,7 @@ $failsafeArmed = $false
 
 try {
     $remoteProgressPath = "/mnt/lisjong-326-artifacts/issue-326/operational/progress.json"
-    $failSafeDeadlineUtc = (Get-Date).ToUniversalTime().AddHours($FailSafeHours).ToString("o")
+    $failSafeDeadlineUtc = ""
     $predictedRuntimeMinSeconds = [int][math]::Round([double]$PredictedRuntimeMinHours * 3600)
     $predictedRuntimeMaxSeconds = [int][math]::Round([double]$PredictedRuntimeMaxHours * 3600)
     $hourlyRateText = ([double]$price.Rate).ToString(
@@ -526,7 +528,6 @@ try {
         instance_vcpu = $instanceVcpu
         instance_memory_mib = $instanceMemoryMiB
         operational_progress_path = $remoteProgressPath
-        fail_safe_deadline_utc = $failSafeDeadlineUtc
         pricing_source = [string]$price.Source
         pricing_checked_at = [string]$price.CheckedAt
         instance_hourly_rate_usd = [double]$price.Rate
@@ -565,7 +566,7 @@ try {
                     @{ Key = "lisjong-run-id"; Value = $runId },
                     @{ Key = "lisjong-progress-path"; Value = $remoteProgressPath },
                     @{ Key = "lisjong-worker-count"; Value = [string]$MaxWorkers },
-                    @{ Key = "lisjong-failsafe-deadline"; Value = $failSafeDeadlineUtc }
+                    @{ Key = "lisjong-instance-hourly-rate-usd"; Value = $hourlyRateText }
                 )
             },
             [ordered]@{
@@ -604,7 +605,6 @@ try {
         instance_vcpu = $instanceVcpu
         instance_memory_mib = $instanceMemoryMiB
         operational_progress_path = $remoteProgressPath
-        fail_safe_deadline_utc = $failSafeDeadlineUtc
         pricing_source = [string]$price.Source
         pricing_checked_at = [string]$price.CheckedAt
         instance_hourly_rate_usd = [double]$price.Rate
@@ -684,8 +684,10 @@ try {
     $failSafeCommand = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds 300 -RequestPath $failSafePath -Commands @(
         "set -eu",
         "systemctl stop lisjong-cost-failsafe.timer 2>/dev/null || true",
+        "FAILSAFE_ARM_EPOCH=`$(date +%s)",
         "systemd-run --quiet --unit=lisjong-cost-failsafe --on-active=$($FailSafeHours)h --timer-property=AccuracySec=30s /usr/bin/systemctl poweroff",
         "systemctl is-active --quiet lisjong-cost-failsafe.timer",
+        "echo LISJONG_FAILSAFE_DEADLINE_EPOCH=`$((FAILSAFE_ARM_EPOCH + $($FailSafeHours * 3600)))",
         "echo FAILSAFE_ARMED"
     )
     $failSafeInvocation = Wait-SsmInvocation -CommandId $failSafeCommand -InstanceId $instanceId
@@ -695,7 +697,22 @@ try {
     ) {
         throw "The independent instance-side cost fail-safe could not be armed."
     }
+    $deadlineMatch = [regex]::Match(
+        [string]$failSafeInvocation.StandardOutputContent,
+        "LISJONG_FAILSAFE_DEADLINE_EPOCH=([0-9]+)"
+    )
+    if (-not $deadlineMatch.Success) {
+        throw "The fail-safe timer armed without returning its actual deadline."
+    }
+    $failSafeDeadlineUtc = [DateTimeOffset]::FromUnixTimeSeconds(
+        [long]$deadlineMatch.Groups[1].Value
+    ).UtcDateTime.ToString("o")
     $failsafeArmed = $true
+    [void](Invoke-AwsText -Arguments @(
+        "ec2", "create-tags",
+        "--resources", $instanceId,
+        "--tags", "Key=lisjong-failsafe-deadline,Value=$failSafeDeadlineUtc"
+    ))
 
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-wait-shape-326.sh"
     $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-326.sh; chmod 700 /tmp/lisjong-bootstrap-326.sh; exec /tmp/lisjong-bootstrap-326.sh --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' --max-workers '$MaxWorkers' --run-id '$runId' --instance-type '$InstanceType' --vcpu '$instanceVcpu' --pricing-source '$($price.Source)' --pricing-checked-at '$($price.CheckedAt)' --pricing-region '$Region' --instance-hourly-rate-usd '$hourlyRateText' --predicted-runtime-min-seconds '$predictedRuntimeMinSeconds' --predicted-runtime-max-seconds '$predictedRuntimeMaxSeconds'"
@@ -778,6 +795,36 @@ try {
     if (-not $terminated) {
         throw "Pilot evidence is complete but instance termination could not be confirmed."
     }
+    $terminationConfirmedUtc = (Get-Date).ToUniversalTime()
+    $ec2BillableRuntimeSeconds = [math]::Max(
+        0.001,
+        ($terminationConfirmedUtc - $launchTimeUtc.ToUniversalTime()).TotalSeconds
+    )
+    $scientificRuntimeSeconds = [double]$summary.elapsed_seconds
+    $calibrationPath = Join-Path $runDir "calibration.json"
+    $calibrationArguments = @(
+        "-m", "lisjong_arena.aws_execution_observability", "calibration",
+        "--output-path", $calibrationPath,
+        "--run-id", $runId,
+        "--unit-kind", "hanchan",
+        "--completed-units", "96",
+        "--scientific-runtime-seconds", $scientificRuntimeSeconds.ToString($invariant),
+        "--ec2-billable-runtime-seconds", $ec2BillableRuntimeSeconds.ToString($invariant),
+        "--predicted-runtime-min-seconds", [string]$predictedRuntimeMinSeconds,
+        "--predicted-runtime-max-seconds", [string]$predictedRuntimeMaxSeconds,
+        "--instance-type", $InstanceType,
+        "--vcpu", [string]$instanceVcpu,
+        "--worker-count", [string]$MaxWorkers,
+        "--pricing-source", [string]$price.Source,
+        "--pricing-checked-at", [string]$price.CheckedAt,
+        "--pricing-region", $Region,
+        "--instance-hourly-rate-usd", $hourlyRateText
+    )
+    $calibrationText = (& $localPython @calibrationArguments 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Operational calibration generation failed after termination: $calibrationText"
+    }
+    $calibration = Get-Content -Raw -LiteralPath $calibrationPath | ConvertFrom-Json
 
     [void](Invoke-AwsText -Arguments @(
         "ec2", "wait", "volume-available", "--volume-ids", $artifactVolumeId
@@ -794,6 +841,28 @@ try {
     ) {
         throw "The retained artifact volume failed post-compute verification."
     }
+    $scientificRuntimeTag = ([double]$calibration.scientific_runtime_seconds).ToString($invariant)
+    $billableRuntimeTag = ([double]$calibration.ec2_billable_runtime_seconds).ToString($invariant)
+    $throughputTag = ([double]$calibration.actual_throughput_per_hour).ToString($invariant)
+    $realizedCostTag = ([double]$calibration.estimated_realized_cost.ec2_compute_usd).ToString($invariant)
+    $runtimeErrorTag = ([double]$calibration.runtime_prediction_error_seconds).ToString($invariant)
+    $costErrorTag = ([double]$calibration.cost_prediction_error_usd).ToString($invariant)
+    $calibrationTags = @(
+        "Key=lisjong-worker-count,Value=$MaxWorkers",
+        "Key=lisjong-failsafe-deadline,Value=$failSafeDeadlineUtc",
+        "Key=lisjong-instance-hourly-rate-usd,Value=$hourlyRateText",
+        "Key=lisjong-scientific-runtime-sec,Value=$scientificRuntimeTag",
+        "Key=lisjong-ec2-billable-runtime-sec,Value=$billableRuntimeTag",
+        "Key=lisjong-throughput-per-hour,Value=$throughputTag",
+        "Key=lisjong-realized-cost-usd,Value=$realizedCostTag",
+        "Key=lisjong-runtime-error-sec,Value=$runtimeErrorTag",
+        "Key=lisjong-cost-error-usd,Value=$costErrorTag"
+    )
+    [void](Invoke-AwsText -Arguments (@(
+            "ec2", "create-tags",
+            "--resources", $artifactVolumeId,
+            "--tags"
+        ) + $calibrationTags))
 
     $summary | Add-Member -NotePropertyName aws_execution -NotePropertyValue ([ordered]@{
         region = $Region
@@ -815,6 +884,7 @@ try {
         retained_artifact_volume_attachment_count = @($retained.Attachments).Count
         note = "One encrypted 1 GiB gp3 EBS volume is intentionally retained as immutable Issue #326 evidence. Delete it only after the evidence is copied or intentionally retired."
     }) -Force
+    $summary | Add-Member -NotePropertyName operational_calibration -NotePropertyValue $calibration -Force
     Write-JsonFile -Value $summary -Path $completionPath
 
     Write-JsonFile -Value ([ordered]@{
@@ -827,6 +897,11 @@ try {
         artifact_volume_id = $artifactVolumeId
         artifact_volume_retained = $true
         completion_path = $completionPath
+        calibration_path = $calibrationPath
+        launch_time_utc = $launchTimeUtc.ToUniversalTime().ToString("o")
+        termination_confirmed_at_utc = $terminationConfirmedUtc.ToString("o")
+        fail_safe_deadline_utc = $failSafeDeadlineUtc
+        instance_hourly_rate_usd = [double]$price.Rate
     }) -Path $statePath
 
     Write-Host "PASS: ISSUE #326 AWS PILOT COMPLETE"

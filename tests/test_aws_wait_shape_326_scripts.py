@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import base64
+import json
 import shutil
 import subprocess
+import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -13,16 +17,76 @@ _CORE = _REPOSITORY_ROOT / "src" / "lisjong_arena" / "aws_execution_observabilit
 
 
 class AwsWaitShape326ScriptTest(unittest.TestCase):
+    def _run_status_with_fake_aws(
+        self,
+        rules: list[tuple[tuple[str, ...], dict[str, object]]],
+    ) -> subprocess.CompletedProcess[str]:
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("pwsh is unavailable")
+        status_path = str(_STATUS).replace("'", "''")
+        lines = [
+            "function global:aws {",
+            "    $joined = $args -join ' '",
+        ]
+        for required, payload in rules:
+            condition = " -and ".join(
+                f"$joined.Contains('{value.replace("'", "''")}')" for value in required
+            )
+            encoded = base64.b64encode(
+                json.dumps(payload, separators=(",", ":")).encode()
+            ).decode()
+            lines.extend(
+                [
+                    f"    if ({condition}) {{",
+                    "        $global:LASTEXITCODE = 0",
+                    "        [Text.Encoding]::UTF8.GetString("
+                    f"[Convert]::FromBase64String('{encoded}'))",
+                    "        return",
+                    "    }",
+                ]
+            )
+        lines.extend(
+            [
+                "    $global:LASTEXITCODE = 41",
+                '    [Console]::Error.WriteLine("unexpected fake AWS call: $joined")',
+                "}",
+                f"& '{status_path}' -RunId run-1 -AwsProfile fake -Region ap-northeast-1",
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            wrapper = Path(temp) / "status-fixture.ps1"
+            wrapper.write_text("\n".join(lines), encoding="utf-8")
+            return subprocess.run(
+                [
+                    pwsh,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-File",
+                    str(wrapper),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+
     def test_bootstrap_has_valid_bash_syntax(self) -> None:
-        bash = shutil.which("bash")
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
         if bash is None:
             self.skipTest("bash is unavailable")
-        result = subprocess.run(
-            [bash, "-n", str(_BOOTSTRAP)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [bash, "-n", str(_BOOTSTRAP)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            self.skipTest(f"bash cannot be executed: {error}")
         self.assertEqual(0, result.returncode, result.stderr)
 
     def test_launcher_has_valid_powershell_syntax_when_pwsh_is_available(self) -> None:
@@ -73,38 +137,34 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
 
-    def test_preflight_is_non_billable_and_binds_executor_before_resource_creation(
-        self,
-    ) -> None:
+    def test_historical_launcher_is_closed_before_any_aws_operation(self) -> None:
         text = _LAUNCHER.read_text(encoding="utf-8")
-        self.assertIn("[switch]$PreflightOnly", text)
-        self.assertIn("wait_shape_qualification.pilot preflight", text)
-        self.assertIn("targeted-honor-release-terminal-progression", text)
-        self.assertIn(
-            "15b9b3ad22569491860593509647d753f2b7160680ff0fb3c8b953575530784d",
-            text,
+        closed = "Issue #326 historical scientific allocation is closed"
+        self.assertIn(closed, text)
+        self.assertLess(text.index(closed), text.index("& aws --version"))
+
+        pwsh = shutil.which("pwsh")
+        if pwsh is None:
+            self.skipTest("pwsh is unavailable")
+        result = subprocess.run(
+            [
+                pwsh,
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                str(_LAUNCHER),
+                "-AwsProfile",
+                "must-not-be-used",
+                "-PreflightOnly",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
         )
-        self.assertIn("PASS: ISSUE #326 AWS PREFLIGHT ONLY", text)
-        self.assertIn(
-            "No EC2 instance, EBS artifact volume, or other billable execution resource was created.",
-            text,
-        )
-        preflight_guard = (
-            "if ($PreflightOnly) {\n"
-            '    Write-Host "PASS: ISSUE #326 AWS PREFLIGHT ONLY"'
-        )
-        self.assertLess(
-            text.index("wait_shape_qualification.pilot preflight"),
-            text.index(preflight_guard),
-        )
-        self.assertLess(
-            text.index(preflight_guard),
-            text.index('"ec2", "create-volume"'),
-        )
-        self.assertLess(
-            text.index(preflight_guard),
-            text.index('"ec2", "run-instances"'),
-        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(closed, result.stderr + result.stdout)
+        self.assertNotIn("AWS CLI is not available", result.stderr + result.stdout)
 
     def test_launcher_rejects_unbounded_instance_type_and_failsafe(self) -> None:
         text = _LAUNCHER.read_text(encoding="utf-8")
@@ -117,11 +177,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
             "if ($FailSafeHours -lt 4 -or $FailSafeHours -gt 8) {",
             text,
         )
-        self.assertIn(
-            '$historical326Revision = "13317bd85bc2f80a575d487cae9dda1bebd7f5f0"',
-            text,
-        )
-        self.assertIn("must not be restarted or instrumented", text)
+        self.assertNotIn("$historical326Revision", text)
 
     def test_launcher_keeps_bounded_compute_and_teardown_invariants(self) -> None:
         text = _LAUNCHER.read_text(encoding="utf-8")
@@ -136,6 +192,18 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         self.assertIn('"ec2", "wait", "instance-terminated"', text)
         self.assertNotIn("--user-data", text)
         self.assertNotIn("authorize-security-group-ingress", text.lower())
+
+    def test_archived_executor_uses_timer_arm_deadline_and_full_billable_window(
+        self,
+    ) -> None:
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertNotIn(".AddHours($FailSafeHours).ToString", text)
+        self.assertIn("LISJONG_FAILSAFE_DEADLINE_EPOCH=", text)
+        self.assertIn("lisjong-failsafe-deadline,Value=$failSafeDeadlineUtc", text)
+        self.assertIn("$terminationConfirmedUtc - $launchTimeUtc", text)
+        self.assertIn('"--scientific-runtime-seconds"', text)
+        self.assertIn('"--ec2-billable-runtime-seconds"', text)
+        self.assertIn("lisjong-ec2-billable-runtime-sec", text)
 
     def test_launcher_retains_only_bounded_encrypted_artifact_volume_after_compute(
         self,
@@ -199,12 +267,160 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         self.assertIn("unknown / not hard-bounded", text)
         self.assertNotIn("maximum AWS bill", text + core)
 
-    def test_future_pilot_writes_separate_progress_and_calibration(self) -> None:
+    def test_bootstrap_writes_progress_but_does_not_guess_billable_runtime(
+        self,
+    ) -> None:
         text = _BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn('PROGRESS_PATH="$OPERATIONAL_ROOT/progress.json"', text)
-        self.assertIn('CALIBRATION_PATH="$OPERATIONAL_ROOT/calibration.json"', text)
         self.assertIn("--operational-progress-path", text)
-        self.assertIn("aws_execution_observability calibration", text)
+        self.assertNotIn("aws_execution_observability calibration", text)
+        self.assertNotIn("CALIBRATION_PATH", text)
+
+    def test_running_status_executes_with_percentage_exposure_and_warning(self) -> None:
+        now = datetime.now(UTC)
+        launch = now - timedelta(hours=1)
+        deadline = now + timedelta(hours=1)
+        estimated_finish = deadline + timedelta(minutes=5)
+        instance = {
+            "InstanceId": "i-running",
+            "State": {"Name": "running"},
+            "InstanceType": "t3.small",
+            "LaunchTime": launch.isoformat(),
+            "Tags": [
+                {"Key": "lisjong-run-id", "Value": "run-1"},
+                {
+                    "Key": "lisjong-progress-path",
+                    "Value": "/mnt/run/operational/progress.json",
+                },
+                {"Key": "lisjong-worker-count", "Value": "2"},
+                {"Key": "lisjong-failsafe-deadline", "Value": deadline.isoformat()},
+                {"Key": "lisjong-instance-hourly-rate-usd", "Value": "0.1"},
+                {"Key": "lisjong-scientific-command-id", "Value": "cmd-science"},
+            ],
+            "BlockDeviceMappings": [{"Ebs": {"VolumeId": "vol-root"}}],
+        }
+        progress = {
+            "completed_units": 37,
+            "total_units": 96,
+            "unit_kind": "hanchan",
+            "elapsed_seconds": 3600,
+            "throughput_per_hour": 37.0,
+            "eta_status": "estimated",
+            "eta_seconds": 600,
+            "estimated_finish_at": estimated_finish.isoformat(),
+        }
+        rules = [
+            (("describe-instances",), {"Reservations": [{"Instances": [instance]}]}),
+            (("describe-volumes",), {"Volumes": []}),
+            (
+                ("describe-instance-types",),
+                {
+                    "InstanceTypes": [
+                        {
+                            "VCpuInfo": {"DefaultVCpus": 2},
+                            "MemoryInfo": {"SizeInMiB": 2048},
+                        }
+                    ]
+                },
+            ),
+            (
+                ("describe-instance-information",),
+                {
+                    "InstanceInformationList": [
+                        {"InstanceId": "i-running", "PingStatus": "Online"}
+                    ]
+                },
+            ),
+            (("get-command-invocation", "cmd-science"), {"Status": "InProgress"}),
+            (("send-command",), {"Command": {"CommandId": "cmd-probe"}}),
+            (
+                ("get-command-invocation", "cmd-probe"),
+                {"Status": "Success", "StandardOutputContent": json.dumps(progress)},
+            ),
+        ]
+        result = self._run_status_with_fake_aws(rules)
+        output = result.stdout + result.stderr
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("Phase: RUN", output)
+        self.assertIn("Progress: 37/96 hanchan (38.5%)", output)
+        self.assertIn("Estimated fail-safe EC2 cost exposure: USD", output)
+        self.assertIn("Estimated finish reaches or exceeds", output)
+
+    def test_terminated_status_executes_and_displays_final_calibration(self) -> None:
+        rules = self._completed_status_rules(include_instance=True)
+        result = self._run_status_with_fake_aws(rules)
+        output = result.stdout + result.stderr
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("Phase: COMPLETE", output)
+        self.assertIn("state=terminated / compute billing continues=False", output)
+        self.assertIn("scientific runtime seconds=6000", output)
+        self.assertIn("EC2 billable runtime seconds=7200", output)
+        self.assertIn("Estimated realized EC2 cost: USD 0.2", output)
+        self.assertIn("Prediction error: runtime seconds=600", output)
+
+    def test_local_state_missing_status_recovers_completion_from_run_id(self) -> None:
+        rules = self._completed_status_rules(include_instance=False)
+        result = self._run_status_with_fake_aws(rules)
+        output = result.stdout + result.stderr
+        self.assertEqual(0, result.returncode, output)
+        self.assertIn("Phase: COMPLETE", output)
+        self.assertIn("state=not-found / compute billing continues=False", output)
+        self.assertIn("EBS: vol-artifact", output)
+        self.assertIn("EC2 billable runtime seconds=7200", output)
+
+    def _completed_status_rules(
+        self, *, include_instance: bool
+    ) -> list[tuple[tuple[str, ...], dict[str, object]]]:
+        tags = [
+            {"Key": "Purpose", "Value": "wait-shape-pilot-artifact"},
+            {"Key": "lisjong-run-id", "Value": "run-1"},
+            {"Key": "lisjong-worker-count", "Value": "2"},
+            {"Key": "lisjong-scientific-runtime-sec", "Value": "6000"},
+            {"Key": "lisjong-ec2-billable-runtime-sec", "Value": "7200"},
+            {"Key": "lisjong-throughput-per-hour", "Value": "57.6"},
+            {"Key": "lisjong-realized-cost-usd", "Value": "0.2"},
+            {"Key": "lisjong-runtime-error-sec", "Value": "600"},
+            {"Key": "lisjong-cost-error-usd", "Value": "0.05"},
+        ]
+        volume = {
+            "VolumeId": "vol-artifact",
+            "State": "available",
+            "Size": 1,
+            "Encrypted": True,
+            "Attachments": [],
+            "Tags": tags,
+        }
+        instances: list[dict[str, object]] = []
+        if include_instance:
+            instances.append(
+                {
+                    "InstanceId": "i-complete",
+                    "State": {"Name": "terminated"},
+                    "InstanceType": "t3.small",
+                    "LaunchTime": "2026-09-21T00:00:00Z",
+                    "Tags": [{"Key": "lisjong-run-id", "Value": "run-1"}],
+                    "BlockDeviceMappings": [],
+                }
+            )
+        rules: list[tuple[tuple[str, ...], dict[str, object]]] = [
+            (("describe-instances",), {"Reservations": [{"Instances": instances}]}),
+            (("describe-volumes",), {"Volumes": [volume]}),
+        ]
+        if include_instance:
+            rules.append(
+                (
+                    ("describe-instance-types",),
+                    {
+                        "InstanceTypes": [
+                            {
+                                "VCpuInfo": {"DefaultVCpus": 2},
+                                "MemoryInfo": {"SizeInMiB": 2048},
+                            }
+                        ]
+                    },
+                )
+            )
+        return rules
 
     def test_status_rediscovery_is_run_id_based_and_does_not_resubmit_science(
         self,
