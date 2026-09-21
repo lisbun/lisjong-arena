@@ -12,6 +12,7 @@ from lisjong_arena.wait_shape_qualification.pilot import (
     FINAL_QUALIFIED,
     LoadedPilotRaw,
     WaitShapePilotError,
+    _collect_observations,
     _run_seed,
     _validate_lock_document,
     _validate_observation,
@@ -133,6 +134,51 @@ class WaitShapePilotTest(unittest.TestCase):
             with self.assertRaises(WaitShapePilotError):
                 _run_seed(2100)
         runner.assert_not_called()
+
+    def test_collection_reconstructs_canonical_order_after_reverse_completion(self):
+        completed = []
+
+        class Future:
+            def __init__(self, seed):
+                self.seed = seed
+
+            def result(self):
+                return ({"seed": self.seed}, ({"seed": self.seed},))
+
+        class Executor:
+            def __init__(self, *, max_workers):
+                self.max_workers = max_workers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def submit(self, function, seed):
+                return Future(seed)
+
+        def reverse_completion(futures):
+            return sorted(futures, key=lambda future: future.seed, reverse=True)
+
+        with (
+            patch(
+                "lisjong_arena.wait_shape_qualification.pilot.ProcessPoolExecutor",
+                Executor,
+            ),
+            patch(
+                "lisjong_arena.wait_shape_qualification.pilot.as_completed",
+                reverse_completion,
+            ),
+        ):
+            receipts, observations = _collect_observations(
+                2,
+                progress_callback=lambda count, total: completed.append((count, total)),
+            )
+        self.assertEqual([item["seed"] for item in receipts], list(PILOT_SEEDS))
+        self.assertEqual([item["seed"] for item in observations], list(PILOT_SEEDS))
+        self.assertEqual(completed[0], (1, len(PILOT_SEEDS)))
+        self.assertEqual(completed[-1], (len(PILOT_SEEDS), len(PILOT_SEEDS)))
 
     def test_synthetic_locked_support_passes_f1_f2(self):
         raw = raw_with()
