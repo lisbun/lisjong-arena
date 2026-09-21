@@ -97,7 +97,10 @@ class SourceRecordTest(unittest.TestCase):
             pass
 
     def test_player_safe_roundtrip_and_locked_corpus_identity_are_independent(self):
-        with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
+        with (
+            tempfile.TemporaryDirectory() as first_tmp,
+            tempfile.TemporaryDirectory() as second_tmp,
+        ):
             first_root, second_root = Path(first_tmp), Path(second_tmp)
             lock, first, corpus_path, source_path = self.generate_fixture(
                 first_root, source_name="source-a"
@@ -131,12 +134,19 @@ class SourceRecordTest(unittest.TestCase):
                     {"rows.jsonl", "features.f32", "legal-mask.u8"},
                 )
                 self.assertEqual(
-                    {path.name for path in (corpus_path / f"game-{game_index:03d}").iterdir()},
+                    {
+                        path.name
+                        for path in (corpus_path / f"game-{game_index:03d}").iterdir()
+                    },
                     {"rows.jsonl", "features.f32", "legal-mask.u8"},
                 )
-            for left in sorted(path for path in corpus_path.rglob("*") if path.is_file()):
+            for left in sorted(
+                path for path in corpus_path.rglob("*") if path.is_file()
+            ):
                 relative = left.relative_to(corpus_path)
-                self.assertEqual(left.read_bytes(), (corpus_path_2 / relative).read_bytes())
+                self.assertEqual(
+                    left.read_bytes(), (corpus_path_2 / relative).read_bytes()
+                )
 
             row = json.loads(
                 (source_path / "game-000" / source_record.SOURCE_FILENAME)
@@ -191,9 +201,13 @@ class SourceRecordTest(unittest.TestCase):
                 )
             self.assertEqual(expected, actual)
             source_parallel = parallel_root / "source"
-            for left in sorted(path for path in source_serial.rglob("*") if path.is_file()):
+            for left in sorted(
+                path for path in source_serial.rglob("*") if path.is_file()
+            ):
                 relative = left.relative_to(source_serial)
-                self.assertEqual(left.read_bytes(), (source_parallel / relative).read_bytes())
+                self.assertEqual(
+                    left.read_bytes(), (source_parallel / relative).read_bytes()
+                )
             self.assertEqual(
                 corpus.read_corpus(corpus_serial, expected_lock=lock),
                 corpus.read_corpus(parallel_root / "corpus", expected_lock=lock),
