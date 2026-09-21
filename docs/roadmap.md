@@ -225,7 +225,7 @@ bounded interpretation
 - external benchmark
 - external competitor orchestration
 
-Evaluationはcandidate generation conditionを所有しない。結果を見てtraining conditionを変える場合はresearch側のnew candidateとして扱う。
+Evaluationはcandidate generation conditionを所有しない。結果を見てtraining conditionを変える場合は`lisjong`側のnew candidate / new experimentとして扱う。
 
 ### Multi-fidelity evaluation
 
