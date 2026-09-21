@@ -23,13 +23,13 @@ from pathlib import Path
 from typing import Iterable
 
 from lisjong.action_vocabulary import encode_action, resolve_legal_action
-from lisjong.policy_contract import Seat
-from lisjong.policy_contract.action import DiscardAction
-from lisjong.policy_contract.riichi import RiichiState
 from lisjong.policies.targeted_honor_release_terminal_progression import (
     TargetedHonorReleaseAnalysis,
     TargetedHonorReleaseBranch,
 )
+from lisjong.policy_contract import Seat
+from lisjong.policy_contract.action import DiscardAction
+from lisjong.policy_contract.riichi import RiichiState
 
 from lisjong_arena._artifact_io import (
     ArtifactValidationError,
