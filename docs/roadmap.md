@@ -2,44 +2,35 @@
 
 ## 目的
 
-`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、bounded research candidateを再現可能に生成・診断し、そのdecision qualityやgame performanceをcontrolled / reproducibleな条件で比較・評価する基盤である。
+`lisjong-arena` は、lisjongのPolicy / agentをconcrete environmentで実行・観測し、そのdecision qualityやgame performanceをcontrolled / reproducibleな条件で比較・評価する基盤である。
 
-長期的にはArena内の能力を次の3 trackとして発展させる。
+長期的なtarget trackは次の2つとする。
 
 ```text
 Execution / Observation Track
         what happened
              |
              v
-      objective evidence
+      player-safe / objective evidence
              |
              +------------------------------+
              |                              |
              v                              v
-Experiment-local Research Track       Evaluation Track
-bounded candidate generation         reproducible comparison
-training / diagnostics               metrics / artifacts
-             |                              ^
-             v                              |
-      research candidate ------------------+
+        lisjong Learning              Evaluation Track
+        candidate generation          reproducible comparison
 ```
 
-この3 trackは同一repositoryに存在してよいが、責務を混ぜない。
+historical / already-locked Arena Learning implementationはpreservation / referenceとして残せるが、新しいcanonical Learning capabilityは`lisjong`が所有する。
 
-- Execution / Observationは「何が起きたか」を取得する
-- Experiment-local Researchは「bounded hypothesisをどうmaterialize / train / diagnoseするか」を扱う
-- Evaluationは「candidate / Policyをどう再現可能に比較するか」を扱う
-- stableなPolicy / feature / HandBelief / value等のAI semanticsは`lisjong`が所有する
-
-lisjong ecosystem全体のrepository責務、依存方向、promotion boundaryは[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とする。Arena固有の詳細ownershipは[`docs/architecture.md`](architecture.md)を正本とする。
+lisjong ecosystem全体のrepository責務と依存方向は[`lisjong-project`](https://github.com/lisbun/lisjong-project)を正本とし、Arena固有の詳細ownershipは[`docs/architecture.md`](architecture.md)を正本とする。
 
 現在のIssue / PR / experiment statusはGitHubを正本とし、本書は特定Issue番号へ依存しない長期的なcapability developmentを示す。
 
 ## Roadmap principles
 
-- Execution / Observation、Experiment-local Research、Evaluationを分離する
-- stable AI semanticsとexperiment-local implementationを分離する
-- research codeがArenaにあることだけでproduction ownershipを決めない
+- Execution / ObservationとEvaluationを分離する
+- lisjong Learning semanticsとArena execution / evaluationを分離する
+- historical Learning codeがArenaにあることだけでcanonical ownershipを決めない
 - one bounded experiment = one primary research questionを優先する
 - purpose-specific implementation before generic framework
 - player-safe serving inputとprivileged training / diagnostic truthを分離する
@@ -401,11 +392,11 @@ promotion時に検討するもの:
 HandBeliefでは次を分離する。
 
 ```text
-stable belief semantics
+semantics / learned-estimator Learning / intrinsic metric definition
     -> lisjong
 
-training / prediction measurement / scale experiment
-    -> Arena Research
+Arena-executed population / provenance
+    -> Arena Execution / Observation
 
 decision / game-strength effect
     -> Arena Evaluation
@@ -413,24 +404,19 @@ decision / game-strength effect
 
 prediction quality improvementだけでPolicy strength improvementを主張しない。
 
-将来HandBelief-aware consumerを評価する場合も、component diagnosticからdecision-level、必要な場合だけgame-levelへ進む。
-
 ## Learned Policy roadmap interaction
 
-Learned PolicyではArenaが:
+Learned Policyのcanonical feature / dataset / teacher / trainer / artifact / inferenceは`lisjong`で発展させる。
 
-- experiment-local feature / dataset
-- bounded trainer
-- checkpoint
-- failure diagnosis
-- candidate adapter
+Arenaは次を担当する。
+
+- player-safe source execution / observation
+- Arena-executed population provenance
+- candidate execution
 - strength evaluation
+- external benchmark
 
-を持てる。
-
-一方、stable / public Policy semantics、production inference contract、canonical feature meaningは`lisjong`へformalizeする。
-
-representation、objective、data、model scale等を同一cycleで不用意に同時変更せず、可能な範囲でone-axis experimentを優先する。
+既存Arena-local feature / dataset / trainer / checkpoint / diagnosticはhistorical / reference implementationとして保持できる。bulk migrationやhistorical identityの遡及変更は行わない。
 
 ## Visualization / analysis consumers
 
