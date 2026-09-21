@@ -373,6 +373,11 @@ def _validate_lock_document(document: object) -> dict[str, object]:
     }
     _require(set(document) == expected, "lock fields are invalid")
     _require(document["schema_version"] == LOCK_SCHEMA_VERSION, "unsupported lock")
+    _require(document["issue"] == "lisbun/lisjong-arena#326", "lock issue drifted")
+    _require(
+        document["parent_issue"] == "lisbun/lisjong-arena#322",
+        "lock parent issue drifted",
+    )
     _require(
         document["protocol_lock_identity"] == EXPECTED_PROTOCOL_LOCK_IDENTITY,
         "lock protocol identity drifted",
@@ -427,6 +432,19 @@ def _validate_lock_document(document: object) -> dict[str, object]:
     _require(
         f0 == {"outcome": F0_OUTCOME, "artifact_sha256": F0_ARTIFACT_SHA256},
         "F0 prerequisite binding drifted",
+    )
+    _require(
+        document["f2_operationalization"]
+        == {
+            "normal_discard_choice_predicate": (
+                "lisjong_arena.learned_policy_offline_q.activation."
+                "is_eligible_ordinary_discard_choice"
+            ),
+            "semantics": (
+                "all legal actions are DiscardAction and there are at least two"
+            ),
+        },
+        "F2 operationalization drifted",
     )
     _require(
         document["defense_diagnostic_status"] == DEFENSE_DIAGNOSTIC_STATUS,
@@ -1420,6 +1438,14 @@ def verify_output_root(output_root: str | Path) -> dict[str, object]:
     root = Path(output_root)
     destinations = _destinations(root)
     lock = _load_lock(destinations["lock"])
+    locked_destinations = lock["artifact_destinations"]
+    assert isinstance(locked_destinations, dict)
+    for name, expected in destinations.items():
+        _require(
+            Path(str(locked_destinations[name])).resolve(strict=False)
+            == expected.resolve(strict=False),
+            f"locked artifact destination {name} differs from output root",
+        )
     raw = load_raw_artifact(destinations["raw"])
     _require(
         raw.manifest["lock_identity"] == lock["lock_identity"], "raw/lock mismatch"
