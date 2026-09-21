@@ -265,6 +265,38 @@ $statePath = Join-Path $runDir "state.json"
 $completionPath = Join-Path $runDir "completion.json"
 $preflightPath = Join-Path $runDir "preflight.json"
 
+$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\\.."))
+$localPython = Join-Path $repoRoot ".venv\\Scripts\\python.exe"
+if (-not (Test-Path -LiteralPath $localPython -PathType Leaf)) {
+    throw "Local project virtualenv Python is required for #326 executor preflight: $localPython"
+}
+$pilotProbeRoot = Join-Path $runDir "pilot-output-probe"
+$pilotPreflightText = (
+    & $localPython -m lisjong_arena.wait_shape_qualification.pilot preflight `
+        --output-root $pilotProbeRoot `
+        --max-workers $MaxWorkers `
+        --repository-collision-audit-pass `
+        --private-collision-audit-pass `
+        --no-prior-result-exposure-confirmed 2>&1 |
+        Out-String
+).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "#326 executor preflight failed: $pilotPreflightText"
+}
+$pilotPreflight = $pilotPreflightText | ConvertFrom-Json
+if ([string]$pilotPreflight.status -ne "PASS") {
+    throw "#326 executor preflight did not return PASS."
+}
+if ([string]$pilotPreflight.arena_revision -ne $ArenaRevision) {
+    throw "#326 executor revision differs from -ArenaRevision."
+}
+if ([string]$pilotPreflight.teacher_identity -ne "targeted-honor-release-terminal-progression") {
+    throw "#326 executor teacher identity drifted."
+}
+if ([string]$pilotPreflight.protocol_lock_identity -ne "15b9b3ad22569491860593509647d753f2b7160680ff0fb3c8b953575530784d") {
+    throw "#326 protocol lock identity drifted."
+}
+
 $preflightSummary = [ordered]@{
     status = "PASS"
     issue = "326"
@@ -283,6 +315,10 @@ $preflightSummary = [ordered]@{
     instance_type = $InstanceType
     max_workers = $MaxWorkers
     fail_safe_hours = $FailSafeHours
+    executor_preflight_status = [string]$pilotPreflight.status
+    executor_protocol_lock_identity = [string]$pilotPreflight.protocol_lock_identity
+    executor_teacher_identity = [string]$pilotPreflight.teacher_identity
+    executor_arena_revision = [string]$pilotPreflight.arena_revision
     artifact_volume_size_gib = 1
     artifact_volume_type = "gp3"
     artifact_volume_encrypted = $true
