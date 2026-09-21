@@ -36,6 +36,7 @@ A complete artifact is:
 
 - schema and artifact kind;
 - exact #331 protocol-lock identity and game mode;
+- exact scientific corpus identity produced by the same generation run;
 - the exact qualification `binding` used by that lock (Arena revision,
   installed lisjong/lisjong-engine identities, teacher identity, feature and
   vocabulary fingerprints, and runtime identities when present);
