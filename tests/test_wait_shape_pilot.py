@@ -13,6 +13,7 @@ from lisjong_arena.wait_shape_qualification.pilot import (
     LoadedPilotRaw,
     WaitShapePilotError,
     _run_seed,
+    _validate_lock_document,
     _validate_observation,
     build_execution_lock,
     build_pilot_teacher_population,
@@ -296,6 +297,27 @@ class WaitShapePilotTest(unittest.TestCase):
         )
         self.assertFalse(lock["result_exposed"])
         self.assertTrue(lock["pilot"]["scientific_reuse_forbidden"])
+
+    def test_execution_lock_rejects_f2_operationalization_tampering(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch(
+                "lisjong_arena.wait_shape_qualification.pilot._verify_locked_environment",
+                return_value=fake_execution(),
+            ):
+                lock = build_execution_lock(
+                    temp,
+                    max_workers=1,
+                    repository_collision_audit_pass=True,
+                    private_collision_audit_pass=True,
+                    no_prior_result_exposure_confirmed=True,
+                )
+        bad = copy.deepcopy(lock)
+        bad["f2_operationalization"]["semantics"] = "relaxed after exposure"
+        from lisjong_arena.wait_shape_qualification.pilot import _document_identity
+
+        bad["lock_identity"] = _document_identity(bad, "lock_identity")
+        with self.assertRaises(WaitShapePilotError):
+            _validate_lock_document(bad)
 
     def test_execution_lock_requires_all_three_external_preexposure_gates(self):
         with tempfile.TemporaryDirectory() as temp:
