@@ -47,19 +47,18 @@ Arenaにはhistorical / already-locked experiment-local ML implementationが残�
 
 Arenaは当面**単一repositoryのまま**維持する。Execution / ObservationとEvaluationをcurrent target responsibilityとし、historical / already-locked experiment implementationはpreservation対象として同repository内に残せる。
 
-内部コードは、新規変更のplacement判断では次の5 categoryで考える。
+内部コードは、新規変更のplacement判断では次の4 categoryで考える。
 
 ```text
 1. Execution / Observation
 2. Evaluation
-3. Experiment-local Research
-4. Shared Arena Infrastructure
-5. Historical Experiment
+3. Shared Arena Infrastructure
+4. Historical / Transitional Experiment
 ```
 
-`Shared Arena Infrastructure`は第4のproduct responsibilityではない。複数のArena responsibilityまたは無関係な複数experimentで実際に再利用され、かつ特定protocolの意味を持たないlow-level supportだけを置く。
+`Shared Arena Infrastructure`は独立したproduct responsibilityではない。複数のArena responsibilityまたは無関係な複数experimentで実際に再利用され、かつ特定protocolの意味を持たないlow-level supportだけを置く。
 
-`Historical Experiment`はpreservation classificationである。過去のPhase / Stage / Issue packageがretained experiment identity、frozen protocol、dataset / feature / checkpoint contractを表す場合、見た目のdependency graphを整えるためだけに移動・改名しない。
+`Historical / Transitional Experiment`はpreservation classificationである。過去のPhase / Stage / Issue packageがretained experiment identity、frozen protocol、dataset / feature / checkpoint contractを表す場合、見た目のdependency graphを整えるためだけに移動・改名しない。
 
 ### Placement rules
 
@@ -67,7 +66,7 @@ Arenaは当面**単一repositoryのまま**維持する。Execution / Observatio
 | --- | --- | --- |
 | Execution / Observation | concrete environmentを実行・観測し、objective evidenceを取得・transportする | local / external runners、RiichiEnv / RiichiLab integration、`game_trace.py`、durable execution records |
 | Evaluation | candidate / Policyを再現可能な条件で比較し、seed / rotation / metric / artifactを所有する | `comparison.py`、strength / benchmark evaluation paths、evaluation artifact semantics |
-| Experiment-local Research | bounded research question固有のdataset / feature / trainer / model / checkpoint / diagnosticを実装する | `phase*` / `stage*` experiment families、purpose-specific learned-policy / HandBelief research packages |
+| Historical / Transitional Experiment | existing locked / retained experimentのprotocol・artifact互換性を維持する | `phase*` / `stage*` experiment families、既存learned-policy / HandBelief research packages |
 | Shared Arena Infrastructure | responsibility-neutralで、concreteな複数consumerに既に必要なlow-level primitive | `runtime_measurement.py`、`_artifact_io.py`、`_execution_safety.py`、`_parallel_execution.py`のlow-level primitives |
 | Historical Experiment | exact historical compositionを維持すること自体がreproducibility requirementである | retained Phase / Stage packagesとそのfrozen cross-phase composition |
 
@@ -537,9 +536,12 @@ Objective execution
   GameTrace / applied actions / score / protocol events
         -> Arena Execution / Observation
 
-Experiment-local diagnostic
-  dataset metric / model metric / failure classification
-        -> Arena Experiment-local Research
+Learning / experiment diagnostic
+  metric definition / semantic threshold
+        -> lisjong
+
+  Arena-executed measurement / provenance
+        -> Arena Execution / Evaluation as applicable
 
 Policy-internal analysis semantics
   shanten / ukeire / value / risk / selection reason
