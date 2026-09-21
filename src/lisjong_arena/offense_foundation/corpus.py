@@ -509,9 +509,7 @@ def generate(
         source_manifest = write_source_manifest(source_staging, lock, source_summaries)
         read_corpus(staging, expected_lock=lock)
         if (
-            read_source_record(
-                source_staging, expected_lock=lock, corpus_path=staging
-            )
+            read_source_record(source_staging, expected_lock=lock, corpus_path=staging)
             != source_manifest
         ):
             raise OffenseError("source-record strict readback mismatch")
