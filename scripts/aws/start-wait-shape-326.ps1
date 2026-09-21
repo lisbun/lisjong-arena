@@ -11,9 +11,9 @@ param(
     [int]$FailSafeHours = 8,
     [ValidateSet(1, 2)][int]$MaxWorkers = 2,
     [Nullable[double]]$HourlyPriceUsd = $null,
-    [Nullable[double]]$PredictedRuntimeMinHours = $null,
-    [Nullable[double]]$PredictedRuntimeMaxHours = $null,
-    [string]$RuntimeEstimateBasis = "",
+    [Nullable[double]]$PredictedScientificRuntimeMinHours = $null,
+    [Nullable[double]]$PredictedScientificRuntimeMaxHours = $null,
+    [string]$ScientificRuntimeEstimateBasis = "",
     [Nullable[double]]$RetainedEbsEstimateUsd = $null,
     [switch]$AllowWorkerOversubscription,
     [string]$ArenaRevision = "",
@@ -414,12 +414,12 @@ $preflightSummary = [ordered]@{
 }
 Write-JsonFile -Value $preflightSummary -Path $preflightPath
 
-$hasRuntimeRange = (
-    $null -ne $PredictedRuntimeMinHours -and
-    $null -ne $PredictedRuntimeMaxHours -and
-    [double]$PredictedRuntimeMinHours -gt 0 -and
-    [double]$PredictedRuntimeMaxHours -ge [double]$PredictedRuntimeMinHours -and
-    -not [string]::IsNullOrWhiteSpace($RuntimeEstimateBasis)
+$hasScientificRuntimeRange = (
+    $null -ne $PredictedScientificRuntimeMinHours -and
+    $null -ne $PredictedScientificRuntimeMaxHours -and
+    [double]$PredictedScientificRuntimeMinHours -gt 0 -and
+    [double]$PredictedScientificRuntimeMaxHours -ge [double]$PredictedScientificRuntimeMinHours -and
+    -not [string]::IsNullOrWhiteSpace($ScientificRuntimeEstimateBasis)
 )
 $invariant = [Globalization.CultureInfo]::InvariantCulture
 $planArguments = @(
@@ -448,11 +448,11 @@ if ($null -ne $price.Rate) {
         "--instance-hourly-rate-usd", ([double]$price.Rate).ToString($invariant)
     )
 }
-if ($hasRuntimeRange) {
+if ($hasScientificRuntimeRange) {
     $planArguments += @(
-        "--predicted-runtime-min-seconds", ([double]$PredictedRuntimeMinHours * 3600).ToString($invariant),
-        "--predicted-runtime-max-seconds", ([double]$PredictedRuntimeMaxHours * 3600).ToString($invariant),
-        "--estimate-basis", $RuntimeEstimateBasis
+        "--predicted-scientific-runtime-min-seconds", ([double]$PredictedScientificRuntimeMinHours * 3600).ToString($invariant),
+        "--predicted-scientific-runtime-max-seconds", ([double]$PredictedScientificRuntimeMaxHours * 3600).ToString($invariant),
+        "--scientific-estimate-basis", $ScientificRuntimeEstimateBasis
     )
 }
 if ($null -ne $RetainedEbsEstimateUsd) {
@@ -471,7 +471,7 @@ Write-Host "Arena revision: $ArenaRevision"
 Write-Host "AMI: $amiId / subnet: $SubnetId / SG: $SecurityGroupId"
 Write-Host "PLAN: $planPath"
 Write-Host "Instance: $InstanceType / vCPU: $instanceVcpu / memory MiB: $instanceMemoryMiB / workers: $MaxWorkers"
-Write-Host "Runtime confidence: $($plan.runtime_estimate.confidence) / pricing source: $($price.Source)"
+Write-Host "Scientific runtime confidence: $($plan.scientific_runtime_estimate.confidence) / pricing source: $($price.Source)"
 
 if ($PreflightOnly) {
     Write-Host "PASS: ISSUE #326 AWS PREFLIGHT ONLY"
@@ -480,8 +480,8 @@ if ($PreflightOnly) {
     return
 }
 
-if (-not $hasRuntimeRange) {
-    throw "Billable execution requires a numeric calibrated runtime range and explicit RuntimeEstimateBasis. PLAN was saved before resource creation."
+if (-not $hasScientificRuntimeRange) {
+    throw "Billable execution requires a numeric calibrated scientific runtime range and explicit ScientificRuntimeEstimateBasis. PLAN was saved before resource creation."
 }
 if ($null -eq $price.Rate) {
     throw "Billable execution requires EC2 pricing provenance and an hourly rate. PLAN was saved before resource creation."
@@ -497,8 +497,8 @@ $failsafeArmed = $false
 try {
     $remoteProgressPath = "/mnt/lisjong-326-artifacts/issue-326/operational/progress.json"
     $failSafeDeadlineUtc = ""
-    $predictedRuntimeMinSeconds = [int][math]::Round([double]$PredictedRuntimeMinHours * 3600)
-    $predictedRuntimeMaxSeconds = [int][math]::Round([double]$PredictedRuntimeMaxHours * 3600)
+    $predictedScientificRuntimeMinSeconds = [int][math]::Round([double]$PredictedScientificRuntimeMinHours * 3600)
+    $predictedScientificRuntimeMaxSeconds = [int][math]::Round([double]$PredictedScientificRuntimeMaxHours * 3600)
     $hourlyRateText = ([double]$price.Rate).ToString(
         [Globalization.CultureInfo]::InvariantCulture
     )
@@ -715,7 +715,7 @@ try {
     ))
 
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-wait-shape-326.sh"
-    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-326.sh; chmod 700 /tmp/lisjong-bootstrap-326.sh; exec /tmp/lisjong-bootstrap-326.sh --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' --max-workers '$MaxWorkers' --run-id '$runId' --instance-type '$InstanceType' --vcpu '$instanceVcpu' --pricing-source '$($price.Source)' --pricing-checked-at '$($price.CheckedAt)' --pricing-region '$Region' --instance-hourly-rate-usd '$hourlyRateText' --predicted-runtime-min-seconds '$predictedRuntimeMinSeconds' --predicted-runtime-max-seconds '$predictedRuntimeMaxSeconds'"
+    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-326.sh; chmod 700 /tmp/lisjong-bootstrap-326.sh; exec /tmp/lisjong-bootstrap-326.sh --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' --max-workers '$MaxWorkers' --run-id '$runId' --instance-type '$InstanceType' --vcpu '$instanceVcpu' --pricing-source '$($price.Source)' --pricing-checked-at '$($price.CheckedAt)' --pricing-region '$Region' --instance-hourly-rate-usd '$hourlyRateText'"
     $runRequestPath = Join-Path $runDir "ssm-run.json"
     $executionTimeout = ($FailSafeHours * 3600) + 1800
     $commandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds $executionTimeout -RequestPath $runRequestPath -Commands @($remoteCommand)
@@ -810,8 +810,8 @@ try {
         "--completed-units", "96",
         "--scientific-runtime-seconds", $scientificRuntimeSeconds.ToString($invariant),
         "--ec2-billable-runtime-seconds", $ec2BillableRuntimeSeconds.ToString($invariant),
-        "--predicted-runtime-min-seconds", [string]$predictedRuntimeMinSeconds,
-        "--predicted-runtime-max-seconds", [string]$predictedRuntimeMaxSeconds,
+        "--predicted-scientific-runtime-min-seconds", [string]$predictedScientificRuntimeMinSeconds,
+        "--predicted-scientific-runtime-max-seconds", [string]$predictedScientificRuntimeMaxSeconds,
         "--instance-type", $InstanceType,
         "--vcpu", [string]$instanceVcpu,
         "--worker-count", [string]$MaxWorkers,
@@ -845,8 +845,7 @@ try {
     $billableRuntimeTag = ([double]$calibration.ec2_billable_runtime_seconds).ToString($invariant)
     $throughputTag = ([double]$calibration.actual_throughput_per_hour).ToString($invariant)
     $realizedCostTag = ([double]$calibration.estimated_realized_cost.ec2_compute_usd).ToString($invariant)
-    $runtimeErrorTag = ([double]$calibration.runtime_prediction_error_seconds).ToString($invariant)
-    $costErrorTag = ([double]$calibration.cost_prediction_error_usd).ToString($invariant)
+    $scientificRuntimeErrorTag = ([double]$calibration.scientific_runtime_prediction_error_seconds).ToString($invariant)
     $calibrationTags = @(
         "Key=lisjong-worker-count,Value=$MaxWorkers",
         "Key=lisjong-failsafe-deadline,Value=$failSafeDeadlineUtc",
@@ -855,9 +854,16 @@ try {
         "Key=lisjong-ec2-billable-runtime-sec,Value=$billableRuntimeTag",
         "Key=lisjong-throughput-per-hour,Value=$throughputTag",
         "Key=lisjong-realized-cost-usd,Value=$realizedCostTag",
-        "Key=lisjong-runtime-error-sec,Value=$runtimeErrorTag",
-        "Key=lisjong-cost-error-usd,Value=$costErrorTag"
+        "Key=lisjong-scientific-runtime-error-sec,Value=$scientificRuntimeErrorTag"
     )
+    if ($null -ne $calibration.ec2_billable_runtime_prediction_error_seconds) {
+        $billableRuntimeErrorTag = ([double]$calibration.ec2_billable_runtime_prediction_error_seconds).ToString($invariant)
+        $calibrationTags += "Key=lisjong-billable-runtime-error-sec,Value=$billableRuntimeErrorTag"
+    }
+    if ($null -ne $calibration.cost_prediction_error_usd) {
+        $costErrorTag = ([double]$calibration.cost_prediction_error_usd).ToString($invariant)
+        $calibrationTags += "Key=lisjong-cost-error-usd,Value=$costErrorTag"
+    }
     [void](Invoke-AwsText -Arguments (@(
             "ec2", "create-tags",
             "--resources", $artifactVolumeId,

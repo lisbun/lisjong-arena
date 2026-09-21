@@ -260,9 +260,10 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         self.assertIn("instance_hourly_rate_usd", text)
         self.assertIn("no matching historical evidence", core)
         self.assertIn(
-            "Billable execution requires a numeric calibrated runtime range",
+            "Billable execution requires a numeric calibrated scientific runtime range",
             text,
         )
+        self.assertIn("no billable-overhead calibration", core)
         self.assertIn("estimated_fail_safe_cost_exposure", core)
         self.assertIn("unknown / not hard-bounded", text)
         self.assertNotIn("maximum AWS bill", text + core)
@@ -356,7 +357,10 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         self.assertIn("scientific runtime seconds=6000", output)
         self.assertIn("EC2 billable runtime seconds=7200", output)
         self.assertIn("Estimated realized EC2 cost: USD 0.2", output)
-        self.assertIn("Prediction error: runtime seconds=600", output)
+        self.assertIn(
+            "Prediction error: scientific runtime seconds=600 / EC2 billable runtime seconds=unavailable / cost USD=unavailable",
+            output,
+        )
 
     def test_local_state_missing_status_recovers_completion_from_run_id(self) -> None:
         rules = self._completed_status_rules(include_instance=False)
@@ -379,8 +383,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
             {"Key": "lisjong-ec2-billable-runtime-sec", "Value": "7200"},
             {"Key": "lisjong-throughput-per-hour", "Value": "57.6"},
             {"Key": "lisjong-realized-cost-usd", "Value": "0.2"},
-            {"Key": "lisjong-runtime-error-sec", "Value": "600"},
-            {"Key": "lisjong-cost-error-usd", "Value": "0.05"},
+            {"Key": "lisjong-scientific-runtime-error-sec", "Value": "600"},
         ]
         volume = {
             "VolumeId": "vol-artifact",

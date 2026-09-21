@@ -109,7 +109,7 @@ class AwsExecutionPlanningTest(unittest.TestCase):
     def test_cost_uses_runtime_and_injected_rate(self) -> None:
         self.assertEqual(calculate_compute_cost(5400, 0.1), 0.15)
 
-    def test_pricing_provenance_is_retained_in_plan(self) -> None:
+    def test_scientific_runtime_does_not_fabricate_predicted_ec2_cost(self) -> None:
         plan = build_execution_plan(
             run_id="run-1",
             unit_kind="hanchan",
@@ -120,13 +120,56 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             worker_count=2,
             fail_safe_seconds=8 * 3600,
             pricing=self.pricing,
-            predicted_runtime_seconds=(3600, 5400),
-            estimate_basis="matching prior run",
+            predicted_scientific_runtime_seconds=(3600, 5400),
+            scientific_estimate_basis="matching prior run",
+            predicted_ec2_billable_runtime_seconds=None,
+            billable_estimate_basis=None,
             retained_ebs_estimate_usd=None,
             unknown_variable_charges=("data transfer: unknown / not hard-bounded",),
         )
         self.assertEqual(plan["pricing"], self.pricing)
-        self.assertEqual(plan["predicted_ec2_cost"]["range_usd"], [0.1, 0.15])
+        self.assertEqual(
+            plan["scientific_runtime_estimate"]["range_seconds"],
+            [3600.0, 5400.0],
+        )
+        self.assertIsNone(plan["ec2_billable_runtime_estimate"]["range_seconds"])
+        self.assertEqual(
+            plan["ec2_billable_runtime_estimate"]["reason"],
+            "no billable-overhead calibration",
+        )
+        self.assertIsNone(plan["predicted_ec2_cost"]["range_usd"])
+        self.assertEqual(
+            plan["predicted_ec2_cost"]["reason"],
+            "no billable-overhead calibration",
+        )
+        self.assertEqual(
+            plan["estimated_fail_safe_cost_exposure"]["ec2_compute_usd"],
+            0.8,
+        )
+
+    def test_predicted_ec2_cost_uses_billable_runtime_only(self) -> None:
+        plan = build_execution_plan(
+            run_id="run-1",
+            unit_kind="hanchan",
+            total_units=96,
+            instance_type="t3.small",
+            vcpu=2,
+            memory_mib=2048,
+            worker_count=2,
+            fail_safe_seconds=8 * 3600,
+            pricing=self.pricing,
+            predicted_scientific_runtime_seconds=(3600, 5400),
+            scientific_estimate_basis="matching scientific run",
+            predicted_ec2_billable_runtime_seconds=(4320, 6480),
+            billable_estimate_basis="matching AWS run",
+            retained_ebs_estimate_usd=None,
+        )
+        self.assertEqual(
+            plan["ec2_billable_runtime_estimate"]["range_seconds"],
+            [4320.0, 6480.0],
+        )
+        self.assertEqual(plan["predicted_ec2_cost"]["range_usd"], [0.12, 0.18])
+        self.assertIsNone(plan["predicted_ec2_cost"]["reason"])
 
     def test_no_matching_evidence_does_not_invent_runtime(self) -> None:
         plan = build_execution_plan(
@@ -139,14 +182,17 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             worker_count=2,
             fail_safe_seconds=8 * 3600,
             pricing=self.pricing,
-            predicted_runtime_seconds=None,
-            estimate_basis=None,
+            predicted_scientific_runtime_seconds=None,
+            scientific_estimate_basis=None,
+            predicted_ec2_billable_runtime_seconds=None,
+            billable_estimate_basis=None,
             retained_ebs_estimate_usd=None,
         )
-        self.assertEqual(plan["runtime_estimate"]["confidence"], "LOW")
-        self.assertIsNone(plan["runtime_estimate"]["range_seconds"])
+        self.assertEqual(plan["scientific_runtime_estimate"]["confidence"], "LOW")
+        self.assertIsNone(plan["scientific_runtime_estimate"]["range_seconds"])
         self.assertEqual(
-            plan["runtime_estimate"]["reason"], "no matching historical evidence"
+            plan["scientific_runtime_estimate"]["reason"],
+            "no matching historical evidence",
         )
 
     def test_unavailable_rate_retains_pricing_check_provenance(self) -> None:
@@ -166,12 +212,14 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             worker_count=2,
             fail_safe_seconds=8 * 3600,
             pricing=unavailable,
-            predicted_runtime_seconds=None,
-            estimate_basis=None,
+            predicted_scientific_runtime_seconds=None,
+            scientific_estimate_basis=None,
+            predicted_ec2_billable_runtime_seconds=None,
+            billable_estimate_basis=None,
             retained_ebs_estimate_usd=None,
         )
         self.assertEqual(plan["pricing"], unavailable)
-        self.assertIsNone(plan["predicted_ec2_cost"])
+        self.assertIsNone(plan["predicted_ec2_cost"]["range_usd"])
         self.assertIsNone(plan["estimated_fail_safe_cost_exposure"])
 
     def test_unknown_charges_are_explicit(self) -> None:
@@ -185,8 +233,10 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             worker_count=3,
             fail_safe_seconds=8 * 3600,
             pricing=self.pricing,
-            predicted_runtime_seconds=(3600, 5400),
-            estimate_basis="matching prior run",
+            predicted_scientific_runtime_seconds=(3600, 5400),
+            scientific_estimate_basis="matching prior run",
+            predicted_ec2_billable_runtime_seconds=None,
+            billable_estimate_basis=None,
             retained_ebs_estimate_usd=None,
             unknown_variable_charges=(
                 "T-family surplus credits: unknown / not hard-bounded",
@@ -204,14 +254,19 @@ class AwsExecutionPlanningTest(unittest.TestCase):
             completed_units=96,
             scientific_runtime_seconds=6000,
             ec2_billable_runtime_seconds=7200,
-            predicted_runtime_seconds=(3600, 5400),
+            predicted_scientific_runtime_seconds=(3600, 5400),
+            predicted_ec2_billable_runtime_seconds=None,
             instance_type="t3.small",
             vcpu=2,
             worker_count=2,
             pricing=self.pricing,
         )
-        self.assertEqual(calibration["runtime_prediction_error_seconds"], 600.0)
-        self.assertEqual(calibration["cost_prediction_error_usd"], 0.05)
+        self.assertEqual(
+            calibration["scientific_runtime_prediction_error_seconds"], 600.0
+        )
+        self.assertIsNone(calibration["ec2_billable_runtime_prediction_error_seconds"])
+        self.assertIsNone(calibration["predicted_ec2_cost_range_usd"])
+        self.assertIsNone(calibration["cost_prediction_error_usd"])
         self.assertEqual(calibration["scientific_runtime_seconds"], 6000.0)
         self.assertEqual(calibration["ec2_billable_runtime_seconds"], 7200.0)
         self.assertEqual(calibration["actual_throughput_per_hour"], 57.6)
@@ -235,12 +290,40 @@ class AwsExecutionPlanningTest(unittest.TestCase):
                 completed_units=96,
                 scientific_runtime_seconds=6000,
                 ec2_billable_runtime_seconds=5999,
-                predicted_runtime_seconds=(3600, 5400),
+                predicted_scientific_runtime_seconds=(3600, 5400),
+                predicted_ec2_billable_runtime_seconds=None,
                 instance_type="t3.small",
                 vcpu=2,
                 worker_count=2,
                 pricing=self.pricing,
             )
+
+    def test_calibration_cost_error_uses_billable_prediction(self) -> None:
+        calibration = build_calibration(
+            run_id="run-1",
+            unit_kind="hanchan",
+            completed_units=96,
+            scientific_runtime_seconds=6000,
+            ec2_billable_runtime_seconds=7200,
+            predicted_scientific_runtime_seconds=(3600, 5400),
+            predicted_ec2_billable_runtime_seconds=(6500, 7000),
+            instance_type="t3.small",
+            vcpu=2,
+            worker_count=2,
+            pricing=self.pricing,
+        )
+        self.assertEqual(
+            calibration["predicted_ec2_billable_runtime_range_seconds"],
+            [6500, 7000],
+        )
+        self.assertEqual(
+            calibration["predicted_ec2_cost_range_usd"],
+            [0.180556, 0.194444],
+        )
+        self.assertEqual(
+            calibration["ec2_billable_runtime_prediction_error_seconds"], 200.0
+        )
+        self.assertEqual(calibration["cost_prediction_error_usd"], 0.005556)
 
     def test_plan_cli_writes_the_pure_core_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -275,20 +358,22 @@ class AwsExecutionPlanningTest(unittest.TestCase):
                         "ap-northeast-1",
                         "--instance-hourly-rate-usd",
                         "0.1",
-                        "--predicted-runtime-min-seconds",
+                        "--predicted-scientific-runtime-min-seconds",
                         "3600",
-                        "--predicted-runtime-max-seconds",
+                        "--predicted-scientific-runtime-max-seconds",
                         "5400",
-                        "--estimate-basis",
+                        "--scientific-estimate-basis",
                         "matching prior run",
                     ]
                 )
             self.assertEqual(exit_code, 0)
             plan = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(
-                plan["runtime_estimate"]["range_seconds"], [3600.0, 5400.0]
+                plan["scientific_runtime_estimate"]["range_seconds"],
+                [3600.0, 5400.0],
             )
-            self.assertEqual(plan["predicted_ec2_cost"]["range_usd"], [0.1, 0.15])
+            self.assertIsNone(plan["ec2_billable_runtime_estimate"]["range_seconds"])
+            self.assertIsNone(plan["predicted_ec2_cost"]["range_usd"])
 
 
 if __name__ == "__main__":

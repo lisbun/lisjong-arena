@@ -78,6 +78,14 @@ function ConvertTo-InvariantNumber {
     )
 }
 
+function Format-OptionalValue {
+    param($Value)
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return "unavailable"
+    }
+    return [string]$Value
+}
+
 function Read-ProgressThroughSsm {
     param(
         [Parameter(Mandatory = $true)][string]$InstanceId,
@@ -286,7 +294,8 @@ if ($null -eq $calibration -and $null -ne $retainedVolume) {
                 ec2_compute_usd = ConvertTo-InvariantNumber (Get-TagValue -Tags $retainedTags -Key "lisjong-realized-cost-usd")
                 is_finalized_aws_invoice = $false
             }
-            runtime_prediction_error_seconds = Get-TagValue -Tags $retainedTags -Key "lisjong-runtime-error-sec"
+            scientific_runtime_prediction_error_seconds = Get-TagValue -Tags $retainedTags -Key "lisjong-scientific-runtime-error-sec"
+            ec2_billable_runtime_prediction_error_seconds = Get-TagValue -Tags $retainedTags -Key "lisjong-billable-runtime-error-sec"
             cost_prediction_error_usd = Get-TagValue -Tags $retainedTags -Key "lisjong-cost-error-usd"
         }
     }
@@ -360,7 +369,10 @@ if ($null -ne $calibration) {
     Write-Output "Calibration: scientific runtime seconds=$($calibration.scientific_runtime_seconds) / EC2 billable runtime seconds=$($calibration.ec2_billable_runtime_seconds)"
     Write-Output "Calibration throughput per hour: $($calibration.actual_throughput_per_hour)"
     Write-Output "Estimated realized EC2 cost: USD $($calibration.estimated_realized_cost.ec2_compute_usd) / finalized AWS invoice=$($calibration.estimated_realized_cost.is_finalized_aws_invoice)"
-    Write-Output "Prediction error: runtime seconds=$($calibration.runtime_prediction_error_seconds) / cost USD=$($calibration.cost_prediction_error_usd)"
+    $scientificRuntimeError = Format-OptionalValue $calibration.scientific_runtime_prediction_error_seconds
+    $billableRuntimeError = Format-OptionalValue $calibration.ec2_billable_runtime_prediction_error_seconds
+    $costError = Format-OptionalValue $calibration.cost_prediction_error_usd
+    Write-Output "Prediction error: scientific runtime seconds=$scientificRuntimeError / EC2 billable runtime seconds=$billableRuntimeError / cost USD=$costError"
 }
 
 $rootVolumeIds = @()

@@ -310,6 +310,19 @@ def pricing_provenance(
     }
 
 
+def _validated_runtime_range(
+    value: tuple[float, float] | None,
+    *,
+    label: str,
+) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    low = _positive_number(value[0], f"{label} lower bound")
+    high = _positive_number(value[1], f"{label} upper bound")
+    _require(low <= high, f"{label} range is reversed")
+    return (low, high)
+
+
 def build_execution_plan(
     *,
     run_id: str,
@@ -321,8 +334,10 @@ def build_execution_plan(
     worker_count: int,
     fail_safe_seconds: float,
     pricing: dict[str, object] | None,
-    predicted_runtime_seconds: tuple[float, float] | None,
-    estimate_basis: str | None,
+    predicted_scientific_runtime_seconds: tuple[float, float] | None,
+    scientific_estimate_basis: str | None,
+    predicted_ec2_billable_runtime_seconds: tuple[float, float] | None,
+    billable_estimate_basis: str | None,
     retained_ebs_estimate_usd: float | None,
     known_other_charges: tuple[str, ...] = (),
     unknown_variable_charges: tuple[str, ...] = (),
@@ -335,28 +350,68 @@ def build_execution_plan(
     _require(type(memory_mib) is int and memory_mib > 0, "memory_mib is invalid")
     _require(type(worker_count) is int and worker_count > 0, "worker_count is invalid")
     fail_safe = _positive_number(fail_safe_seconds, "fail_safe_seconds")
+    scientific_prediction = _validated_runtime_range(
+        predicted_scientific_runtime_seconds,
+        label="scientific runtime",
+    )
+    billable_prediction = _validated_runtime_range(
+        predicted_ec2_billable_runtime_seconds,
+        label="EC2 billable runtime",
+    )
 
-    runtime: dict[str, object]
-    predicted_cost: dict[str, object] | None = None
-    if predicted_runtime_seconds is None:
-        _require(not estimate_basis, "runtime basis requires a numeric range")
-        runtime = {
+    scientific_runtime: dict[str, object]
+    if scientific_prediction is None:
+        _require(
+            not scientific_estimate_basis,
+            "scientific runtime basis requires a numeric range",
+        )
+        scientific_runtime = {
             "confidence": "LOW",
             "range_seconds": None,
             "basis": None,
             "reason": "no matching historical evidence",
         }
     else:
-        low = _positive_number(predicted_runtime_seconds[0], "runtime lower bound")
-        high = _positive_number(predicted_runtime_seconds[1], "runtime upper bound")
-        _require(low <= high, "runtime range is reversed")
+        low, high = scientific_prediction
         _require(
-            bool(estimate_basis and estimate_basis.strip()), "runtime basis is required"
+            bool(scientific_estimate_basis and scientific_estimate_basis.strip()),
+            "scientific runtime basis is required",
         )
-        runtime = {
+        scientific_runtime = {
             "confidence": "CALIBRATED",
             "range_seconds": [low, high],
-            "basis": estimate_basis,
+            "basis": scientific_estimate_basis,
+            "reason": None,
+        }
+
+    billable_runtime: dict[str, object]
+    predicted_cost: dict[str, object]
+    if billable_prediction is None:
+        _require(
+            not billable_estimate_basis,
+            "EC2 billable runtime basis requires a numeric range",
+        )
+        billable_runtime = {
+            "confidence": "LOW",
+            "range_seconds": None,
+            "basis": None,
+            "reason": "no billable-overhead calibration",
+        }
+        predicted_cost = {
+            "kind": "predicted EC2 execution cost",
+            "range_usd": None,
+            "reason": "no billable-overhead calibration",
+        }
+    else:
+        billable_low, billable_high = billable_prediction
+        _require(
+            bool(billable_estimate_basis and billable_estimate_basis.strip()),
+            "EC2 billable runtime basis is required",
+        )
+        billable_runtime = {
+            "confidence": "CALIBRATED",
+            "range_seconds": [billable_low, billable_high],
+            "basis": billable_estimate_basis,
             "reason": None,
         }
         if pricing is not None and pricing.get("instance_hourly_rate_usd") is not None:
@@ -364,11 +419,18 @@ def build_execution_plan(
                 pricing.get("instance_hourly_rate_usd"), "instance hourly rate"
             )
             predicted_cost = {
-                "kind": "predicted cost",
+                "kind": "predicted EC2 execution cost",
                 "range_usd": [
-                    calculate_compute_cost(low, rate),
-                    calculate_compute_cost(high, rate),
+                    calculate_compute_cost(billable_low, rate),
+                    calculate_compute_cost(billable_high, rate),
                 ],
+                "reason": None,
+            }
+        else:
+            predicted_cost = {
+                "kind": "predicted EC2 execution cost",
+                "range_usd": None,
+                "reason": "instance hourly rate unavailable",
             }
 
     fail_safe_exposure = None
@@ -396,7 +458,8 @@ def build_execution_plan(
             "memory_mib": memory_mib,
         },
         "worker_count": worker_count,
-        "runtime_estimate": runtime,
+        "scientific_runtime_estimate": scientific_runtime,
+        "ec2_billable_runtime_estimate": billable_runtime,
         "pricing": pricing,
         "predicted_ec2_cost": predicted_cost,
         "retained_ebs_estimate_usd": (
@@ -431,7 +494,8 @@ def build_calibration(
     completed_units: int,
     scientific_runtime_seconds: float,
     ec2_billable_runtime_seconds: float,
-    predicted_runtime_seconds: tuple[float, float] | None,
+    predicted_scientific_runtime_seconds: tuple[float, float] | None,
+    predicted_ec2_billable_runtime_seconds: tuple[float, float] | None,
     instance_type: str,
     vcpu: int,
     worker_count: int,
@@ -454,28 +518,37 @@ def build_calibration(
         pricing.get("instance_hourly_rate_usd"), "instance hourly rate"
     )
     actual_cost = calculate_compute_cost(billable_runtime, rate)
+    scientific_prediction = _validated_runtime_range(
+        predicted_scientific_runtime_seconds,
+        label="predicted scientific runtime",
+    )
+    billable_prediction = _validated_runtime_range(
+        predicted_ec2_billable_runtime_seconds,
+        label="predicted EC2 billable runtime",
+    )
     predicted_cost_range = None
-    if predicted_runtime_seconds is not None:
+    if billable_prediction is not None:
         predicted_cost_range = (
-            calculate_compute_cost(predicted_runtime_seconds[0], rate),
-            calculate_compute_cost(predicted_runtime_seconds[1], rate),
+            calculate_compute_cost(billable_prediction[0], rate),
+            calculate_compute_cost(billable_prediction[1], rate),
         )
     return {
         "schema_version": CALIBRATION_SCHEMA_VERSION,
         "run_id": run_id,
         "unit_kind": unit_kind,
         "completed_units": completed_units,
-        "predicted_runtime_range_seconds": (
-            None
-            if predicted_runtime_seconds is None
-            else list(predicted_runtime_seconds)
+        "predicted_scientific_runtime_range_seconds": (
+            None if scientific_prediction is None else list(scientific_prediction)
+        ),
+        "predicted_ec2_billable_runtime_range_seconds": (
+            None if billable_prediction is None else list(billable_prediction)
         ),
         "scientific_runtime_seconds": scientific_runtime,
         "ec2_billable_runtime_seconds": billable_runtime,
         "actual_throughput_per_hour": round(
             completed_units * 3600 / scientific_runtime, 3
         ),
-        "predicted_cost_range_usd": (
+        "predicted_ec2_cost_range_usd": (
             None if predicted_cost_range is None else list(predicted_cost_range)
         ),
         "estimated_realized_cost": {
@@ -487,8 +560,11 @@ def build_calibration(
         "vcpu": vcpu,
         "worker_count": worker_count,
         "pricing": pricing,
-        "runtime_prediction_error_seconds": _range_error(
-            scientific_runtime, predicted_runtime_seconds
+        "scientific_runtime_prediction_error_seconds": _range_error(
+            scientific_runtime, scientific_prediction
+        ),
+        "ec2_billable_runtime_prediction_error_seconds": _range_error(
+            billable_runtime, billable_prediction
         ),
         "cost_prediction_error_usd": _range_error(actual_cost, predicted_cost_range),
     }
@@ -523,9 +599,12 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--pricing-checked-at")
     plan.add_argument("--pricing-region")
     plan.add_argument("--instance-hourly-rate-usd", type=float)
-    plan.add_argument("--predicted-runtime-min-seconds", type=float)
-    plan.add_argument("--predicted-runtime-max-seconds", type=float)
-    plan.add_argument("--estimate-basis")
+    plan.add_argument("--predicted-scientific-runtime-min-seconds", type=float)
+    plan.add_argument("--predicted-scientific-runtime-max-seconds", type=float)
+    plan.add_argument("--scientific-estimate-basis")
+    plan.add_argument("--predicted-ec2-billable-runtime-min-seconds", type=float)
+    plan.add_argument("--predicted-ec2-billable-runtime-max-seconds", type=float)
+    plan.add_argument("--billable-estimate-basis")
     plan.add_argument("--retained-ebs-estimate-usd", type=float)
     plan.add_argument("--known-other-charge", action="append", default=[])
     plan.add_argument("--unknown-variable-charge", action="append", default=[])
@@ -538,8 +617,10 @@ def _parser() -> argparse.ArgumentParser:
     calibration.add_argument(
         "--ec2-billable-runtime-seconds", type=float, required=True
     )
-    calibration.add_argument("--predicted-runtime-min-seconds", type=float)
-    calibration.add_argument("--predicted-runtime-max-seconds", type=float)
+    calibration.add_argument("--predicted-scientific-runtime-min-seconds", type=float)
+    calibration.add_argument("--predicted-scientific-runtime-max-seconds", type=float)
+    calibration.add_argument("--predicted-ec2-billable-runtime-min-seconds", type=float)
+    calibration.add_argument("--predicted-ec2-billable-runtime-max-seconds", type=float)
     calibration.add_argument("--instance-type", required=True)
     calibration.add_argument("--vcpu", type=int, required=True)
     calibration.add_argument("--worker-count", type=int, required=True)
@@ -550,22 +631,33 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _optional_range(
+    minimum: float | None,
+    maximum: float | None,
+    *,
+    label: str,
+) -> tuple[float, float] | None:
+    if minimum is None and maximum is None:
+        return None
+    _require(
+        minimum is not None and maximum is not None,
+        f"both {label} bounds are required",
+    )
+    return (minimum, maximum)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    predicted = None
-    if (
-        args.predicted_runtime_min_seconds is not None
-        or args.predicted_runtime_max_seconds is not None
-    ):
-        _require(
-            args.predicted_runtime_min_seconds is not None
-            and args.predicted_runtime_max_seconds is not None,
-            "both predicted runtime bounds are required",
-        )
-        predicted = (
-            args.predicted_runtime_min_seconds,
-            args.predicted_runtime_max_seconds,
-        )
+    predicted_scientific = _optional_range(
+        args.predicted_scientific_runtime_min_seconds,
+        args.predicted_scientific_runtime_max_seconds,
+        label="predicted scientific runtime",
+    )
+    predicted_billable = _optional_range(
+        args.predicted_ec2_billable_runtime_min_seconds,
+        args.predicted_ec2_billable_runtime_max_seconds,
+        label="predicted EC2 billable runtime",
+    )
     if args.command == "plan":
         pricing_values = (
             args.pricing_source,
@@ -596,8 +688,10 @@ def main(argv: list[str] | None = None) -> int:
             worker_count=args.worker_count,
             fail_safe_seconds=args.fail_safe_seconds,
             pricing=pricing,
-            predicted_runtime_seconds=predicted,
-            estimate_basis=args.estimate_basis,
+            predicted_scientific_runtime_seconds=predicted_scientific,
+            scientific_estimate_basis=args.scientific_estimate_basis,
+            predicted_ec2_billable_runtime_seconds=predicted_billable,
+            billable_estimate_basis=args.billable_estimate_basis,
             retained_ebs_estimate_usd=args.retained_ebs_estimate_usd,
             known_other_charges=tuple(args.known_other_charge),
             unknown_variable_charges=tuple(args.unknown_variable_charge),
@@ -618,7 +712,8 @@ def main(argv: list[str] | None = None) -> int:
         completed_units=args.completed_units,
         scientific_runtime_seconds=args.scientific_runtime_seconds,
         ec2_billable_runtime_seconds=args.ec2_billable_runtime_seconds,
-        predicted_runtime_seconds=predicted,
+        predicted_scientific_runtime_seconds=predicted_scientific,
+        predicted_ec2_billable_runtime_seconds=predicted_billable,
         instance_type=args.instance_type,
         vcpu=args.vcpu,
         worker_count=args.worker_count,

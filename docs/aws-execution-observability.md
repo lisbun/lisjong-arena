@@ -28,17 +28,27 @@ call. `-HourlyPriceUsd` is an explicit injection intended for controlled tests o
 an operator-supplied rate; its provenance is recorded as `explicit-injection`.
 There is no built-in EC2 or public IPv4 price.
 
-Without matching historical calibration, the plan deliberately reports:
+Scientific runtime and EC2 billable runtime are separate prediction windows.
+Without matching scientific calibration, the plan deliberately reports:
 
 ```text
 confidence = LOW
-runtime estimate = unavailable
+scientific runtime estimate = unavailable
 reason = no matching historical evidence
 ```
 
-A billable run additionally requires both runtime bounds and their explicit
-basis. This prevents a fail-safe horizon from being presented as a runtime
-prediction.
+Scientific runtime bounds never produce a predicted EC2 cost. That cost requires
+separate EC2 billable runtime bounds, including modeled launch, setup, SSM wait,
+and termination-confirmation overhead, plus an explicit calibration basis. Until
+matching AWS evidence exists, the plan reports:
+
+```text
+scientific runtime estimate = available
+EC2 billable runtime estimate = unavailable
+predicted EC2 execution cost = unavailable
+reason = no billable-overhead calibration
+estimated fail-safe cost exposure = available
+```
 
 The plan distinguishes predicted EC2 cost, estimated fail-safe cost exposure,
 and a finalized AWS invoice (out of scope). T-family surplus credits, public IPv4,
@@ -71,13 +81,15 @@ EC2 cost. After termination is confirmed, the external executor writes:
 ```
 
 This records `scientific_runtime_seconds` separately from
-`ec2_billable_runtime_seconds`. Throughput and runtime prediction error use the
-scientific interval. Estimated realized EC2 cost uses the billable interval from
-the EC2 `LaunchTime` through confirmed termination, so clone, environment setup,
-dependency installation, preflight, and teardown wait are not omitted. The
-record also contains pricing provenance and range-relative prediction errors.
-It is operational calibration, not a scientific result or a finalized AWS
-invoice.
+`ec2_billable_runtime_seconds`. Throughput and scientific runtime prediction
+error use the scientific interval. Estimated realized EC2 cost uses the billable
+interval from the EC2 `LaunchTime` through confirmed termination, so clone,
+environment setup, dependency installation, preflight, and teardown wait are
+not omitted. Billable runtime and cost prediction errors are unavailable unless
+the corresponding predicted EC2 billable runtime range was supplied; scientific
+runtime bounds are never reused for them. The record also contains pricing
+provenance. It is operational calibration, not a scientific result or a
+finalized AWS invoice.
 
 The finalized operational values are mirrored as tags on the retained artifact
 volume. This makes COMPLETE status observable by RunId after the instance and

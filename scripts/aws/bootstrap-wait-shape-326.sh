@@ -11,8 +11,6 @@ PRICING_SOURCE=""
 PRICING_CHECKED_AT=""
 PRICING_REGION=""
 INSTANCE_HOURLY_RATE_USD=""
-PREDICTED_RUNTIME_MIN_SECONDS=""
-PREDICTED_RUNTIME_MAX_SECONDS=""
 WORK_ROOT="/var/lib/lisjong-wait-shape-326"
 REPOSITORY_URL="https://github.com/lisbun/lisjong-arena.git"
 
@@ -58,14 +56,6 @@ while (($#)); do
             INSTANCE_HOURLY_RATE_USD="$2"
             shift 2
             ;;
-        --predicted-runtime-min-seconds)
-            PREDICTED_RUNTIME_MIN_SECONDS="$2"
-            shift 2
-            ;;
-        --predicted-runtime-max-seconds)
-            PREDICTED_RUNTIME_MAX_SECONDS="$2"
-            shift 2
-            ;;
         --work-root)
             WORK_ROOT="$2"
             shift 2
@@ -99,10 +89,6 @@ if [[ -z "$PRICING_SOURCE" || -z "$PRICING_CHECKED_AT" || -z "$PRICING_REGION" ]
 fi
 if [[ ! "$INSTANCE_HOURLY_RATE_USD" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
     echo "instance hourly rate must be non-negative" >&2
-    exit 2
-fi
-if [[ ! "$PREDICTED_RUNTIME_MIN_SECONDS" =~ ^[1-9][0-9]*$ || ! "$PREDICTED_RUNTIME_MAX_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
-    echo "calibrated runtime bounds are required" >&2
     exit 2
 fi
 if [[ "$(id -u)" != "0" ]]; then
