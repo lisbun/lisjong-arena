@@ -58,6 +58,25 @@ def observation(index: int, *, projection=None, ordinary=True):
     }
 
 
+def game_receipts(records):
+    counts = {}
+    for record in records:
+        seed = record["seed"]
+        counts[seed] = counts.get(seed, 0) + 1
+    return tuple(
+        {
+            "seed": seed,
+            "game_mode": "4p-red-half",
+            "steps": 1,
+            "decisions": max(1, counts.get(seed, 0)),
+            "scores": [25000, 25000, 25000, 25000],
+            "ranks": [1, 2, 3, 4],
+            "support_observation_count": counts.get(seed, 0),
+        }
+        for seed in PILOT_SEEDS
+    )
+
+
 def raw_with(count=300):
     return LoadedPilotRaw(
         path=Path("."),
@@ -265,16 +284,59 @@ class WaitShapePilotTest(unittest.TestCase):
                     no_prior_result_exposure_confirmed=True,
                 )
             raw_path = root / "raw"
+            records = (observation(0), observation(1))
             loaded = write_raw_artifact(
                 raw_path,
-                observations=(observation(0), observation(1)),
+                game_receipts=game_receipts(records),
+                observations=records,
                 lock=lock,
             )
             self.assertEqual(len(loaded.observations), 2)
+            self.assertEqual(len(loaded.manifest["game_receipts"]), 96)
+            self.assertEqual(
+                [receipt["seed"] for receipt in loaded.manifest["game_receipts"]],
+                list(PILOT_SEEDS),
+            )
             with self.assertRaises(FileExistsError):
                 write_raw_artifact(
                     raw_path,
+                    game_receipts=game_receipts((observation(0),)),
                     observations=(observation(0),),
+                    lock=lock,
+                )
+
+    def test_raw_artifact_rejects_missing_or_relabelled_game_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch(
+                "lisjong_arena.wait_shape_qualification.pilot._verify_locked_environment",
+                return_value=fake_execution(),
+            ):
+                lock = build_execution_lock(
+                    root / "unused",
+                    max_workers=1,
+                    repository_collision_audit_pass=True,
+                    private_collision_audit_pass=True,
+                    no_prior_result_exposure_confirmed=True,
+                )
+            records = (observation(0),)
+            receipts = list(game_receipts(records))
+            receipts.pop()
+            with self.assertRaises(WaitShapePilotError):
+                write_raw_artifact(
+                    root / "missing-receipt",
+                    game_receipts=receipts,
+                    observations=records,
+                    lock=lock,
+                )
+
+            receipts = list(game_receipts(records))
+            receipts[0] = {**receipts[0], "seed": 2100}
+            with self.assertRaises(WaitShapePilotError):
+                write_raw_artifact(
+                    root / "scientific-seed-receipt",
+                    game_receipts=receipts,
+                    observations=records,
                     lock=lock,
                 )
 
