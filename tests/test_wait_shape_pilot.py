@@ -298,12 +298,14 @@ class WaitShapePilotTest(unittest.TestCase):
     def test_raw_artifact_is_write_once_and_strict(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
+            lock_root = root / "unused"
+            lock_root.mkdir()
             with patch(
                 "lisjong_arena.wait_shape_qualification.pilot._verify_locked_environment",
                 return_value=fake_execution(),
             ):
                 lock = build_execution_lock(
-                    root / "unused",
+                    lock_root,
                     max_workers=1,
                     repository_collision_audit_pass=True,
                     private_collision_audit_pass=True,
@@ -334,12 +336,14 @@ class WaitShapePilotTest(unittest.TestCase):
     def test_raw_artifact_rejects_missing_or_relabelled_game_receipt(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
+            lock_root = root / "unused"
+            lock_root.mkdir()
             with patch(
                 "lisjong_arena.wait_shape_qualification.pilot._verify_locked_environment",
                 return_value=fake_execution(),
             ):
                 lock = build_execution_lock(
-                    root / "unused",
+                    lock_root,
                     max_workers=1,
                     repository_collision_audit_pass=True,
                     private_collision_audit_pass=True,
