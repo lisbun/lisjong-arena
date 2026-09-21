@@ -126,3 +126,29 @@ Root and retained artifact volumes are both tagged for rediscovery. Status shows
 volume state, size, encryption, attachments, whether billing continues, and root
 deletion expectation. The encrypted 1 GiB artifact volume remains intentionally
 retained and is never deleted by status or normal teardown.
+
+## Local monitor detachment
+
+Long-running launchers use bounded SSM polling retries. One unavailable poll
+does not end monitoring; three consecutive unavailable polls detach the local
+monitor after short backoff. A later successful poll resets that consecutive
+failure count. This retry policy changes only local observation and never
+resubmits, restarts, or mutates the remote workload.
+
+Confirmed `Success` and confirmed terminal SSM failure remain distinct outcomes.
+Retry exhaustion instead reports `LOCAL MONITOR DETACHED` and `REMOTE EXECUTION
+STATUS = UNKNOWN`. Known expired-token and expired-SSO messages add explicit
+`aws login --profile ...` guidance. Unclassified failures remain generic rather
+than guessing that authentication expired.
+
+The launcher writes `run_id`, instance and command identity, region, applicable
+volume identity, and fail-safe state before monitoring begins. Detachment does
+not rewrite that state or request termination. Reauthenticate when necessary,
+then inspect the existing invocation without resubmitting it:
+
+```powershell
+./scripts/aws/status-run.ps1 `
+  -RunId <run-id> `
+  -AwsProfile <short-lived-profile> `
+  -Region ap-northeast-1
+```

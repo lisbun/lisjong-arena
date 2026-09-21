@@ -152,6 +152,8 @@ function Send-SsmCommand {
     return [string]$response.Command.CommandId
 }
 
+. (Join-Path $PSScriptRoot "ssm-monitor.ps1")
+
 function Get-InstancePrice {
     param([Parameter(Mandatory = $true)][string]$Location)
     $checkedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -492,6 +494,7 @@ $instanceId = $null
 $commandId = $null
 $pilotSubmitted = $false
 $commandTerminal = $false
+$monitorDetached = $false
 $failsafeArmed = $false
 
 try {
@@ -749,32 +752,25 @@ try {
         fail_safe_hours = $FailSafeHours
     }) -Path $statePath
 
-    $lastStatus = ""
-    while ($true) {
-        $probe = Invoke-AwsTextAllowFailure -Arguments @(
-            "ssm", "get-command-invocation",
-            "--command-id", $commandId,
-            "--instance-id", $instanceId,
-            "--output", "json"
-        )
-        if ($probe.ExitCode -ne 0) {
-            throw "Could not poll SSM command. The independent fail-safe remains the safety net. State: $statePath"
-        }
-        $invocation = $probe.Text | ConvertFrom-Json
-        $status = [string]$invocation.Status
-        if ($status -ne $lastStatus) {
-            Write-Host "SSM status: $status"
-            $lastStatus = $status
-        }
-        if ($status -notin @("Pending", "InProgress", "Delayed")) {
-            $commandTerminal = $true
-            break
-        }
-        Start-Sleep -Seconds 60
+    $monitorResult = Wait-SsmLongRunningInvocation `
+        -CommandId $commandId `
+        -InstanceId $instanceId
+    if ([string]$monitorResult.Outcome -eq "MonitorDetached") {
+        $monitorDetached = $true
+        Write-SsmMonitorDetachedGuidance `
+            -RunId $runId `
+            -AwsProfile $AwsProfile `
+            -Region $Region `
+            -StatePath $statePath `
+            -AuthenticationRequired ([bool]$monitorResult.AuthenticationRequired) `
+            -FailSafeArmed $failsafeArmed `
+            -FailSafeHours $FailSafeHours
+        throw "Local monitor detached; remote execution status is unknown."
     }
-
-    if ([string]$invocation.Status -ne "Success") {
-        throw "Remote pilot ended with SSM status $($invocation.Status)."
+    $invocation = $monitorResult.Invocation
+    $commandTerminal = $true
+    if ([string]$monitorResult.Outcome -eq "RemoteFailure") {
+        throw "Remote scientific execution failure confirmed: SSM status $($invocation.Status)."
     }
 
     $stdout = [string]$invocation.StandardOutputContent
@@ -914,6 +910,9 @@ try {
     Write-Host "Completion summary: $completionPath"
     Write-Host "Retained artifact volume: $artifactVolumeId"
 } catch {
+    if ($monitorDetached) {
+        throw
+    }
     if (-not [string]::IsNullOrWhiteSpace([string]$instanceId)) {
         if (-not $pilotSubmitted -or $commandTerminal) {
             [void](Request-Termination -InstanceId $instanceId)

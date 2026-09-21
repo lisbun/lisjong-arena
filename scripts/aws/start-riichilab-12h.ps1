@@ -74,6 +74,8 @@ function Invoke-AwsTextAllowFailure {
     }
 }
 
+. (Join-Path $PSScriptRoot "ssm-monitor.ps1")
+
 function Invoke-AwsJson {
     param(
         [Parameter(Mandatory = $true)][string[]]$Arguments,
@@ -448,6 +450,7 @@ Write-JsonFile -Value $launchRequest -Path $launchPath
 $instanceId = $null
 $longCommandSubmitted = $false
 $commandTerminal = $false
+$monitorDetached = $false
 $terminationRequested = $false
 $failsafeArmed = $false
 $volumeIds = @()
@@ -563,6 +566,11 @@ try {
         fail_safe_armed = $failsafeArmed
         fail_safe_hours = $FailSafeHours
     }) -Path $statePath
+    [void](Invoke-AwsText -Arguments @(
+        "ec2", "create-tags",
+        "--resources", $instanceId,
+        "--tags", "Key=lisjong-scientific-command-id,Value=$commandId"
+    ))
 
     Write-Host "12-hour graceful run submitted through SSM. Command id: $commandId"
     if ($SubmitOnly) {
@@ -572,28 +580,25 @@ try {
         return
     }
 
-    $lastStatus = ""
-    while ($true) {
-        $probe = Invoke-AwsTextAllowFailure -Arguments @(
-            "ssm", "get-command-invocation",
-            "--command-id", $commandId,
-            "--instance-id", $instanceId,
-            "--output", "json"
-        )
-        if ($probe.ExitCode -ne 0) {
-            throw "Could not poll SSM command. Remote execution may still be active. State: $statePath"
-        }
-        $invocation = $probe.Text | ConvertFrom-Json
-        $status = [string]$invocation.Status
-        if ($status -ne $lastStatus) {
-            Write-Host "SSM status: $status"
-            $lastStatus = $status
-        }
-        if ($status -notin @("Pending", "InProgress", "Delayed")) {
-            $commandTerminal = $true
-            break
-        }
-        Start-Sleep -Seconds 60
+    $monitorResult = Wait-SsmLongRunningInvocation `
+        -CommandId $commandId `
+        -InstanceId $instanceId
+    if ([string]$monitorResult.Outcome -eq "MonitorDetached") {
+        $monitorDetached = $true
+        Write-SsmMonitorDetachedGuidance `
+            -RunId $runId `
+            -AwsProfile $AwsProfile `
+            -Region $Region `
+            -StatePath $statePath `
+            -AuthenticationRequired ([bool]$monitorResult.AuthenticationRequired) `
+            -FailSafeArmed $failsafeArmed `
+            -FailSafeHours $FailSafeHours
+        throw "Local monitor detached; remote execution status is unknown."
+    }
+    $invocation = $monitorResult.Invocation
+    $commandTerminal = $true
+    if ([string]$monitorResult.Outcome -eq "RemoteFailure") {
+        throw "Remote scientific execution failure confirmed: SSM status $($invocation.Status)."
     }
 
     $collectorPath = Join-Path $PSScriptRoot "collect-riichilab-12h.ps1"
@@ -607,6 +612,9 @@ try {
     }
     & $collectorPath @collectorArgs
 } catch {
+    if ($monitorDetached) {
+        throw
+    }
     if (-not [string]::IsNullOrWhiteSpace([string]$instanceId)) {
         if (-not $longCommandSubmitted -or $commandTerminal) {
             if (-not $terminationRequested) {
