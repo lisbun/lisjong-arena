@@ -493,8 +493,7 @@ def _validate_lock_document(document: object) -> dict[str, object]:
     runtime = document["runtime"]
     _require(
         type(runtime) is dict
-        and set(runtime)
-        == {"python_implementation", "python_version", "sys_version"}
+        and set(runtime) == {"python_implementation", "python_version", "sys_version"}
         and all(type(value) is str and value for value in runtime.values()),
         "runtime identity is invalid",
     )
