@@ -942,9 +942,7 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
         list
     )
     episode_seeds: dict[tuple[object, ...], int] = {}
-    episode_first_availability: dict[
-        tuple[object, ...], WaitShapeAvailability
-    ] = {}
+    episode_first_availability: dict[tuple[object, ...], WaitShapeAvailability] = {}
 
     all_six_zero_rows = 0
     ordinary_zero_kokushi_rows = 0
