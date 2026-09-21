@@ -304,7 +304,9 @@ class SourceRecordTest(unittest.TestCase):
             body["lock_identity"] = "0" * 64
             manifest_path.unlink()
             write_document(manifest_path, seal(body))
-            with self.assertRaisesRegex(OffenseError, "schema/provenance identity mismatch"):
+            with self.assertRaisesRegex(
+                OffenseError, "schema/provenance identity mismatch"
+            ):
                 source_record.read_source_record(
                     source_path, expected_lock=lock, corpus_path=corpus_path
                 )
