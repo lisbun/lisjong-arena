@@ -24,13 +24,7 @@ from lisjong_arena.durable_local_game_record import (
 )
 
 from .protocol import GAME_MODE, ordered_games
-from .qualification import (
-    qualification_contract,
-    read_document,
-    seal,
-    unseal,
-    write_document,
-)
+from .qualification import read_document, seal, unseal, write_document
 from .semantics import OffenseError
 
 SOURCE_SCHEMA = "arena-offense-o0-player-safe-source-record-v1"
@@ -176,7 +170,7 @@ def build_manifest(lock, game_summaries):
             "kind": SOURCE_KIND,
             "lock_identity": lock["identity"],
             "game_mode": GAME_MODE,
-            "source_contract": qualification_contract(lock["qualification"]),
+            "source_contract": lock["qualification"]["binding"],
             "games": game_summaries,
         }
     )
@@ -363,8 +357,7 @@ def read_source_record(path, *, expected_lock, corpus_path):
         or manifest["kind"] != SOURCE_KIND
         or manifest["lock_identity"] != expected_lock["identity"]
         or manifest["game_mode"] != GAME_MODE
-        or manifest["source_contract"]
-        != qualification_contract(expected_lock["qualification"])
+        or manifest["source_contract"] != expected_lock["qualification"]["binding"]
     ):
         raise OffenseError("source-record schema/provenance identity mismatch")
 
