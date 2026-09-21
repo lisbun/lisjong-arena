@@ -103,11 +103,13 @@ raw recordはtraining datasetそのものではない。
 ```text
 raw execution / decision record
         |
-        +--> experiment-local dataset builder
+        +--> lisjong Learning materialization
         +--> offline diagnostic
         `--> viewer / replay consumer
 ```
 
+Arena source recordはplayer-safe observation / action / provenanceを保持し、
+feature / label / dataset semanticsは`lisjong`側でmaterializeする。
 project-wide canonical `GameRecord`を先に発明しない。
 
 standard RiichiEnv local executionでは、completed same-process inspectionから
@@ -117,90 +119,50 @@ versioned local bundleを作り、strict loaderでcross-process readbackする�
 この能力を理由に、all backend共通record、database、registry、random-access replayへ
 自動拡張しない。
 
-## Track 2 — Experiment-local Research / ML
+## lisjong Learning interaction
 
-このtrackは、bounded research questionを再現可能なcandidate / evidenceへ変換する。
-
-```text
-research hypothesis
-      |
-      v
-one changed axis where practical
-      |
-      v
-purpose-specific feature / dataset / training
-      |
-      v
-checkpoint / diagnostic artifact
-      |
-      v
-bounded classification
-```
-
-主な能力:
-
-- player-safe feature materialization
-- experiment-local tensor schema / fingerprint
-- raw corpus -> dataset transform
-- TRAIN / VALIDATION / TEST discipline
-- bounded training harness
-- experiment-specific model / loss / optimizer
-- deterministic training where required
-- checkpoint / result artifact
-- retained-artifact readback
-- offline failure diagnosis
-- component measurement / calibration study
-- experiment-local serving adapter
-- exhaustive classification
-
-### Research ownership boundary
-
-このtrackが所有するのは**experiment implementation**であって、stable AI semanticsではない。
+candidate generationのcanonical ownerは`lisjong`であり、Arenaのtarget trackには含めない。
 
 ```text
-experiment-local feature
-!= production feature contract
-
-experiment-local model
-!= canonical Learned Policy architecture
-
-experiment-local checkpoint
-!= production Policy
+Arena Execution / Observation
+        |
+        v
+player-safe source record / provenance
+        |
+        v
+lisjong Learning
+feature / dataset / teacher / training / model / inference
+        |
+        v
+candidate Policy / estimator
+        |
+        v
+Arena Evaluation
 ```
 
-shanten / ukeire / HandBelief / risk / value等のstable semanticsが必要なら`lisjong`のcanonical implementationをreuseする。
+Arenaは、必要なconcrete populationを実行してplayer-safe source evidenceを取得し、
+lisjong側のLearning entry pointをoperationalにhostできる。ただしhost locationは
+feature meaning、dataset split semantics、teacher / label、training objective、
+model artifact、inference contractのownershipを変更しない。
+
+既存のArena-local feature / dataset / trainer / checkpoint / diagnosticは、
+historical / already-locked experimentの再現・完了・referenceとして保持できる。
+新しいgeneric ML frameworkへ拡張せず、bulk migrationやhistorical artifact identityの
+遡及変更もしない。
 
 ### Cheap evidence first
 
-高コストevaluationへ進む前に、研究仮説に対応したcheap diagnosticを置ける場合は利用する。
+高コストevaluationへ進む前に、lisjong側のLearning objectiveに対応したcheap
+diagnosticが定義されている場合は利用できる。Arenaはその測定を実行・保持できるが、
+metric definitionやsemantic thresholdのcanonical ownerにはならない。
 
-conceptual ladder:
-
-```text
-same-state / component diagnostic
-        |
-        v
-low-complexity interaction
-        |
-        v
-interactive round evaluation
-        |
-        v
-hanchan / game-level strength
-```
-
-ただし:
-
-```text
-cheap metric != final optimization target
-cheap metric = rejection / triage / prioritization signal
-```
-
-proxyが有用かは、将来higher-fidelity outcomeとの対応を継続的に校正する。
+cheap proxyの改善だけでhanchan strength向上を主張しない。最終claimは質問に対応した
+Arena Evaluation protocolで確認する。
 
 ### Curriculum / staged capability development
 
-複雑なPolicy能力を一度に要求せず、selected research hypothesisに応じて基礎能力から段階化してよい。
+複雑なPolicy能力を一度に要求せず、selected Learning hypothesisに応じて基礎能力から
+段階化してよい。
 
 例:
 
@@ -214,22 +176,18 @@ hand progression
     -> placement / full hanchan strength
 ```
 
-これは永久固定の学習順序ではなく、cheap / interpretableなfailure localizationを優先するためのroadmap principleである。
+これは永久固定の学習順序ではなく、cheap / interpretableなfailure localizationを
+優先するためのproject principleである。具体的なcurriculum / dataset / objectiveは
+`lisjong`が所有する。
 
-### Research scaling
+### Learning scaling
 
-次を先に固定しない。
+large dataset、larger model、HPO、self-play league、distributed training、
+cloud executionを先に固定しない。small bounded experimentで情報価値を確認し、
+measured bottleneckが出た場合だけscaleする。Arenaがcloud executionをhostしても、
+Learning semanticsのownerは`lisjong`のままである。
 
-- large dataset
-- larger model
-- HPO
-- self-play league
-- distributed training
-- cloud execution
-
-small bounded experimentで情報価値を確認し、measured bottleneckが出た場合だけscaleする。
-
-## Track 3 — Evaluation
+## Track 2 — Evaluation
 
 このtrackはcandidate / Policy performanceのcontrolled evidenceを提供する。
 
@@ -329,63 +287,49 @@ always-on infrastructure、generic scheduler、Kubernetes等を先行要件に�
 
 ## Cross-track flow
 
-Arena内の典型的なresearch cycleは次のようになる。
+典型的なLearning / evaluation cycleは次のようになる。
 
 ```text
-Execution / retained evidence
+Arena Execution / retained source evidence
         |
         v
-bounded research question
-        |
-        v
-Experiment-local Research
-        |
-        v
+lisjong Learning
 candidate / diagnostic evidence
         |
         v
 cheap gate where justified
         |
         v
-Evaluation at increasing fidelity
+Arena Evaluation at increasing fidelity
         |
         v
 validated evidence
         |
         v
-next research decision outside the experiment
+next Learning / research decision
 ```
 
 研究仮説の選択そのものをArena infrastructureへ自動化しない。
 
-## Promotion path
+## Promotion / preservation path
 
-repeatedly usefulなresearch implementationが生まれても、Arena内で自動promotionしない。
+既存Arena-local Learning implementationはhistorical evidenceとして保持できるが、
+新しいcanonical Learning capabilityへの自動promotionは行わない。
 
 ```text
-experiment-local implementation
+historical / transitional Arena implementation
         |
-        v
-evidence across bounded uses
+        +--> preserve exact experiment identity when required
         |
-        v
-owner / consumer review
-        |
-        +--> remain Arena research infrastructure
-        |
-        `--> stable AI contractへformalize
-               owner = lisjong where appropriate
+        `--> extract requirements / invariants
+                 |
+                 v
+           lisjong canonical Learning implementation
 ```
 
-promotion時に検討するもの:
-
-- semantics stability
-- multiple-consumer need
-- production runtime dependency
-- model weights distribution
-- feature / model versioning
-- artifact delivery
-- compatibility / breaking-change policy
+canonicalization時はsemantics stability、consumer need、runtime dependency、
+model / feature / artifact versioning、compatibility policyを`lisjong`側で明示する。
+Arenaはexecution / evaluation consumerとして必要なboundaryだけを要求する。
 
 ## HandBelief roadmap interaction
 
