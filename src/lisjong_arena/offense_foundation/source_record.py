@@ -164,13 +164,14 @@ def write_game(
     )
 
 
-def build_manifest(lock, game_summaries):
+def build_manifest(lock, scientific_corpus_identity, game_summaries):
     """Seal an independent source-record manifest without entering corpus identity."""
     return seal(
         {
             "schema": SOURCE_SCHEMA,
             "kind": SOURCE_KIND,
             "lock_identity": lock["identity"],
+            "scientific_corpus_identity": scientific_corpus_identity,
             "game_mode": GAME_MODE,
             "source_contract": lock["qualification"]["binding"],
             "games": game_summaries,
@@ -178,8 +179,8 @@ def build_manifest(lock, game_summaries):
     )
 
 
-def write_manifest(path: Path, lock, game_summaries):
-    manifest = build_manifest(lock, game_summaries)
+def write_manifest(path: Path, lock, scientific_corpus_identity, game_summaries):
+    manifest = build_manifest(lock, scientific_corpus_identity, game_summaries)
     write_document(path / "manifest.json", manifest)
     return manifest
 
@@ -351,6 +352,7 @@ def read_source_record(path, *, expected_lock, corpus_path):
         "schema",
         "kind",
         "lock_identity",
+        "scientific_corpus_identity",
         "game_mode",
         "source_contract",
         "games",
@@ -360,6 +362,7 @@ def read_source_record(path, *, expected_lock, corpus_path):
         manifest["schema"] != SOURCE_SCHEMA
         or manifest["kind"] != SOURCE_KIND
         or manifest["lock_identity"] != expected_lock["identity"]
+        or manifest["scientific_corpus_identity"] != corpus["identity"]
         or manifest["game_mode"] != GAME_MODE
         or manifest["source_contract"] != expected_lock["qualification"]["binding"]
     ):
