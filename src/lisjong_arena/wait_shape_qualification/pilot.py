@@ -1186,7 +1186,8 @@ def summarize_f2(raw: LoadedPilotRaw) -> dict[str, object]:
     }
     selected = Counter(int(record["teacher_action_index"]) for record in rows)
     candidate_counts = Counter(
-        len(record["legal_discard_indices"]) for record in rows  # type: ignore[arg-type]
+        len(record["legal_discard_indices"])
+        for record in rows  # type: ignore[arg-type]
     )
     branch_counts = Counter(
         str(record["production_defensive_branch"])
