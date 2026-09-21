@@ -68,7 +68,6 @@ Arenaは当面**単一repositoryのまま**維持する。Execution / Observatio
 | Evaluation | candidate / Policyを再現可能な条件で比較し、seed / rotation / metric / artifactを所有する | `comparison.py`、strength / benchmark evaluation paths、evaluation artifact semantics |
 | Historical / Transitional Experiment | existing locked / retained experimentのprotocol・artifact互換性を維持する | `phase*` / `stage*` experiment families、既存learned-policy / HandBelief research packages |
 | Shared Arena Infrastructure | responsibility-neutralで、concreteな複数consumerに既に必要なlow-level primitive | `runtime_measurement.py`、`_artifact_io.py`、`_execution_safety.py`、`_parallel_execution.py`のlow-level primitives |
-| Historical Experiment | exact historical compositionを維持すること自体がreproducibility requirementである | retained Phase / Stage packagesとそのfrozen cross-phase composition |
 
 この表はcurrent treeをすべてrename / relocateする指示ではない。物理配置とresponsibilityが歴史的理由で混在している場合は、new codeのownerだけを明確にし、既存packageはboundedな理由なしに動かさない。
 
@@ -123,20 +122,21 @@ neutral layerはexperiment packageをimportしない。purpose-specific module�
 新規または新たにstable/shared化するcodeは、原則として次の方向を守る。
 
 ```text
-Shared Arena Infrastructure
-    ^            ^            ^
-    |            |            |
-Execution     Research     Evaluation
-    ^            |            |
-    +------------+------------+
-       explicit consumer relationships
+            lisjong
+       AI / Learning semantics
+          ^              ^
+          |              |
+Execution / Observation  Evaluation
+          ^              ^
+          |              |
+       Shared Arena Infrastructure
 ```
 
 - Shared Arena Infrastructureはhistorical Phase / Stage packageへ依存しない。
 - Execution / Observationはtraining objective、research hypothesis、AABB / ABBB semantics、strength statisticsへ依存しない。
 - core Evaluationは特定experimentのtrainer / checkpoint内部実装へ依存しない。
-- Experiment-local Researchはobjective execution evidence、stable Arena helper、`lisjong`-owned stable semanticsをconsumeできる。
-- stable AI / domain semanticsのcanonical ownerは引き続き`lisjong`である。
+- canonical feature / dataset / teacher / trainer / model / inference semanticsは`lisjong`をconsumeする。
+- historical / transitional experiment packageはpreservation対象であり、新規shared codeのdependency ownerにはしない。
 - **new stable/shared codeはhelper再利用だけを理由にhistorical experiment packageをimportしない。**
 
 historical cross-phase dependencyは、このruleへの違反という理由だけでrewriteしない。exact experiment identityやfrozen compositionを維持するA-type dependencyとしてgrandfatherし、変更には独立したbounded justificationを要求する。
@@ -175,11 +175,13 @@ splitは、例えば次のpressureが複数同時に具体化した場合だけ�
 
 - ExecutionがArena workflow外から独立consume / versioningされる
 - Evaluationが独立consumerを持つstable reusable APIになる
-- Research dependency / release cadenceが他責務とmaterially独立する
 - CI / dependency isolationを単一repositoryで合理的に管理できなくなる
 - 一責務に明確に独立したdistribution / lifecycle contractが成立する
+- historical / transitional packageのpreservation burdenがtarget responsibilityのrelease / dependency lifecycleをmaterially阻害する
 
-将来検討する場合も、機械的な三分割ではなく、まずboundedな`Arena vs Research`等のseamを評価する。
+将来検討する場合も、LearningをArena内の別repositoryへ切り出す前提にはしない。
+canonical Learning ownerは`lisjong`のまま、Arena内部のExecution / Evaluation seamを
+boundedに評価する。
 
 ## Execution / Observation
 
