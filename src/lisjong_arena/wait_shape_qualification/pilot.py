@@ -26,6 +26,10 @@ from lisjong.action_vocabulary import encode_action, resolve_legal_action
 from lisjong.policy_contract import Seat
 from lisjong.policy_contract.action import DiscardAction
 from lisjong.policy_contract.riichi import RiichiState
+from lisjong.policies.targeted_honor_release_terminal_progression import (
+    TargetedHonorReleaseAnalysis,
+    TargetedHonorReleaseBranch,
+)
 
 from lisjong_arena._artifact_io import (
     ArtifactValidationError,
@@ -480,6 +484,13 @@ def _run_seed(
         raise WaitShapePilotError("hidden-state observer did not cover every game step")
 
     inspection = inspection_recorder.snapshot()
+    analysis_by_decision: dict[tuple[int, int], object] = {}
+    for step in inspection.step_observations:
+        for seat_decision in step.seat_decisions:
+            analysis_by_decision[(step.step_ordinal, int(seat_decision.seat))] = (
+                seat_decision.decision_trace.analysis
+            )
+
     observations: list[dict[str, object]] = []
     for decision in iter_inspection_decisions(
         inspection, expected_decision_count=result.decisions
@@ -531,6 +542,15 @@ def _run_seed(
         if len(discard_indices) != len(set(discard_indices)):
             raise WaitShapePilotError("legal discard vocabulary indices are not unique")
 
+        analysis = analysis_by_decision.get(
+            (decision.step_ordinal, decision.actor_seat)
+        )
+        production_branch = (
+            analysis.branch.name
+            if isinstance(analysis, TargetedHonorReleaseAnalysis)
+            else None
+        )
+
         round_state = decision.context.input.round
         observations.append(
             {
@@ -545,6 +565,7 @@ def _run_seed(
                 "ordinary_discard_choice": is_eligible_ordinary_discard_choice(
                     decision.context.legal_actions
                 ),
+                "production_defensive_branch": production_branch,
                 "legal_discard_indices": discard_indices,
                 "accepted_opponents": accepted,
             }
@@ -636,6 +657,7 @@ def _validate_observation(record: object, context: str) -> dict[str, object]:
         "actor_seat",
         "teacher_action_index",
         "ordinary_discard_choice",
+        "production_defensive_branch",
         "legal_discard_indices",
         "accepted_opponents",
     }
@@ -659,6 +681,15 @@ def _validate_observation(record: object, context: str) -> dict[str, object]:
     _require(
         type(record["ordinary_discard_choice"]) is bool,
         f"{context}.ordinary_discard_choice must be bool",
+    )
+    branch = record["production_defensive_branch"]
+    _require(
+        branch is None
+        or (
+            type(branch) is str
+            and branch in {member.name for member in TargetedHonorReleaseBranch}
+        ),
+        f"{context}.production_defensive_branch is invalid",
     )
     discard_indices = record["legal_discard_indices"]
     _require(type(discard_indices) is list, f"{context}.legal_discard_indices invalid")
@@ -1153,7 +1184,17 @@ def summarize_f2(raw: LoadedPilotRaw) -> dict[str, object]:
         for cell in record["accepted_opponents"]  # type: ignore[index]
     }
     selected = Counter(int(record["teacher_action_index"]) for record in rows)
-    candidate_counts = Counter(len(record["legal_discard_indices"]) for record in rows)  # type: ignore[arg-type]
+    candidate_counts = Counter(
+        len(record["legal_discard_indices"]) for record in rows  # type: ignore[arg-type]
+    )
+    branch_counts = Counter(
+        str(record["production_defensive_branch"])
+        for record in rows
+        if record["production_defensive_branch"] is not None
+    )
+    branch_unavailable_count = sum(
+        record["production_defensive_branch"] is None for record in rows
+    )
     multiple_riichi = sum(
         len(record["accepted_opponents"]) >= 2
         for record in rows  # type: ignore[arg-type]
@@ -1183,7 +1224,10 @@ def summarize_f2(raw: LoadedPilotRaw) -> dict[str, object]:
         },
         "multiple_riichi_opponent_count": multiple_riichi,
         "defense_diagnostic_status": DEFENSE_DIAGNOSTIC_STATUS,
-        "production_defensive_branch_counts": None,
+        "production_defensive_branch_counts": {
+            branch: branch_counts[branch] for branch in sorted(branch_counts)
+        },
+        "production_defensive_branch_unavailable_count": branch_unavailable_count,
         "qualified": passed,
     }
     document: dict[str, object] = {
