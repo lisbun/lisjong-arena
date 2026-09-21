@@ -63,16 +63,20 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
             "No EC2 instance, EBS artifact volume, or other billable execution resource was created.",
             text,
         )
-        self.assertLess(
-            text.index("wait_shape_qualification.pilot preflight"),
-            text.index("if ($PreflightOnly)"),
+        preflight_guard = (
+            'if ($PreflightOnly) {\n'
+            '    Write-Host "PASS: ISSUE #326 AWS PREFLIGHT ONLY"'
         )
         self.assertLess(
-            text.index("if ($PreflightOnly)"),
+            text.index("wait_shape_qualification.pilot preflight"),
+            text.index(preflight_guard),
+        )
+        self.assertLess(
+            text.index(preflight_guard),
             text.index('"ec2", "create-volume"'),
         )
         self.assertLess(
-            text.index("if ($PreflightOnly)"),
+            text.index(preflight_guard),
             text.index('"ec2", "run-instances"'),
         )
 
@@ -123,7 +127,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         self.assertNotIn("2220..", text)
         self.assertIn("/mnt/lisjong-326-artifacts", text)
         self.assertIn("execution-lock.json", text)
-        self.assertIn("pilot-raw/manifest.json", text)
+        self.assertIn('root / "pilot-raw" / "manifest.json"', text)
         self.assertIn("f1.json", text)
         self.assertIn("f2.json", text)
         self.assertIn("qualification.json", text)
