@@ -179,21 +179,34 @@ python -m ruff check .
 `lisjong-arena`は、lisjongのPolicyをconcrete environmentで実行・観測し、その実行を
 controlled / reproducibleな条件で評価する基盤を担当する。
 
+canonicalなLearning / Learned Policy capability（feature / dataset / teacher / training / artifact / inference）は
+`lisjong`が所有する。Arena内の既存Learning codeはhistorical / reference / already-locked workloadとして
+維持できるが、新しいcanonical Learning capabilityをArenaへ追加する根拠にはしない。
+
 repository内部では次の依存方向を維持する。
 
 ```text
 evaluation
     -> execution / observation
-    -> lisjong Policy contract
+    -> lisjong Policy / Learning contract
 ```
 
 execution / observationはevaluation-specific semanticsを知らなくても成立させる。
-Policy / AI戦略、AI-side `DecisionContext` / `InternalAction` semantics、麻雀ルール / game state transitionは
-Arenaへ取り込まない。詳細なownership matrix、current physical placement、migration historyは
-`docs/architecture.md`を正本とし、変化しやすいcommit SHAやmigration statusを`AGENTS.md`へ重複維持しない。
+Policy / AI戦略、AI-side `DecisionContext` / `InternalAction` semantics、Learning semantics、
+麻雀ルール / game state transitionはArenaへ取り込まない。詳細なownership matrix、
+current physical placement、migration historyは`docs/architecture.md`を正本とする。
 
-責務判断では、**Arenaは「何が起きたか」を所有し、lisjongは「なぜそのActionを選んだか」を所有する**
-ことを基本線とする。
+責務判断では、**Arenaは「何が起きたか」と「どう比較したか」を所有し、lisjongは
+「どうAIを作るか / なぜそのActionを選んだか」を所有する**ことを基本線とする。
+
+### Learning / source-record boundary
+
+- ArenaがLearning consumer向けrecordを生成する場合は、player-safe observation、legal actions、selected / applied action、provenanceをversioned source contractとして保持する
+- encode済みfeature tensorやtraining objective固有labelをreusable sourceのcanonical representationにしない
+- source-record schemaはArenaがversion管理し、unknown version / identity mismatchはfail closedする
+- training semantics / executable entry pointはlisjong-ownedとし、Arena AWS等でhostしてもownershipを移さない
+- historical experiment artifactのidentityをownership変更だけで遡及改名・再指定しない
+- `lisjong -> lisjong-arena` のreverse dependencyやartifact経由のhidden reverse dependencyを作らない
 
 ### Policy contract / Adapter boundary
 
@@ -243,6 +256,8 @@ Arenaへ取り込まない。詳細なownership matrix、current physical placem
 ### Review重点
 
 - execution / observation vs evaluation ownership
+- Arena execution/evaluation vs lisjong Learning ownership
+- reusable source record vs encoded feature / privileged truth boundary
 - external mapping / revalidation
 - objective trace vs AI analysis separation
 - reproducibility / evaluation protocol invariants
