@@ -420,7 +420,7 @@ shanten、ukeire、HandBelief、value / risk、feature / action vocabulary、tea
 
 ## Evaluation
 
-Execution / Observationまたはresearch candidateをconsumerとして利用し、Policy / game performanceを再現可能な条件で比較する。
+Execution / Observationまたは`lisjong`が生成したcandidateをconsumerとして利用し、Policy / game performanceを再現可能な条件で比較する。
 
 主な責務:
 
@@ -437,7 +437,7 @@ Execution / Observationまたはresearch candidateをconsumerとして利用し�
 - external benchmark protocol
 - external competitor orchestration
 
-Evaluationはcandidateを生成するresearch conditionを暗黙に変更しない。research結果を見てtraining seed / feature / threshold / datasetを変更した場合はnew candidate / new experimentとして扱う。
+Evaluationはcandidateを生成するLearning / research conditionを暗黙に変更しない。結果を見てtraining seed / feature / threshold / datasetを変更した場合は`lisjong`側のnew candidate / new experimentとして扱う。
 
 portable automationでは、既存ABBB execution / artifact / aggregationを再実装せず、
 machine-readable specから1回のlocked orchestrationとしてcompositionする。このlayerは
@@ -451,7 +451,7 @@ Automated Strength Evaluation
     -> one locked orchestration run
 
 future Strength Loop
-    -> upper-layer research scheduling / promotion decision
+    -> project-level scheduling / promotion decision outside Arena
 ```
 
 ```text
@@ -481,52 +481,46 @@ INVALID
 
 Arenaはこれらをexecution / evaluationのconsumerとして利用する。historical Arena codeが残ることを理由にcanonical contractをArenaへ戻さない。
 
-## Promotion boundary
+## Promotion / preservation boundary
 
-experiment-localな成功からstable AI contractへのpromotionは明示的なarchitecture decisionを必要とする。
+historical Arena experimentの成功を、そのまま新しいcanonical Learning contractへ
+promotionしない。
 
 ```text
-bounded experiment
-    |
-    v
-experiment-local implementation
-    |
-    v
-result / evidence
-    |
-    +--> negative / inconclusive
-    |       historical experiment record
-    |
-    `--> repeatedly useful / adopted principle
-            |
-            v
-       owner review
-            |
-            +--> remain Arena research infrastructure
-            `--> formalize in lisjong stable AI contract
+historical / bounded Arena experiment
+        |
+        v
+result / retained evidence
+        |
+        +--> preserve exact historical identity when required
+        |
+        `--> extract reusable requirement / invariant
+                 |
+                 v
+           lisjong owner review
+                 |
+                 v
+        canonical Learning contract
 ```
 
 最低限、次を確認する。
 
 - semanticsが特定experimentを超えてstableか
 - multiple consumers / productionで必要か
-- Arena concernかAI decision concernか
-- experiment-local identityをstable contractへ流用してよいか
-- breaking-change / versioning policyが必要か
+- Arena execution / evaluation concernかAI / Learning concernか
+- historical artifact identityを新contractへ流用せずversion boundaryを明示できるか
+- breaking-change / compatibility policyが必要か
 - runtime dependency / weights distribution / artifact deliveryを誰が所有するか
 
 ```text
-experiment-local model
+historical experiment model
 != canonical production model
 
-experiment-local feature schema
-!= canonical PolicyInput / production feature contract
+historical feature schema
+!= canonical lisjong feature contract
 
-experiment-local checkpoint
-!= production Policy
-
-experiment result
-!= stable public API
+historical checkpoint
+!= canonical model artifact
 ```
 
 ## Objective execution, research diagnostics, and Policy analysis
