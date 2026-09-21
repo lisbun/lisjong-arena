@@ -12,8 +12,10 @@ from lisjong_arena.wait_shape_qualification.pilot import (
     FINAL_QUALIFIED,
     LoadedPilotRaw,
     WaitShapePilotError,
+    _run_seed,
     _validate_observation,
     build_execution_lock,
+    build_pilot_teacher_population,
     qualification_document,
     summarize_f1,
     summarize_f2,
@@ -113,6 +115,23 @@ def fake_execution():
 
 
 class WaitShapePilotTest(unittest.TestCase):
+    def test_teacher_population_is_exact_and_fresh_per_seat(self):
+        population = build_pilot_teacher_population()
+        self.assertEqual(len(population), 4)
+        self.assertEqual(len({id(policy) for policy in population.values()}), 4)
+        self.assertEqual(
+            {type(policy).__name__ for policy in population.values()},
+            {"TargetedHonorReleaseTerminalProgressionPolicy"},
+        )
+
+    def test_executor_rejects_scientific_seed_before_game_construction(self):
+        with patch(
+            "lisjong_arena.wait_shape_qualification.pilot.LocalGameRunner"
+        ) as runner:
+            with self.assertRaises(WaitShapePilotError):
+                _run_seed(2100)
+        runner.assert_not_called()
+
     def test_synthetic_locked_support_passes_f1_f2(self):
         raw = raw_with()
         f1 = summarize_f1(raw)
