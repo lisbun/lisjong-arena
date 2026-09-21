@@ -212,6 +212,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         status = _STATUS.read_text(encoding="utf-8")
         launcher = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn("[Parameter(Mandatory = $true)][string]$RunId", status)
+        self.assertIn("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", status)
         self.assertIn("Name=tag:lisjong-run-id,Values=$RunId", status)
         self.assertIn('"ec2", "describe-instances"', status)
         self.assertIn('"ec2", "describe-volumes"', status)

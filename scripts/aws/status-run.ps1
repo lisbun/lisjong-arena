@@ -9,8 +9,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-if ([string]::IsNullOrWhiteSpace($RunId)) {
-    throw "RunId is required."
+if ($RunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') {
+    throw "RunId must use only letters, digits, dot, underscore, and hyphen."
 }
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
     throw "AWS profile is required. Pass -AwsProfile or set AWS_PROFILE."
