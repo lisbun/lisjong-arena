@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import platform
 import sys
 from collections import Counter, defaultdict
@@ -24,7 +23,7 @@ from pathlib import Path
 from typing import Iterable
 
 from lisjong.action_vocabulary import encode_action, resolve_legal_action
-from lisjong.policy_contract import DecisionContext, Seat
+from lisjong.policy_contract import Seat
 from lisjong.policy_contract.action import DiscardAction
 from lisjong.policy_contract.riichi import RiichiState
 
@@ -42,7 +41,10 @@ from lisjong_arena._execution_safety import (
     require_merged_arena_revision,
     require_new_artifact_destinations,
 )
-from lisjong_arena.environment_identity import EnvironmentIdentityError, verify_environment
+from lisjong_arena.environment_identity import (
+    EnvironmentIdentityError,
+    verify_environment,
+)
 from lisjong_arena.learned_policy_offline_q.activation import (
     is_eligible_ordinary_discard_choice,
 )
@@ -108,9 +110,7 @@ EXPECTED_CANONICAL_WAIT_IDENTITY = (
     "18ce0fbf9c8f986d9fe214f1056a2cf57ba11d0a5e5656e32ea2437894ca6afe"
 )
 F0_OUTCOME = "RETAINED WAIT-SHAPE LABEL PATH QUALIFIED"
-F0_ARTIFACT_SHA256 = (
-    "0af9ad89be0cf69d939cfefbc576f99e28678556c1dcab7c58aaf5be8b7280a7"
-)
+F0_ARTIFACT_SHA256 = "0af9ad89be0cf69d939cfefbc576f99e28678556c1dcab7c58aaf5be8b7280a7"
 
 LOCK_SCHEMA_VERSION = "arena-wait-shape-pilot-lock-v1"
 RAW_SCHEMA_VERSION = "arena-wait-shape-pilot-raw-v1"
@@ -238,7 +238,9 @@ def build_pilot_teacher_population() -> dict[Seat, object]:
         if cls.__name__ != TEACHER_POLICY_CLASS:
             raise WaitShapePilotError("teacher class differs from the #322 lock")
         if cls.__module__ != TEACHER_SOURCE_MODULE:
-            raise WaitShapePilotError("teacher source module differs from the #322 lock")
+            raise WaitShapePilotError(
+                "teacher source module differs from the #322 lock"
+            )
     return policies
 
 
@@ -391,8 +393,7 @@ def _validate_lock_document(document: object) -> dict[str, object]:
         "fresh Policy requirement drifted",
     )
     _require(
-        type(pilot.get("max_workers")) is int
-        and 1 <= int(pilot["max_workers"]) <= 2,
+        type(pilot.get("max_workers")) is int and 1 <= int(pilot["max_workers"]) <= 2,
         "pilot max_workers is invalid",
     )
     _require(
@@ -412,8 +413,7 @@ def _validate_lock_document(document: object) -> dict[str, object]:
     )
     f0 = document["f0_prerequisite"]
     _require(
-        f0
-        == {"outcome": F0_OUTCOME, "artifact_sha256": F0_ARTIFACT_SHA256},
+        f0 == {"outcome": F0_OUTCOME, "artifact_sha256": F0_ARTIFACT_SHA256},
         "F0 prerequisite binding drifted",
     )
     _require(
@@ -516,7 +516,10 @@ def _run_seed(seed: int) -> tuple[dict[str, object], ...]:
             continue
 
         selected_index = encode_action(decision.selected_action)
-        if resolve_legal_action(selected_index, decision.context) is not decision.selected_action:
+        if (
+            resolve_legal_action(selected_index, decision.context)
+            is not decision.selected_action
+        ):
             raise WaitShapePilotError("teacher action encode/resolve round trip failed")
         discard_indices = [
             encode_action(action)
@@ -548,13 +551,16 @@ def _run_seed(seed: int) -> tuple[dict[str, object], ...]:
 
 
 def _observation_line(record: dict[str, object]) -> str:
-    return json.dumps(
-        record,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ) + "\n"
+    return (
+        json.dumps(
+            record,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
 
 
 def _validate_projection(value: object, context: str) -> dict[str, int]:
@@ -643,7 +649,9 @@ def _validate_observation(record: object, context: str) -> dict[str, object]:
         try:
             availability = WaitShapeAvailability(cell["availability"])
         except (TypeError, ValueError) as exc:
-            raise WaitShapePilotError(f"{cell_context}.availability is invalid") from exc
+            raise WaitShapePilotError(
+                f"{cell_context}.availability is invalid"
+            ) from exc
         _require(
             availability is not WaitShapeAvailability.NOT_ACCEPTED_RIICHI,
             f"{cell_context} cannot be NOT_ACCEPTED_RIICHI",
@@ -765,7 +773,9 @@ def load_raw_artifact(path: str | Path) -> LoadedPilotRaw:
         manifest["raw_identity"] == _raw_identity(manifest),
         "raw identity mismatch",
     )
-    _require(manifest_text == canonical_json_text(manifest), "raw manifest not canonical")
+    _require(
+        manifest_text == canonical_json_text(manifest), "raw manifest not canonical"
+    )
 
     file_doc = manifest["file"]
     _require(
@@ -839,7 +849,9 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
         for availability in WaitShapeAvailability
         if availability is not WaitShapeAvailability.AVAILABLE
     }
-    episode_rows: dict[tuple[object, ...], list[dict[str, int] | None]] = defaultdict(list)
+    episode_rows: dict[tuple[object, ...], list[dict[str, int] | None]] = defaultdict(
+        list
+    )
     episode_seeds: dict[tuple[object, ...], int] = {}
 
     all_six_zero_rows = 0
@@ -856,7 +868,10 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
             if availability is WaitShapeAvailability.AVAILABLE:
                 projection = cell["projection"]
                 assert isinstance(projection, dict)
-                labels = {shape: int(projection[shape]) for shape in (*PRIMARY_SHAPES, DESCRIPTIVE_SHAPE)}
+                labels = {
+                    shape: int(projection[shape])
+                    for shape in (*PRIMARY_SHAPES, DESCRIPTIVE_SHAPE)
+                }
                 labelled_cells += 1
                 episode_rows[episode].append(labels)
                 ordinary_positive = sum(labels[shape] for shape in PRIMARY_SHAPES)
@@ -934,19 +949,19 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
                     negative_rows_by_episode[episode] += 1
 
         positive_anchor_episodes = {
-            episode
-            for episode, labels in support_anchors.items()
-            if labels[shape] == 1
+            episode for episode, labels in support_anchors.items() if labels[shape] == 1
         }
         negative_anchor_episodes = {
-            episode
-            for episode, labels in support_anchors.items()
-            if labels[shape] == 0
+            episode for episode, labels in support_anchors.items() if labels[shape] == 0
         }
         anchor_total = len(positive_anchor_episodes) + len(negative_anchor_episodes)
         anchor_prevalence = _safe_share(len(positive_anchor_episodes), anchor_total)
-        positive_hanchan = {episode_seeds[episode] for episode in positive_anchor_episodes}
-        negative_hanchan = {episode_seeds[episode] for episode in negative_anchor_episodes}
+        positive_hanchan = {
+            episode_seeds[episode] for episode in positive_anchor_episodes
+        }
+        negative_hanchan = {
+            episode_seeds[episode] for episode in negative_anchor_episodes
+        }
         max_positive_concentration = _safe_share(
             max(positive_rows_by_episode.values(), default=0), positive_rows
         )
@@ -961,10 +976,8 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
             and F1_MIN_ANCHOR_PREVALENCE
             <= anchor_prevalence
             <= F1_MAX_ANCHOR_PREVALENCE
-            and max_positive_concentration
-            <= F1_MAX_SINGLE_EPISODE_ROW_CONCENTRATION
-            and max_negative_concentration
-            <= F1_MAX_SINGLE_EPISODE_ROW_CONCENTRATION
+            and max_positive_concentration <= F1_MAX_SINGLE_EPISODE_ROW_CONCENTRATION
+            and max_negative_concentration <= F1_MAX_SINGLE_EPISODE_ROW_CONCENTRATION
         )
         shapes[shape] = {
             "positive_rows": positive_rows,
@@ -1051,7 +1064,8 @@ def summarize_f2(raw: LoadedPilotRaw) -> dict[str, object]:
     selected = Counter(int(record["teacher_action_index"]) for record in rows)
     candidate_counts = Counter(len(record["legal_discard_indices"]) for record in rows)  # type: ignore[arg-type]
     multiple_riichi = sum(
-        len(record["accepted_opponents"]) >= 2 for record in rows  # type: ignore[arg-type]
+        len(record["accepted_opponents"]) >= 2
+        for record in rows  # type: ignore[arg-type]
     )
     decision_count = len(rows)
     largest_share = _safe_share(max(selected.values(), default=0), decision_count)
@@ -1134,7 +1148,8 @@ def qualification_document(
 
 def _write_result(path: Path, document: dict[str, object]) -> None:
     _require(
-        document.get("result_identity") == _document_identity(document, "result_identity"),
+        document.get("result_identity")
+        == _document_identity(document, "result_identity"),
         "result document identity mismatch before write",
     )
     write_new_artifact_file(path, canonical_json_text(document))
@@ -1152,7 +1167,8 @@ def _load_result(path: Path, schema: str) -> dict[str, object]:
         f"{path.name} protocol identity drifted",
     )
     _require(
-        document.get("result_identity") == _document_identity(document, "result_identity"),
+        document.get("result_identity")
+        == _document_identity(document, "result_identity"),
         f"{path.name} result identity mismatch",
     )
     _require(
@@ -1167,7 +1183,9 @@ def verify_output_root(output_root: str | Path) -> dict[str, object]:
     destinations = _destinations(root)
     lock = _load_lock(destinations["lock"])
     raw = load_raw_artifact(destinations["raw"])
-    _require(raw.manifest["lock_identity"] == lock["lock_identity"], "raw/lock mismatch")
+    _require(
+        raw.manifest["lock_identity"] == lock["lock_identity"], "raw/lock mismatch"
+    )
     recorded_f1 = _load_result(destinations["f1"], F1_SCHEMA_VERSION)
     recorded_f2 = _load_result(destinations["f2"], F2_SCHEMA_VERSION)
     recorded_qualification = _load_result(

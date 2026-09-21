@@ -45,7 +45,9 @@ def observation(index: int, *, projection=None, ordinary=True):
         "actor_seat": 0,
         "teacher_action_index": selected,
         "ordinary_discard_choice": ordinary,
-        "legal_discard_indices": [selected, (selected + 1) % 20] if ordinary else [selected],
+        "legal_discard_indices": [selected, (selected + 1) % 20]
+        if ordinary
+        else [selected],
         "accepted_opponents": [
             {
                 "opponent_seat": 1,
@@ -97,9 +99,7 @@ class WaitShapePilotTest(unittest.TestCase):
         f2 = summarize_f2(raw)
         self.assertEqual(f1["outcome"], F1_QUALIFIED)
         self.assertEqual(f2["outcome"], F2_QUALIFIED)
-        self.assertEqual(
-            f2["summary"]["riichi_exposed_discard_choice_decisions"], 300
-        )
+        self.assertEqual(f2["summary"]["riichi_exposed_discard_choice_decisions"], 300)
         self.assertGreaterEqual(f2["summary"]["unique_source_hanchan"], 48)
         self.assertGreaterEqual(f2["summary"]["unique_accepted_riichi_episodes"], 80)
         self.assertEqual(
@@ -181,7 +181,9 @@ class WaitShapePilotTest(unittest.TestCase):
         with self.assertRaises(WaitShapePilotError):
             _validate_observation(all_zero, "record")
 
-    def test_ordinary_discard_choice_requires_two_discard_candidates_and_selected_discard(self):
+    def test_ordinary_discard_choice_requires_two_discard_candidates_and_selected_discard(
+        self,
+    ):
         fewer = observation(0)
         fewer["legal_discard_indices"] = [0]
         with self.assertRaises(WaitShapePilotError):
@@ -229,9 +231,7 @@ class WaitShapePilotTest(unittest.TestCase):
                     "no_prior_result_exposure_confirmed": True,
                 }
                 kwargs[field] = False
-                with self.subTest(field=field), self.assertRaises(
-                    WaitShapePilotError
-                ):
+                with self.subTest(field=field), self.assertRaises(WaitShapePilotError):
                     build_execution_lock(temp, max_workers=1, **kwargs)
 
     def test_raw_artifact_is_write_once_and_strict(self):
