@@ -63,18 +63,21 @@ Arenaはconcrete environment integrationを所有します。
 
 Execution / observationはresearch hypothesisやPolicy comparison conclusionを所有しません。
 
-### Experiment-local research / ML
+### Historical / transitional Learning implementation
 
-bounded research questionに必要なpurpose-specific implementationはArenaで所有できます。
+Arena内の既存dataset / trainer / model / checkpoint / diagnosticは、historical experimentまたはalready-locked workloadとして保持できます。
 
-- dataset / tensor / split / manifest
-- training harness
-- fixed experiment model / loss / optimizer
-- checkpoint / result / diagnostic artifact
-- offline failure diagnosis
-- experiment-local Learned Policy adapter
+新しいcanonical Learning capabilityは`lisjong`が所有します。
 
-研究で使えたことだけを理由にcanonical model / feature schema / public API / production Policyへ昇格させません。promotionはownerを含めて明示的に判断します。
+```text
+lisjong
+    feature / dataset / teacher / training / artifact / inference
+
+lisjong-arena
+    execution / observation / source record / strength evaluation
+```
+
+既存Arena implementationはreferenceとして利用できますが、bulk migrationやhistorical artifact identityの遡及変更は行いません。
 
 ### Evaluation
 
@@ -97,7 +100,8 @@ stable AI-side semanticsは該当する場合`lisjong`側に残します。例:
 - Policy behavior
 - `DecisionContext` / `PolicyInput` / `InternalAction`
 - shanten / ukeire / HandBelief / value / risk semantics
-- production Learned Policy contract
+- model-facing feature / dataset / teacher / training semantics
+- model artifact / Learned Policy / learned estimator inference
 
 麻雀ルールやgame state transitionもArenaへ複製しません。
 
