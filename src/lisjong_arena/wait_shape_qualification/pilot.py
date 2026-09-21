@@ -853,6 +853,9 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
         list
     )
     episode_seeds: dict[tuple[object, ...], int] = {}
+    episode_first_availability: dict[
+        tuple[object, ...], WaitShapeAvailability
+    ] = {}
 
     all_six_zero_rows = 0
     ordinary_zero_kokushi_rows = 0
@@ -865,6 +868,7 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
             availability = WaitShapeAvailability(cell["availability"])
             episode = _episode_key(record, int(cell["opponent_seat"]))
             episode_seeds[episode] = int(record["seed"])
+            episode_first_availability.setdefault(episode, availability)
             if availability is WaitShapeAvailability.AVAILABLE:
                 projection = cell["projection"]
                 assert isinstance(projection, dict)
@@ -903,19 +907,19 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
     labelable_fraction = _safe_share(labelled_cells, technically_labelable)
 
     # Support anchors are the first AVAILABLE labelled observation per episode.
-    # Integrity anchors use the first technically observed cell so unexpected
-    # NO_STRUCTURAL_WAIT cannot disappear by waiting for a later row.
+    # The integrity zero-channel anchor is classified from the first observation's
+    # exact availability reason, so unrelated fail-closed reasons are not
+    # misreported as NO_STRUCTURAL_WAIT.
     support_anchors: dict[tuple[object, ...], dict[str, int]] = {}
-    integrity_anchors: dict[tuple[object, ...], dict[str, int] | None] = {}
     for episode, rows in episode_rows.items():
-        integrity_anchors[episode] = rows[0]
         for row in rows:
             if row is not None:
                 support_anchors[episode] = row
                 break
 
     all_six_zero_anchors = sum(
-        1 for value in integrity_anchors.values() if value is None
+        availability is WaitShapeAvailability.NO_STRUCTURAL_WAIT
+        for availability in episode_first_availability.values()
     )
     ordinary_zero_kokushi_anchors = sum(
         1
