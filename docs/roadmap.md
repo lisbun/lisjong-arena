@@ -192,7 +192,7 @@ Learning semanticsのownerは`lisjong`のままである。
 このtrackはcandidate / Policy performanceのcontrolled evidenceを提供する。
 
 ```text
-research candidate / existing Policy
+lisjong candidate / existing Policy
         |
         v
 locked evaluation plan
