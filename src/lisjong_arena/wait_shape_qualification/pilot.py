@@ -169,6 +169,14 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _is_full_commit_id(value: object) -> bool:
+    return (
+        type(value) is str
+        and len(value) == 40
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def _document_identity(document: dict[str, object], field: str) -> str:
     logical = {key: value for key, value in document.items() if key != field}
     return _sha256_text(canonical_json_text(logical))
@@ -427,6 +435,76 @@ def _validate_lock_document(document: object) -> dict[str, object]:
     _require(
         document["no_rescue_boundary"] == list(_NO_RESCUE_BOUNDARY),
         "no-rescue boundary drifted",
+    )
+
+    execution_target = document["execution_target"]
+    _require(
+        type(execution_target) is dict
+        and set(execution_target) == {"branch", "revision", "target_type"},
+        "execution target fields are invalid",
+    )
+    _require(execution_target["branch"] == "main", "execution branch drifted")
+    _require(
+        execution_target["target_type"] == "reviewed-merged-main-v1",
+        "execution target type drifted",
+    )
+    _require(
+        _is_full_commit_id(execution_target["revision"]),
+        "execution Arena revision is not a full commit id",
+    )
+
+    provenance = document["provenance"]
+    provenance_fields = {
+        "execution_environment",
+        "lisjong_arena_version",
+        "lisjong_arena_revision",
+        "lisjong_version",
+        "lisjong_revision",
+        "lisjong_engine_version",
+        "lisjong_engine_revision",
+        "riichienv_version",
+        "python_version",
+    }
+    _require(
+        type(provenance) is dict and set(provenance) == provenance_fields,
+        "execution provenance fields are invalid",
+    )
+    _require(
+        provenance["execution_environment"] == "riichienv",
+        "execution environment drifted",
+    )
+    _require(
+        provenance["lisjong_arena_revision"] == execution_target["revision"],
+        "Arena provenance differs from execution target",
+    )
+    _require(
+        provenance["lisjong_revision"] == TEACHER_LISJONG_REVISION,
+        "lisjong provenance differs from #322 lock",
+    )
+    _require(
+        provenance["lisjong_engine_revision"] == LISJONG_ENGINE_REVISION,
+        "lisjong-engine provenance differs from #322 lock",
+    )
+    _require(
+        provenance["riichienv_version"] == RIICHIENV_VERSION,
+        "RiichiEnv provenance differs from #322 lock",
+    )
+
+    runtime = document["runtime"]
+    _require(
+        type(runtime) is dict
+        and set(runtime)
+        == {"python_implementation", "python_version", "sys_version"}
+        and all(type(value) is str and value for value in runtime.values()),
+        "runtime identity is invalid",
+    )
+
+    destinations = document["artifact_destinations"]
+    _require(
+        type(destinations) is dict
+        and set(destinations) == {"lock", "raw", "f1", "f2", "qualification"}
+        and all(type(value) is str and value for value in destinations.values()),
+        "artifact destination lock is invalid",
     )
     _require(
         document["lock_identity"] == _document_identity(document, "lock_identity"),
@@ -871,6 +949,30 @@ def load_raw_artifact(path: str | Path) -> LoadedPilotRaw:
         "raw protocol identity drifted",
     )
     _require(manifest["ordered_seeds"] == list(PILOT_SEEDS), "raw seed plan drifted")
+    _require(
+        manifest["teacher"]
+        == {
+            "identity": TEACHER_IDENTITY,
+            "policy_class": TEACHER_POLICY_CLASS,
+            "population": TEACHER_POPULATION,
+            "lisjong_revision": TEACHER_LISJONG_REVISION,
+        },
+        "raw teacher binding drifted",
+    )
+    _require(
+        manifest["runtime"]
+        == {
+            "game_mode": GAME_MODE,
+            "lisjong_engine_revision": LISJONG_ENGINE_REVISION,
+            "riichienv_version": RIICHIENV_VERSION,
+            "canonical_wait_implementation_identity": EXPECTED_CANONICAL_WAIT_IDENTITY,
+        },
+        "raw runtime binding drifted",
+    )
+    _require(
+        type(manifest["provenance"]) is dict,
+        "raw provenance must be an object",
+    )
     game_receipts = manifest["game_receipts"]
     _require(
         type(game_receipts) is list and len(game_receipts) == len(PILOT_SEEDS),
@@ -1322,6 +1424,10 @@ def verify_output_root(output_root: str | Path) -> dict[str, object]:
     raw = load_raw_artifact(destinations["raw"])
     _require(
         raw.manifest["lock_identity"] == lock["lock_identity"], "raw/lock mismatch"
+    )
+    _require(
+        raw.manifest["provenance"] == lock["provenance"],
+        "raw provenance differs from the execution lock",
     )
     recorded_f1 = _load_result(destinations["f1"], F1_SCHEMA_VERSION)
     recorded_f2 = _load_result(destinations["f2"], F2_SCHEMA_VERSION)
