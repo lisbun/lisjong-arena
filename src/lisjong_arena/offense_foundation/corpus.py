@@ -503,7 +503,7 @@ def generate(
         )
         write_document(staging / "manifest.json", manifest)
         source_manifest = source_record.write_manifest(
-            source_staging, lock, source_summaries
+            source_staging, lock, manifest["identity"], source_summaries
         )
         read_corpus(staging, expected_lock=lock)
         if (
