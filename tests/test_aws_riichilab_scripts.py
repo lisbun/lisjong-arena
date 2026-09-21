@@ -14,15 +14,19 @@ _MONITOR = _REPOSITORY_ROOT / "scripts" / "aws" / "ssm-monitor.ps1"
 
 class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
     def test_bootstrap_has_valid_bash_syntax(self) -> None:
-        bash = shutil.which("bash")
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
         if bash is None:
             self.skipTest("bash is unavailable")
-        result = subprocess.run(
-            [bash, "-n", str(_BOOTSTRAP)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [bash, "-n", str(_BOOTSTRAP)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            self.skipTest(f"bash cannot be executed: {error}")
         self.assertEqual(0, result.returncode, result.stderr)
 
     def test_powershell_scripts_have_valid_syntax_when_pwsh_is_available(self) -> None:

@@ -4,17 +4,25 @@ import argparse
 import json
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
-from lisjong_arena._artifact_io import parse_json_text
+from lisjong_arena._artifact_io import (
+    canonical_json_text,
+    parse_json_text,
+    write_new_artifact_file,
+)
+from lisjong_arena.aws_execution_observability import ProgressTracker, write_progress
 
 from .corpus import generate, read_corpus
-from .protocol import make_lock
+from .protocol import make_lock, validate_request
 from .qualification import (
     P0_PASS,
     P1_PASS,
+    qualification_contract,
     qualify,
     read_document,
+    require_matching_qualification_contract,
     require_qualification,
     runtime_binding,
     write_document,
@@ -29,6 +37,25 @@ def main(argv=None):
         "qualify", help="P0/P1 fixture qualification only; no games"
     )
     qualification.add_argument("--output", required=True)
+    request_validation = commands.add_parser(
+        "validate-request", help="validate an operator-supplied population request"
+    )
+    request_validation.add_argument("--request", required=True)
+    request_validation.add_argument(
+        "--phase", choices=("P2", "SCIENTIFIC"), required=True
+    )
+    contract = commands.add_parser(
+        "qualification-contract",
+        help="derive the cross-platform scientific/runtime contract fields",
+    )
+    contract.add_argument("--qualification", required=True)
+    contract.add_argument("--output", required=True)
+    contract_match = commands.add_parser(
+        "require-qualification-contract-match",
+        help="fail closed unless a local and remote qualification contract match",
+    )
+    contract_match.add_argument("--local", required=True)
+    contract_match.add_argument("--remote", required=True)
     lock = commands.add_parser(
         "lock", help="bind operator-supplied fresh population before generation"
     )
@@ -40,6 +67,9 @@ def main(argv=None):
     generation.add_argument("--lock", required=True)
     generation.add_argument("--p2-corpus")
     generation.add_argument("--output", required=True)
+    generation.add_argument("--workers", type=int, default=1)
+    generation.add_argument("--operational-progress-path")
+    generation.add_argument("--operational-run-id")
     readback = commands.add_parser("readback")
     readback.add_argument("--corpus", required=True)
     readback.add_argument("--lock", required=True)
@@ -58,6 +88,29 @@ def main(argv=None):
                 )
             )
             return 0 if result["p0"] == P0_PASS and result["p1"] == P1_PASS else 2
+        if args.command == "validate-request":
+            request = parse_json_text(Path(args.request).read_text(encoding="utf-8"))
+            validate_request(request)
+            if request["phase"] != args.phase:
+                raise ValueError("population request phase differs from expected phase")
+            print(json.dumps({"phase": args.phase, "status": "PASS"}))
+            return 0
+        if args.command == "qualification-contract":
+            report = read_document(args.qualification)
+            contract = qualification_contract(report)
+            write_new_artifact_file(Path(args.output), canonical_json_text(contract))
+            print(json.dumps(contract, sort_keys=True))
+            return 0
+        if args.command == "require-qualification-contract-match":
+            local_contract = parse_json_text(
+                Path(args.local).read_text(encoding="utf-8")
+            )
+            remote_contract = parse_json_text(
+                Path(args.remote).read_text(encoding="utf-8")
+            )
+            require_matching_qualification_contract(local_contract, remote_contract)
+            print(json.dumps({"status": "PASS"}))
+            return 0
         if args.command == "lock":
             report = read_document(args.qualification)
             require_qualification(report, runtime_binding(args.project))
@@ -67,21 +120,49 @@ def main(argv=None):
             write_document(args.output, result)
         elif args.command == "generate":
             started = time.monotonic()
+            started_at = datetime.now(UTC)
+            tracker = None
+            if bool(args.operational_progress_path) != bool(args.operational_run_id):
+                raise ValueError(
+                    "operational progress path and run id must be supplied together"
+                )
+            if args.operational_progress_path:
+                total = sum(
+                    len(v)
+                    for v in read_document(args.lock)["request"]["populations"].values()
+                )
+                tracker = ProgressTracker(
+                    run_id=args.operational_run_id,
+                    unit_kind="hanchan",
+                    total_units=total,
+                    worker_count=args.workers,
+                    started_at=started_at,
+                )
+                write_progress(
+                    args.operational_progress_path,
+                    tracker.snapshot(0, now=started_at),
+                )
 
             def progress(completed, total):
                 # Only operational units/time; no partial support or results.
                 elapsed = time.monotonic() - started
-                print(
-                    json.dumps(
+                document = {
+                    "completed": completed,
+                    "total": total,
+                    "elapsed_seconds": elapsed,
+                    "eta_seconds": elapsed / completed * (total - completed),
+                }
+                if tracker is not None:
+                    snapshot = tracker.snapshot(completed, now=datetime.now(UTC))
+                    write_progress(args.operational_progress_path, snapshot)
+                    document.update(
                         {
-                            "completed": completed,
-                            "total": total,
-                            "elapsed_seconds": elapsed,
-                            "eta_seconds": elapsed / completed * (total - completed),
+                            "throughput_per_hour": snapshot["throughput_per_hour"],
+                            "estimated_finish_at": snapshot["estimated_finish_at"],
+                            "workers": snapshot["worker_count"],
                         }
-                    ),
-                    flush=True,
-                )
+                    )
+                print(json.dumps(document), flush=True)
 
             result = generate(
                 read_document(args.lock),
@@ -89,6 +170,7 @@ def main(argv=None):
                 project=args.project,
                 p2_path=args.p2_corpus,
                 progress=progress,
+                workers=args.workers,
             )
         else:
             result = read_corpus(args.corpus, expected_lock=read_document(args.lock))

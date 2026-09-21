@@ -1,8 +1,10 @@
 """Synthetic contract tests only: no P2/scientific hanchan execution."""
 
 import copy
+import json
 import tempfile
 import unittest
+from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -30,8 +32,10 @@ from lisjong_arena.offense_foundation.qualification import (
     P1_PASS,
     P2_PASS,
     SCHEMA,
+    qualification_contract,
     qualify,
     read_document,
+    require_matching_qualification_contract,
     seal,
     write_document,
 )
@@ -168,6 +172,84 @@ class SemanticTest(unittest.TestCase):
         self.assertEqual(counts["choice_rows"], 1)
 
 
+def synthetic_binding(**overrides):
+    # Shape matches lisjong_arena.offense_foundation.qualification.runtime_binding().
+    base = {
+        "arena_revision": "a" * 40,
+        "dependencies": {"lisjong": "b" * 40, "lisjong-engine": "c" * 40},
+        "lisjong_source_digest": "d" * 64,
+        "teacher": "lisjong.policies.TwoStepUkeirePolicy",
+        "feature_fingerprint": "e" * 16,
+        "vocabulary_fingerprint": "f" * 16,
+        "feature_dimension": 8204,
+        "vocabulary_size": 802,
+        "python": "3.14.0",
+        "riichienv": "0.4.10",
+    }
+    base.update(overrides)
+    return base
+
+
+class QualificationContractTest(unittest.TestCase):
+    """#332 Blocker 1: cross-platform qualification identity equality removal."""
+
+    def test_platform_only_differences_are_permitted(self):
+        local = qualification_contract(qualify(synthetic_binding()))
+        remote = qualification_contract(
+            qualify(
+                synthetic_binding(
+                    python="3.14.1",
+                    lisjong_source_digest="9" * 64,
+                )
+            )
+        )
+        self.assertEqual(local, remote)
+        require_matching_qualification_contract(local, remote)  # must not raise
+
+    def test_scientific_field_mismatches_are_rejected(self):
+        local = qualification_contract(qualify(synthetic_binding()))
+        mismatches = {
+            "arena_revision": synthetic_binding(arena_revision="9" * 40),
+            "lisjong_revision": synthetic_binding(
+                dependencies={"lisjong": "9" * 40, "lisjong-engine": "c" * 40}
+            ),
+            "lisjong_engine_revision": synthetic_binding(
+                dependencies={"lisjong": "b" * 40, "lisjong-engine": "9" * 40}
+            ),
+            "riichienv_version": synthetic_binding(riichienv="0.4.11"),
+            "teacher": synthetic_binding(teacher="other.Teacher"),
+            "feature_dimension": synthetic_binding(feature_dimension=1),
+            "feature_fingerprint": synthetic_binding(feature_fingerprint="0" * 16),
+            "vocabulary_size": synthetic_binding(vocabulary_size=1),
+            "vocabulary_fingerprint": synthetic_binding(
+                vocabulary_fingerprint="0" * 16
+            ),
+        }
+        for field, altered_binding in mismatches.items():
+            with self.subTest(field=field):
+                remote = qualification_contract(qualify(altered_binding))
+                self.assertNotEqual(local, remote)
+                with self.assertRaises(OffenseError):
+                    require_matching_qualification_contract(local, remote)
+
+    def test_p0_or_p1_failure_is_rejected_before_comparison(self):
+        original = TwoStepUkeirePolicy._decide
+
+        def bad(policy, context):
+            from lisjong.policy_contract import PolicyDecision
+
+            kan = next(
+                (a for a in context.legal_actions if isinstance(a, AnkanAction)), None
+            )
+            return PolicyDecision(kan) if kan else original(policy, context)
+
+        with patch.object(TwoStepUkeirePolicy, "_decide", bad):
+            failed = qualify(synthetic_binding())
+        self.assertNotEqual(failed["p0"], P0_PASS)
+        with self.assertRaises(OffenseError):
+            qualification_contract(failed)
+
+
 class CorpusTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -196,6 +278,27 @@ class CorpusTest(unittest.TestCase):
         ):
             result = corpus.generate(lock, path, progress=progress)
         return lock, result
+
+    class ImmediateExecutor:
+        instances = []
+
+        def __init__(self, max_workers):
+            self.max_workers = max_workers
+            self.futures = []
+            self.shutdown_arguments = None
+            self.__class__.instances.append(self)
+
+        def submit(self, function, *args):
+            future = Future()
+            try:
+                future.set_result(function(*args))
+            except BaseException as error:
+                future.set_exception(error)
+            self.futures.append(future)
+            return future
+
+        def shutdown(self, *, wait, cancel_futures):
+            self.shutdown_arguments = (wait, cancel_futures)
 
     def test_complete_fixture_deterministic_strict_read_and_choice_only_tensors(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -232,6 +335,90 @@ class CorpusTest(unittest.TestCase):
             with self.assertRaises(OffenseError):
                 corpus.generate(lock, Path(tmp) / "out")
             run.assert_not_called()
+
+    def test_parallel_reverse_completion_matches_serial_artifact(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            serial = Path(tmp) / "serial"
+            parallel = Path(tmp) / "parallel"
+            lock, expected = self.generate_fixture(serial)
+            progress = []
+            self.ImmediateExecutor.instances.clear()
+            with (
+                patch.object(corpus, "runtime_binding", return_value={}),
+                patch.object(corpus, "_record_game", side_effect=self.fake_game),
+                patch.object(corpus, "ProcessPoolExecutor", self.ImmediateExecutor),
+                patch.object(
+                    corpus,
+                    "as_completed",
+                    side_effect=lambda futures: reversed(tuple(futures)),
+                ),
+            ):
+                actual = corpus.generate(
+                    lock,
+                    parallel,
+                    workers=4,
+                    progress=lambda *values: progress.append(values),
+                )
+            self.assertEqual(expected, actual)
+            self.assertEqual(
+                [path.relative_to(serial) for path in sorted(serial.rglob("*"))],
+                [path.relative_to(parallel) for path in sorted(parallel.rglob("*"))],
+            )
+            for serial_path in sorted(
+                path for path in serial.rglob("*") if path.is_file()
+            ):
+                relative = serial_path.relative_to(serial)
+                self.assertEqual(
+                    serial_path.read_bytes(), (parallel / relative).read_bytes()
+                )
+            self.assertEqual(progress, [(i, 20) for i in range(1, 21)])
+            executor = self.ImmediateExecutor.instances[-1]
+            self.assertEqual(executor.max_workers, 4)
+            self.assertEqual(executor.shutdown_arguments, (True, True))
+
+    def test_worker_bounds_and_parallel_failure_publish_nothing(self):
+        lock = make_lock(request(), self.report)
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(corpus, "runtime_binding", return_value={}):
+                for workers in (0, 21, 33, True):
+                    with self.subTest(workers=workers), self.assertRaises(OffenseError):
+                        corpus.generate(
+                            lock, Path(tmp) / f"out-{workers}", workers=workers
+                        )
+            target = Path(tmp) / "parallel-failure"
+
+            def fail_one_game(seed):
+                if seed == 5:
+                    raise RuntimeError("worker failed")
+                return self.fake_game(seed)
+
+            with (
+                patch.object(corpus, "runtime_binding", return_value={}),
+                patch.object(corpus, "_record_game", side_effect=fail_one_game),
+                patch.object(corpus, "ProcessPoolExecutor", self.ImmediateExecutor),
+                patch.object(corpus, "as_completed", side_effect=lambda values: values),
+                self.assertRaises(RuntimeError),
+            ):
+                corpus.generate(lock, target, workers=2)
+            self.assertFalse(target.exists())
+            self.assertEqual(
+                [path for path in Path(tmp).iterdir() if path.name == target.name], []
+            )
+
+    def test_p2_outcome_is_not_published_when_strict_readback_fails(self):
+        lock = make_lock(request(), self.report)
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "out"
+            with (
+                patch.object(corpus, "runtime_binding", return_value={}),
+                patch.object(corpus, "_record_game", side_effect=self.fake_game),
+                patch.object(
+                    corpus, "read_corpus", side_effect=OffenseError("readback failed")
+                ),
+                self.assertRaises(OffenseError),
+            ):
+                corpus.generate(lock, target)
+            self.assertFalse(target.exists())
 
     def test_failed_game_publishes_no_partial_corpus(self):
         with (
@@ -400,6 +587,36 @@ class ProtocolTest(unittest.TestCase):
                 report = read_document(path)
                 self.assertEqual(report["p0"], P0_PASS)
                 run.assert_not_called()
+
+    def test_request_validation_cli_is_read_only_and_phase_specific(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            request_path = Path(tmp) / "request.json"
+            request_path.write_text(json.dumps(request()), encoding="utf-8")
+            self.assertEqual(
+                main(
+                    [
+                        "validate-request",
+                        "--request",
+                        str(request_path),
+                        "--phase",
+                        "P2",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "validate-request",
+                        "--request",
+                        str(request_path),
+                        "--phase",
+                        "SCIENTIFIC",
+                    ]
+                ),
+                2,
+            )
+            self.assertEqual([request_path], list(Path(tmp).iterdir()))
 
 
 if __name__ == "__main__":
