@@ -65,7 +65,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         )
         self.assertLess(
             text.index("wait_shape_qualification.pilot preflight"),
-            text.index('if ($PreflightOnly)'),
+            text.index("if ($PreflightOnly)"),
         )
         self.assertLess(
             text.index("if ($PreflightOnly)"),
