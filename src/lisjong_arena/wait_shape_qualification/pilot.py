@@ -1554,8 +1554,10 @@ def preflight(
     finally:
         try:
             root.rmdir()
-        except OSError:
-            pass
+        except OSError as exc:
+            raise WaitShapePilotError(
+                "preflight probe output root could not be removed"
+            ) from exc
 
     return {
         "status": "PASS",
