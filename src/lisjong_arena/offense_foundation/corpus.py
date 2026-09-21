@@ -5,6 +5,7 @@ import json
 import math
 import sys
 from array import array
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from lisjong.action_vocabulary import (
@@ -49,6 +50,8 @@ from .qualification import (
     write_document,
 )
 from .semantics import CALL, WIN, OffenseError, audit_trace
+
+MAX_PROCESS_WORKERS = 32
 
 
 def _support(trace, stages):
@@ -380,9 +383,19 @@ def read_corpus(path, *, expected_lock=None):
 
 
 def generate(
-    lock, destination, *, project="pyproject.toml", p2_path=None, progress=None
+    lock,
+    destination,
+    *,
+    project="pyproject.toml",
+    p2_path=None,
+    progress=None,
+    workers=1,
 ):
     """Publish only a complete, strict-read corpus. Operational progress is separate."""
+    if type(workers) is not int or not 1 <= workers <= MAX_PROCESS_WORKERS:
+        raise OffenseError(
+            f"workers must be an integer from 1 through {MAX_PROCESS_WORKERS}"
+        )
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(destination)
@@ -392,14 +405,44 @@ def generate(
     validate_lock(lock, p2)
     destination.parent.mkdir(parents=True, exist_ok=True)
     games = ordered_games(lock)
+    if workers > len(games):
+        raise OffenseError("workers must not exceed the hanchan count")
     with staged_artifact_directory(destination) as staging:
-        summaries = []
-        for i, (split, seed) in enumerate(games):
-            summaries.append(
-                _write_game(staging / f"game-{i:03d}", split, seed, lock["identity"])
-            )
-            if progress is not None:
-                progress(i + 1, len(games))
+        summaries = [None] * len(games)
+        if workers == 1:
+            for i, (split, seed) in enumerate(games):
+                summaries[i] = _write_game(
+                    staging / f"game-{i:03d}", split, seed, lock["identity"]
+                )
+                if progress is not None:
+                    progress(i + 1, len(games))
+        else:
+            executor = ProcessPoolExecutor(max_workers=workers)
+            futures = {
+                executor.submit(
+                    _write_game,
+                    staging / f"game-{i:03d}",
+                    split,
+                    seed,
+                    lock["identity"],
+                ): i
+                for i, (split, seed) in enumerate(games)
+            }
+            completed = 0
+            try:
+                for future in as_completed(futures):
+                    summaries[futures[future]] = future.result()
+                    completed += 1
+                    if progress is not None:
+                        progress(completed, len(games))
+            except BaseException:
+                for future in futures:
+                    future.cancel()
+                raise
+            finally:
+                executor.shutdown(wait=True, cancel_futures=True)
+        if any(summary is None for summary in summaries):
+            raise OffenseError("incomplete parallel hanchan collection")
         counts = {key: sum(g["support"][key] for g in summaries) for key in SUPPORT}
         manifest = seal(
             {

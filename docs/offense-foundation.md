@@ -152,8 +152,13 @@ Operational progress prints only completed/total, elapsed and ETA. #332 must
 provide its existing AWS PLAN/SSM/reattachment/fail-safe and durable retention
 surfaces around this CLI; this PR does not implement that operational wiring.
 
-Generation is serial and bounds memory to one hanchan inspection. It stages the
-entire output and publishes it only after strict readback. Strict readback
+Generation is serial by default and accepts bounded hanchan-level process
+parallelism through `generate --workers N` (maximum 32). Each game writes only
+its protocol-indexed staging directory; completion order is operational, while
+the manifest and final directories remain in exact protocol order. Worker count
+does not enter scientific identity. Any worker failure discards the entire
+staging directory. The complete output is published only after strict readback.
+Strict readback
 checks exact files, ordered seeds/splits, checksums, feature dimensions/finiteness,
 legal label/mask consistency, candidate coverage/missingness, teacher hierarchy,
 decision order, per-game counts and final support. It never reruns tile-efficiency
