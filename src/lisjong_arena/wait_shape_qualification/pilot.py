@@ -1489,14 +1489,27 @@ def run_pilot(
     """Lock, generate exactly 96 pilot hanchan once, derive F1/F2, and verify."""
 
     root = Path(output_root)
-    lock = build_execution_lock(
-        root,
-        max_workers=max_workers,
-        repository_collision_audit_pass=repository_collision_audit_pass,
-        private_collision_audit_pass=private_collision_audit_pass,
-        no_prior_result_exposure_confirmed=no_prior_result_exposure_confirmed,
-    )
-    root.mkdir(parents=True, exist_ok=True)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        root.mkdir(exist_ok=False)
+    except FileExistsError as exc:
+        raise WaitShapePilotError("pilot output root already exists") from exc
+
+    try:
+        lock = build_execution_lock(
+            root,
+            max_workers=max_workers,
+            repository_collision_audit_pass=repository_collision_audit_pass,
+            private_collision_audit_pass=private_collision_audit_pass,
+            no_prior_result_exposure_confirmed=no_prior_result_exposure_confirmed,
+        )
+    except BaseException:
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+        raise
+
     destinations = _destinations(root)
     _write_lock(lock, destinations["lock"])
 
@@ -1524,13 +1537,26 @@ def preflight(
     private_collision_audit_pass: bool,
     no_prior_result_exposure_confirmed: bool,
 ) -> dict[str, object]:
-    lock = build_execution_lock(
-        output_root,
-        max_workers=max_workers,
-        repository_collision_audit_pass=repository_collision_audit_pass,
-        private_collision_audit_pass=private_collision_audit_pass,
-        no_prior_result_exposure_confirmed=no_prior_result_exposure_confirmed,
-    )
+    root = Path(output_root)
+    root.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        root.mkdir(exist_ok=False)
+    except FileExistsError as exc:
+        raise WaitShapePilotError("preflight probe output root already exists") from exc
+    try:
+        lock = build_execution_lock(
+            root,
+            max_workers=max_workers,
+            repository_collision_audit_pass=repository_collision_audit_pass,
+            private_collision_audit_pass=private_collision_audit_pass,
+            no_prior_result_exposure_confirmed=no_prior_result_exposure_confirmed,
+        )
+    finally:
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+
     return {
         "status": "PASS",
         "protocol_lock_identity": lock["protocol_lock_identity"],
