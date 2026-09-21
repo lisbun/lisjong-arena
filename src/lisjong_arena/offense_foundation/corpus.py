@@ -33,6 +33,7 @@ from lisjong_arena.riichienv.local_game_runner import (
     LocalGameRunner,
 )
 
+from . import source_record
 from .protocol import (
     GAME_MODE,
     SUPPORT,
@@ -51,11 +52,6 @@ from .qualification import (
     write_document,
 )
 from .semantics import CALL, WIN, OffenseError, audit_trace
-from .source_record import (
-    read_source_record,
-    write_game as write_source_game,
-    write_manifest as write_source_manifest,
-)
 
 MAX_PROCESS_WORKERS = 32
 
@@ -190,7 +186,7 @@ def _write_game(path, source_path, game_ordinal, split, seed, lock_identity):
             },
         }
     )
-    source_summary = write_source_game(
+    source_summary = source_record.write_game(
         source_path,
         game_ordinal=game_ordinal,
         split=split,
@@ -506,10 +502,10 @@ def generate(
             }
         )
         write_document(staging / "manifest.json", manifest)
-        source_manifest = write_source_manifest(source_staging, lock, source_summaries)
+        source_manifest = source_record.write_manifest(source_staging, lock, source_summaries)
         read_corpus(staging, expected_lock=lock)
         if (
-            read_source_record(source_staging, expected_lock=lock, corpus_path=staging)
+            source_record.read_source_record(source_staging, expected_lock=lock, corpus_path=staging)
             != source_manifest
         ):
             raise OffenseError("source-record strict readback mismatch")
