@@ -4,7 +4,9 @@ Issue #331 remains the scientific authority. This operator surface adds only
 single-instance hanchan process parallelism and AWS lifecycle controls around
 the canonical `lisjong_arena.offense_foundation` generator. Worker count,
 instance metadata, AWS run-id, completion timing and cost remain operational
-metadata and never enter corpus identity.
+metadata and never enter corpus identity. The #342 player-safe source record is
+retained beside the corpus as an independent artifact and likewise never enters
+the locked #331 corpus identity.
 
 No P2 or scientific population is allocated by this repository change. Do not
 run the examples until the implementation PR is merged and the required fresh
@@ -69,7 +71,9 @@ pricing lookup and PLAN creation. It does not call `create-volume`,
 Billable execution additionally requires an operator-supplied calibrated
 scientific runtime range and basis. Defaults are `c7i.4xlarge`, 16 workers and
 20 hanchan. The output is retained on a separate encrypted 8 GiB gp3 volume
-tagged with the Phase A run-id. P2 support is absent from progress and is
+tagged with the Phase A run-id. The volume retains both `p2-corpus` and the
+strict-read `p2-source-record`; completion evidence/tagging includes the
+source-record identity. P2 support is absent from progress and is
 published only after complete generation and strict readback. A complete
 `OFFENSE SUPPORT NOT QUALIFIED` artifact is retained as the terminal negative
 result, but never receives the Phase B PASS gate; no extension or replacement
@@ -93,8 +97,10 @@ after remote execution rejects a stale qualification.
 The Phase B instance is selected in the Phase A volume's Availability Zone.
 The Phase A volume is attached as a separate input device and mounted
 read-only; it is never retagged to the Phase B run-id. Before locking or
-generating the 140-game scientific population, the bootstrap strict-reads the
-complete Phase A corpus again. Defaults are `c7i.8xlarge`, 32 workers and 140
+generating the 140-game scientific population, the bootstrap strict-reads both
+the complete Phase A corpus and its player-safe source record again. Phase B
+retains a new `scientific-source-record` beside the 140-game scientific corpus.
+Defaults are `c7i.8xlarge`, 32 workers and 140
 hanchan.
 
 After the Phase B instance terminates, the collector explicitly verifies the
@@ -141,7 +147,9 @@ Reattachment never submits a workload. A nonterminal command is reported
 without termination or teardown. A completed command is verified, temporary
 EC2 is terminated, the 8 GiB output volume is checked detached and retained,
 and runtime/billable-runtime/cost calibration plus known residual-resource
-evidence is recorded. Local monitor detach does not restart, resubmit,
+evidence is recorded. Completion is not accepted unless source-record strict
+readback also passes; the retained volume is tagged with its source-record
+identity. Local monitor detach does not restart, resubmit,
 terminate or otherwise mutate the remote scientific workload; the independent
 instance-side fail-safe remains the last-resort compute bound.
 
