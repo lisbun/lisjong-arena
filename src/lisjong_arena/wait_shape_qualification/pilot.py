@@ -1133,6 +1133,7 @@ def summarize_f1(raw: LoadedPilotRaw) -> dict[str, object]:
     summary = {
         "source_hanchan_count": len(PILOT_SEEDS),
         "accepted_riichi_opponent_cells": accepted_cells,
+        "unavailable_accepted_riichi_cells": accepted_cells - labelled_cells,
         "technically_labelable_accepted_riichi_cells": technically_labelable,
         "eligible_labelled_accepted_riichi_cells": labelled_cells,
         "labelable_fraction": labelable_fraction,
