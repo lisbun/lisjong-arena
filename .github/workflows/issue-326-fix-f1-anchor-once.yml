@@ -1,0 +1,133 @@
+name: issue-326-fix-f1-anchor-once
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'issue-326-wait-shape-pilot'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: issue-326-wait-shape-pilot
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Patch F1 zero-channel anchor semantics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/lisjong_arena/wait_shape_qualification/pilot.py")
+          text = path.read_text(encoding="utf-8")
+
+          old = '''    episode_seeds: dict[tuple[object, ...], int] = {}
+
+    all_six_zero_rows = 0
+'''
+          new = '''    episode_seeds: dict[tuple[object, ...], int] = {}
+    episode_first_availability: dict[
+        tuple[object, ...], WaitShapeAvailability
+    ] = {}
+
+    all_six_zero_rows = 0
+'''
+          if old not in text:
+              raise SystemExit("first patch anchor not found")
+          text = text.replace(old, new, 1)
+
+          old = '''            episode = _episode_key(record, int(cell["opponent_seat"]))
+            episode_seeds[episode] = int(record["seed"])
+            if availability is WaitShapeAvailability.AVAILABLE:
+'''
+          new = '''            episode = _episode_key(record, int(cell["opponent_seat"]))
+            episode_seeds[episode] = int(record["seed"])
+            episode_first_availability.setdefault(episode, availability)
+            if availability is WaitShapeAvailability.AVAILABLE:
+'''
+          if old not in text:
+              raise SystemExit("second patch anchor not found")
+          text = text.replace(old, new, 1)
+
+          old = '''    # Support anchors are the first AVAILABLE labelled observation per episode.
+    # Integrity anchors use the first technically observed cell so unexpected
+    # NO_STRUCTURAL_WAIT cannot disappear by waiting for a later row.
+    support_anchors: dict[tuple[object, ...], dict[str, int]] = {}
+    integrity_anchors: dict[tuple[object, ...], dict[str, int] | None] = {}
+    for episode, rows in episode_rows.items():
+        integrity_anchors[episode] = rows[0]
+        for row in rows:
+            if row is not None:
+                support_anchors[episode] = row
+                break
+
+    all_six_zero_anchors = sum(
+        1 for value in integrity_anchors.values() if value is None
+    )
+'''
+          new = '''    # Support anchors are the first AVAILABLE labelled observation per episode.
+    # The integrity zero-channel anchor is classified from the first observation's
+    # exact availability reason, so unrelated fail-closed reasons are not
+    # misreported as NO_STRUCTURAL_WAIT.
+    support_anchors: dict[tuple[object, ...], dict[str, int]] = {}
+    for episode, rows in episode_rows.items():
+        for row in rows:
+            if row is not None:
+                support_anchors[episode] = row
+                break
+
+    all_six_zero_anchors = sum(
+        availability is WaitShapeAvailability.NO_STRUCTURAL_WAIT
+        for availability in episode_first_availability.values()
+    )
+'''
+          if old not in text:
+              raise SystemExit("third patch anchor not found")
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8", newline="\n")
+
+          test = Path("tests/test_wait_shape_pilot.py")
+          t = test.read_text(encoding="utf-8")
+          anchor = '''    def test_final_route_requires_both_f1_and_f2(self):
+'''
+          addition = '''    def test_non_zero_channel_unavailable_reason_is_not_counted_as_zero_anchor(self):
+        record = observation(0)
+        record["accepted_opponents"][0] = {
+            "opponent_seat": 1,
+            "availability": "HIDDEN_HAND_UNAVAILABLE",
+            "projection": None,
+        }
+        raw = LoadedPilotRaw(
+            path=Path("."),
+            manifest={"raw_identity": "e" * 64},
+            observations=(record,),
+        )
+        f1 = summarize_f1(raw)
+        self.assertEqual(f1["outcome"], "STOP / INVALID")
+        self.assertEqual(f1["summary"]["all_six_channel_zero_anchors"], 0)
+
+'''
+          if anchor not in t:
+              raise SystemExit("test insertion anchor not found")
+          t = t.replace(anchor, addition + anchor, 1)
+          test.write_text(t, encoding="utf-8", newline="\n")
+          PY
+
+          python -m pip install --disable-pip-version-check ruff==0.16.0
+          python -m ruff check --fix src/lisjong_arena/wait_shape_qualification/pilot.py tests/test_wait_shape_pilot.py
+          python -m ruff format src/lisjong_arena/wait_shape_qualification/pilot.py tests/test_wait_shape_pilot.py
+          git diff --check
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/lisjong_arena/wait_shape_qualification/pilot.py tests/test_wait_shape_pilot.py
+          git commit -m "#326: fix F1 zero-channel anchor accounting"
+          git push origin HEAD:issue-326-wait-shape-pilot
