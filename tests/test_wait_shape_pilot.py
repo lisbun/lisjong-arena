@@ -45,6 +45,7 @@ def observation(index: int, *, projection=None, ordinary=True):
         "actor_seat": 0,
         "teacher_action_index": selected,
         "ordinary_discard_choice": ordinary,
+        "production_defensive_branch": "PUSH",
         "legal_discard_indices": [selected, (selected + 1) % 20]
         if ordinary
         else [selected],
@@ -126,6 +127,12 @@ class WaitShapePilotTest(unittest.TestCase):
         )
         self.assertLessEqual(
             f2["summary"]["largest_selected_discard_index_share"], 0.20
+        )
+        self.assertEqual(
+            f2["summary"]["production_defensive_branch_counts"], {"PUSH": 300}
+        )
+        self.assertEqual(
+            f2["summary"]["production_defensive_branch_unavailable_count"], 0
         )
 
     def test_weak_shape_cannot_be_dropped_after_inspection(self):
