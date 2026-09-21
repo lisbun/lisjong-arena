@@ -456,8 +456,10 @@ def _projection_document(projection: WaitShapeProjection) -> dict[str, int]:
     }
 
 
-def _run_seed(seed: int) -> tuple[dict[str, object], ...]:
-    """Execute one exact pilot seed and return only F1/F2 support observations."""
+def _run_seed(
+    seed: int,
+) -> tuple[dict[str, object], tuple[dict[str, object], ...]]:
+    """Execute one exact pilot seed and return a game receipt plus support observations."""
 
     if seed not in PILOT_SEEDS:
         raise WaitShapePilotError("pilot executor refuses non-pilot seeds")
@@ -547,7 +549,56 @@ def _run_seed(seed: int) -> tuple[dict[str, object], ...]:
                 "accepted_opponents": accepted,
             }
         )
-    return tuple(observations)
+
+    receipt: dict[str, object] = {
+        "seed": seed,
+        "game_mode": result.game_mode,
+        "steps": result.steps,
+        "decisions": result.decisions,
+        "scores": list(result.scores),
+        "ranks": list(result.ranks),
+        "support_observation_count": len(observations),
+    }
+    return receipt, tuple(observations)
+
+
+def _validate_game_receipt(record: object, context: str) -> dict[str, object]:
+    _require(type(record) is dict, f"{context} must be an object")
+    expected = {
+        "seed",
+        "game_mode",
+        "steps",
+        "decisions",
+        "scores",
+        "ranks",
+        "support_observation_count",
+    }
+    _require(set(record) == expected, f"{context} fields are invalid")
+    _require(type(record["seed"]) is int, f"{context}.seed must be an int")
+    _require(record["seed"] in PILOT_SEEDS, f"{context}.seed is not a pilot seed")
+    _require(record["game_mode"] == GAME_MODE, f"{context}.game_mode drifted")
+    for name in ("steps", "decisions", "support_observation_count"):
+        _require(
+            type(record[name]) is int and int(record[name]) >= 0,
+            f"{context}.{name} must be a nonnegative int",
+        )
+    _require(
+        int(record["decisions"]) >= int(record["steps"]),
+        f"{context}.decisions must be at least steps",
+    )
+    for name in ("scores", "ranks"):
+        values = record[name]
+        _require(
+            type(values) is list
+            and len(values) == 4
+            and all(type(value) is int for value in values),
+            f"{context}.{name} must contain exactly four ints",
+        )
+    _require(
+        sorted(record["ranks"]) == [1, 2, 3, 4],
+        f"{context}.ranks must be a permutation of 1..4",
+    )
+    return record
 
 
 def _observation_line(record: dict[str, object]) -> str:
@@ -674,6 +725,7 @@ def _raw_identity(manifest: dict[str, object]) -> str:
 def write_raw_artifact(
     destination: str | Path,
     *,
+    game_receipts: Iterable[dict[str, object]],
     observations: Iterable[dict[str, object]],
     lock: dict[str, object],
 ) -> LoadedPilotRaw:
@@ -681,6 +733,15 @@ def write_raw_artifact(
     _validate_lock_document(lock)
     if destination.exists():
         raise FileExistsError("raw pilot destination already exists")
+
+    receipts = tuple(game_receipts)
+    _require(len(receipts) == len(PILOT_SEEDS), "raw game receipt count must be 96")
+    for index, receipt in enumerate(receipts):
+        _validate_game_receipt(receipt, f"game_receipt[{index}]")
+    _require(
+        tuple(int(receipt["seed"]) for receipt in receipts) == PILOT_SEEDS,
+        "raw game receipts must exactly cover ordered pilot seeds",
+    )
 
     records = tuple(observations)
     previous_key: tuple[int, int, int, int] | None = None
@@ -696,6 +757,14 @@ def write_raw_artifact(
             _require(key > previous_key, "raw observations are not in canonical order")
         previous_key = key
 
+    observed_by_seed = Counter(int(record["seed"]) for record in records)
+    for receipt in receipts:
+        seed = int(receipt["seed"])
+        _require(
+            int(receipt["support_observation_count"]) == observed_by_seed[seed],
+            f"game receipt support count disagrees for seed {seed}",
+        )
+
     payload = "".join(_observation_line(record) for record in records).encode("utf-8")
     provenance = lock["provenance"]
     manifest: dict[str, object] = {
@@ -703,6 +772,7 @@ def write_raw_artifact(
         "protocol_lock_identity": EXPECTED_PROTOCOL_LOCK_IDENTITY,
         "lock_identity": lock["lock_identity"],
         "ordered_seeds": list(PILOT_SEEDS),
+        "game_receipts": list(receipts),
         "teacher": {
             "identity": TEACHER_IDENTITY,
             "policy_class": TEACHER_POLICY_CLASS,
@@ -755,6 +825,7 @@ def load_raw_artifact(path: str | Path) -> LoadedPilotRaw:
         "protocol_lock_identity",
         "lock_identity",
         "ordered_seeds",
+        "game_receipts",
         "teacher",
         "runtime",
         "provenance",
@@ -769,6 +840,17 @@ def load_raw_artifact(path: str | Path) -> LoadedPilotRaw:
         "raw protocol identity drifted",
     )
     _require(manifest["ordered_seeds"] == list(PILOT_SEEDS), "raw seed plan drifted")
+    game_receipts = manifest["game_receipts"]
+    _require(
+        type(game_receipts) is list and len(game_receipts) == len(PILOT_SEEDS),
+        "raw game receipts must contain exactly 96 entries",
+    )
+    for index, receipt in enumerate(game_receipts):
+        _validate_game_receipt(receipt, f"manifest.game_receipts[{index}]")
+    _require(
+        tuple(int(receipt["seed"]) for receipt in game_receipts) == PILOT_SEEDS,
+        "raw manifest game receipts do not cover exact ordered pilot seeds",
+    )
     _require(
         manifest["raw_identity"] == _raw_identity(manifest),
         "raw identity mismatch",
@@ -817,6 +899,13 @@ def load_raw_artifact(path: str | Path) -> LoadedPilotRaw:
         manifest["observation_count"] == len(records),
         "raw observation count mismatch",
     )
+    observed_by_seed = Counter(int(record["seed"]) for record in records)
+    for receipt in game_receipts:
+        seed = int(receipt["seed"])
+        _require(
+            int(receipt["support_observation_count"]) == observed_by_seed[seed],
+            f"raw manifest game receipt support count disagrees for seed {seed}",
+        )
     return LoadedPilotRaw(path=path, manifest=manifest, observations=tuple(records))
 
 
@@ -1224,13 +1313,19 @@ def verify_output_root(output_root: str | Path) -> dict[str, object]:
     }
 
 
-def _collect_observations(max_workers: int) -> tuple[dict[str, object], ...]:
+def _collect_observations(
+    max_workers: int,
+) -> tuple[tuple[dict[str, object], ...], tuple[dict[str, object], ...]]:
     if max_workers == 1:
         per_seed = [_run_seed(seed) for seed in PILOT_SEEDS]
     else:
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             per_seed = list(executor.map(_run_seed, PILOT_SEEDS))
-    return tuple(record for seed_records in per_seed for record in seed_records)
+    receipts = tuple(receipt for receipt, _ in per_seed)
+    observations = tuple(
+        record for _, seed_records in per_seed for record in seed_records
+    )
+    return receipts, observations
 
 
 def run_pilot(
@@ -1255,8 +1350,13 @@ def run_pilot(
     destinations = _destinations(root)
     _write_lock(lock, destinations["lock"])
 
-    observations = _collect_observations(max_workers)
-    raw = write_raw_artifact(destinations["raw"], observations=observations, lock=lock)
+    game_receipts, observations = _collect_observations(max_workers)
+    raw = write_raw_artifact(
+        destinations["raw"],
+        game_receipts=game_receipts,
+        observations=observations,
+        lock=lock,
+    )
     f1 = summarize_f1(raw)
     f2 = summarize_f2(raw)
     qualification = qualification_document(raw, f1, f2, lock)
