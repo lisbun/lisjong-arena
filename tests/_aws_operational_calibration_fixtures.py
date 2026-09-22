@@ -377,6 +377,7 @@ def observation(prior: dict[str, object], **overrides: object) -> dict[str, obje
         "schema_version": calibration.OBSERVATION_SCHEMA_VERSION,
         "arena_revision": ARENA_REVISION,
         "availability_zone": "ap-northeast-1a",
+        "boot_fail_safe_armed": True,
         "fail_safe_arm_epoch": FAIL_SAFE_ARM_EPOCH,
         "fail_safe_armed": True,
         "fail_safe_deadline_epoch": FAIL_SAFE_ARM_EPOCH

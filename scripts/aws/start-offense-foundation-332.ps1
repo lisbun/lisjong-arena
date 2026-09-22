@@ -684,6 +684,13 @@ $scientificSubmitted = $false
 $commandTerminal = $false
 $monitorDetached = $false
 $failsafeArmed = $false
+# The SSM fail-safe can only be armed once SSM is reachable, so a launch-time
+# timer armed from boot is what bounds the pre-arm interval. Both stay armed;
+# the SSM one fires first in a healthy run.
+$bootFailSafeSeconds = [long]($setupSeconds + $hardFailSafeSeconds + $teardownSeconds)
+$bootFailSafeUserData = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+        "#!/bin/bash`nsystemd-run --quiet --unit=lisjong-boot-failsafe --on-active=${bootFailSafeSeconds}s --timer-property=AccuracySec=30s /usr/bin/systemctl poweroff`n"
+    ))
 try {
     $volume = Invoke-AwsJson -Arguments @(
         "ec2", "create-volume", "--availability-zone", $availabilityZone,
@@ -697,10 +704,12 @@ try {
         IamInstanceProfile = [ordered]@{ Name = $InstanceProfileName }
         MetadataOptions = [ordered]@{ HttpTokens = "required"; HttpEndpoint = "enabled"; HttpPutResponseHopLimit = 1 }
         InstanceInitiatedShutdownBehavior = "terminate"
+        UserData = $bootFailSafeUserData
         NetworkInterfaces = @([ordered]@{ DeviceIndex = 0; SubnetId = $SubnetId; Groups = @($SecurityGroupId); AssociatePublicIpAddress = $true; DeleteOnTermination = $true })
         TagSpecifications = @(
             [ordered]@{ ResourceType = "instance"; Tags = @(
                     @{ Key = "Name"; Value = "lisjong-offense-332-$Phase-$runId" }, @{ Key = "Project"; Value = "lisjong" },
+                    @{ Key = "lisjong-boot-failsafe-seconds"; Value = [string]$bootFailSafeSeconds },
                     @{ Key = "ManagedBy"; Value = "lisjong-arena" }, @{ Key = "Issue"; Value = "332" },
                     @{ Key = "lisjong-run-id"; Value = $runId }, @{ Key = "lisjong-phase"; Value = $Phase },
                     @{ Key = "lisjong-progress-path"; Value = $remoteProgressPath }, @{ Key = "lisjong-worker-count"; Value = [string]$MaxWorkers },
@@ -757,7 +766,10 @@ try {
         "set -eu", "systemctl stop lisjong-cost-failsafe.timer 2>/dev/null || true",
         "systemd-run --quiet --unit=lisjong-cost-failsafe --on-active=$($FailSafeHours)h --timer-property=AccuracySec=30s /usr/bin/systemctl poweroff",
         "FAILSAFE_ARM_EPOCH=`$(date +%s)", "echo LISJONG_FAILSAFE_DEADLINE_EPOCH=`$((FAILSAFE_ARM_EPOCH + $($FailSafeHours * 3600)))",
-        "systemctl is-active --quiet lisjong-cost-failsafe.timer"
+        "systemctl is-active --quiet lisjong-cost-failsafe.timer",
+        'BOOT_FAILSAFE=inactive',
+        'for _ in $(seq 1 30); do BOOT_FAILSAFE=$(systemctl is-active lisjong-boot-failsafe.timer 2>/dev/null || true); test x$BOOT_FAILSAFE = xactive && break; sleep 2; done',
+        'echo LISJONG_BOOT_FAILSAFE=$BOOT_FAILSAFE'
     )
     $failSafeInvocation = Wait-SsmInvocation -CommandId $failSafeCommand -InstanceId $instanceId
     if ([string]$failSafeInvocation.Status -ne "Success") { throw "Instance fail-safe could not be armed." }
@@ -765,6 +777,12 @@ try {
     if (-not $deadlineMatch.Success) { throw "Fail-safe deadline was not returned." }
     $failSafeDeadlineUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$deadlineMatch.Groups[1].Value).UtcDateTime.ToString("o")
     $failsafeArmed = $true
+    $bootFailSafeMatch = [regex]::Match([string]$failSafeInvocation.StandardOutputContent, "LISJONG_BOOT_FAILSAFE=([a-z-]+)")
+    $bootFailSafeArmed = ($bootFailSafeMatch.Success -and $bootFailSafeMatch.Groups[1].Value -eq "active")
+    if (-not $bootFailSafeArmed) {
+        Write-Warning "The launch-time boot fail-safe is not active; phase 2 will fail closed."
+    }
+
 
     # Issue #340 Phase 2: after provisioning and before the first scientific
     # seed is submitted, verify the actual environment, that the hard fail-safe
@@ -830,6 +848,7 @@ try {
             schema_version = "arena-aws-phase2-observation-v1"
             arena_revision = $ArenaRevision
             availability_zone = $availabilityZone
+            boot_fail_safe_armed = $bootFailSafeArmed
             fail_safe_arm_epoch = $failSafeArmEpoch
             fail_safe_armed = $failsafeArmed
             fail_safe_deadline_epoch = $failSafeDeadlineEpoch

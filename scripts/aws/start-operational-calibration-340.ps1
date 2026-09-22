@@ -18,6 +18,7 @@ param(
     [Nullable[double]]$HourlyPriceUsd = $null,
     [Nullable[double]]$CalibrationCostBudgetUsd = $null,
     [string]$ChargesPath = "",
+    [int]$PreArmAllowanceMinutes = 20,
     [int]$TeardownMinutes = 15,
     [int]$MaxUnitCount = 64,
     [int]$MaxWorkerCount = 32,
@@ -41,6 +42,9 @@ if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
 }
 if ($FailSafeHours -lt 1 -or $FailSafeHours -gt 12) {
     throw "FailSafeHours must be between 1 and 12 inclusive for a calibration."
+}
+if ($PreArmAllowanceMinutes -lt 1 -or $PreArmAllowanceMinutes -gt 120) {
+    throw "PreArmAllowanceMinutes bounds the billable window before the SSM fail-safe is armed; it must be between 1 and 120."
 }
 if ($UnitCount -lt 1 -or $UnitCount -gt $MaxUnitCount) {
     throw "UnitCount must be between 1 and $MaxUnitCount."
@@ -301,6 +305,10 @@ $invariant = [Globalization.CultureInfo]::InvariantCulture
 $lastSeed = $FirstSeed + $UnitCount - 1
 $seedSpec = "$FirstSeed-$lastSeed"
 $teardownSeconds = [double]($TeardownMinutes * 60)
+# The provisioning / pre-arm allowance: run-instances through the SSM-armed
+# fail-safe. The instance is already billable there, so the approved budget
+# prices it and the launch-time boot fail-safe covers it.
+$preArmAllowanceSeconds = [double]($PreArmAllowanceMinutes * 60)
 $hardFailSafeSeconds = [double]($FailSafeHours * 3600)
 $normalDeadlineSeconds = $hardFailSafeSeconds - $teardownSeconds
 if ($normalDeadlineSeconds -le 0) { throw "The teardown reserve leaves no calibration window." }
@@ -331,7 +339,7 @@ Write-JsonFile -Path $admissionRequirementPath -Value ([ordered]@{
             headroom_factor = 1.5
             normal_deadline_seconds = $normalDeadlineSeconds
             post_processing_seconds = 0.0
-            setup_seconds = 0.0
+            setup_seconds = $preArmAllowanceSeconds
             teardown_seconds = $teardownSeconds
         }
         calibration_cost_budget_usd = $(if ($null -ne $CalibrationCostBudgetUsd) { [double]$CalibrationCostBudgetUsd } else { 0.0 })
@@ -391,6 +399,7 @@ $planArguments = @(
     "--instance-type", $InstanceType, "--vcpu", [string]$instanceVcpu,
     "--memory-mib", [string]$instanceMemoryMiB, "--worker-count", [string]$MaxWorkers,
     "--fail-safe-seconds", [string]$hardFailSafeSeconds,
+    "--known-other-charge", "bounded pre-arm provisioning window: $preArmAllowanceSeconds s from EC2 launch",
     "--known-other-charge", "one retained encrypted 8 GiB gp3 calibration volume",
     "--unknown-variable-charge", "public IPv4: unknown / not hard-bounded",
     "--unknown-variable-charge", "data transfer: unknown / not hard-bounded",
@@ -407,6 +416,7 @@ if ($LASTEXITCODE -ne 0) { throw "Operational PLAN generation failed: $planText"
 Write-Host "Issue #340 calibration run id: $runId"
 Write-Host "PLAN: $planPath"
 Write-Host "Seeds: $seedSpec / units: $UnitCount / workers: $MaxWorkers / instance: $InstanceType"
+Write-Host "Boot-clock fail-safe: $([long]($preArmAllowanceSeconds + $hardFailSafeSeconds + $teardownSeconds))s (pre-arm $preArmAllowanceSeconds s + fail-safe $hardFailSafeSeconds s + teardown $teardownSeconds s)"
 Write-Host "Calibration admission: $([string]$admission.decision) ($admissionPath)"
 foreach ($blockingReason in @($admission.blocking_reasons)) {
     Write-Warning "Calibration NO-GO: $blockingReason"
@@ -426,6 +436,13 @@ $instanceId = ""
 $workloadSubmitted = $false
 $commandTerminal = $false
 $monitorDetached = $false
+# The SSM fail-safe can only be armed once SSM is reachable, so a launch-time
+# timer armed from boot is what bounds the pre-arm interval, and the approved
+# calibration budget prices that whole boot-clock window.
+$bootFailSafeSeconds = [long]($preArmAllowanceSeconds + $hardFailSafeSeconds + $teardownSeconds)
+$bootFailSafeUserData = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
+        "#!/bin/bash`nsystemd-run --quiet --unit=lisjong-boot-failsafe --on-active=${bootFailSafeSeconds}s --timer-property=AccuracySec=30s /usr/bin/systemctl poweroff`n"
+    ))
 try {
     $volume = Invoke-AwsJson -Arguments @(
         "ec2", "create-volume", "--availability-zone", $availabilityZone,
@@ -439,10 +456,12 @@ try {
         IamInstanceProfile = [ordered]@{ Name = $InstanceProfileName }
         MetadataOptions = [ordered]@{ HttpTokens = "required"; HttpEndpoint = "enabled"; HttpPutResponseHopLimit = 1 }
         InstanceInitiatedShutdownBehavior = "terminate"
+        UserData = $bootFailSafeUserData
         NetworkInterfaces = @([ordered]@{ DeviceIndex = 0; SubnetId = $SubnetId; Groups = @($SecurityGroupId); AssociatePublicIpAddress = $true; DeleteOnTermination = $true })
         TagSpecifications = @(
             [ordered]@{ ResourceType = "instance"; Tags = @(
                     @{ Key = "Name"; Value = "lisjong-calibration-340-$runId" }, @{ Key = "Project"; Value = "lisjong" },
+                    @{ Key = "lisjong-boot-failsafe-seconds"; Value = [string]$bootFailSafeSeconds },
                     @{ Key = "ManagedBy"; Value = "lisjong-arena" }, @{ Key = "Issue"; Value = "340" },
                     @{ Key = "lisjong-run-id"; Value = $runId },
                     @{ Key = "lisjong-worker-count"; Value = [string]$MaxWorkers },
@@ -475,7 +494,10 @@ try {
         "set -eu", "systemctl stop lisjong-cost-failsafe.timer 2>/dev/null || true",
         "systemd-run --quiet --unit=lisjong-cost-failsafe --on-active=$($FailSafeHours)h --timer-property=AccuracySec=30s /usr/bin/systemctl poweroff",
         "FAILSAFE_ARM_EPOCH=`$(date +%s)", "echo LISJONG_FAILSAFE_DEADLINE_EPOCH=`$((FAILSAFE_ARM_EPOCH + $($FailSafeHours * 3600)))",
-        "systemctl is-active --quiet lisjong-cost-failsafe.timer"
+        "systemctl is-active --quiet lisjong-cost-failsafe.timer",
+        'BOOT_FAILSAFE=inactive',
+        'for _ in $(seq 1 30); do BOOT_FAILSAFE=$(systemctl is-active lisjong-boot-failsafe.timer 2>/dev/null || true); test x$BOOT_FAILSAFE = xactive && break; sleep 2; done',
+        'echo LISJONG_BOOT_FAILSAFE=$BOOT_FAILSAFE'
     )
     $failSafeInvocation = Wait-SsmInvocation -CommandId $failSafeCommand -InstanceId $instanceId
     if ([string]$failSafeInvocation.Status -ne "Success") { throw "Instance fail-safe could not be armed." }
@@ -483,6 +505,12 @@ try {
     if (-not $deadlineMatch.Success) { throw "Fail-safe deadline was not returned." }
     $failSafeDeadlineEpoch = [long]$deadlineMatch.Groups[1].Value
     $failSafeDeadlineUtc = [DateTimeOffset]::FromUnixTimeSeconds($failSafeDeadlineEpoch).UtcDateTime.ToString("o")
+    $bootFailSafeMatch = [regex]::Match([string]$failSafeInvocation.StandardOutputContent, "LISJONG_BOOT_FAILSAFE=([a-z-]+)")
+    $bootFailSafeArmed = ($bootFailSafeMatch.Success -and $bootFailSafeMatch.Groups[1].Value -eq "active")
+    if (-not $bootFailSafeArmed) {
+        Write-Warning "The launch-time boot fail-safe is not active; phase 2 will fail closed."
+    }
+
 
     $recoveryIdentityPath = Join-Path $runDir "recovery-identity.json"
     Write-JsonFile -Path $recoveryIdentityPath -Value ([ordered]@{
@@ -532,6 +560,7 @@ try {
             schema_version = "arena-aws-phase2-observation-v1"
             arena_revision = $ArenaRevision
             availability_zone = $availabilityZone
+            boot_fail_safe_armed = $bootFailSafeArmed
             fail_safe_arm_epoch = ($failSafeDeadlineEpoch - [long]$hardFailSafeSeconds)
             fail_safe_armed = $true
             fail_safe_deadline_epoch = $failSafeDeadlineEpoch

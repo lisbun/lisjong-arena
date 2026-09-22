@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -103,6 +104,32 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
             launcher.index('$longRequestPath = Join-Path $runDir "ssm-run.json"'),
         )
         self.assertLess(phase_two, launcher.index("$workloadSubmitted = $true"))
+
+    def test_the_pre_arm_interval_is_bounded_from_launch(self):
+        # Issue #340 blocker: the SSM fail-safe can only be armed once SSM is
+        # reachable, so the launch request itself must carry an instance-side
+        # timer that bounds the pre-arm interval.
+        launcher = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("$bootFailSafeUserData", launcher)
+        self.assertIn("UserData = $bootFailSafeUserData", launcher)
+        self.assertIn("lisjong-boot-failsafe", launcher)
+        self.assertIn(
+            "$bootFailSafeSeconds = [long]($preArmAllowanceSeconds "
+            "+ $hardFailSafeSeconds + $teardownSeconds)",
+            launcher,
+        )
+        # The user data is built before the billable resources are created.
+        self.assertLess(
+            launcher.index("$bootFailSafeUserData = "),
+            launcher.index('"ec2", "create-volume"'),
+        )
+        self.assertLess(
+            launcher.index("UserData = $bootFailSafeUserData"),
+            launcher.index("$failSafeRequestPath = Join-Path"),
+        )
+        self.assertIn("$PreArmAllowanceMinutes = 20", launcher)
+        self.assertIn("setup_seconds = $preArmAllowanceSeconds", launcher)
+        self.assertIn("boot_fail_safe_armed = $bootFailSafeArmed", launcher)
 
     def test_the_calibration_lifecycle_is_bounded_and_teardown_confirmed(self):
         launcher = _LAUNCHER.read_text(encoding="utf-8")
@@ -410,7 +437,10 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
         self.assertEqual("GO", admission["decision"], admission["blocking_reasons"])
         self.assertEqual(0, admission["admission_phase"])
         self.assertFalse(admission["scientific_submission_authorized"])
-        self.assertTrue(admission["workload_submission_authorized"])
+        # Phase 0 authorizes billable creation only; phase 2 authorizes the
+        # workload, so reading this record cannot bypass the second gate.
+        self.assertTrue(admission["billable_resource_creation_authorized"])
+        self.assertFalse(admission["workload_submission_authorized"])
         self.assertFalse(admission["runtime_prediction"]["available"])
         # The PLAN for a calibration carries no calibrated runtime range.
         plan = json.loads(
@@ -443,6 +473,45 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
         self.assertNotIn("bootstrap-operational-calibration-340.sh", aws_calls)
         self.assertIn("terminate-instances", aws_calls)
         self.assertIn("delete-volume", aws_calls)
+
+    def test_run_instances_itself_bounds_the_instance_independently(self):
+        # Issue #340 blocker: losing the local launcher after `run-instances`
+        # but before SSM is reachable must not leave an unbounded billable
+        # instance, so the launch request carries its own boot-clock timer.
+        self._require_windows_pwsh()
+        _result, aws_calls, run_dir = self._run_launcher(probe_outcome="FAIL")
+        self.assertIn("run-instances", aws_calls)
+        request = json.loads(
+            (run_dir / "run-instances.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("terminate", request["InstanceInitiatedShutdownBehavior"])
+        user_data = base64.b64decode(request["UserData"]).decode("utf-8")
+        self.assertIn("systemd-run", user_data)
+        self.assertIn("--unit=lisjong-boot-failsafe", user_data)
+        self.assertIn("/usr/bin/systemctl poweroff", user_data)
+        seconds = int(re.search(r"--on-active=(\d+)s", user_data).group(1))
+        admission = json.loads(
+            (run_dir / "admission-calibration.json").read_text(encoding="utf-8")
+        )
+        budget = admission["budget"]
+        expected = (
+            float(budget["setup_seconds"])
+            + float(budget["hard_fail_safe_seconds"])
+            + float(budget["teardown_seconds"])
+        )
+        # The instance-side bound is exactly the window phase 0 priced.
+        self.assertEqual(expected, float(seconds))
+        self.assertEqual(
+            expected,
+            admission["cost_prediction"][
+                "predicted_ec2_billable_runtime_range_seconds"
+            ][1],
+        )
+        # Phase 2 records what was observed about both fail-safes.
+        observation = json.loads(
+            (run_dir / "phase-2-observation.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("boot_fail_safe_armed", observation)
 
 
 if __name__ == "__main__":

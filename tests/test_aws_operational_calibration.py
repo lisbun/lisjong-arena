@@ -649,6 +649,9 @@ class PhaseGateTest(unittest.TestCase):
         cases = {
             "actual-environment-identity": {"arena_revision": "9" * 40},
             "hard-fail-safe-armed": {"fail_safe_armed": False},
+            # The launch-time boot fail-safe is what bounded the pre-arm
+            # interval; without it the run was never independently bounded.
+            "hard-fail-safe-armed-from-boot": {"boot_fail_safe_armed": False},
             "retained-destination-writable": {
                 "retained_destination": {"write_probe": "FAIL"}
             },
@@ -669,7 +672,10 @@ class PhaseGateTest(unittest.TestCase):
                 self.assertEqual("NO-GO", phase_two["decision"])
                 self.assertFalse(phase_two["scientific_submission_authorized"])
                 self.assertFalse(phase_two["workload_submission_authorized"])
-                self.assertEqual("FAIL", _gate(phase_two, gate_name)["status"])
+                self.assertEqual(
+                    "FAIL",
+                    _gate(phase_two, gate_name.replace("-from-boot", ""))["status"],
+                )
                 self.assertIn("submit no workload", " ".join(phase_two["limitations"]))
 
     def test_phase_two_re_evaluates_remaining_monetary_budget(self):
@@ -794,23 +800,71 @@ class CalibrationAdmissionTest(unittest.TestCase):
         )
         self.assertFalse(record["runtime_prediction"]["available"])
         self.assertIn("circular", record["runtime_prediction"]["reason"])
+        # Phase 0 authorizes creating the bounded billable resources only.
+        # Only phase 2 may authorize the workload, exactly as in production.
         self.assertTrue(record["billable_resource_creation_authorized"])
-        self.assertTrue(record["workload_submission_authorized"])
+        self.assertFalse(record["workload_submission_authorized"])
         self.assertFalse(record["scientific_submission_authorized"])
 
-    def test_calibration_cost_bound_is_the_worst_case_fail_safe_window(self):
+    def test_calibration_cost_bound_is_the_worst_case_boot_clock_window(self):
         record = _admit_calibration()
         cost = record["cost_prediction"]
-        hard = float(record["budget"]["hard_fail_safe_seconds"])
-        teardown = float(record["budget"]["teardown_seconds"])
-        expected = round(
-            (hard + teardown) / 3600.0 * fixtures.HOURLY_RATE_USD + 0.96 + 0.07, 6
+        budget = record["budget"]
+        window = (
+            float(budget["setup_seconds"])
+            + float(budget["hard_fail_safe_seconds"])
+            + float(budget["teardown_seconds"])
         )
+        self.assertEqual(window, calibration.boot_fail_safe_seconds(budget))
+        # The priced window starts at the EC2 boot clock, not at the later SSM
+        # fail-safe arm, so the pre-arm interval is inside the approved budget.
+        self.assertEqual(
+            window, cost["predicted_ec2_billable_runtime_range_seconds"][1]
+        )
+        expected = round(window / 3600.0 * fixtures.HOURLY_RATE_USD + 0.96 + 0.07, 6)
         self.assertEqual(expected, cost["predicted_total_cost_range_usd"][1])
-        self.assertIn(
-            "whole hard fail-safe window",
-            _gate(record, "calibration-cost-budget")["detail"],
+        detail = _gate(record, "calibration-cost-budget")["detail"]
+        self.assertIn("worst case from the EC2 boot clock", detail)
+        self.assertIn("pre-arm allowance", detail)
+
+    def test_a_longer_pre_arm_allowance_raises_the_priced_worst_case(self):
+        base = _admit_calibration()
+        longer = _admit_calibration(
+            fixtures.calibration_requirement(
+                budget={"setup_seconds": fixtures.SETUP_SECONDS * 3}
+            )
         )
+        self.assertGreater(
+            longer["cost_prediction"]["predicted_total_cost_range_usd"][1],
+            base["cost_prediction"]["predicted_total_cost_range_usd"][1],
+        )
+
+    def test_a_calibration_without_a_pre_arm_allowance_is_no_go(self):
+        # Without a bounded pre-arm allowance there is nothing for the
+        # launch-time boot fail-safe to cover, so the lifecycle is not
+        # independently bounded from EC2 launch.
+        record = _admit_calibration(
+            fixtures.calibration_requirement(budget={"setup_seconds": 0.0})
+        )
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertEqual("FAIL", _gate(record, "hard-fail-safe")["status"])
+        self.assertIn("pre-arm allowance", _gate(record, "hard-fail-safe")["detail"])
+
+    def test_the_pre_arm_allowance_moves_the_cost_budget_boundary(self):
+        window = calibration.boot_fail_safe_seconds(
+            fixtures.calibration_requirement()["budget"]
+        )
+        exact = window / 3600.0 * fixtures.HOURLY_RATE_USD + 0.96 + 0.07
+        for budget_usd, expected in ((exact, "PASS"), (exact - 0.01, "FAIL")):
+            with self.subTest(budget_usd=budget_usd):
+                record = _admit_calibration(
+                    fixtures.calibration_requirement(
+                        calibration_cost_budget_usd=budget_usd
+                    )
+                )
+                self.assertEqual(
+                    expected, _gate(record, "calibration-cost-budget")["status"]
+                )
 
     def test_calibration_cost_budget_exceeded_is_no_go(self):
         record = _admit_calibration(
@@ -896,8 +950,9 @@ class CalibrationAdmissionTest(unittest.TestCase):
                 )
                 self.assertEqual("NO-GO", record["decision"])
 
-    def test_calibration_phase_two_never_authorizes_a_scientific_seed(self):
+    def test_only_phase_two_authorizes_the_calibration_workload(self):
         phase_zero = _admit_calibration()
+        self.assertFalse(phase_zero["workload_submission_authorized"])
         phase_two = calibration.build_phase_two_admission(
             phase_zero, fixtures.observation(phase_zero), now=fixtures.NOW
         )
@@ -908,6 +963,17 @@ class CalibrationAdmissionTest(unittest.TestCase):
             "worst-case remaining hard fail-safe window",
             _gate(phase_two, "remaining-budget-sufficient")["detail"],
         )
+
+    def test_no_pre_phase_two_record_can_authorize_a_workload(self):
+        for record in (_admit_calibration(), _admit()):
+            with self.subTest(phase=record["admission_phase"]):
+                self.assertEqual("GO", record["decision"])
+                self.assertFalse(record["workload_submission_authorized"])
+                self.assertFalse(record["scientific_submission_authorized"])
+                forged = dict(record)
+                forged["workload_submission_authorized"] = True
+                with self.assertRaises(calibration.AwsOperationalCalibrationError):
+                    calibration.validate_admission_record(forged)
 
 
 class InformationFlowTest(unittest.TestCase):
@@ -1196,7 +1262,7 @@ class CommandLineTest(unittest.TestCase):
         )
         record = calibration.read_admission_record(output)
         self.assertEqual(0, record["admission_phase"])
-        self.assertTrue(record["workload_submission_authorized"])
+        self.assertFalse(record["workload_submission_authorized"])
         self.assertFalse(record["scientific_submission_authorized"])
         self.assertEqual(
             3,

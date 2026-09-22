@@ -266,6 +266,7 @@ _OBSERVATION_FIELDS: Final = frozenset(
         "fail_safe_arm_epoch",
         "fail_safe_armed",
         "fail_safe_deadline_epoch",
+        "boot_fail_safe_armed",
         "instance_id",
         "instance_launch_epoch",
         "instance_type",
@@ -324,11 +325,31 @@ GATE_NAMES_BY_PHASE: Final = {
 }
 
 CLOCK_ORIGINS: Final = {
+    # The boot fail-safe is the only bound that exists before SSM is reachable,
+    # so it is the one that makes the pre-arm interval independently bounded.
+    "boot_fail_safe_seconds": "EC2 instance boot (launch-time user data)",
     "execution_budget_seconds": "scientific workload start",
     "hard_fail_safe_seconds": "instance-side fail-safe arm epoch",
     "normal_deadline_seconds": "instance-side fail-safe arm epoch",
     "predicted_scientific_runtime_seconds": "scientific workload start",
 }
+
+
+def boot_fail_safe_seconds(budget: Mapping[str, object]) -> float:
+    """Return the whole billable exposure measured from the EC2 boot clock.
+
+    ``setup_seconds`` is the bounded provisioning / pre-arm allowance: the
+    window between ``run-instances`` and the SSM-armed workload fail-safe, in
+    which the instance is already billable and the SSM timer does not exist
+    yet. A launch-time fail-safe armed from boot must cover this whole window,
+    and the approved budget must price it.
+    """
+
+    return (
+        float(budget["setup_seconds"])
+        + float(budget["hard_fail_safe_seconds"])
+        + float(budget["teardown_seconds"])
+    )
 
 
 class AwsOperationalCalibrationError(ValueError):
@@ -1740,9 +1761,8 @@ def validate_phase_two_observation(document: object) -> dict[str, object]:
     _sha1_text(observation["arena_revision"], "arena_revision")
     _positive_int(observation["vcpu"], "vcpu")
     _positive_int(observation["worker_count"], "worker_count")
-    _require(
-        type(observation["fail_safe_armed"]) is bool, "fail_safe_armed must be a bool"
-    )
+    for name in ("boot_fail_safe_armed", "fail_safe_armed"):
+        _require(type(observation[name]) is bool, f"{name} must be a bool")
     for name in (
         "fail_safe_arm_epoch",
         "fail_safe_deadline_epoch",
@@ -1823,8 +1843,11 @@ def build_phase_two_admission(
     deadline_epoch = int(observed["fail_safe_deadline_epoch"])
     observed_at = int(observed["observed_at_epoch"])
     launch_epoch = int(observed["instance_launch_epoch"])
+    # Both bounds must be real: the launch-time boot fail-safe that covered the
+    # pre-arm interval, and the SSM-armed workload fail-safe that bounds the run.
     armed = (
         instance_present
+        and bool(observed["boot_fail_safe_armed"])
         and bool(observed["fail_safe_armed"])
         and abs((deadline_epoch - arm_epoch) - hard_fail_safe) <= 60
         and deadline_epoch > observed_at
@@ -1938,6 +1961,7 @@ def build_phase_two_admission(
             "hard-fail-safe-armed",
             armed,
             (
+                f"boot_fail_safe_armed={observed['boot_fail_safe_armed']} "
                 f"armed={observed['fail_safe_armed']} arm_epoch={arm_epoch} "
                 f"deadline_epoch={deadline_epoch} against hard fail-safe "
                 f"{hard_fail_safe}s on instance {instance_id!r}"
@@ -2083,9 +2107,9 @@ def validate_admission_record(document: object) -> dict[str, object]:
         _require(
             record["billable_resource_creation_authorized"]
             == (record["decision"] == "GO")
-            and record["workload_submission_authorized"]
-            == (record["decision"] == "GO"),
-            "calibration admission authorization is inconsistent",
+            and record["workload_submission_authorized"] is False,
+            "a calibration admission authorizes billable creation only; workload "
+            "submission is authorized by phase 2",
         )
         _require(
             record["phase_one_admission_identity"] is None,
@@ -2298,6 +2322,8 @@ def build_calibration_admission(
     )
     hard_fail_safe = float(budget["hard_fail_safe_seconds"])
     teardown = float(budget["teardown_seconds"])
+    pre_arm = float(budget["setup_seconds"])
+    boot_window = boot_fail_safe_seconds(budget)
     unbounded = sorted(
         str(charge["label"])
         for charge in charges
@@ -2345,15 +2371,14 @@ def build_calibration_admission(
             "unbounded_material_charges": unbounded,
         }
     else:
-        worst_case = (
-            (hard_fail_safe + teardown) / 3600.0 * float(rate) + known + bounded
-        )
+        worst_case = boot_window / 3600.0 * float(rate) + known + bounded
         cost_ok = _fits(worst_case, calibration_budget)
         cost_detail = (
-            f"worst case = whole hard fail-safe window {hard_fail_safe}s + teardown "
-            f"{teardown}s at {rate} USD/h + known {_round(known)} USD + bounded "
-            f"{_round(bounded)} USD = {_round(worst_case)} USD against the approved "
-            f"calibration budget {calibration_budget} USD"
+            f"worst case from the EC2 boot clock = pre-arm allowance {pre_arm}s + "
+            f"whole hard fail-safe window {hard_fail_safe}s + teardown {teardown}s "
+            f"= {_round(boot_window)}s at {rate} USD/h + known {_round(known)} USD + "
+            f"bounded {_round(bounded)} USD = {_round(worst_case)} USD against the "
+            f"approved calibration budget {calibration_budget} USD"
         )
         cost_prediction = {
             "available": True,
@@ -2364,11 +2389,11 @@ def build_calibration_admission(
             "overhead_basis": None,
             "predicted_ec2_billable_runtime_range_seconds": [
                 0.0,
-                _round(hard_fail_safe + teardown),
+                _round(boot_window),
             ],
             "predicted_ec2_cost_range_usd": [
                 0.0,
-                _round((hard_fail_safe + teardown) / 3600.0 * float(rate)),
+                _round(boot_window / 3600.0 * float(rate)),
             ],
             "predicted_total_cost_range_usd": [
                 _round(known),
@@ -2379,9 +2404,12 @@ def build_calibration_admission(
             "unbounded_material_charges": unbounded,
         }
 
+    # A calibration is only independently bounded when a launch-time fail-safe
+    # covers the pre-arm interval too, so a zero pre-arm allowance is a No-Go.
     fail_safe_ok = (
         _fits(float(budget["normal_deadline_seconds"]) + teardown, hard_fail_safe)
         and hard_fail_safe > 0
+        and pre_arm > 0
     )
     gates = [
         _gate("calibration-allocation-authority", authority_ok, authority_detail),
@@ -2399,9 +2427,10 @@ def build_calibration_admission(
             "hard-fail-safe",
             fail_safe_ok,
             (
-                f"independent calibration fail-safe {hard_fail_safe}s with normal "
-                f"deadline {budget['normal_deadline_seconds']}s + teardown "
-                f"{teardown}s"
+                f"boot-clock fail-safe {_round(boot_window)}s = pre-arm allowance "
+                f"{pre_arm}s + independent calibration fail-safe {hard_fail_safe}s "
+                f"+ teardown {teardown}s, with normal deadline "
+                f"{budget['normal_deadline_seconds']}s inside the fail-safe window"
             ),
         ),
         _gate(
@@ -2453,10 +2482,10 @@ def build_calibration_admission(
         "limitations": [
             "a calibration run produces operational timing evidence only; it is "
             "never qualification, TRAIN, SELECT or OFFLINE-EVAL evidence",
-            "a calibration GO authorizes this bounded measurement only; it does "
-            "not authorize any scientific execution",
-            "the cost bound is the worst-case fail-safe window, not a prediction: "
-            "no prior calibration is required to run a calibration",
+            "a calibration GO authorizes creating the bounded billable resources "
+            "only; the workload is authorized by phase 2, never here",
+            "the cost bound is the worst-case boot-clock window, not a "
+            "prediction: no prior calibration is required to run a calibration",
         ],
         "phase_one_admission_identity": None,
         "run_id": required["run_id"],
@@ -2469,7 +2498,10 @@ def build_calibration_admission(
         },
         "scientific_submission_authorized": False,
         "target": target,
-        "workload_submission_authorized": decision == "GO",
+        # Phase 0 authorizes creating the bounded billable resources only. The
+        # workload is authorized by phase 2, exactly as in production, so the
+        # two-stage control flow cannot be bypassed by reading this record.
+        "workload_submission_authorized": False,
     }
     document["admission_identity"] = _digest(
         {key: value for key, value in document.items() if key != "admission_identity"}
@@ -2755,6 +2787,7 @@ __all__ = [
     "PHASE_ZERO_GATE_NAMES",
     "REQUIREMENT_SCHEMA_VERSION",
     "assert_no_scientific_fields",
+    "boot_fail_safe_seconds",
     "build_calibration_admission",
     "build_calibration_evidence",
     "build_calibration_evidence_from_document",

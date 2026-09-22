@@ -305,6 +305,25 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("LISJONG_332_PHASE2_PROBE=PASS", text)
         self.assertIn("recovery-identity.json", text)
 
+    def test_the_pre_arm_interval_is_bounded_from_launch(self):
+        # Issue #340 blocker: the SSM fail-safe is armed only after the
+        # instance is already billable, so the launch request carries its own
+        # instance-side timer covering the whole planned window.
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("UserData = $bootFailSafeUserData", text)
+        self.assertIn("--unit=lisjong-boot-failsafe", text)
+        self.assertIn(
+            "$bootFailSafeSeconds = [long]($setupSeconds + $hardFailSafeSeconds "
+            "+ $teardownSeconds)",
+            text,
+        )
+        self.assertLess(
+            text.index("$bootFailSafeUserData = "),
+            text.index('"ec2", "create-volume"'),
+        )
+        self.assertIn("boot_fail_safe_armed = $bootFailSafeArmed", text)
+        self.assertIn("LISJONG_BOOT_FAILSAFE", text)
+
     def test_unpriced_material_charges_default_to_fail_closed(self):
         text = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn("an unpriced material charge is never treated as zero", text)

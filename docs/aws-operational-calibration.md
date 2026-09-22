@@ -294,9 +294,10 @@ authorized` is `false` in Phase 1 regardless.
 ```text
 actual-environment-identity       run id, prior admission identity, instance
                                   type, vCPU, workers and Arena revision match
-hard-fail-safe-armed              armed on this instance, deadline - arm epoch
-                                  equals the admitted hard fail-safe, and the
-                                  deadline is still in the future
+hard-fail-safe-armed              the launch-time boot timer AND the SSM timer
+                                  are both armed on this instance, deadline -
+                                  arm epoch equals the admitted hard fail-safe,
+                                  and the deadline is still in the future
 retained-destination-writable     a real write probe on this instance
 recovery-identity-persisted       recovery identity written on this instance
 remaining-budget-sufficient       time AND cost, both re-evaluated after setup
@@ -338,12 +339,46 @@ admission record's `scientific_submission_authorized` is always `false`.
   -AllocationIdentity <calibration allocation identity> `
   -FirstSeed <first calibration seed> -UnitCount 20 `
   -InstanceType c7i.4xlarge -MaxWorkers 16 `
-  -FailSafeHours 4 `
+  -FailSafeHours 4 -PreArmAllowanceMinutes 20 -TeardownMinutes 15 `
   -CalibrationCostBudgetUsd <approved budget> `
   -ChargesPath <charges.json> `
   -AwsProfile <profile> `
   -PreflightOnly
 ```
+
+### The pre-arm interval is bounded from launch
+
+The SSM-armed fail-safe can only exist once SSM is reachable, which is after
+`run-instances`, the instance-running wait, the volume attach and the SSM
+Online wait. The instance is already billable in that window, and a local
+launcher that dies inside it would leave nothing instance-side to stop the
+spend.
+
+Both launchers therefore arm a second, independent timer from **boot**, through
+launch-time user data in the same `run-instances` request, with
+`InstanceInitiatedShutdownBehavior = terminate`:
+
+```text
+boot fail-safe = setup_seconds (pre-arm allowance)
+               + hard_fail_safe_seconds
+               + teardown_seconds
+```
+
+Both timers stay armed. In a healthy run the SSM one fires first, because it is
+armed at most `setup_seconds` after boot and runs for `hard_fail_safe_seconds`.
+The boot timer is the outer guarantee that exists from the moment the instance
+exists.
+
+`setup_seconds` is therefore not decorative for a calibration: it is the
+bounded provisioning allowance, it is what the boot fail-safe has to cover, and
+the phase-0 worst case prices the **whole boot-clock window** rather than
+starting at the later SSM arm epoch. A calibration requirement with
+`setup_seconds = 0` is a No-Go, because nothing would bound the pre-arm
+interval.
+
+Phase 2 records `boot_fail_safe_armed` from an actual
+`systemctl is-active lisjong-boot-failsafe.timer` check on the instance, and
+`hard-fail-safe-armed` requires **both** timers.
 
 On the instance, the bootstrap regenerates qualification, requires the same
 cross-platform qualification-contract match as #332, and runs
@@ -378,14 +413,25 @@ teardown-confirmation
 
 There is deliberately **no matching-calibration gate**: requiring calibration
 evidence in order to calibrate would be circular. The monetary bound is
-therefore the worst case -- the entire hard fail-safe window plus the teardown
-reserve at the current rate, plus every declared charge -- rather than a
-prediction. The record's `runtime_prediction` is explicitly unavailable with
-that reason, which is what makes the absence of circularity auditable.
+therefore the worst case -- the whole boot-clock window at the current rate,
+plus every declared charge -- rather than a prediction. The record's
+`runtime_prediction` is explicitly unavailable with that reason, which is what
+makes the absence of circularity auditable.
 
-The same Phase 2 gate then runs before the calibration workload is submitted.
-Because the prior record is a calibration admission, its remaining-budget check
-uses the worst-case remaining fail-safe window, and its
+Phase 0 authorizes **creating the bounded billable resources only**:
+
+```text
+billable_resource_creation_authorized   decision == "GO"
+workload_submission_authorized          false
+scientific_submission_authorized        false
+```
+
+This matches production, where Phase 1 never authorizes submission. The same
+Phase 2 gate then runs before the calibration workload is submitted, and it is
+the first record that can set `workload_submission_authorized`. A caller that
+reads only the phase-0 record therefore cannot bypass Phase 2. Because the
+prior record is a calibration admission, Phase 2's remaining-budget check uses
+the worst-case remaining fail-safe window, and its
 `scientific_submission_authorized` stays `false` however it turns out.
 
 ## Using it from the #332 launcher
