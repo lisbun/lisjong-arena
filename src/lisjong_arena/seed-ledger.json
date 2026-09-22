@@ -67,6 +67,28 @@
       "state": "RETIRED"
     },
     {
+      "allocation_identity": "e368ac845ad98da127addad09e15c28ba4218facb724e530c6c4822df1744cd7",
+      "allocation_timestamp": null,
+      "arena_revision": "e863295a0a5c2e2d41f9e0f9a57b90fc8b798b86",
+      "owner_issue": "lisbun/lisjong-arena#281",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-281-overall-formal",
+      "protocol": "overall-champion-aabb-half",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/281#issuecomment-5747151067",
+      "purpose": "formal Overall Champion one-shot AABB half-game evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 60000,
+        "kind": "range",
+        "last": 60099
+      },
+      "seed_membership_identity": "d0b4c7c37b59e837230de6677c4ae6c4117419d0004041c6e8444b55f63c565c",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
       "allocation_identity": "18649fea8955ee6b3f937156f65b825c2ccfed45fe4e9b44b658229919401f79",
       "allocation_timestamp": "2026-09-22T01:09:20Z",
       "arena_revision": "a9bcbc0184a6b3628eb609e3821ca33b924ba2c2",
@@ -130,6 +152,160 @@
       },
       "seed_membership_identity": "d3dfc8d152e29ede8dad7975ae99f20432585ea9629fdfb28d27f45f4b427ac2",
       "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "6f27b34848eb576fe38f604806a0908828391355f44f11054ed2039cfee0a232",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong-arena#196",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-196-predecessor-exploratory",
+      "protocol": "open-hand-yaku-aware-call-exploratory",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/196",
+      "purpose": "historical exploratory ABBB result; result exposed, no rerun",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 22700,
+        "kind": "range",
+        "last": 22799
+      },
+      "seed_membership_identity": "4014f9e15edf269db2668f5e043fb846b398b298283571eb0f6dff5eb60dfd8f",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "157c0fbe353b8377ebb4142be2e4f071a65e8b1531ed8b793268f626e8ed98ab",
+      "allocation_timestamp": null,
+      "arena_revision": "7ca3fbe68df71479189a1307ad4c8ea57a7f26ed",
+      "owner_issue": "lisbun/lisjong-arena#196",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-196-fresh-diagnostic",
+      "protocol": "open-hand-yaku-aware-call-divergence-diagnostic",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/196#issuecomment-5619228988",
+      "purpose": "fresh bounded OpenHandYakuAwareCall divergence measurement",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 22800,
+        "kind": "range",
+        "last": 22899
+      },
+      "seed_membership_identity": "729a7af6cd731c737f4ec42c10c916bf90a8326fa75ecdf5580d281b3c44b322",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "d0d9cca4a0420ed3fb7253617c4b05e7762ed1945edc9510bc59c486ab9cdf9a",
+      "allocation_timestamp": null,
+      "arena_revision": "14fc12b67d701b8d5ee29900b485ba8bc308b76b",
+      "owner_issue": "lisbun/lisjong-arena#211",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-211-source-pilot",
+      "protocol": "riichilab-source-pilot",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/211#issuecomment-5651302757",
+      "purpose": "matched flat-BC RiichiLab source pilot ABBB evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 23000,
+        "kind": "range",
+        "last": 23099
+      },
+      "seed_membership_identity": "13f94706488aa0d76e46aa28d6576e33d01476745a98f434ea058b7cc35e442e",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "a83287fe9c8008542fdf0b15cc054af89846f4eb929174ae2fb7523716a79e4d",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong-arena#216",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-216-invalid-predecessor",
+      "protocol": "mechanism-defense-gate1-invalid-predecessor",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/216#issuecomment-5642919062",
+      "purpose": "prior Gate 1 attempt exposed transient result and remains consumed",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 35000,
+        "kind": "range",
+        "last": 35099
+      },
+      "seed_membership_identity": "61ed592871a6d8ec5137152790a2c812a70e0a32ce22a376b1df5489d0cba16c",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "5e93fa62c8e568d8c5abad80c9a5d6fe91bab9b8e6ba48943aef051e836fb8d8",
+      "allocation_timestamp": null,
+      "arena_revision": "2275aae735b9137c1c6f859ef888246fc42a9a10",
+      "owner_issue": "lisbun/lisjong-arena#216",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-216-gate1-successor",
+      "protocol": "mechanism-defense-gate1",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/216#issuecomment-5642976185",
+      "purpose": "fresh Gate 1 successor ABBB evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 35100,
+        "kind": "range",
+        "last": 35199
+      },
+      "seed_membership_identity": "182c84bcebb39e48d990df65255d8f8b9d15f6c0940e22082385b6ac61db2e39",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "ec84ea9f5681f78801e3ccff57ac2e2fd6a5f6756c16722d883af5d8deff8074",
+      "allocation_timestamp": null,
+      "arena_revision": "2275aae735b9137c1c6f859ef888246fc42a9a10",
+      "owner_issue": "lisbun/lisjong-arena#217",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-217-gate2-confirmation",
+      "protocol": "mechanism-defense-gate2",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/217#issuecomment-5644679433",
+      "purpose": "Gate 2 confirmation ABBB evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 35200,
+        "kind": "range",
+        "last": 37699
+      },
+      "seed_membership_identity": "b3060f0286915a62f2c9595af4008fe0c86cc5ca4dc3bfe1cee9cc14356e23d7",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "07aa6b0df737fc19674a3459800898d52cfd593f9084c38b119a33d0db52bec1",
+      "allocation_timestamp": null,
+      "arena_revision": "50a2050f9e6a3ae926f714fe469093a7b667f08d",
+      "owner_issue": "lisbun/lisjong-arena#259",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-259-locked-downstream",
+      "protocol": "stage-a0-downstream-lock",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/259#issuecomment-5739227359",
+      "purpose": "historically locked downstream A-vs-T population; downstream never ran and lock is retired",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 37700,
+        "kind": "range",
+        "last": 37905
+      },
+      "seed_membership_identity": "54daa3966e309ceb2f93b1a1098d3faa7f23e8b9a0cd34b7c105f9cea43bbb10",
+      "split": "DOWNSTREAM",
       "state": "RETIRED"
     },
     {
