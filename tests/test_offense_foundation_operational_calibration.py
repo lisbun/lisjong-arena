@@ -33,26 +33,32 @@ def _ledger(**overrides):
 
 
 class InstrumentationCapabilityTest(unittest.TestCase):
-    def test_the_generation_path_reports_its_real_capability(self):
+    def test_the_generation_path_satisfies_the_lighter_production_requirement(self):
         described = instrumentation.describe_generation_instrumentation()
-        self.assertEqual("FAIL", described["status"])
+        self.assertEqual("PASS", described["status"])
         self.assertFalse(described["per_seed_durable_receipt_supported"])
         self.assertEqual(
             "atomic-operational-progress", described["durable_evidence_level"]
         )
         self.assertEqual(
-            "per-seed-durable-receipt", described["required_durable_evidence_level"]
+            "atomic-operational-progress",
+            described["required_durable_evidence_level"],
         )
-        self.assertEqual(
-            instrumentation.PER_SEED_RECEIPT_FOLLOW_UP, described["follow_up"]
-        )
-        self.assertIn("no", described["limitation"])
-        self.assertIn("#350", described["follow_up"])
+        self.assertIsNone(described["follow_up"])
+        self.assertIn("full", described["limitation"])
+        self.assertIn("locked phase", described["limitation"])
 
-    def test_the_calibration_path_satisfies_the_required_level(self):
+    def test_the_calibration_path_keeps_the_stronger_receipt_requirement(self):
         described = instrumentation.describe_calibration_instrumentation()
         self.assertEqual("PASS", described["status"])
         self.assertTrue(described["per_seed_durable_receipt_supported"])
+        self.assertEqual(
+            "per-seed-durable-receipt", described["durable_evidence_level"]
+        )
+        self.assertEqual(
+            "per-seed-durable-receipt",
+            described["required_durable_evidence_level"],
+        )
         self.assertEqual(
             instrumentation.GENERATION_INSTRUMENTATION_IDENTITY,
             described["instrumentation_identity"],
@@ -61,14 +67,25 @@ class InstrumentationCapabilityTest(unittest.TestCase):
     def test_declared_levels_are_recognized_by_the_admission_core(self):
         for level in (
             instrumentation.GENERATION_DURABLE_EVIDENCE_LEVEL,
+            instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL,
             instrumentation.CALIBRATION_DURABLE_EVIDENCE_LEVEL,
-            instrumentation.REQUIRED_DURABLE_EVIDENCE_LEVEL,
+            instrumentation.CALIBRATION_REQUIRED_DURABLE_EVIDENCE_LEVEL,
         ):
             self.assertIn(level, aws_operational_calibration.DURABLE_EVIDENCE_LEVELS)
         levels = aws_operational_calibration.DURABLE_EVIDENCE_LEVELS
-        self.assertLess(
+        self.assertEqual(
             levels.index(instrumentation.GENERATION_DURABLE_EVIDENCE_LEVEL),
-            levels.index(instrumentation.REQUIRED_DURABLE_EVIDENCE_LEVEL),
+            levels.index(
+                instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL
+            ),
+        )
+        self.assertLess(
+            levels.index(
+                instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL
+            ),
+            levels.index(
+                instrumentation.CALIBRATION_REQUIRED_DURABLE_EVIDENCE_LEVEL
+            ),
         )
 
     def test_the_cli_probe_is_machine_readable(self):
