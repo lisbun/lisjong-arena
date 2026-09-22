@@ -213,13 +213,12 @@ function Get-InstancePrice {
 
 $request = Get-Content -Raw -LiteralPath $RequestPath | ConvertFrom-Json
 $requestFields = @($request.PSObject.Properties.Name | Sort-Object)
-if (($requestFields -join ",") -ne "freshness_evidence,known_used_seeds,phase,populations") {
+if (($requestFields -join ",") -ne "allocation_bindings,phase,populations") {
     throw "Population request fields are invalid."
 }
 if ([string]$request.phase -ne $expectedRequestPhase) {
     throw "Phase $Phase requires request phase $expectedRequestPhase."
 }
-if (@($request.freshness_evidence).Count -lt 1) { throw "Freshness evidence is required." }
 if ($Phase -eq "A") {
     Assert-ContiguousPopulation -Seeds @($request.populations.QUALIFICATION) -Count 20 -Name "QUALIFICATION"
     $populationNames = @($request.populations.PSObject.Properties.Name | Sort-Object)
