@@ -13,9 +13,10 @@ from lisjong_arena._artifact_io import (
     write_new_artifact_file,
 )
 from lisjong_arena.aws_execution_observability import ProgressTracker, write_progress
+from lisjong_arena.seed_registry import load_ledger
 
 from .corpus import generate, read_corpus
-from .protocol import make_lock, validate_request
+from .protocol import make_lock, require_request_allocations, validate_request
 from .qualification import (
     P0_PASS,
     P1_PASS,
@@ -42,6 +43,7 @@ def main(argv=None):
         "validate-request", help="validate an operator-supplied population request"
     )
     request_validation.add_argument("--request", required=True)
+    request_validation.add_argument("--seed-ledger")
     request_validation.add_argument(
         "--phase", choices=("P2", "SCIENTIFIC"), required=True
     )
@@ -61,6 +63,7 @@ def main(argv=None):
         "lock", help="bind operator-supplied fresh population before generation"
     )
     lock.add_argument("--request", required=True)
+    lock.add_argument("--seed-ledger")
     lock.add_argument("--qualification", required=True)
     lock.add_argument("--p2-corpus")
     lock.add_argument("--output", required=True)
@@ -99,6 +102,8 @@ def main(argv=None):
             validate_request(request)
             if request["phase"] != args.phase:
                 raise ValueError("population request phase differs from expected phase")
+            ledger = load_ledger(args.seed_ledger) if args.seed_ledger else None
+            require_request_allocations(request, ledger)
             print(json.dumps({"phase": args.phase, "status": "PASS"}))
             return 0
         if args.command == "qualification-contract":
@@ -121,6 +126,8 @@ def main(argv=None):
             report = read_document(args.qualification)
             require_qualification(report, runtime_binding(args.project))
             request = parse_json_text(Path(args.request).read_text(encoding="utf-8"))
+            ledger = load_ledger(args.seed_ledger) if args.seed_ledger else None
+            require_request_allocations(request, ledger)
             p2 = read_corpus(args.p2_corpus) if args.p2_corpus else None
             result = make_lock(request, report, p2)
             write_document(args.output, result)
