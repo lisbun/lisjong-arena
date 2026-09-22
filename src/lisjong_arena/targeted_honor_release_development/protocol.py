@@ -191,9 +191,7 @@ def repository_declared_allocated_seeds() -> frozenset[int]:
 
     from lisjong_arena.seed_registry import allocated_seeds
 
-    return allocated_seeds(
-        exclude_owner_issues={"lisbun/lisjong-arena#263"}
-    )
+    return allocated_seeds(exclude_owner_issues={"lisbun/lisjong-arena#263"})
 
 
 def seed_freshness_block(
