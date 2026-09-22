@@ -284,6 +284,7 @@ def ledger_revision(document: object) -> str:
     text = canonical_json_text(validate_ledger(document))
     return hashlib.sha256(text.encode()).hexdigest()
 
+
 def validate_bootstrap_ledger(document: object) -> dict[str, object]:
     """Validate the immutable main-branch bootstrap snapshot.
 
