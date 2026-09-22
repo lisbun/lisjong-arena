@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
@@ -396,18 +395,17 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                     "  }",
                 ]
             )
-        ledger_b64 = base64.b64encode(ledger_path.read_bytes()).decode("ascii")
         lines.extend(
             [
                 "  $global:LASTEXITCODE = 51",
                 '  throw "unexpected AWS call: $joined"',
                 "}",
-                f"$global:seedLedgerJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{ledger_b64}'))",
+                f"$global:seedLedgerPath = '{str(ledger_path).replace("'", "''")}'",
                 "function global:git {",
                 "  $joined = $args -join ' '",
                 "  $global:LASTEXITCODE = 0",
                 "  if ($joined.Contains(' fetch ')) { return }",
-                "  if ($joined.Contains(' show ')) { $global:seedLedgerJson; return }",
+                "  if ($joined.Contains(' show ')) { Get-Content -LiteralPath $global:seedLedgerPath; return }",
                 "  $global:LASTEXITCODE = 52",
                 '  throw "unexpected git call: $joined"',
                 "}",
