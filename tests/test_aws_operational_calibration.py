@@ -652,6 +652,18 @@ class PhaseGateTest(unittest.TestCase):
             # The launch-time boot fail-safe is what bounded the pre-arm
             # interval; without it the run was never independently bounded.
             "hard-fail-safe-armed-from-boot": {"boot_fail_safe_armed": False},
+            # A boot deadline beyond the priced launch-clock window means the
+            # timer was armed from cloud-init, not from EC2 launch.
+            "hard-fail-safe-armed-beyond-launch-window": {
+                "boot_fail_safe_deadline_epoch": fixtures.INSTANCE_LAUNCH_EPOCH
+                + int(fixtures.HARD_FAIL_SAFE_SECONDS)
+                + int(fixtures.SETUP_SECONDS)
+                + int(fixtures.TEARDOWN_SECONDS)
+                + 600
+            },
+            "hard-fail-safe-armed-without-a-deadline": {
+                "boot_fail_safe_deadline_epoch": 0
+            },
             "retained-destination-writable": {
                 "retained_destination": {"write_probe": "FAIL"}
             },
@@ -674,7 +686,9 @@ class PhaseGateTest(unittest.TestCase):
                 self.assertFalse(phase_two["workload_submission_authorized"])
                 self.assertEqual(
                     "FAIL",
-                    _gate(phase_two, gate_name.replace("-from-boot", ""))["status"],
+                    _gate(phase_two, gate_name.split("-armed-")[0] + "-armed")["status"]
+                    if "-armed-" in gate_name
+                    else _gate(phase_two, gate_name)["status"],
                 )
                 self.assertIn("submit no workload", " ".join(phase_two["limitations"]))
 
@@ -743,6 +757,26 @@ class PhaseGateTest(unittest.TestCase):
             "recovery-identity-persisted",
         ):
             self.assertEqual("FAIL", _gate(phase_two, gate_name)["status"])
+
+    def test_phase_two_accepts_a_boot_deadline_inside_the_launch_clock_window(self):
+        phase_one = _admit()
+        window = int(calibration.boot_fail_safe_seconds(phase_one["budget"]))
+        # cloud-init started late, so the boot timer holds a deadline strictly
+        # inside the priced launch-clock window. That is the correct behaviour.
+        phase_two = calibration.build_phase_two_admission(
+            phase_one,
+            fixtures.observation(
+                phase_one,
+                boot_fail_safe_deadline_epoch=fixtures.INSTANCE_LAUNCH_EPOCH
+                + window
+                - 300,
+            ),
+            now=fixtures.NOW,
+        )
+        self.assertEqual("PASS", _gate(phase_two, "hard-fail-safe-armed")["status"])
+        self.assertIn(
+            "boot_deadline_epoch", _gate(phase_two, "hard-fail-safe-armed")["detail"]
+        )
 
     def test_phase_two_rejects_a_fail_safe_deadline_that_is_not_the_admitted_one(self):
         phase_one = _admit()

@@ -378,6 +378,10 @@ def observation(prior: dict[str, object], **overrides: object) -> dict[str, obje
         "arena_revision": ARENA_REVISION,
         "availability_zone": "ap-northeast-1a",
         "boot_fail_safe_armed": True,
+        # The boot timer holds the EC2 launch clock, so its deadline is
+        # launch + (pre-arm allowance + hard fail-safe + teardown).
+        "boot_fail_safe_deadline_epoch": INSTANCE_LAUNCH_EPOCH
+        + int(calibration.boot_fail_safe_seconds(prior["budget"])),  # type: ignore[index]
         "fail_safe_arm_epoch": FAIL_SAFE_ARM_EPOCH,
         "fail_safe_armed": True,
         "fail_safe_deadline_epoch": FAIL_SAFE_ARM_EPOCH

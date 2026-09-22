@@ -311,7 +311,9 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         # instance-side timer covering the whole planned window.
         text = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn("UserData = $bootFailSafeUserData", text)
-        self.assertIn("--unit=lisjong-boot-failsafe", text)
+        self.assertIn("boot-fail-safe-user-data --window-seconds", text)
+        self.assertNotIn("--on-active=${bootFailSafeSeconds}s", text)
+        self.assertIn("boot_fail_safe_deadline_epoch = ", text)
         self.assertIn(
             "$bootFailSafeSeconds = [long]($setupSeconds + $hardFailSafeSeconds "
             "+ $teardownSeconds)",

@@ -359,10 +359,33 @@ launch-time user data in the same `run-instances` request, with
 `InstanceInitiatedShutdownBehavior = terminate`:
 
 ```text
-boot fail-safe = setup_seconds (pre-arm allowance)
-               + hard_fail_safe_seconds
-               + teardown_seconds
+boot fail-safe window = setup_seconds (pre-arm allowance)
+                      + hard_fail_safe_seconds
+                      + teardown_seconds
 ```
+
+That window is a **launch-clock** window, and `systemd-run --on-active` counts
+from the moment cloud-init runs the user data, which is some way into the first
+boot cycle. Arming `--on-active=<window>` would therefore hold
+`EC2 launch + cloud-init delay + window`, which is longer than the window the
+admission record prices. The rendered script instead resolves the real launch
+time and arms only what is left:
+
+```text
+IMDSv2 token
+  -> /latest/dynamic/instance-identity/document
+  -> pendingTime                       (the EC2 launch time)
+  -> DEADLINE  = pendingTime + window
+  -> REMAINING = DEADLINE - now
+  -> REMAINING <= 0        power off immediately
+  -> launch clock unknown  power off immediately (fail closed)
+  -> otherwise             systemd-run --on-active="${REMAINING}s"
+```
+
+The script is rendered by `render_boot_fail_safe_user_data()` in the admission
+core, not assembled inside the launchers, so there is one implementation and
+the boundary cases are tested by executing it against a stubbed IMDS. It also
+records its deadline to `/run/lisjong-boot-failsafe.env`.
 
 Both timers stay armed. In a healthy run the SSM one fires first, because it is
 armed at most `setup_seconds` after boot and runs for `hard_fail_safe_seconds`.
@@ -377,8 +400,17 @@ starting at the later SSM arm epoch. A calibration requirement with
 interval.
 
 Phase 2 records `boot_fail_safe_armed` from an actual
-`systemctl is-active lisjong-boot-failsafe.timer` check on the instance, and
-`hard-fail-safe-armed` requires **both** timers.
+`systemctl is-active lisjong-boot-failsafe.timer` check on the instance, plus
+`boot_fail_safe_deadline_epoch` from that env file, and `hard-fail-safe-armed`
+requires **both** timers *and*:
+
+```text
+0 < boot_fail_safe_deadline_epoch <= instance_launch_epoch + boot window
+boot_fail_safe_deadline_epoch > observed_at_epoch
+```
+
+so a timer that was actually armed from cloud-init rather than from EC2 launch
+is rejected.
 
 On the instance, the bootstrap regenerates qualification, requires the same
 cross-platform qualification-contract match as #332, and runs
@@ -570,6 +602,9 @@ python -m lisjong_arena.aws_operational_calibration admit-phase-2 \
     --output <admission-phase-2.json>
 
 python -m lisjong_arena.aws_operational_calibration historical-observation
+
+python -m lisjong_arena.aws_operational_calibration boot-fail-safe-user-data \
+    --window-seconds <launch-clock window> [--base64]
 ```
 
 Exit codes: `0` = GO, `3` = NO-GO, `2` = invalid input. `--calibration` may be

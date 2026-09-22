@@ -113,6 +113,11 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
         self.assertIn("$bootFailSafeUserData", launcher)
         self.assertIn("UserData = $bootFailSafeUserData", launcher)
         self.assertIn("lisjong-boot-failsafe", launcher)
+        # The script is rendered by the tested core helper, not inline here.
+        self.assertIn("boot-fail-safe-user-data --window-seconds", launcher)
+        self.assertNotIn("--on-active=${bootFailSafeSeconds}s", launcher)
+        self.assertIn("LISJONG_BOOT_FAILSAFE_DEADLINE_EPOCH", launcher)
+        self.assertIn("boot_fail_safe_deadline_epoch = ", launcher)
         self.assertIn(
             "$bootFailSafeSeconds = [long]($preArmAllowanceSeconds "
             "+ $hardFailSafeSeconds + $teardownSeconds)",
@@ -487,9 +492,16 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
         self.assertEqual("terminate", request["InstanceInitiatedShutdownBehavior"])
         user_data = base64.b64decode(request["UserData"]).decode("utf-8")
         self.assertIn("systemd-run", user_data)
-        self.assertIn("--unit=lisjong-boot-failsafe", user_data)
+        self.assertIn('--unit="$UNIT"', user_data)
         self.assertIn("/usr/bin/systemctl poweroff", user_data)
-        seconds = int(re.search(r"--on-active=(\d+)s", user_data).group(1))
+        # The timer holds the EC2 launch clock: it resolves pendingTime from
+        # the instance identity document and arms only the remaining window.
+        self.assertIn("latest/dynamic/instance-identity/document", user_data)
+        self.assertIn("pendingTime", user_data)
+        self.assertIn("DEADLINE=$((LAUNCH_EPOCH + WINDOW))", user_data)
+        self.assertIn("REMAINING=$((DEADLINE - $(date -u +%s)))", user_data)
+        self.assertIn('--on-active="${REMAINING}s"', user_data)
+        window = int(re.search(r"(?m)^WINDOW=(\d+)$", user_data).group(1))
         admission = json.loads(
             (run_dir / "admission-calibration.json").read_text(encoding="utf-8")
         )
@@ -499,19 +511,25 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
             + float(budget["hard_fail_safe_seconds"])
             + float(budget["teardown_seconds"])
         )
-        # The instance-side bound is exactly the window phase 0 priced.
-        self.assertEqual(expected, float(seconds))
+        # The launch-clock window is exactly the one phase 0 priced.
+        self.assertEqual(expected, float(window))
+        self.assertEqual(
+            aws_operational_calibration.render_boot_fail_safe_user_data(int(expected)),
+            user_data,
+        )
         self.assertEqual(
             expected,
             admission["cost_prediction"][
                 "predicted_ec2_billable_runtime_range_seconds"
             ][1],
         )
-        # Phase 2 records what was observed about both fail-safes.
+        # Phase 2 records what was observed about both fail-safes, including
+        # the launch-clock deadline the boot timer actually holds.
         observation = json.loads(
             (run_dir / "phase-2-observation.json").read_text(encoding="utf-8")
         )
         self.assertIn("boot_fail_safe_armed", observation)
+        self.assertIn("boot_fail_safe_deadline_epoch", observation)
 
 
 if __name__ == "__main__":

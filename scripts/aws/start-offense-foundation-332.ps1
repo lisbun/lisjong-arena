@@ -688,9 +688,13 @@ $failsafeArmed = $false
 # timer armed from boot is what bounds the pre-arm interval. Both stay armed;
 # the SSM one fires first in a healthy run.
 $bootFailSafeSeconds = [long]($setupSeconds + $hardFailSafeSeconds + $teardownSeconds)
-$bootFailSafeUserData = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(
-        "#!/bin/bash`nsystemd-run --quiet --unit=lisjong-boot-failsafe --on-active=${bootFailSafeSeconds}s --timer-property=AccuracySec=30s /usr/bin/systemctl poweroff`n"
-    ))
+# Rendered by the admission core so the timer is bound to the EC2 launch clock
+# (instance identity document pendingTime), not to whenever cloud-init runs it.
+$bootFailSafeUserData = (& $localPython -m lisjong_arena.aws_operational_calibration `
+        boot-fail-safe-user-data --window-seconds $bootFailSafeSeconds --base64 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $bootFailSafeUserData -notmatch "^[A-Za-z0-9+/=]+$") {
+    throw "Could not render the launch-time boot fail-safe: $bootFailSafeUserData"
+}
 try {
     $volume = Invoke-AwsJson -Arguments @(
         "ec2", "create-volume", "--availability-zone", $availabilityZone,
@@ -768,8 +772,11 @@ try {
         "FAILSAFE_ARM_EPOCH=`$(date +%s)", "echo LISJONG_FAILSAFE_DEADLINE_EPOCH=`$((FAILSAFE_ARM_EPOCH + $($FailSafeHours * 3600)))",
         "systemctl is-active --quiet lisjong-cost-failsafe.timer",
         'BOOT_FAILSAFE=inactive',
+        'BOOT_FAILSAFE_DEADLINE=0',
         'for _ in $(seq 1 30); do BOOT_FAILSAFE=$(systemctl is-active lisjong-boot-failsafe.timer 2>/dev/null || true); test x$BOOT_FAILSAFE = xactive && break; sleep 2; done',
-        'echo LISJONG_BOOT_FAILSAFE=$BOOT_FAILSAFE'
+        'if [ -r /run/lisjong-boot-failsafe.env ]; then . /run/lisjong-boot-failsafe.env 2>/dev/null || true; BOOT_FAILSAFE_DEADLINE=${LISJONG_BOOT_FAILSAFE_DEADLINE_EPOCH:-0}; fi',
+        'echo LISJONG_BOOT_FAILSAFE=$BOOT_FAILSAFE',
+        'echo LISJONG_BOOT_FAILSAFE_DEADLINE_EPOCH=$BOOT_FAILSAFE_DEADLINE'
     )
     $failSafeInvocation = Wait-SsmInvocation -CommandId $failSafeCommand -InstanceId $instanceId
     if ([string]$failSafeInvocation.Status -ne "Success") { throw "Instance fail-safe could not be armed." }
@@ -779,8 +786,10 @@ try {
     $failsafeArmed = $true
     $bootFailSafeMatch = [regex]::Match([string]$failSafeInvocation.StandardOutputContent, "LISJONG_BOOT_FAILSAFE=([a-z-]+)")
     $bootFailSafeArmed = ($bootFailSafeMatch.Success -and $bootFailSafeMatch.Groups[1].Value -eq "active")
-    if (-not $bootFailSafeArmed) {
-        Write-Warning "The launch-time boot fail-safe is not active; phase 2 will fail closed."
+    $bootDeadlineMatch = [regex]::Match([string]$failSafeInvocation.StandardOutputContent, "LISJONG_BOOT_FAILSAFE_DEADLINE_EPOCH=([0-9]+)")
+    $bootFailSafeDeadlineEpoch = if ($bootDeadlineMatch.Success) { [long]$bootDeadlineMatch.Groups[1].Value } else { [long]0 }
+    if (-not $bootFailSafeArmed -or $bootFailSafeDeadlineEpoch -le 0) {
+        Write-Warning "The launch-time boot fail-safe is not active or has no launch-clock deadline; phase 2 will fail closed."
     }
 
 
@@ -849,6 +858,7 @@ try {
             arena_revision = $ArenaRevision
             availability_zone = $availabilityZone
             boot_fail_safe_armed = $bootFailSafeArmed
+            boot_fail_safe_deadline_epoch = $bootFailSafeDeadlineEpoch
             fail_safe_arm_epoch = $failSafeArmEpoch
             fail_safe_armed = $failsafeArmed
             fail_safe_deadline_epoch = $failSafeDeadlineEpoch

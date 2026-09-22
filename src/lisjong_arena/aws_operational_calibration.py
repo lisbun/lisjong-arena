@@ -30,10 +30,12 @@ framework.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
 import re
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Mapping, Sequence
@@ -267,6 +269,7 @@ _OBSERVATION_FIELDS: Final = frozenset(
         "fail_safe_armed",
         "fail_safe_deadline_epoch",
         "boot_fail_safe_armed",
+        "boot_fail_safe_deadline_epoch",
         "instance_id",
         "instance_launch_epoch",
         "instance_type",
@@ -468,6 +471,89 @@ def assert_no_scientific_fields(document: object, *, context: str) -> None:
     elif type(document) is list:
         for value in document:
             assert_no_scientific_fields(value, context=context)
+
+
+BOOT_FAIL_SAFE_UNIT: Final = "lisjong-boot-failsafe"
+BOOT_FAIL_SAFE_DEADLINE_FILE: Final = "/run/lisjong-boot-failsafe.env"
+BOOT_FAIL_SAFE_DEADLINE_KEY: Final = "LISJONG_BOOT_FAILSAFE_DEADLINE_EPOCH"
+DEFAULT_POWEROFF_COMMAND: Final = "/usr/bin/systemctl poweroff"
+
+#: ``systemd-run --on-active`` counts from the moment cloud-init runs the user
+#: data, which is some way into the first boot cycle. The admitted budget is a
+#: launch-clock window, so the script below resolves the EC2 launch time from
+#: the instance identity document's ``pendingTime`` and arms only the window
+#: that is actually left. It fails closed: if the launch clock cannot be
+#: established, or the window is already exhausted, it powers the instance off
+#: instead of arming a timer that would outlive the priced budget.
+_BOOT_FAIL_SAFE_TEMPLATE = """#!/bin/bash
+# Issue #340: bound this instance from the EC2 launch clock, not from the time
+# cloud-init happened to execute this user data.
+set -u
+WINDOW=__WINDOW__
+UNIT=__UNIT__
+DEADLINE_FILE=__DEADLINE_FILE__
+IMDS=http://169.254.169.254
+LAUNCH_EPOCH=""
+for _ in $(seq 1 10); do
+    TOKEN="$(curl -fsS -m 5 -X PUT "$IMDS/latest/api/token" \\
+        -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' 2>/dev/null || true)"
+    if [ -n "$TOKEN" ]; then
+        PENDING="$(curl -fsS -m 5 -H "X-aws-ec2-metadata-token: $TOKEN" \\
+            "$IMDS/latest/dynamic/instance-identity/document" 2>/dev/null \\
+            | sed -n 's/.*"pendingTime"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')"
+        if [ -n "$PENDING" ]; then
+            LAUNCH_EPOCH="$(date -u -d "$PENDING" +%s 2>/dev/null || true)"
+            if [ -n "$LAUNCH_EPOCH" ]; then break; fi
+        fi
+    fi
+    sleep 2
+done
+if [ -z "$LAUNCH_EPOCH" ]; then
+    printf '__KEY__=0\\n' >"$DEADLINE_FILE"
+    exec __POWEROFF__
+fi
+DEADLINE=$((LAUNCH_EPOCH + WINDOW))
+REMAINING=$((DEADLINE - $(date -u +%s)))
+if [ "$REMAINING" -gt "$WINDOW" ]; then REMAINING="$WINDOW"; fi
+printf '__KEY__=%s\\n' "$DEADLINE" >"$DEADLINE_FILE"
+chmod 644 "$DEADLINE_FILE"
+if [ "$REMAINING" -le 0 ]; then
+    exec __POWEROFF__
+fi
+systemd-run --quiet --unit="$UNIT" --on-active="${REMAINING}s" \\
+    --timer-property=AccuracySec=30s __POWEROFF__
+"""
+
+
+def render_boot_fail_safe_user_data(
+    window_seconds: int,
+    *,
+    unit: str = BOOT_FAIL_SAFE_UNIT,
+    deadline_file: str = BOOT_FAIL_SAFE_DEADLINE_FILE,
+    poweroff_command: str = DEFAULT_POWEROFF_COMMAND,
+) -> str:
+    """Return the launch-time user data that bounds the instance from boot.
+
+    The rendered script is LF-only so it stays a valid shebang script whatever
+    the checkout's line-ending policy is.
+    """
+
+    window = _positive_int(window_seconds, "window_seconds")
+    for name, value in (
+        ("unit", unit),
+        ("deadline_file", deadline_file),
+        ("poweroff_command", poweroff_command),
+    ):
+        _text(value, name)
+        _require("\n" not in value and "'" not in value, f"{name} is not shell-safe")
+    return (
+        _BOOT_FAIL_SAFE_TEMPLATE.replace("__WINDOW__", str(window))
+        .replace("__UNIT__", unit)
+        .replace("__DEADLINE_FILE__", deadline_file)
+        .replace("__KEY__", BOOT_FAIL_SAFE_DEADLINE_KEY)
+        .replace("__POWEROFF__", poweroff_command)
+        .replace("\r\n", "\n")
+    )
 
 
 def instance_family(instance_type: str) -> str:
@@ -1764,6 +1850,7 @@ def validate_phase_two_observation(document: object) -> dict[str, object]:
     for name in ("boot_fail_safe_armed", "fail_safe_armed"):
         _require(type(observation[name]) is bool, f"{name} must be a bool")
     for name in (
+        "boot_fail_safe_deadline_epoch",
         "fail_safe_arm_epoch",
         "fail_safe_deadline_epoch",
         "instance_launch_epoch",
@@ -1845,9 +1932,19 @@ def build_phase_two_admission(
     launch_epoch = int(observed["instance_launch_epoch"])
     # Both bounds must be real: the launch-time boot fail-safe that covered the
     # pre-arm interval, and the SSM-armed workload fail-safe that bounds the run.
+    # The boot deadline is checked against the EC2 launch clock, because that is
+    # the clock the admitted budget priced -- not the later cloud-init start.
+    boot_window = boot_fail_safe_seconds(budget)
+    boot_deadline = int(observed["boot_fail_safe_deadline_epoch"])
+    boot_bounded = (
+        bool(observed["boot_fail_safe_armed"])
+        and boot_deadline > 0
+        and boot_deadline <= launch_epoch + boot_window + 60
+        and boot_deadline > observed_at
+    )
     armed = (
         instance_present
-        and bool(observed["boot_fail_safe_armed"])
+        and boot_bounded
         and bool(observed["fail_safe_armed"])
         and abs((deadline_epoch - arm_epoch) - hard_fail_safe) <= 60
         and deadline_epoch > observed_at
@@ -1962,6 +2059,8 @@ def build_phase_two_admission(
             armed,
             (
                 f"boot_fail_safe_armed={observed['boot_fail_safe_armed']} "
+                f"boot_deadline_epoch={boot_deadline} against launch epoch "
+                f"{launch_epoch} + boot window {_round(boot_window)}s; "
                 f"armed={observed['fail_safe_armed']} arm_epoch={arm_epoch} "
                 f"deadline_epoch={deadline_epoch} against hard fail-safe "
                 f"{hard_fail_safe}s on instance {instance_id!r}"
@@ -2667,6 +2766,12 @@ def _parser() -> argparse.ArgumentParser:
     phase_two.add_argument("--observation", required=True)
     phase_two.add_argument("--output", required=True)
     phase_two.add_argument("--now")
+    user_data = commands.add_parser(
+        "boot-fail-safe-user-data",
+        help="render the launch-time fail-safe bound to the EC2 launch clock",
+    )
+    user_data.add_argument("--window-seconds", type=int, required=True)
+    user_data.add_argument("--base64", action="store_true")
     historical = commands.add_parser(
         "historical-observation",
         help="emit the #326 incomplete observation with its gaps preserved",
@@ -2703,6 +2808,14 @@ def main(argv: list[str] | None = None) -> int:
                     sort_keys=True,
                 )
             )
+            return 0
+        if args.command == "boot-fail-safe-user-data":
+            script = render_boot_fail_safe_user_data(args.window_seconds)
+            if args.base64:
+                print(base64.b64encode(script.encode("utf-8")).decode("ascii"))
+            else:
+                sys.stdout.buffer.write(script.encode("utf-8"))
+                sys.stdout.buffer.flush()
             return 0
         if args.command == "validate-evidence":
             document = read_calibration_evidence(args.calibration)
@@ -2772,6 +2885,9 @@ if __name__ == "__main__":
 
 __all__ = [
     "ADMISSION_SCHEMA_VERSION",
+    "BOOT_FAIL_SAFE_DEADLINE_FILE",
+    "BOOT_FAIL_SAFE_DEADLINE_KEY",
+    "BOOT_FAIL_SAFE_UNIT",
     "AwsOperationalCalibrationError",
     "BURSTABLE_INSTANCE_FAMILIES",
     "CALIBRATION_POPULATION",
@@ -2804,6 +2920,7 @@ __all__ = [
     "predict_runtime",
     "read_admission_record",
     "read_calibration_evidence",
+    "render_boot_fail_safe_user_data",
     "resolve_calibration_allocation",
     "select_matching_calibration",
     "tasks_from_durable_receipts",
