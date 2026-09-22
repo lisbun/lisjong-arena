@@ -99,6 +99,9 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Install Arena runtime dependencies
+        run: python -m pip install --disable-pip-version-check -e .
+
       - name: Load live authority ledger
         id: authority
         shell: bash

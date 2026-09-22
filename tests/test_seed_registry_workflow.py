@@ -19,6 +19,14 @@ class SeedRegistryWorkflowTest(unittest.TestCase):
         )
         self.assertNotIn("--force", text)
 
+    def test_runtime_dependencies_are_installed_before_registry_cli(self):
+        text = _WORKFLOW.read_text(encoding="utf-8")
+        install = "python -m pip install --disable-pip-version-check -e ."
+        first_registry_call = "python -m lisjong_arena.seed_registry"
+        self.assertIn(install, text)
+        self.assertIn(first_registry_call, text)
+        self.assertLess(text.index(install), text.index(first_registry_call))
+
     def test_reservation_requires_reviewed_main_revision_and_current_authority(self):
         text = _WORKFLOW.read_text(encoding="utf-8")
         self.assertIn(
