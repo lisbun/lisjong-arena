@@ -23,12 +23,12 @@
       "state": "RETIRED"
     },
     {
-      "allocation_identity": "e872979f4f5fa885117d0922ea902b3e4b09f41b86c312dbb6e44b8570efa34a",
+      "allocation_identity": "2536cec01492784bb53a8be03566969e2b94371180ce8cd4c64834a65bf63b06",
       "allocation_timestamp": null,
       "arena_revision": null,
       "owner_issue": null,
       "owner_repository": "lisbun/lisjong-arena",
-      "population": "historical-preledger-quarantine-851-2499",
+      "population": "historical-preledger-quarantine-851-999",
       "protocol": "historical-arena-strength-evaluation",
       "protocol_revision": null,
       "provenance_reference": "https://github.com/lisbun/lisjong/issues/121",
@@ -38,9 +38,9 @@
       "seed_membership": {
         "first": 851,
         "kind": "range",
-        "last": 2499
+        "last": 999
       },
-      "seed_membership_identity": "c4f43cf01e2295eade1607d33fa46da54f830c27280d923e0a47d8e704aa653f",
+      "seed_membership_identity": "e4a19e1902b207f55bbf580b2732f46003f89605ec008dbc211565b508566212",
       "split": null,
       "state": "RETIRED"
     },
@@ -63,6 +63,28 @@
         "last": 1007
       },
       "seed_membership_identity": "1f69ed6b3f2961b5c1eb519c058d95681b19f89e1c8375925aa2fc7523fa0a96",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "a389c91b6852695d3ff99fdb3427ff12fa0a2034d59e52d8834163a1fc3ae297",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": null,
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "historical-preledger-quarantine-1008-2499",
+      "protocol": "historical-arena-strength-evaluation",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/121",
+      "purpose": "historical pre-ledger single-round seeds; quarantined because legacy evaluations reused overlapping ranges",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "arena-legacy-declared-v1",
+      "seed_membership": {
+        "first": 1008,
+        "kind": "range",
+        "last": 2499
+      },
+      "seed_membership_identity": "68710c0393f7d2b42899491c84b7843733c84f894f03ea18b79af01cde6fbee7",
       "split": null,
       "state": "RETIRED"
     },
