@@ -143,11 +143,37 @@ class SeedRegistryTest(unittest.TestCase):
 
     def test_bootstrap_contains_history_and_the_332_candidate_is_reserved(self):
         ledger = seed_registry.load_ledger()
+
+        historical_ranges = (
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 647, 850),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 22700, 22899),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 23000, 23099),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 35000, 37905),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 50000, 52299),
+            (seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN, 2000, 2095),
+            (seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN, 60000, 60099),
+        )
+        for domain, first, last in historical_ranges:
+            with self.subTest(domain=domain, first=first, last=last):
+                covered = set()
+                for record in seed_registry.collision_records(
+                    ledger, seed_domain=domain, seeds=range(first, last + 1)
+                ):
+                    covered.update(record["seeds"])
+                    self.assertEqual(record["state"], seed_registry.RETIRED)
+                self.assertEqual(covered, set(range(first, last + 1)))
+
         all_seeds = seed_registry.allocated_seeds(ledger)
-        self.assertTrue(set(range(647, 851)) <= all_seeds)
         self.assertTrue(set(range(1000, 1008)) <= all_seeds)
-        self.assertTrue(set(range(2000, 2096)) <= all_seeds)
-        self.assertTrue(set(range(50000, 52300)) <= all_seeds)
+
+        self.assertFalse(
+            seed_registry.collision_records(
+                ledger,
+                seed_domain=seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN,
+                seeds=range(60000, 60100),
+            )
+        )
+
         collisions = seed_registry.collision_records(
             ledger,
             seed_domain=seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
