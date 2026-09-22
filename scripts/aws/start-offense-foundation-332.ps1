@@ -23,8 +23,6 @@ param(
     [Nullable[double]]$RetainedEbsEstimateUsd = $null,
     [switch]$AllowWorkerOversubscription,
     [string]$ArenaRevision = "",
-    [string]$SeedLedgerPath = "",
-    [string]$SeedRegistryBranch = "seed-registry",
     [string]$OutputRoot = "",
     [string]$ReattachRunId = "",
     [switch]$PreflightOnly,
@@ -366,34 +364,25 @@ $preflightPath = Join-Path $runDir "preflight.json"
 $localPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $localPython -PathType Leaf)) { throw "Local project virtualenv Python is required: $localPython" }
 
-$resolvedSeedLedgerPath = $SeedLedgerPath
-$seedLedgerSource = "operator-path"
-if ([string]::IsNullOrWhiteSpace($resolvedSeedLedgerPath)) {
-    if ($SeedRegistryBranch -notmatch "^[A-Za-z0-9._/-]+$") {
-        throw "SeedRegistryBranch contains unsupported characters."
-    }
-    $resolvedSeedLedgerPath = Join-Path $runDir "seed-ledger-authority.json"
-    $registryRef = "refs/remotes/origin/$SeedRegistryBranch"
-    $fetchSpec = "+refs/heads/$SeedRegistryBranch`:$registryRef"
-    $fetchOutput = (& git -C $repoRoot fetch --no-tags origin $fetchSpec 2>&1 | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not fetch canonical seed registry branch '$SeedRegistryBranch': $fetchOutput"
-    }
-    $ledgerLines = @(& git -C $repoRoot show "$registryRef`:src/lisjong_arena/seed-ledger.json" 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not read canonical seed ledger from '$SeedRegistryBranch'."
-    }
-    $ledgerText = (($ledgerLines | ForEach-Object { [string]$_ }) -join "`n") + "`n"
-    [IO.File]::WriteAllText(
-        $resolvedSeedLedgerPath,
-        $ledgerText,
-        [Text.UTF8Encoding]::new($false)
-    )
-    $seedLedgerSource = "git-ref:$SeedRegistryBranch"
+$seedRegistryBranch = "seed-registry"
+$resolvedSeedLedgerPath = Join-Path $runDir "seed-ledger-authority.json"
+$registryRef = "refs/remotes/origin/$seedRegistryBranch"
+$fetchSpec = "+refs/heads/$seedRegistryBranch`:$registryRef"
+$fetchOutput = (& git -C $repoRoot fetch --no-tags origin $fetchSpec 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not fetch canonical seed registry branch '$seedRegistryBranch': $fetchOutput"
 }
-if (-not (Test-Path -LiteralPath $resolvedSeedLedgerPath -PathType Leaf)) {
-    throw "Seed ledger file is required: $resolvedSeedLedgerPath"
+$ledgerLines = @(& git -C $repoRoot show "$registryRef`:src/lisjong_arena/seed-ledger.json" 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not read canonical seed ledger from '$seedRegistryBranch'."
 }
+$ledgerText = (($ledgerLines | ForEach-Object { [string]$_ }) -join "`n") + "`n"
+[IO.File]::WriteAllText(
+    $resolvedSeedLedgerPath,
+    $ledgerText,
+    [Text.UTF8Encoding]::new($false)
+)
+$seedLedgerSource = "git-ref:$seedRegistryBranch"
 $seedLedgerValidationText = (& $localPython -m lisjong_arena.seed_registry `
         --ledger $resolvedSeedLedgerPath validate-ledger 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw "Canonical seed ledger validation failed: $seedLedgerValidationText" }
