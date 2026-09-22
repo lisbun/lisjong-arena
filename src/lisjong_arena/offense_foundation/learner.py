@@ -312,7 +312,10 @@ def _load_choice_split(view: CorpusTrainingView, split: str) -> SplitTensors:
                 if len(trace.legal_actions) >= 2:
                     payload = features.read(_FEATURE_ROW_BYTES)
                     mask = masks.read(_MASK_ROW_BYTES)
-                    if len(payload) != _FEATURE_ROW_BYTES or len(mask) != _MASK_ROW_BYTES:
+                    if (
+                        len(payload) != _FEATURE_ROW_BYTES
+                        or len(mask) != _MASK_ROW_BYTES
+                    ):
                         raise OffenseError("scientific tensor payload truncated")
                     expected_mask = bytes(
                         int(index in row["legal_indices"])
@@ -515,7 +518,10 @@ def load_checkpoint(
     if (
         type(manifest.get("selected_epoch")) is not int
         or manifest["selected_epoch"] <= 0
-        or any(type(value) not in (int, float) or not math.isfinite(value) for value in numeric_metrics)
+        or any(
+            type(value) not in (int, float) or not math.isfinite(value)
+            for value in numeric_metrics
+        )
         or not math.isclose(
             manifest["selected_select_choice_masked_ce"],
             manifest["select_choice_masked_ce"],
@@ -535,10 +541,9 @@ def load_checkpoint(
         raise OffenseError("checkpoint scientific corpus identity mismatch")
 
     weights = (path / WEIGHTS_FILENAME).read_bytes()
-    if (
-        len(weights) != manifest.get("weights_bytes")
-        or _sha256(weights) != manifest.get("weights_sha256")
-    ):
+    if len(weights) != manifest.get("weights_bytes") or _sha256(
+        weights
+    ) != manifest.get("weights_sha256"):
         raise OffenseError("checkpoint weights digest/size mismatch")
     state_dict = torch.load(
         path / WEIGHTS_FILENAME, weights_only=True, map_location="cpu"
@@ -547,7 +552,9 @@ def load_checkpoint(
     try:
         model.load_state_dict(state_dict, strict=True)
     except RuntimeError as error:
-        raise OffenseError("checkpoint state_dict does not match locked model") from error
+        raise OffenseError(
+            "checkpoint state_dict does not match locked model"
+        ) from error
     model.eval()
     for parameter in model.parameters():
         parameter.requires_grad_(False)
@@ -578,7 +585,9 @@ def train_once(
         rel_tol=0.0,
         abs_tol=1e-9,
     ):
-        raise OffenseError("frozen checkpoint does not reproduce SELECT selection metric")
+        raise OffenseError(
+            "frozen checkpoint does not reproduce SELECT selection metric"
+        )
     return save_checkpoint(
         checkpoint_path,
         view=view,
