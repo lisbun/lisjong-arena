@@ -199,6 +199,15 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
         self.assertIn("ec2_billable_runtime_seconds", launcher)
         self.assertIn("setup_overhead_seconds", launcher)
         self.assertIn("teardown_overhead_seconds", launcher)
+        # PowerShell 7.5+ parses ISO JSON timestamps into DateTime by default.
+        # Preserve the original offset and convert through DateTimeOffset so a
+        # local operator timezone cannot shift the measured setup/teardown.
+        self.assertIn("ConvertFrom-Json -DateKind String", launcher)
+        self.assertIn("[DateTimeOffset]::Parse(", launcher)
+        self.assertIn(".ToUnixTimeSeconds()", launcher)
+        self.assertNotIn(
+            "[datetime]::Parse([string]$rawObservation.started_at)", launcher
+        )
 
     def test_the_calibration_publishes_durable_receipts_and_no_scientific_data(self):
         bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
