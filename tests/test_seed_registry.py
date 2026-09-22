@@ -66,6 +66,38 @@ class SeedRegistryTest(unittest.TestCase):
         )
         self.assertEqual(len(updated["allocations"]), 2)
 
+    def test_legacy_quarantine_blocks_new_explicit_domain_reuse(self):
+        ledger = seed_registry.load_ledger()
+        for domain in (
+            seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN,
+            seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+        ):
+            with self.subTest(domain=domain):
+                collisions = seed_registry.collision_records(
+                    ledger, seed_domain=domain, seeds=(0,)
+                )
+                self.assertTrue(collisions)
+                self.assertTrue(
+                    any(
+                        record["owner_issue"] is None
+                        for record in collisions
+                    )
+                )
+                with self.assertRaises(seed_registry.SeedRegistryError):
+                    reserved(
+                        ledger,
+                        (0,),
+                        issue="lisbun/lisjong-arena#1000",
+                        domain=domain,
+                    )
+
+        with self.assertRaises(seed_registry.SeedRegistryError):
+            reserved(
+                seed_registry.new_ledger(),
+                (90000,),
+                domain=seed_registry.LEGACY_SEED_DOMAIN,
+            )
+
     def test_state_never_returns_to_free(self):
         ledger, record = reserved(seed_registry.new_ledger(), range(20, 30))
         committed = seed_registry.transition_allocation(
@@ -164,9 +196,10 @@ class SeedRegistryTest(unittest.TestCase):
         ledger = seed_registry.load_ledger()
 
         historical_ranges = (
-            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 647, 850),
-            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 22700, 22899),
-            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 23000, 23099),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 0, 2499),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 10000, 12499),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 20000, 22899),
+            (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 23000, 23199),
             (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 35000, 37905),
             (seed_registry.RIICHIENV_SINGLE_ROUND_SEED_DOMAIN, 50000, 52299),
             (seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN, 2000, 2095),
