@@ -1,7 +1,6 @@
 import unittest
 from pathlib import Path
 
-
 _ROOT = Path(__file__).resolve().parents[1]
 _WORKFLOW = _ROOT / ".github" / "workflows" / "seed-registry.yml"
 
