@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from lisjong_arena import seed_registry
+
 _ROOT = Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "scripts" / "aws" / "start-offense-foundation-332.ps1"
 _BOOTSTRAP = _ROOT / "scripts" / "aws" / "bootstrap-offense-foundation-332.sh"
@@ -253,15 +255,30 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         value on the mocked retained Phase A volume; omit it to simulate a
         volume with no such tag at all (Blocker 2 missing-tag case).
         """
+        populations = {
+            "TRAIN": list(range(100, 200)),
+            "SELECT": list(range(200, 220)),
+            "OFFLINE-EVAL": list(range(220, 240)),
+        }
         request = {
             "phase": "SCIENTIFIC",
-            "populations": {
-                "TRAIN": list(range(100, 200)),
-                "SELECT": list(range(200, 220)),
-                "OFFLINE-EVAL": list(range(220, 240)),
+            "populations": populations,
+            "allocation_bindings": {
+                split: {
+                    "allocation_identity": identity * 64,
+                    "ledger_revision": "f" * 64,
+                    "owner_repository": "lisbun/lisjong-arena",
+                    "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+                    "seed_membership_identity": seed_registry.seed_membership_identity(
+                        seeds
+                    ),
+                }
+                for split, seeds, identity in (
+                    ("TRAIN", populations["TRAIN"], "1"),
+                    ("SELECT", populations["SELECT"], "2"),
+                    ("OFFLINE-EVAL", populations["OFFLINE-EVAL"], "3"),
+                )
             },
-            "known_used_seeds": [],
-            "freshness_evidence": ["synthetic preflight fixture only"],
         }
         temp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, temp, True)
