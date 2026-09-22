@@ -97,11 +97,23 @@ class SeedRegistryTest(unittest.TestCase):
 
     def test_state_never_returns_to_free(self):
         ledger, record = reserved(seed_registry.new_ledger(), range(20, 30))
+        original_identity = record["allocation_identity"]
+        original_revision = seed_registry.ledger_revision(ledger)
         committed = seed_registry.transition_allocation(
-            ledger, record["allocation_identity"], state=seed_registry.COMMITTED
+            ledger, original_identity, state=seed_registry.COMMITTED
+        )
+        self.assertEqual(
+            seed_registry.find_allocation(committed, original_identity)[
+                "allocation_identity"
+            ],
+            original_identity,
+        )
+        self.assertNotEqual(
+            seed_registry.ledger_revision(committed),
+            original_revision,
         )
         retired = seed_registry.transition_allocation(
-            committed, record["allocation_identity"], state=seed_registry.RETIRED
+            committed, original_identity, state=seed_registry.RETIRED
         )
         with self.assertRaises(seed_registry.SeedRegistryError):
             seed_registry.transition_allocation(
@@ -189,7 +201,7 @@ class SeedRegistryTest(unittest.TestCase):
         with self.assertRaises(seed_registry.SeedRegistryError):
             seed_registry.validate_branch_against_base(base, committed)
 
-    def test_bootstrap_contains_history_and_the_332_candidate_is_reserved(self):
+    def test_bootstrap_contains_history_and_the_332_candidate_remains_fresh(self):
         ledger = seed_registry.load_ledger()
 
         historical_ranges = (
@@ -223,21 +235,12 @@ class SeedRegistryTest(unittest.TestCase):
             )
         )
 
-        collisions = seed_registry.collision_records(
-            ledger,
-            seed_domain=seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
-            seeds=range(70000, 70020),
-        )
-        self.assertEqual(len(collisions), 1)
-        self.assertEqual(collisions[0]["owner_issue"], "lisbun/lisjong-arena#332")
-        self.assertEqual(collisions[0]["state"], seed_registry.RESERVED)
-        record = seed_registry.find_allocation(
-            ledger, collisions[0]["allocation_identity"]
-        )
-        self.assertEqual(record["split"], "QUALIFICATION")
-        self.assertEqual(
-            seed_registry.seeds_from_membership(record["seed_membership"]),
-            tuple(range(70000, 70020)),
+        self.assertFalse(
+            seed_registry.collision_records(
+                ledger,
+                seed_domain=seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+                seeds=range(70000, 70020),
+            )
         )
 
     def test_cli_reserve_collision_commit_and_validate(self):
