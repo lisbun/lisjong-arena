@@ -119,25 +119,35 @@ class BootFailSafeExecutionTest(unittest.TestCase):
         path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     def _stub_imds(self, pending_time):
-        """Stub curl so the token call and the identity document both answer."""
-        document = (
-            '{\\n  \\"instanceId\\" : \\"i-0123456789abcdef0\\",\\n'
-            f'  \\"pendingTime\\" : \\"{pending_time}\\"\\n}}'
-            if pending_time is not None
-            else None
-        )
+        """Stub curl so the token call and the identity document both answer.
+
+        The responses are files the stub simply ``cat``s. Nothing is passed
+        through a shell quoting or ``printf`` escape, because ``/bin/sh`` is
+        dash on the CI runner and bash elsewhere, and the two disagree about
+        backslash escapes in a format string.
+        """
         if pending_time is None:
-            body = "#!/bin/sh\nexit 22\n"
-        else:
-            body = (
-                "#!/bin/sh\n"
-                'case "$*" in\n'
-                "  *api/token*) printf 'AQAE-token'; exit 0 ;;\n"
-                f"  *instance-identity/document*) printf '{document}'; exit 0 ;;\n"
-                "esac\n"
-                "exit 22\n"
-            )
-        self._write(self.stubs / "curl", body)
+            self._write(self.stubs / "curl", "#!/bin/sh\nexit 22\n")
+            return
+        token_file = self.root / "imds-token"
+        document_file = self.root / "imds-document"
+        token_file.write_text("AQAE-token", encoding="utf-8", newline="\n")
+        document_file.write_text(
+            '{\n  "instanceId" : "i-0123456789abcdef0",\n'
+            f'  "pendingTime" : "{pending_time}"\n}}\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        self._write(
+            self.stubs / "curl",
+            "#!/bin/sh\n"
+            'case "$*" in\n'
+            f'  *api/token*) cat "{_posix(token_file)}"; exit 0 ;;\n'
+            f'  *instance-identity/document*) cat "{_posix(document_file)}"; '
+            "exit 0 ;;\n"
+            "esac\n"
+            "exit 22\n",
+        )
 
     def _run(self, *, pending_time, window=_WINDOW):
         self._stub_imds(pending_time)
@@ -178,8 +188,11 @@ class BootFailSafeExecutionTest(unittest.TestCase):
     def test_it_arms_only_the_window_left_since_ec2_launch(self):
         # The instance launched 600s ago, so cloud-init may only arm the rest.
         launched_at = int(time.time()) - 600
-        _result, recorded, deadline = self._run(pending_time=self._stamp(-600))
-        self.assertIn("systemd-run", recorded)
+        result, recorded, deadline = self._run(pending_time=self._stamp(-600))
+        # A broken stub would make the script fail closed and power off, so
+        # surface what it actually saw rather than just the missing call.
+        diagnostic = f"stderr={result.stderr!r} deadline={deadline!r}"
+        self.assertIn("systemd-run", recorded, diagnostic)
         self.assertNotIn("poweroff\n", recorded.replace("systemd-run", ""))
         armed = recorded.split("--on-active=")[1].split("s ")[0]
         self.assertLessEqual(int(armed), _WINDOW - 595)
