@@ -10,11 +10,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 LEDGER_SCHEMA_VERSION = "arena-seed-ledger-v1"
 ALLOCATION_SCHEMA_VERSION = "arena-seed-allocation-v1"
@@ -300,9 +302,28 @@ def load_ledger(
 
 def write_ledger(path: str | Path, document: object) -> None:
     path = Path(path)
-    path.write_text(
-        canonical_json_text(validate_ledger(document)), encoding="utf-8", newline="\n"
-    )
+    text = canonical_json_text(validate_ledger(document))
+    temporary_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        load_ledger(temporary_path)
+        os.replace(temporary_path, path)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
     load_ledger(path)
 
 
