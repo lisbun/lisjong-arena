@@ -15,10 +15,6 @@ from lisjong_arena.model import (
     PolicySpec,
     SingleRoundEvaluationPlan,
 )
-from lisjong_arena.targeted_honor_release_confirmation.protocol import (
-    repository_declared_allocated_seeds as prior_declared_allocated_seeds,
-)
-
 PROTOCOL_ID = "champion-hand-value-v2-bounded-screen-v1"
 ROLE = "BOUNDED DEVELOPMENT SCREEN"
 FORMAL_TEST = False
