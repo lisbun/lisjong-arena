@@ -1,0 +1,160 @@
+{
+  "allocations": [
+    {
+      "allocation_identity": "484e7cb27f1480d9135996ff6b49a5e121fd1f829a584f08d21aa00ab1844290",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": null,
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "historical-declared-chain",
+      "protocol": "historical-arena-declared-seed-chain",
+      "protocol_revision": null,
+      "provenance_reference": "src/lisjong_arena/stage3_scale_learning_curve/protocol.py:declared_occupied_seeds plus successor declared allocation helpers",
+      "purpose": "historical repository-declared allocations; exact legacy domain semantics were not reconstructed",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "arena-legacy-declared-v1",
+      "seed_membership": {
+        "first": 100,
+        "kind": "range",
+        "last": 646
+      },
+      "seed_membership_identity": "2eafb36c96c42456095c2adbc8ddf1a990bcb5e0016f24f8e3fcd8a467915188",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "73d1df57a1973778bf834bd06848ae37ae5a92f041fc7cbd10e2dacbb22f0586",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": null,
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "phase4-raw-corpus",
+      "protocol": "phase4-raw-corpus",
+      "protocol_revision": null,
+      "provenance_reference": "src/lisjong_arena/phase4_raw_corpus/model.py:FIXED_SEEDS",
+      "purpose": "historical fixed raw-corpus generation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "arena-legacy-declared-v1",
+      "seed_membership": {
+        "first": 1000,
+        "kind": "range",
+        "last": 1007
+      },
+      "seed_membership_identity": "1f69ed6b3f2961b5c1eb519c058d95681b19f89e1c8375925aa2fc7523fa0a96",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong-arena#326",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-326-qualification-pilot",
+      "protocol": "wait-shape-qualification-pilot",
+      "protocol_revision": "1ff2a0dc8b130077b8ffd292cc1eb58741624c42394b64616e98b8ad46c2c1b9",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/322#issuecomment-5762375118",
+      "purpose": "wait-shape qualification pilot; incomplete run remains consumed",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 2000,
+        "kind": "range",
+        "last": 2095
+      },
+      "seed_membership_identity": "f3b727ef644c0158484c876265e4bc093be5a28dfbba7c8d43abf909bc315dc4",
+      "split": "PILOT",
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong-arena#252",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-252-development",
+      "protocol": "targeted-honor-release-development",
+      "protocol_revision": null,
+      "provenance_reference": "src/lisjong_arena/targeted_honor_release_development/protocol.py:PHASE_A_SEEDS + ISSUE_252_PARENT_SEEDS",
+      "purpose": "targeted honor release development populations",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 647,
+        "kind": "range",
+        "last": 750
+      },
+      "seed_membership_identity": "d1e93e21d196c9fda0d4e0df7ead1ca01fda00fd209f24f89b182af266970295",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "e186722d18f55f45d8671ed00c478777e86ebdfacf20c30bf9f982e05999062c",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong-arena#263",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-263-confirmation",
+      "protocol": "targeted-honor-release-confirmation",
+      "protocol_revision": null,
+      "provenance_reference": "src/lisjong_arena/targeted_honor_release_confirmation/protocol.py:ISSUE_263_DEVELOPMENT_SEEDS",
+      "purpose": "targeted honor release confirmation population",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 751,
+        "kind": "range",
+        "last": 850
+      },
+      "seed_membership_identity": "d3dfc8d152e29ede8dad7975ae99f20432585ea9629fdfb28d27f45f4b427ac2",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "9b26bf835507516b9834a92f2a3d21828ad18afd5336211c7c1cdf20f07fd835",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong-arena#270",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-270-confirmation",
+      "protocol": "targeted-honor-release-terminal-confirmation",
+      "protocol_revision": null,
+      "provenance_reference": "src/lisjong_arena/champion_hand_value_v2_screen/protocol.py:ISSUE_270_CONFIRMATION_SEEDS",
+      "purpose": "terminal targeted honor release confirmation allocation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 50000,
+        "kind": "range",
+        "last": 52199
+      },
+      "seed_membership_identity": "fd13be996b70787914eb0ec02cc32d863520ddb6725faf8da10e797811e33230",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "a5bc6173967911c65a9a1148246ed55c94413dd69be1acb9c050f8321b4530f4",
+      "allocation_timestamp": null,
+      "arena_revision": "2e4baba8d5979198c861a768b242e993627edb13",
+      "owner_issue": "lisbun/lisjong-arena#297",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "issue-297-screen",
+      "protocol": "champion-hand-value-v2-screen",
+      "protocol_revision": "f3f09b7c048a2454bf66d877cea633f1df8db916cfd28c32c8c10fd3b2adea8e",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/297#issuecomment-5748118482",
+      "purpose": "Champion + HandValue-v2 bounded ABBB screen",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 52200,
+        "kind": "range",
+        "last": 52299
+      },
+      "seed_membership_identity": "9f690487a52367d9988e172b021c4e7767f80fc42800687e80d1217b414b7f5b",
+      "split": null,
+      "state": "RETIRED"
+    }
+  ],
+  "owner_repository": "lisbun/lisjong-arena",
+  "schema_version": "arena-seed-ledger-v1"
+}
