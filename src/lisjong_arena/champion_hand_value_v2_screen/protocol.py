@@ -15,6 +15,7 @@ from lisjong_arena.model import (
     PolicySpec,
     SingleRoundEvaluationPlan,
 )
+
 PROTOCOL_ID = "champion-hand-value-v2-bounded-screen-v1"
 ROLE = "BOUNDED DEVELOPMENT SCREEN"
 FORMAL_TEST = False
@@ -107,9 +108,7 @@ def repository_declared_allocated_seeds() -> frozenset[int]:
 
     from lisjong_arena.seed_registry import allocated_seeds
 
-    return allocated_seeds(
-        exclude_owner_issues={"lisbun/lisjong-arena#297"}
-    )
+    return allocated_seeds(exclude_owner_issues={"lisbun/lisjong-arena#297"})
 
 
 def seed_freshness_block(
