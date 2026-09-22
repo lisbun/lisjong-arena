@@ -133,28 +133,6 @@
       "state": "RETIRED"
     },
     {
-      "allocation_identity": "18649fea8955ee6b3f937156f65b825c2ccfed45fe4e9b44b658229919401f79",
-      "allocation_timestamp": "2026-09-22T01:09:20Z",
-      "arena_revision": "a9bcbc0184a6b3628eb609e3821ca33b924ba2c2",
-      "owner_issue": "lisbun/lisjong-arena#332",
-      "owner_repository": "lisbun/lisjong-arena",
-      "population": "offense-foundation",
-      "protocol": "offense-foundation-v1",
-      "protocol_revision": "a9bcbc0184a6b3628eb609e3821ca33b924ba2c2",
-      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/346#issuecomment-5769753555",
-      "purpose": "offense foundation Phase A P2 qualification",
-      "schema_version": "arena-seed-allocation-v1",
-      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
-      "seed_membership": {
-        "first": 70000,
-        "kind": "range",
-        "last": 70019
-      },
-      "seed_membership_identity": "037b629fd6e587c437976d8260d6e12642ce90654f5ab13d85dda6afff9d1b8d",
-      "split": "QUALIFICATION",
-      "state": "RESERVED"
-    },
-    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
