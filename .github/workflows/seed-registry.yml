@@ -135,6 +135,7 @@ jobs:
           }
 
           changed=false
+          result=""
           case "${OPERATION}" in
             validate)
               python -m lisjong_arena.seed_registry --ledger "${ledger}" validate-ledger
@@ -220,8 +221,8 @@ jobs:
             echo "- operation: \`${OPERATION}\`"
             echo "- authority before: \`${{ steps.authority.outputs.authority_commit }}\`"
             echo "- live branch existed: \`${{ steps.authority.outputs.branch_exists }}\`"
-            if [[ -n "${{ steps.operation.outputs.result }}" ]]; then
-              echo "- result: \`${{ steps.operation.outputs.result }}\`"
+            if [[ -n "${result}" ]]; then
+              echo "- result: \`${result}\`"
             fi
           } >> "${GITHUB_STEP_SUMMARY}"
 
