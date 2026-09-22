@@ -67,9 +67,7 @@ def request(phase="P2"):
             "ledger_revision": "f" * 64,
             "owner_repository": seed_registry.OWNER_REPOSITORY,
             "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
-            "seed_membership_identity": seed_registry.seed_membership_identity(
-                seeds
-            ),
+            "seed_membership_identity": seed_registry.seed_membership_identity(seeds),
         }
     return {
         "allocation_bindings": bindings,
