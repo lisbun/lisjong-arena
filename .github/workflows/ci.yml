@@ -31,6 +31,20 @@ jobs:
       - name: Verify internal VCS dependency identity
         run: python -m lisjong_arena.environment_verify --project pyproject.toml
 
+      - name: Validate Arena seed ledger
+        shell: bash
+        run: |
+          python -m lisjong_arena.seed_registry validate-ledger
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags origin "${{ github.base_ref }}"
+            base_ledger="${RUNNER_TEMP}/base-seed-ledger.json"
+            if git show "origin/${{ github.base_ref }}:src/lisjong_arena/seed-ledger.json" > "$base_ledger" 2>/dev/null; then
+              python -m lisjong_arena.seed_registry validate-branch --base-ledger "$base_ledger"
+            else
+              python -m lisjong_arena.seed_registry validate-branch
+            fi
+          fi
+
       - name: Check formatting
         run: python -m ruff format --check .
 
