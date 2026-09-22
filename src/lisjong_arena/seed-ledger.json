@@ -221,7 +221,7 @@
       "state": "RETIRED"
     },
     {
-      "allocation_identity": "7aa7d7d6023cd2a67a27193292c339f03be90c56351593409e69778fe6b9a745",
+      "allocation_identity": "d764864fd110f008f462b05d156a71b8f0d687f0af9107ef82ffdb28092ce36f",
       "allocation_timestamp": null,
       "arena_revision": "e94a88a885772788d0fa27186c12a31fe471fee2",
       "owner_issue": "lisbun/lisjong#161",
@@ -238,7 +238,7 @@
         "kind": "range",
         "last": 23199
       },
-      "seed_membership_identity": "2776064fe5be76ce0f3b6f453bc9da710ca0145bdba3264f71b4c99176791f53",
+      "seed_membership_identity": "cafb361f9caa965b4e4875d28519e0a4769053f998a99ad34369bd1df0abbdec",
       "split": null,
       "state": "RETIRED"
     },
