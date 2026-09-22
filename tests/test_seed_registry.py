@@ -93,14 +93,20 @@ class SeedRegistryTest(unittest.TestCase):
                 seed_registry.load_ledger(path)
             tampered = json.loads(seed_registry.canonical_json_text(ledger))
             tampered["allocations"][0]["seed_membership"]["last"] = 36
-            path.write_text(seed_registry.canonical_json_text(tampered), encoding="utf-8")
+            path.write_text(
+                seed_registry.canonical_json_text(tampered), encoding="utf-8"
+            )
             with self.assertRaises(seed_registry.SeedRegistryError):
                 seed_registry.load_ledger(path)
 
     def test_binding_carries_identity_membership_domain_and_ledger_revision(self):
         ledger, record = reserved(seed_registry.new_ledger(), range(40, 45))
-        binding = seed_registry.allocation_binding(ledger, record["allocation_identity"])
-        self.assertEqual(binding["ledger_revision"], seed_registry.ledger_revision(ledger))
+        binding = seed_registry.allocation_binding(
+            ledger, record["allocation_identity"]
+        )
+        self.assertEqual(
+            binding["ledger_revision"], seed_registry.ledger_revision(ledger)
+        )
         self.assertEqual(binding["seed_domain"], DOMAIN)
         seed_registry.require_allocation_binding(
             ledger,
@@ -150,7 +156,9 @@ class SeedRegistryTest(unittest.TestCase):
         self.assertEqual(len(collisions), 1)
         self.assertEqual(collisions[0]["owner_issue"], "lisbun/lisjong-arena#332")
         self.assertEqual(collisions[0]["state"], seed_registry.RESERVED)
-        record = seed_registry.find_allocation(ledger, collisions[0]["allocation_identity"])
+        record = seed_registry.find_allocation(
+            ledger, collisions[0]["allocation_identity"]
+        )
         self.assertEqual(record["split"], "QUALIFICATION")
         self.assertEqual(
             seed_registry.seeds_from_membership(record["seed_membership"]),
@@ -209,7 +217,9 @@ class SeedRegistryTest(unittest.TestCase):
                 0,
             )
             self.assertEqual(
-                seed_registry.find_allocation(seed_registry.load_ledger(path), identity)["state"],
+                seed_registry.find_allocation(
+                    seed_registry.load_ledger(path), identity
+                )["state"],
                 seed_registry.COMMITTED,
             )
 
