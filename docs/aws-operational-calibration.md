@@ -13,9 +13,10 @@ Issue #340 adds three things on top of the #329 observability contract:
 
 The implementation is `lisjong_arena.aws_operational_calibration`. It calls no
 AWS API, executes no workload, and introduces no new cloud framework: it
-consumes #329 pricing/runtime planning, #339 durable per-seed receipts and the
-#346 seed-ledger binding shape, and it is driven from the existing #332
-launcher.
+consumes #329 pricing/runtime planning, #339 durable per-seed receipts for the
+calibration path, and the #346 seed-ledger binding shape, and it is driven from
+the existing #332 launcher. #351 deliberately does not require those per-seed
+receipts from production scientific generation.
 
 ## Boundaries
 
@@ -527,31 +528,45 @@ verifies a write/read probe, and unmounts. That directory is outside the
 `issue-332/` artifact root, so the bootstrap's artifact-root freshness check is
 unaffected.
 
-### #332 is No-Go until the per-seed receipt capability exists
+### Production and calibration use different durability minima
 
-#340 Phase 1 requires `per-seed-durable-receipt`. The launcher does not assert
-that capability; it probes it:
+#351 separates the durability requirement by purpose.
+
+Production #332 requires the capability the canonical generator already
+provides:
 
 ```text
 python -m lisjong_arena.offense_foundation durable-evidence
 
 durable_evidence_level             atomic-operational-progress
-required_durable_evidence_level    per-seed-durable-receipt
+required_durable_evidence_level    atomic-operational-progress
 per_seed_durable_receipt_supported false
-status                             FAIL
-follow_up                          lisbun/lisjong-arena#350
+status                             PASS
+follow_up                          null
 ```
 
-The probe reports what `corpus.generate` really does today: atomic operational
-progress, no #339 per-seed receipt, so an interrupted production run retains no
-completed hanchan. The `durable-evidence-support` gate takes its status
-directly from that probe, so **billable #332 Phase A and Phase B are No-Go by
-construction until [#350](https://github.com/lisbun/lisjong-arena/issues/350)
-lands**, and the gate flips on its own when the capability does.
+Calibration remains stronger:
 
-The declared level and instrumentation identity both come from
-`offense_foundation/instrumentation.py`, so a change to the real write path
-also invalidates calibrations measured against the old one.
+```text
+calibration durable evidence       per-seed-durable-receipt
+calibration required level         per-seed-durable-receipt
+```
+
+That split is intentional. A production interruption does not become
+recoverable scientific data merely because per-seed receipts exist: partial
+output cannot be adopted, resumed, selectively rerun, or used to classify P2.
+An authorized retry reruns the same locked phase in full. Calibration, by
+contrast, needs a complete per-task timing set to prevent an incomplete fast
+sample from becoming runtime evidence, so #339 receipts remain mandatory
+there.
+
+Matching calibration accepts evidence whose durable level is **at least** the
+production minimum. A per-seed calibration therefore validly supports an
+atomic-progress production target when every performance-relevant identity
+still matches exactly. The shared
+`GENERATION_INSTRUMENTATION_IDENTITY` continues to bind the paired
+corpus/source-record write path; a real change to that path still makes old
+calibration stale.
 
 ## Historical #326 observation
 
@@ -623,11 +638,13 @@ resolved against canonical seed-registry authority.
 The ordering that follows from this contract is:
 
 ```text
-#350 (per-seed receipts in the generation path)
+freeze the final Arena execution revision (including #351)
+  -> regenerate / strict-read the applicable P0/P1 qualification
   -> reserve the dedicated calibration population on the seed-registry branch
   -> calibration preflight and explicit cost review
-  -> bounded calibration execution
+  -> bounded calibration execution with per-seed timing receipts
   -> calibration evidence
-  -> #332 Phase 1 admission
-  -> billable production execution
+  -> reserve / bind the production population
+  -> #332 Phase 1 admission (atomic production progress is sufficient)
+  -> billable production execution only after GO
 ```
