@@ -31,10 +31,10 @@ jobs:
       - name: Verify internal VCS dependency identity
         run: python -m lisjong_arena.environment_verify --project pyproject.toml
 
-      - name: Validate Arena seed ledger
+      - name: Validate Arena seed ledger bootstrap
         shell: bash
         run: |
-          python -m lisjong_arena.seed_registry validate-ledger
+          python -m lisjong_arena.seed_registry validate-bootstrap
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             git fetch --no-tags origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
             base_ledger="${RUNNER_TEMP}/base-seed-ledger.json"
