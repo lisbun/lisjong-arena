@@ -55,8 +55,7 @@ def describe_generation_instrumentation() -> dict[str, object]:
     """Report the real capability and production requirement."""
 
     supported = (
-        GENERATION_DURABLE_EVIDENCE_LEVEL
-        == PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL
+        GENERATION_DURABLE_EVIDENCE_LEVEL == PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL
     )
     return {
         "durable_evidence_level": GENERATION_DURABLE_EVIDENCE_LEVEL,
@@ -65,9 +64,7 @@ def describe_generation_instrumentation() -> dict[str, object]:
         "limitation": GENERATION_LIMITATION,
         "per_seed_durable_receipt_supported": False,
         "progress_schema": GENERATION_PROGRESS_SCHEMA,
-        "required_durable_evidence_level": (
-            PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL
-        ),
+        "required_durable_evidence_level": (PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL),
         "status": "PASS" if supported else "FAIL",
     }
 
