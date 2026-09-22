@@ -81,13 +81,20 @@ matching dedicated calibration rather than from an operator assertion. Pass
 `-CalibrationEvidencePath`, a priced `-ChargesPath` and `-CostBudgetUsd`; see
 [AWS operational calibration / launch admission](aws-operational-calibration.md).
 
-Billable Phase A and Phase B are currently **No-Go by construction**, for two
-independent reasons: no matching calibration has been produced, and the
-`durable-evidence-support` gate probes
-`python -m lisjong_arena.offense_foundation durable-evidence` and finds that
-the generator publishes no #339 per-seed receipt
-([#350](https://github.com/lisbun/lisjong-arena/issues/350)). `-PreflightOnly`
-reports that decision and exits non-zero without creating any resource.
+Billable Phase A and Phase B remain **No-Go until a matching live
+calibration exists**. The production `durable-evidence-support` gate probes
+`python -m lisjong_arena.offense_foundation durable-evidence` and requires
+`atomic-operational-progress`, which is the capability the canonical
+generator already provides. Per-seed #339 receipts are intentionally not a
+production requirement (#351); they remain mandatory for operational
+calibration, where complete task-level timing evidence affects calibration
+correctness.
+
+An interrupted production phase is still scientifically invalid: partial
+output is never adopted, resumed, selectively rerun, or used to classify P2.
+If a retry is separately authorized, the same locked phase is rerun in full
+under a new operational run-id. `-PreflightOnly` remains a mechanical
+Go/No-Go gate and creates no billable resource.
 
 Defaults are `c7i.4xlarge`, 16 workers and 20 hanchan.
 
