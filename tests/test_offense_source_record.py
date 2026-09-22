@@ -13,7 +13,7 @@ from lisjong.policies import TwoStepUkeirePolicy
 from lisjong.policy_contract import DecisionTraceRecorder, execute_policy_with_trace
 
 from lisjong_arena import seed_registry
-from lisjong_arena.offense_foundation import corpus, source_record
+from lisjong_arena.offense_foundation import corpus, protocol, source_record
 from lisjong_arena.offense_foundation.__main__ import main
 from lisjong_arena.offense_foundation.fixtures import probes
 from lisjong_arena.offense_foundation.protocol import make_lock
@@ -453,24 +453,58 @@ class SourceRecordTest(unittest.TestCase):
                     source_path, expected_lock=lock, corpus_path=corpus_path
                 )
 
-    def test_v1_historical_manifest_without_allocation_bindings_is_readable(self):
-        """A frozen historical v1 artifact (no allocation provenance) still
-        reads successfully; v1 is readback-only and never gains the field."""
-        with tempfile.TemporaryDirectory() as tmp:
-            lock, _, corpus_path, source_path = self.generate_fixture(Path(tmp))
-            self._mutate_manifest_body(
-                source_path,
-                lambda body: (
-                    body.update(schema=source_record.SOURCE_SCHEMA_V1),
-                    body.pop("allocation_bindings"),
-                ),
-            )
+    def test_a_genuinely_pre_347_protocol_lock_is_rejected_upstream_of_the_schema(
+        self,
+    ) -> None:
+        """`read_source_record()` cannot read a genuinely historical (pre-#346/
+        #347) corpus end to end, regardless of the source-record's own schema.
 
-            manifest = source_record.read_source_record(
-                source_path, expected_lock=lock, corpus_path=corpus_path
-            )
-            self.assertEqual(manifest["schema"], source_record.SOURCE_SCHEMA_V1)
-            self.assertNotIn("allocation_bindings", manifest)
+        `read_source_record()` calls `read_corpus() -> validate_lock() ->
+        make_lock() -> validate_request()` before it ever looks at the
+        source-record manifest's own `schema` field. #347 already narrowed
+        `validate_request()` to require `allocation_bindings` unconditionally
+        (removing the old `known_used_seeds`/`freshness_evidence` shape), so
+        a lock built from a genuinely pre-#347 request is rejected at that
+        upstream layer -- independent of `SOURCE_SCHEMA_V1` vs
+        `SOURCE_SCHEMA_V2`. This is a pre-existing consequence of #347, not
+        something #348 introduces, changes, or is responsible for fixing;
+        extending legacy protocol/corpus compatibility is out of scope here.
+        Restoring genuine end-to-end historical readback, if ever wanted,
+        belongs in its own Issue.
+        """
+        historical_seeds = list(range(20))
+        historical_request = {
+            "phase": "P2",
+            "populations": {"QUALIFICATION": historical_seeds},
+            "known_used_seeds": [],
+            "freshness_evidence": ["genuinely pre-#347 request shape"],
+        }
+        historical_lock = seal(
+            {
+                "schema": "arena-offense-o0-prerequisites-v1",
+                "kind": "protocol-lock",
+                "game_mode": protocol.GAME_MODE,
+                "teacher_seats": 4,
+                "request": historical_request,
+                "qualification": self.report,
+                "p2_reference": None,
+            }
+        )
+
+        with self.assertRaisesRegex(OffenseError, "invalid population request fields"):
+            protocol.validate_lock(historical_lock)
+
+    def test_v1_schema_constant_is_still_a_recognized_manifest_identity(self) -> None:
+        """`SOURCE_SCHEMA_V1` remains a schema string this module recognizes as
+        historical (distinct from an unsupported/future schema); this is a
+        narrower claim than genuine historical corpus readback, which the
+        test above shows is blocked upstream by the protocol/lock layer."""
+        self.assertIn(
+            source_record.SOURCE_SCHEMA_V1, source_record.SUPPORTED_SOURCE_SCHEMAS
+        )
+        self.assertNotEqual(
+            source_record.SOURCE_SCHEMA_V1, source_record.SOURCE_SCHEMA_V2
+        )
 
     def test_unsupported_schema_string_is_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

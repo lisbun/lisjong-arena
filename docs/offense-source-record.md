@@ -24,9 +24,20 @@ arena-offense-o0-player-safe-source-record-v2
 exact Arena seed-allocation ledger provenance (lisbun/lisjong-arena#346/#347)
 behind the request population. The historical
 `arena-offense-o0-player-safe-source-record-v1` schema (no allocation
-provenance) remains readable for existing artifacts generated before this
-field existed; it is frozen and readback-only — the generator never writes it
-again.
+provenance) is frozen — the generator never writes it again — and this
+module still recognizes its schema string and (narrower) manifest field
+shape. That is **not** the same claim as "a genuinely historical (pre-#347)
+corpus can be read end to end today": `read_source_record()` calls
+`read_corpus() -> validate_lock() -> make_lock() -> validate_request()`
+before it ever inspects this schema, and #347 already narrowed
+`validate_request()` to require `allocation_bindings` unconditionally. A
+lock built from a genuinely pre-#347 request (`known_used_seeds` /
+`freshness_evidence`, no `allocation_bindings`) is rejected there,
+independent of the source-record's own schema. That is a pre-existing
+consequence of #347, not something this change restores or is responsible
+for fixing; extending legacy protocol/corpus compatibility is out of scope
+here. Restoring genuine end-to-end historical readback, if ever needed,
+belongs in its own Issue.
 
 A complete artifact is:
 

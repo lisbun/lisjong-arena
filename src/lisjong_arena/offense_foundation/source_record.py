@@ -29,8 +29,21 @@ from .qualification import read_document, seal, unseal, write_document
 from .semantics import OffenseError
 
 SOURCE_SCHEMA_V1 = "arena-offense-o0-player-safe-source-record-v1"
-"""Historical schema. Frozen: no allocation provenance field. Readback-only —
-new generation always writes ``SOURCE_SCHEMA_V2``.
+"""Historical schema identity. Frozen: no allocation provenance field, and
+new generation always writes ``SOURCE_SCHEMA_V2`` instead.
+
+This module still recognizes the schema string and its (narrower) manifest
+field shape. That is a distinct, weaker claim than "a genuinely historical
+(pre-lisbun/lisjong-arena#346/#347) corpus can be read end to end today":
+``read_source_record()`` calls ``read_corpus() -> validate_lock() ->
+make_lock() -> validate_request()`` before it inspects this schema at all,
+and #347 already narrowed ``validate_request()`` to require
+``allocation_bindings`` unconditionally. A lock built from a genuinely
+pre-#347 request (``known_used_seeds``/``freshness_evidence``, no
+``allocation_bindings``) is rejected there, independent of this schema.
+That is a pre-existing consequence of #347, not something this module
+changes or restores; see ``tests/test_offense_source_record.py``'s
+``test_a_genuinely_pre_347_protocol_lock_is_rejected_upstream_of_the_schema``.
 """
 
 SOURCE_SCHEMA_V2 = "arena-offense-o0-player-safe-source-record-v2"
