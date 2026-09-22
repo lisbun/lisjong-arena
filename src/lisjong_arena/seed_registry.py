@@ -284,6 +284,26 @@ def ledger_revision(document: object) -> str:
     text = canonical_json_text(validate_ledger(document))
     return hashlib.sha256(text.encode()).hexdigest()
 
+def validate_bootstrap_ledger(document: object) -> dict[str, object]:
+    """Validate the immutable main-branch bootstrap snapshot.
+
+    Live RESERVED/COMMITTED state belongs on the dedicated seed-registry
+    authority branch. Keeping active state out of main prevents ordinary
+    allocation operations from changing the scientific code revision.
+    """
+
+    ledger = validate_ledger(document)
+    active = [
+        record["allocation_identity"]
+        for record in ledger["allocations"]
+        if record["state"] in ACTIVE_STATES
+    ]
+    if active:
+        raise SeedRegistryError(
+            f"bootstrap ledger contains live allocations: {active!r}"
+        )
+    return ledger
+
 
 def load_ledger(
     path: str | Path = DEFAULT_LEDGER_PATH, *, strict_serialization: bool = True
@@ -441,13 +461,25 @@ def require_allocation_binding(
     population: str | None = None,
     split: str | None = None,
 ) -> dict[str, object]:
+    """Resolve a retained binding against the current live authority.
+
+    ledger_revision names the authorizing snapshot that created the binding.
+    It is intentionally not required to equal the current global ledger
+    revision: unrelated reservations and RESERVED -> COMMITTED transitions
+    must not invalidate a scientific lock. Current authority is established
+    by the immutable allocation identity plus live active state and exact
+    ownership/membership.
+    """
+
     ledger = validate_ledger(document)
     binding = validate_binding_shape(binding, seeds=seeds)
-    if binding["ledger_revision"] != ledger_revision(ledger):
-        raise SeedRegistryError("allocation binding ledger_revision is stale")
     record = find_allocation(ledger, binding["allocation_identity"])
-    if allocation_binding(ledger, record["allocation_identity"]) != binding:
-        raise SeedRegistryError("allocation binding differs from canonical ledger")
+    if record["seed_domain"] != binding["seed_domain"]:
+        raise SeedRegistryError("allocation binding seed_domain differs from authority")
+    if record["seed_membership_identity"] != binding["seed_membership_identity"]:
+        raise SeedRegistryError(
+            "allocation binding membership identity differs from authority"
+        )
     if record["state"] not in ACTIVE_STATES:
         raise SeedRegistryError("allocation is not active")
     expected = {
@@ -619,6 +651,7 @@ def main(argv: list[str] | None = None) -> int:
     commit.add_argument("allocation_identity")
     commit.add_argument("--state", choices=(COMMITTED, RETIRED), default=COMMITTED)
     commands.add_parser("validate-ledger")
+    commands.add_parser("validate-bootstrap")
     branch = commands.add_parser("validate-branch")
     branch.add_argument("--base-ledger")
 
@@ -703,12 +736,19 @@ def main(argv: list[str] | None = None) -> int:
                 allocation_identity=args.allocation_identity,
                 state=args.state,
             )
-        elif args.command == "validate-ledger":
+        elif args.command in {"validate-ledger", "validate-bootstrap"}:
+            if args.command == "validate-bootstrap":
+                validate_bootstrap_ledger(ledger)
             print(
                 json.dumps(
                     {
                         "allocation_count": len(ledger["allocations"]),
                         "ledger_revision": ledger_revision(ledger),
+                        "mode": (
+                            "BOOTSTRAP"
+                            if args.command == "validate-bootstrap"
+                            else "LIVE"
+                        ),
                         "status": "PASS",
                     },
                     sort_keys=True,
