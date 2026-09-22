@@ -75,9 +75,15 @@ This API runs no learner and does not produce OFFLINE-EVAL qualification.
 **Do not run these generation commands as part of the prerequisite PR.**
 No actual population or scientific seed range is supplied by this documentation.
 
-Before #332 execution, reserve every split in the canonical Arena seed ledger
-described in `docs/seed-registry.md`, merge that reservation to current
-`main`, and then supply a JSON request with exactly these fields:
+Before #332 execution, use the canonical Arena seed ledger described in
+`docs/seed-registry.md`. Because #332 binds an exact Arena revision across its
+revision-sensitive execution sequence, complete the matching runtime calibration
+first, then merge the P2 and Phase-B reservations before generating the final
+P0/P1 qualification. Reserving the Phase-B splits early does not authorize Phase
+B execution; the existing `OFFENSE SUPPORT QUALIFIED` gate remains mandatory.
+
+After that reservation merge, freeze the exact Arena execution revision and
+supply a JSON request with exactly these fields:
 
 | Field | P2 | SCIENTIFIC |
 | --- | --- | --- |
@@ -98,6 +104,12 @@ default seed allocation, extension, result-driven replacement or row
 reshuffling. Historical/private scans were used to bootstrap the ledger; normal
 fresh allocation now uses the canonical ledger plus PR/main concurrency
 validation rather than repeating a full artifact scan.
+
+Keep the reservations in `RESERVED` while the exact-revision Phase A / Phase B
+sequence is active. The reservation already prevents reuse; a later
+`COMMITTED` / `RETIRED` ledger commit must not force the scientific code
+revision to change. If P2 does not qualify, the pre-reserved Phase-B populations
+remain consumed and are retired rather than recycled.
 
 ```text
 python -m lisjong_arena.offense_foundation validate-request --request p2-request.json --phase P2
