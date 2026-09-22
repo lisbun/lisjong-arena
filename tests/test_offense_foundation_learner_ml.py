@@ -1,5 +1,6 @@
 """ML-facing tests for the #331 TRAIN/SELECT learner path."""
 
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -8,12 +9,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from lisjong_arena.learned_policy_stage2.network import create_model
 from lisjong_arena.learned_policy_stage2.protocol import Split
 from lisjong_arena.offense_foundation import learner
 from lisjong_arena.offense_foundation.semantics import OffenseError
 
+TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 
+
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class LearnerTensorTest(unittest.TestCase):
     def _write_choice_game(self, root: Path, ordinal: int):
         game_path = root / f"game-{ordinal:03d}"
@@ -78,6 +81,7 @@ class LearnerTensorTest(unittest.TestCase):
                 self.assertEqual((offline / name).read_bytes(), sentinel)
 
 
+@unittest.skipUnless(TORCH_AVAILABLE, "requires the Arena ml extra")
 class LearnerCheckpointTest(unittest.TestCase):
     def _view(self, root: Path):
         return learner.CorpusTrainingView(
@@ -91,6 +95,8 @@ class LearnerCheckpointTest(unittest.TestCase):
         )
 
     def _run(self):
+        from lisjong_arena.learned_policy_stage2.network import create_model
+
         model = create_model()
         return SimpleNamespace(
             model=model,
