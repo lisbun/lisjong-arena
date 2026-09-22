@@ -159,15 +159,21 @@ class SeedRegistryTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), previous)
             self.assertEqual(list(path.parent.glob(".ledger.json.*.tmp")), [])
 
-    def test_binding_carries_identity_membership_domain_and_ledger_revision(self):
+    def test_binding_survives_live_ledger_churn_but_not_retirement(self):
         ledger, record = reserved(seed_registry.new_ledger(), range(40, 45))
         binding = seed_registry.allocation_binding(
             ledger, record["allocation_identity"]
         )
-        self.assertEqual(
-            binding["ledger_revision"], seed_registry.ledger_revision(ledger)
-        )
+        authorizing_revision = binding["ledger_revision"]
+        self.assertEqual(authorizing_revision, seed_registry.ledger_revision(ledger))
         self.assertEqual(binding["seed_domain"], DOMAIN)
+
+        ledger, _ = reserved(
+            ledger,
+            range(45, 50),
+            issue="lisbun/lisjong-arena#1000",
+        )
+        self.assertNotEqual(authorizing_revision, seed_registry.ledger_revision(ledger))
         seed_registry.require_allocation_binding(
             ledger,
             binding,
@@ -177,10 +183,23 @@ class SeedRegistryTest(unittest.TestCase):
             population="test-population",
             split="TEST",
         )
-        stale = dict(binding)
-        stale["ledger_revision"] = "0" * 64
-        with self.assertRaises(seed_registry.SeedRegistryError):
-            seed_registry.require_allocation_binding(ledger, stale, seeds=range(40, 45))
+
+        committed = seed_registry.transition_allocation(
+            ledger, record["allocation_identity"], state=seed_registry.COMMITTED
+        )
+        seed_registry.require_allocation_binding(
+            committed, binding, seeds=range(40, 45)
+        )
+
+        retired = seed_registry.transition_allocation(
+            committed, record["allocation_identity"], state=seed_registry.RETIRED
+        )
+        with self.assertRaisesRegex(
+            seed_registry.SeedRegistryError, "allocation is not active"
+        ):
+            seed_registry.require_allocation_binding(
+                retired, binding, seeds=range(40, 45)
+            )
 
     def test_branch_validation_detects_concurrent_main_reservation(self):
         base = seed_registry.new_ledger()
@@ -242,6 +261,20 @@ class SeedRegistryTest(unittest.TestCase):
                 seeds=range(70000, 70020),
             )
         )
+
+    def test_bootstrap_validator_rejects_live_state_on_main(self):
+        bootstrap = seed_registry.load_ledger()
+        self.assertEqual(seed_registry.validate_bootstrap_ledger(bootstrap), bootstrap)
+
+        live, _ = reserved(
+            bootstrap,
+            range(90000, 90005),
+            issue="lisbun/lisjong-arena#1001",
+        )
+        with self.assertRaisesRegex(
+            seed_registry.SeedRegistryError, "bootstrap ledger contains live allocations"
+        ):
+            seed_registry.validate_bootstrap_ledger(live)
 
     def test_cli_reserve_collision_commit_and_validate(self):
         with tempfile.TemporaryDirectory() as tmp:
