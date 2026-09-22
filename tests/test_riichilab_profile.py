@@ -19,7 +19,9 @@ from lisjong.policies import MinimalPolicy, TwoStepUkeirePolicy
 from lisjong_arena.riichilab.profile import (
     PROFILE_NAMES,
     MissingCredentialError,
+    ProfileError,
     RuntimeProfile,
+    SecretShapeError,
     UnknownProfileError,
     build_runtime_summary,
     default_trace_path,
@@ -166,6 +168,51 @@ class ResolveCredentialTest(unittest.TestCase):
         with self.assertRaises(MissingCredentialError) as caught:
             resolve_credential(profile, env={"LISJONG_DEV_BOT_TOKEN": ""})
         self.assertNotIn(_DUMMY_SECRET, str(caught.exception))
+
+
+class ResolveCredentialSecretShapeTest(unittest.TestCase):
+    """Issue #336: 取得できたcredential値自体がraw single-token contractに
+    違反する場合のfail closedを固定する。
+    """
+
+    def test_raw_opaque_token_passes_unchanged(self) -> None:
+        profile = resolve_profile("lisjong-dev")
+        token = resolve_credential(
+            profile, env={"LISJONG_DEV_BOT_TOKEN": _DUMMY_SECRET}
+        )
+        self.assertEqual(token, _DUMMY_SECRET)
+
+    def test_json_object_value_fails_closed(self) -> None:
+        profile = resolve_profile("lisjong-dev")
+        structured = '{"LISJONG_DEV_BOT_TOKEN": "%s"}' % _DUMMY_SECRET
+        with self.assertRaises(SecretShapeError):
+            resolve_credential(profile, env={"LISJONG_DEV_BOT_TOKEN": structured})
+
+    def test_json_array_value_fails_closed(self) -> None:
+        profile = resolve_profile("lisjong-dev")
+        structured = '["%s"]' % _DUMMY_SECRET
+        with self.assertRaises(SecretShapeError):
+            resolve_credential(profile, env={"LISJONG_DEV_BOT_TOKEN": structured})
+
+    def test_newline_bearing_value_fails_closed(self) -> None:
+        profile = resolve_profile("lisjong-dev")
+        with self.assertRaises(SecretShapeError):
+            resolve_credential(
+                profile, env={"LISJONG_DEV_BOT_TOKEN": _DUMMY_SECRET + "\n"}
+            )
+
+    def test_structured_value_is_not_auto_extracted_into_a_token(self) -> None:
+        profile = resolve_profile("lisjong-dev")
+        structured = '{"LISJONG_DEV_BOT_TOKEN": "%s"}' % _DUMMY_SECRET
+        with self.assertRaises(SecretShapeError) as caught:
+            resolve_credential(profile, env={"LISJONG_DEV_BOT_TOKEN": structured})
+        self.assertNotIn(_DUMMY_SECRET, str(caught.exception))
+
+    def test_secret_shape_error_is_a_profile_error(self) -> None:
+        profile = resolve_profile("lisjong-dev")
+        structured = '["%s"]' % _DUMMY_SECRET
+        with self.assertRaises(ProfileError):
+            resolve_credential(profile, env={"LISJONG_DEV_BOT_TOKEN": structured})
 
 
 class RuntimeRootTest(unittest.TestCase):

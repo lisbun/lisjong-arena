@@ -122,6 +122,27 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         self.assertNotIn('echo "$TOKEN"', text)
         self.assertNotIn('printf "$TOKEN"', text)
 
+    def test_bootstrap_validates_secret_shape_through_output_json_seam(self) -> None:
+        """Issue #336: `--output text`のcommand substitutionはtrailing
+        newlineを正規化してしまうため、`--output json`でSecretStringの
+        CR/LF evidenceを保ったまま`secret_contract`検証へ渡していることを
+        固定する。
+        """
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn("--output json", text)
+        self.assertNotIn("--query SecretString", text)
+        self.assertIn("lisjong_arena.riichilab.secret_contract", text)
+        self.assertLess(
+            text.index("SECRET_RESPONSE_JSON"),
+            text.index("lisjong_arena.riichilab.secret_contract"),
+        )
+        self.assertLess(
+            text.index("lisjong_arena.riichilab.secret_contract"),
+            text.index('export LISJONG_DEV_BOT_TOKEN="$TOKEN"'),
+        )
+        self.assertNotIn('echo "$SECRET_RESPONSE_JSON"', text)
+        self.assertNotIn('printf "$SECRET_RESPONSE_JSON"', text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,11 @@ from lisjong.policies import (
 )
 from lisjong.policy_contract.policy import Policy
 
+from lisjong_arena.riichilab.secret_contract import (
+    SecretFormatError,
+    validate_secret_string,
+)
+
 
 class ProfileError(Exception):
     """profile解決・credential解決に関するfail closed例外の基底class。"""
@@ -51,6 +56,16 @@ class MissingCredentialError(ProfileError):
 
     例外メッセージには環境変数の名前だけを含め、値は含めない。他profileの
     credential環境変数を探索・流用することもない。
+    """
+
+
+class SecretShapeError(ProfileError):
+    """profile専用のcredential環境変数の値がraw single-token contract
+    (Issue #336)に違反する場合。
+
+    structured JSON(object/array)、CR/LFを含む値等が該当する。例外
+    メッセージには固定のsecret-safeなblocker文だけを含み、実際の値は
+    一切含めない。trim・自動repair・JSON nested fieldからの抽出は行わない。
     """
 
 
@@ -130,6 +145,9 @@ def resolve_credential(
     """`profile.credential_env_var`だけからtokenを読み込む。
 
     他profileの環境変数は一切参照しない。未設定・空文字列はfail closedする。
+    値が取得できた場合も、structured JSONやCR/LFを含む値等raw single-token
+    contract(Issue #336)に違反する形はfail closedし、`SecretShapeError`を
+    送出する。trim・repair・JSON nested fieldからの自動抽出は行わない。
     """
     source = env if env is not None else os.environ
     token = source.get(profile.credential_env_var)
@@ -139,6 +157,10 @@ def resolve_credential(
             f"profile {profile.name!r}. Set {profile.credential_env_var} to the "
             f"RiichiLab bot token for this profile and re-run."
         )
+    try:
+        validate_secret_string(token)
+    except SecretFormatError as error:
+        raise SecretShapeError(str(error)) from None
     return token
 
 
@@ -242,6 +264,7 @@ __all__ = [
     "ProfileError",
     "RuntimeProfile",
     "RuntimeSummary",
+    "SecretShapeError",
     "UnknownProfileError",
     "build_runtime_summary",
     "default_trace_path",

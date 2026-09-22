@@ -635,6 +635,33 @@ class CliRegressionTest(unittest.TestCase):
         self.assertEqual(return_code, 2)
         self.assertIn(_DEV_TOKEN_VAR, stderr.getvalue())
 
+    def test_structured_secret_exits_2_and_does_not_invoke_the_runner(self) -> None:
+        """Issue #336: SecretStringがJSON objectだった場合、
+        `run_continuous_ranked()`(ranked runner/retry loop)へ到達する前に
+        fail closedすることを固定する。
+        """
+        structured_secret = '{"LISJONG_DEV_BOT_TOKEN": "should-not-be-used"}'
+
+        async def _runner_must_not_be_called(profile, token, **kwargs):
+            raise AssertionError(
+                "run_continuous_ranked must not be invoked after a secret "
+                "format failure"
+            )
+
+        stderr = io.StringIO()
+        with (
+            patch.dict(os.environ, {_DEV_TOKEN_VAR: structured_secret}),
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_continuous_ranked",
+                _runner_must_not_be_called,
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            return_code = _run_cli(["--profile", "lisjong-dev"])
+        self.assertEqual(return_code, 2)
+        self.assertNotIn("should-not-be-used", stderr.getvalue())
+        self.assertIn("RIICHILAB SECRET FORMAT BLOCKER", stderr.getvalue())
+
     def test_cli_reports_summary_and_is_secret_safe(self) -> None:
         dummy_token = "unit-test-dummy-token-should-not-leak"
 
