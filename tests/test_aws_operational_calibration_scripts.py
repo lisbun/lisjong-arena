@@ -29,6 +29,10 @@ def _normalize_console_output(text):
 
 
 class OperationalCalibrationScriptTest(unittest.TestCase):
+    def setUp(self):
+        self.root_for_shell = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root_for_shell, True)
+
     def test_scripts_have_valid_shell_syntax(self):
         pwsh = shutil.which("pwsh")
         if pwsh is not None:
@@ -57,6 +61,50 @@ class OperationalCalibrationScriptTest(unittest.TestCase):
             except OSError as error:
                 self.skipTest(f"bash cannot be executed: {error}")
             self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_the_fail_safe_ssm_command_is_valid_shell(self):
+        """The SSM command is a shell script assembled from PowerShell strings.
+
+        Nothing else syntax-checks it, so reconstruct the command array both
+        launchers send and run ``bash -n`` over it.
+        """
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        for path in (
+            _LAUNCHER,
+            _ROOT / "scripts" / "aws" / "start-offense-foundation-332.ps1",
+        ):
+            with self.subTest(script=path.name):
+                text = path.read_text(encoding="utf-8")
+                start = text.index("$failSafeCommand = Send-SsmCommand")
+                block = text[start : text.index("\n    )", start)]
+                lines = []
+                for raw in block.splitlines():
+                    stripped = raw.strip().rstrip(",")
+                    if stripped.startswith("'") and stripped.endswith("'"):
+                        lines.append(stripped[1:-1].replace("''", "'"))
+                    elif stripped.startswith('"') and stripped.endswith('"'):
+                        # Approximate PowerShell interpolation with a value.
+                        value = stripped[1:-1].replace("`$", "$")
+                        value = re.sub(r"\$\(\$\w+ \* 3600\)", "43200", value)
+                        value = re.sub(r"\$\(\$\w+\)", "12", value)
+                        lines.append(re.sub(r"\$\w+", "12", value))
+                self.assertIn("BOOT_FAILSAFE_DEADLINE", "\n".join(lines))
+                script = self.root_for_shell / f"{path.stem}-failsafe.sh"
+                script.write_text(
+                    "\n".join(["set -eu", *lines]) + "\n",
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                result = subprocess.run(
+                    [bash, "-n", str(script)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
 
     def test_a_calibration_can_never_run_a_scientific_population(self):
         launcher = _LAUNCHER.read_text(encoding="utf-8")
