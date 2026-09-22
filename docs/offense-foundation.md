@@ -75,26 +75,61 @@ This API runs no learner and does not produce OFFLINE-EVAL qualification.
 **Do not run these generation commands as part of the prerequisite PR.**
 No actual population or scientific seed range is supplied by this documentation.
 
-Before #332 execution, the operator must scan current Arena evidence and retained
-artifact history, then supply a JSON request with exactly these fields:
+Before #332 execution, use the canonical Arena seed authority described in
+`docs/seed-registry.md`. Live allocation state is stored on the dedicated
+`seed-registry` branch, not on Arena `main`. Therefore reserving, committing,
+or retiring a population does not change the exact scientific code revision.
+
+For P2:
+
+```text
+merge #346
+    -> freeze exact reviewed Arena code revision X
+    -> reserve one fresh 20-seed QUALIFICATION population on seed-registry
+       with arena_revision = X
+    -> regenerate / strict-read final P0/P1 qualification on X
+    -> build the P2 request from the canonical allocation binding
+    -> Phase A executes X
+```
+
+If P2 qualifies, reserve TRAIN / SELECT / OFFLINE-EVAL exactly once using the
+same execution revision X. This is the predeclared Phase-B gate, not a
+result-driven replacement. If P2 fails, no Phase-B allocation is needed.
+
+The request has exactly these fields:
 
 | Field | P2 | SCIENTIFIC |
 | --- | --- | --- |
 | `phase` | `"P2"` | `"SCIENTIFIC"` |
 | `populations` | `{"QUALIFICATION": [20 explicit seeds]}` | `{"TRAIN": [100 explicit seeds], "SELECT": [20 explicit seeds], "OFFLINE-EVAL": [20 explicit seeds]}` |
-| `known_used_seeds` | explicit array from the evidence/history scan | updated explicit array from that scan |
-| `freshness_evidence` | nonempty array of scan evidence references | nonempty array of scan evidence references |
+| `allocation_bindings` | canonical QUALIFICATION allocation binding | canonical TRAIN / SELECT / OFFLINE-EVAL allocation bindings |
+
+Each binding carries the Arena owner, allocation identity, seed domain,
+membership identity and the authorizing `ledger_revision`. That ledger revision
+is retained for audit; later unrelated allocations or a
+`RESERVED -> COMMITTED` transition do not invalidate the lock. Current live
+validation resolves the immutable allocation identity against the authority
+ledger and requires the record to remain `RESERVED` or `COMMITTED`.
+
+A locally free range is not authority. The #332 launcher fetches
+`refs/heads/seed-registry` read-only, validates the request against that live
+ledger, and passes the exact same ledger snapshot into the AWS bootstrap. It
+does not switch or mutate the Arena scientific worktree.
 
 The bracketed seed descriptions above are explanatory, not valid JSON or
 recommended seeds. Each split must be an ascending contiguous unsigned 32-bit
-range. Populations must not overlap each other, known prior seeds, or P2 seeds.
-There is no default seed allocation, extension, replacement or row reshuffling.
-The tool can check the supplied inventory; it cannot discover every external
-retained artifact automatically. Completeness of the evidence/history scan is
-an operator precondition, not inferred from an empty `known_used_seeds` array.
+range. Scientific splits must not overlap each other or P2 seeds. There is no
+default seed allocation, extension, result-driven replacement or row
+reshuffling. Historical/private scans were used only to bootstrap the authority;
+normal fresh allocation no longer repeats a full artifact scan or requires a
+PR/merge.
+
+For a direct local invocation, first materialize the live ledger to a temporary
+file as documented in `seed-registry.md`, then pass that file explicitly:
 
 ```text
-python -m lisjong_arena.offense_foundation lock --request p2-request.json --qualification o0-qualification.json --output p2-lock.json
+python -m lisjong_arena.offense_foundation validate-request --request p2-request.json --phase P2 --seed-ledger <live-ledger.json>
+python -m lisjong_arena.offense_foundation lock --request p2-request.json --qualification o0-qualification.json --seed-ledger <live-ledger.json> --output p2-lock.json
 python -m lisjong_arena.offense_foundation generate --lock p2-lock.json --output retained/p2-corpus --source-record-output retained/p2-source-record
 python -m lisjong_arena.offense_foundation readback --lock p2-lock.json --corpus retained/p2-corpus
 python -m lisjong_arena.offense_foundation source-readback --lock p2-lock.json --corpus retained/p2-corpus --source-record retained/p2-source-record
@@ -122,7 +157,7 @@ Only after final `OFFENSE SUPPORT QUALIFIED`, allocate and lock the scientific
 request, then execute as a separate AWS run-id:
 
 ```text
-python -m lisjong_arena.offense_foundation lock --request scientific-request.json --qualification o0-qualification.json --p2-corpus retained/p2-corpus --output scientific-lock.json
+python -m lisjong_arena.offense_foundation lock --request scientific-request.json --qualification o0-qualification.json --seed-ledger <live-ledger.json> --p2-corpus retained/p2-corpus --output scientific-lock.json
 python -m lisjong_arena.offense_foundation generate --lock scientific-lock.json --p2-corpus retained/p2-corpus --output retained/scientific-corpus --source-record-output retained/scientific-source-record
 python -m lisjong_arena.offense_foundation readback --lock scientific-lock.json --corpus retained/scientific-corpus
 python -m lisjong_arena.offense_foundation source-readback --lock scientific-lock.json --corpus retained/scientific-corpus --source-record retained/scientific-source-record

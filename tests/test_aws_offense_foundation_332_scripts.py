@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from lisjong_arena import seed_registry
+
 _ROOT = Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "scripts" / "aws" / "start-offense-foundation-332.ps1"
 _BOOTSTRAP = _ROOT / "scripts" / "aws" / "bootstrap-offense-foundation-332.sh"
@@ -153,6 +155,23 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("--expected-qualification-contract-b64", launcher)
         self.assertNotIn("--expected-qualification-identity", launcher)
 
+    def test_seed_registry_authority_is_decoupled_from_arena_code_revision(self):
+        launcher = _LAUNCHER.read_text(encoding="utf-8")
+        bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn('$seedRegistryBranch = "seed-registry"', launcher)
+        self.assertNotIn("[string]$SeedLedgerPath", launcher)
+        self.assertNotIn("[string]$SeedRegistryBranch", launcher)
+        self.assertIn("git -C $repoRoot fetch --no-tags origin $fetchSpec", launcher)
+        self.assertIn("--seed-ledger $resolvedSeedLedgerPath", launcher)
+        self.assertIn("--seed-ledger-json-b64", launcher)
+        self.assertIn("--seed-ledger-json-b64)", bootstrap)
+        self.assertIn('--seed-ledger "$INPUT_ROOT/seed-ledger.json"', bootstrap)
+        self.assertIn("lisjong_arena.seed_registry", bootstrap)
+        self.assertLess(
+            launcher.index("Canonical seed ledger validation failed"),
+            launcher.index('"ec2", "create-volume"'),
+        )
+
     def test_phase_b_arena_revision_bound_before_billable_mutation(self):
         # Blocker 2: Phase B must bind to the exact Phase A Arena revision
         # before any billable AWS resource is created.
@@ -253,19 +272,42 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         value on the mocked retained Phase A volume; omit it to simulate a
         volume with no such tag at all (Blocker 2 missing-tag case).
         """
-        request = {
-            "phase": "SCIENTIFIC",
-            "populations": {
-                "TRAIN": list(range(100, 200)),
-                "SELECT": list(range(200, 220)),
-                "OFFLINE-EVAL": list(range(220, 240)),
-            },
-            "known_used_seeds": [],
-            "freshness_evidence": ["synthetic preflight fixture only"],
+        populations = {
+            "TRAIN": list(range(100, 200)),
+            "SELECT": list(range(200, 220)),
+            "OFFLINE-EVAL": list(range(220, 240)),
         }
         temp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, temp, True)
         root = Path(temp)
+        ledger_path = root / "seed-ledger.json"
+        ledger = seed_registry.new_ledger()
+        identities = {}
+        for split, seeds in populations.items():
+            ledger, record = seed_registry.reserve_allocation(
+                ledger,
+                owner_issue="lisbun/lisjong-arena#332",
+                protocol="offense-foundation-v1",
+                seed_domain=seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+                purpose="synthetic AWS preflight allocation",
+                population="offense-foundation",
+                split=split,
+                seeds=seeds,
+                arena_revision=arena_revision,
+                protocol_revision="synthetic-test-v1",
+                provenance_reference="synthetic test fixture",
+                allocation_timestamp="2026-09-22T00:00:00Z",
+            )
+            identities[split] = record["allocation_identity"]
+        seed_registry.write_ledger(ledger_path, ledger)
+        request = {
+            "phase": "SCIENTIFIC",
+            "populations": populations,
+            "allocation_bindings": {
+                split: seed_registry.allocation_binding(ledger, identity)
+                for split, identity in identities.items()
+            },
+        }
         request_path = root / "request.json"
         request_path.write_text(json.dumps(request), encoding="utf-8")
         wrapper = root / "preflight.ps1"
@@ -358,12 +400,22 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                 "  $global:LASTEXITCODE = 51",
                 '  throw "unexpected AWS call: $joined"',
                 "}",
+                f"$global:seedLedgerPath = '{str(ledger_path).replace("'", "''")}'",
+                "function global:git {",
+                "  $joined = $args -join ' '",
+                "  $global:LASTEXITCODE = 0",
+                "  if ($joined.Contains(' fetch ')) { return }",
+                "  if ($joined.Contains(' show ')) { Get-Content -LiteralPath $global:seedLedgerPath; return }",
+                "  $global:LASTEXITCODE = 52",
+                '  throw "unexpected git call: $joined"',
+                "}",
                 (
                     f"& '{str(_LAUNCHER).replace("'", "''")}' -Phase B "
                     f"-RequestPath '{str(request_path).replace("'", "''")}' "
                     "-PhaseAArtifactVolumeId 'vol-a1' "
                     "-AwsProfile fake -PreflightOnly -HourlyPriceUsd 1.0 "
-                    f"-ArenaRevision '{arena_revision}' -OutputRoot '{str(root).replace("'", "''")}'"
+                    f"-ArenaRevision '{arena_revision}' "
+                    f"-OutputRoot '{str(root).replace("'", "''")}'"
                 ),
                 f"$global:calls | Set-Content -LiteralPath '{str(calls).replace("'", "''")}'",
             ]

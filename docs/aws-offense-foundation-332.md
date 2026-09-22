@@ -8,13 +8,19 @@ metadata and never enter corpus identity. The #342 player-safe source record is
 retained beside the corpus as an independent artifact and likewise never enters
 the locked #331 corpus identity.
 
-No P2 or scientific population is allocated by this repository change. Do not
-run the examples until the implementation PR is merged and the required fresh
-seed/evidence scan has been completed.
+No live P2 or scientific population is stored on Arena `main`. After the
+registry implementation is merged, use the **Arena Seed Registry** workflow to
+reserve populations on the dedicated `seed-registry` authority branch. Normal
+reserve/commit/retire operations require no PR or merge and do not change the
+Arena scientific code revision.
 
 ## Final merged-main prerequisite
 
-On clean final merged `main`, create a new qualification artifact before any
+After #346 is merged, freeze the exact reviewed Arena execution revision
+(`X`). Reserve the P2 QUALIFICATION population on the `seed-registry` branch
+with `arena_revision = X`; this does not move `main`.
+
+On a clean checkout of X, create a new qualification artifact before any
 billable Phase A execution:
 
 ```text
@@ -51,8 +57,9 @@ The locked runtime contract is the current `pyproject.toml`: Python
 
 ## Phase A
 
-The future operator supplies an explicit #331 P2 request containing exactly 20
-ordered fresh seeds and current freshness evidence. Run preflight first:
+The operator supplies an explicit #331 P2 request containing exactly 20 ordered
+fresh seeds plus the canonical allocation binding emitted from the live
+`seed-registry` authority. Run preflight first:
 
 ```powershell
 .\scripts\aws\start-offense-foundation-332.ps1 `
@@ -89,10 +96,15 @@ only after strict readback with final `OFFENSE SUPPORT QUALIFIED`.
 Phase A completion also tags the retained volume with the exact Arena
 revision and remote qualification identity that generated it. Before
 `create-volume` or `run-instances`, the Phase B launcher requires the
-selected `-ArenaRevision` (explicit or resolved from current `main`) to match
-that tag exactly; a commit landing on `main` between Phase A and Phase B, or
-a missing tag, fails before any billable resource is created rather than
-after remote execution rejects a stale qualification.
+selected `-ArenaRevision` to match that tag exactly. If `main` has advanced
+after Phase A, pass the retained Phase A revision explicitly; do not regenerate
+the scientific code identity merely because repository head moved.
+
+Live seed-registry commits are intentionally independent and do **not** change
+that Arena revision. Phase B first reserves TRAIN / SELECT / OFFLINE-EVAL on
+the dedicated authority branch, then the launcher fetches that branch read-only
+and passes the exact ledger snapshot to the AWS bootstrap. A missing/mismatched
+Arena revision or invalid allocation authority fails before billable execution.
 
 The Phase B instance is selected in the Phase A volume's Availability Zone.
 The Phase A volume is attached as a separate input device and mounted
@@ -120,8 +132,9 @@ evidence.
   -PreflightOnly
 ```
 
-The canonical lock rejects P2/TRAIN/SELECT/OFFLINE-EVAL overlap, prior known
-seed use, noncontiguous populations, replacement and extension. No
+The canonical lock rejects P2/TRAIN/SELECT/OFFLINE-EVAL overlap, invalid or
+retired allocation bindings, noncontiguous populations, replacement and
+extension. Freshness authority comes from the live `seed-registry` ledger. No
 multi-instance sharding or AWS-specific scientific format exists.
 
 ## Progress, detach and reattachment

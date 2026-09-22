@@ -12,6 +12,7 @@ MAX_WORKERS=""
 ALLOW_WORKER_OVERSUBSCRIPTION="0"
 RUN_ID=""
 REQUEST_JSON_B64=""
+SEED_LEDGER_JSON_B64=""
 INSTANCE_TYPE=""
 VCPU=""
 PRICING_SOURCE=""
@@ -34,6 +35,7 @@ while (($#)); do
         --allow-worker-oversubscription) ALLOW_WORKER_OVERSUBSCRIPTION="1"; shift ;;
         --run-id) RUN_ID="$2"; shift 2 ;;
         --request-json-b64) REQUEST_JSON_B64="$2"; shift 2 ;;
+        --seed-ledger-json-b64) SEED_LEDGER_JSON_B64="$2"; shift 2 ;;
         --instance-type) INSTANCE_TYPE="$2"; shift 2 ;;
         --vcpu) VCPU="$2"; shift 2 ;;
         --pricing-source) PRICING_SOURCE="$2"; shift 2 ;;
@@ -92,8 +94,8 @@ if [[ "$MAX_WORKERS" -gt "$VCPU" && "$ALLOW_WORKER_OVERSUBSCRIPTION" != "1" ]]; 
     echo "worker oversubscription requires the explicit launcher mechanism" >&2
     exit 2
 fi
-if [[ -z "$RUN_ID" || -z "$INSTANCE_TYPE" || -z "$REQUEST_JSON_B64" ]]; then
-    echo "run, instance, and request metadata are required" >&2
+if [[ -z "$RUN_ID" || -z "$INSTANCE_TYPE" || -z "$REQUEST_JSON_B64" || -z "$SEED_LEDGER_JSON_B64" ]]; then
+    echo "run, instance, request, and seed-ledger metadata are required" >&2
     exit 2
 fi
 if [[ -z "$PRICING_SOURCE" || -z "$PRICING_CHECKED_AT" || -z "$PRICING_REGION" ]]; then
@@ -182,7 +184,8 @@ if [[ -e "$ARTIFACT_ROOT" ]]; then
 fi
 mkdir -p "$OPERATIONAL_ROOT" "$INPUT_ROOT"
 printf '%s' "$REQUEST_JSON_B64" | base64 -d >"$INPUT_ROOT/request.json"
-chmod 600 "$INPUT_ROOT/request.json"
+printf '%s' "$SEED_LEDGER_JSON_B64" | base64 -d >"$INPUT_ROOT/seed-ledger.json"
+chmod 600 "$INPUT_ROOT/request.json" "$INPUT_ROOT/seed-ledger.json"
 
 git clone -q "$REPOSITORY_URL" "$REPO_DIR" >>"$BOOTSTRAP_LOG" 2>&1
 git -C "$REPO_DIR" checkout -q --detach "$ARENA_REVISION" >>"$BOOTSTRAP_LOG" 2>&1
@@ -195,6 +198,7 @@ PYTHON="$REPO_DIR/.venv/bin/python"
 "$PYTHON" -m pip install --disable-pip-version-check -e "$REPO_DIR" >>"$BOOTSTRAP_LOG" 2>&1
 cd "$REPO_DIR"
 "$PYTHON" -m lisjong_arena.environment_verify --project pyproject.toml >>"$BOOTSTRAP_LOG" 2>&1
+"$PYTHON" -m lisjong_arena.seed_registry --ledger "$INPUT_ROOT/seed-ledger.json" validate-ledger >>"$BOOTSTRAP_LOG" 2>&1
 
 START_EPOCH="$(date +%s)"
 START_UTC="$(date -u -d "@$START_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
@@ -218,6 +222,7 @@ if [[ "$PHASE" == "A" ]]; then
     "$PYTHON" -m lisjong_arena.offense_foundation lock \
         --request "$INPUT_ROOT/request.json" \
         --qualification "$QUALIFICATION" \
+        --seed-ledger "$INPUT_ROOT/seed-ledger.json" \
         --output "$LOCK" >>"$BOOTSTRAP_LOG" 2>&1
     "$PYTHON" -m lisjong_arena.offense_foundation generate \
         --lock "$LOCK" \
@@ -246,6 +251,7 @@ else
     "$PYTHON" -m lisjong_arena.offense_foundation lock \
         --request "$INPUT_ROOT/request.json" \
         --qualification "$QUALIFICATION" \
+        --seed-ledger "$INPUT_ROOT/seed-ledger.json" \
         --p2-corpus "$P2_CORPUS" \
         --output "$LOCK" >>"$BOOTSTRAP_LOG" 2>&1
     "$PYTHON" -m lisjong_arena.offense_foundation generate \

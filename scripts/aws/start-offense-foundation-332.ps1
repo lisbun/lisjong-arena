@@ -213,13 +213,12 @@ function Get-InstancePrice {
 
 $request = Get-Content -Raw -LiteralPath $RequestPath | ConvertFrom-Json
 $requestFields = @($request.PSObject.Properties.Name | Sort-Object)
-if (($requestFields -join ",") -ne "freshness_evidence,known_used_seeds,phase,populations") {
+if (($requestFields -join ",") -ne "allocation_bindings,phase,populations") {
     throw "Population request fields are invalid."
 }
 if ([string]$request.phase -ne $expectedRequestPhase) {
     throw "Phase $Phase requires request phase $expectedRequestPhase."
 }
-if (@($request.freshness_evidence).Count -lt 1) { throw "Freshness evidence is required." }
 if ($Phase -eq "A") {
     Assert-ContiguousPopulation -Seeds @($request.populations.QUALIFICATION) -Count 20 -Name "QUALIFICATION"
     $populationNames = @($request.populations.PSObject.Properties.Name | Sort-Object)
@@ -364,8 +363,38 @@ $planPath = Join-Path $runDir "plan.json"
 $preflightPath = Join-Path $runDir "preflight.json"
 $localPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $localPython -PathType Leaf)) { throw "Local project virtualenv Python is required: $localPython" }
+
+$seedRegistryBranch = "seed-registry"
+$resolvedSeedLedgerPath = Join-Path $runDir "seed-ledger-authority.json"
+$registryRef = "refs/remotes/origin/$seedRegistryBranch"
+$fetchSpec = "+refs/heads/$seedRegistryBranch`:$registryRef"
+$fetchOutput = (& git -C $repoRoot fetch --no-tags origin $fetchSpec 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not fetch canonical seed registry branch '$seedRegistryBranch': $fetchOutput"
+}
+$ledgerLines = @(& git -C $repoRoot show "$registryRef`:src/lisjong_arena/seed-ledger.json" 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not read canonical seed ledger from '$seedRegistryBranch'."
+}
+$ledgerText = (($ledgerLines | ForEach-Object { [string]$_ }) -join "`n") + "`n"
+[IO.File]::WriteAllText(
+    $resolvedSeedLedgerPath,
+    $ledgerText,
+    [Text.UTF8Encoding]::new($false)
+)
+$seedLedgerSource = "git-ref:$seedRegistryBranch"
+$seedLedgerValidationText = (& $localPython -m lisjong_arena.seed_registry `
+        --ledger $resolvedSeedLedgerPath validate-ledger 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { throw "Canonical seed ledger validation failed: $seedLedgerValidationText" }
+$seedLedgerValidation = $seedLedgerValidationText | ConvertFrom-Json
+$seedLedgerRevision = [string]$seedLedgerValidation.ledger_revision
+if ($seedLedgerRevision -notmatch "^[0-9a-f]{64}$") { throw "Canonical seed ledger revision is invalid." }
+$seedLedgerBytes = [Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath $resolvedSeedLedgerPath))
+$seedLedgerJsonB64 = [Convert]::ToBase64String($seedLedgerBytes)
+
 $requestValidationText = (& $localPython -m lisjong_arena.offense_foundation validate-request `
-        --request $RequestPath --phase $expectedRequestPhase 2>&1 | Out-String).Trim()
+        --request $RequestPath --phase $expectedRequestPhase `
+        --seed-ledger $resolvedSeedLedgerPath 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw "Canonical population request validation failed: $requestValidationText" }
 $qualificationIdentity = ""
 $qualificationContractPath = ""
@@ -374,6 +403,7 @@ if ($Phase -eq "A") {
     $phaseLockPath = Join-Path $runDir "phase-a-protocol-lock.json"
     $lockText = (& $localPython -m lisjong_arena.offense_foundation lock `
             --request $RequestPath --qualification $QualificationPath `
+            --seed-ledger $resolvedSeedLedgerPath `
             --output $phaseLockPath 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Final merged-main qualification/protocol lock validation failed: $lockText" }
     $phaseLock = Get-Content -Raw -LiteralPath $phaseLockPath | ConvertFrom-Json
@@ -447,6 +477,7 @@ Write-JsonFile -Path $planPath -Value ([ordered]@{
 Write-JsonFile -Path $preflightPath -Value ([ordered]@{
         status = "PASS"; issue = "332"; phase = $Phase; checked_at_utc = (Get-Date).ToUniversalTime().ToString("o")
         arena_revision = $ArenaRevision; request_phase = $expectedRequestPhase; total_units = $totalUnits
+        seed_ledger_revision = $seedLedgerRevision; seed_ledger_source = $seedLedgerSource
         local_qualification_identity = $(if ($Phase -eq "A") { $qualificationIdentity } else { $null })
         local_qualification_contract_path = $(if ($Phase -eq "A") { $qualificationContractPath } else { $null })
         instance_type = $InstanceType; instance_vcpu = $instanceVcpu; instance_memory_mib = $instanceMemoryMiB
@@ -567,7 +598,7 @@ try {
         "--local-qualification-identity '$qualificationIdentity' --expected-qualification-contract-b64 '$qualificationContractB64'"
     }
     $oversubscriptionArgument = if ($AllowWorkerOversubscription) { "--allow-worker-oversubscription" } else { "" }
-    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-332.sh; chmod 700 /tmp/lisjong-bootstrap-332.sh; exec /tmp/lisjong-bootstrap-332.sh --phase '$Phase' --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' $phaseArguments --max-workers '$MaxWorkers' $oversubscriptionArgument --run-id '$runId' --request-json-b64 '$requestJsonB64' --instance-type '$InstanceType' --vcpu '$instanceVcpu' --pricing-source '$($price.Source)' --pricing-checked-at '$($price.CheckedAt)' --pricing-region '$Region' --instance-hourly-rate-usd '$hourlyRateText'"
+    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-332.sh; chmod 700 /tmp/lisjong-bootstrap-332.sh; exec /tmp/lisjong-bootstrap-332.sh --phase '$Phase' --arena-revision '$ArenaRevision' --artifact-volume-id '$artifactVolumeId' $phaseArguments --max-workers '$MaxWorkers' $oversubscriptionArgument --run-id '$runId' --request-json-b64 '$requestJsonB64' --seed-ledger-json-b64 '$seedLedgerJsonB64' --instance-type '$InstanceType' --vcpu '$instanceVcpu' --pricing-source '$($price.Source)' --pricing-checked-at '$($price.CheckedAt)' --pricing-region '$Region' --instance-hourly-rate-usd '$hourlyRateText'"
     $longRequestPath = Join-Path $runDir "ssm-run.json"
     $commandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds (($FailSafeHours * 3600) + 1800) -RequestPath $longRequestPath -Commands @($remoteCommand)
     $scientificSubmitted = $true

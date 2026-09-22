@@ -1,0 +1,261 @@
+name: Arena Seed Registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Registry operation
+        required: true
+        type: choice
+        options:
+          - validate
+          - list
+          - show
+          - check
+          - reserve
+          - commit
+          - retire
+      allocation_identity:
+        description: Allocation identity for show/commit/retire
+        required: false
+        type: string
+      owner_issue:
+        description: Owner issue, for example lisbun/lisjong-arena#332
+        required: false
+        type: string
+      protocol:
+        description: Protocol identity
+        required: false
+        type: string
+      seed_domain:
+        description: Seed domain for check/reserve
+        required: false
+        type: string
+      purpose:
+        description: Human-readable allocation purpose
+        required: false
+        type: string
+      population:
+        description: Population identity
+        required: false
+        type: string
+      split:
+        description: Optional split identity
+        required: false
+        type: string
+      seeds:
+        description: Seed membership, for example 70000..70019
+        required: false
+        type: string
+      arena_revision:
+        description: Exact merged Arena revision that owns the protocol execution
+        required: false
+        type: string
+      protocol_revision:
+        description: Stable protocol revision/identity
+        required: false
+        type: string
+      provenance_reference:
+        description: Stable Issue/comment/protocol provenance reference
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: arena-seed-registry-authority
+  cancel-in-progress: false
+
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+      REGISTRY_BRANCH: seed-registry
+      LEDGER_PATH: src/lisjong_arena/seed-ledger.json
+      OPERATION: ${{ inputs.operation }}
+      ALLOCATION_IDENTITY: ${{ inputs.allocation_identity }}
+      OWNER_ISSUE: ${{ inputs.owner_issue }}
+      PROTOCOL: ${{ inputs.protocol }}
+      SEED_DOMAIN: ${{ inputs.seed_domain }}
+      PURPOSE: ${{ inputs.purpose }}
+      POPULATION: ${{ inputs.population }}
+      SPLIT: ${{ inputs.split }}
+      SEEDS: ${{ inputs.seeds }}
+      ARENA_REVISION: ${{ inputs.arena_revision }}
+      PROTOCOL_REVISION: ${{ inputs.protocol_revision }}
+      PROVENANCE_REFERENCE: ${{ inputs.provenance_reference }}
+
+    steps:
+      - name: Check out current Arena main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Load live authority ledger
+        id: authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          live_ledger="${RUNNER_TEMP}/seed-ledger.json"
+          bootstrap_ledger="${RUNNER_TEMP}/seed-ledger-bootstrap.json"
+          cp "${LEDGER_PATH}" "${bootstrap_ledger}"
+          python -m lisjong_arena.seed_registry --ledger "${bootstrap_ledger}" validate-bootstrap
+
+          if git ls-remote --exit-code --heads origin "refs/heads/${REGISTRY_BRANCH}" >/dev/null 2>&1; then
+            git fetch --no-tags origin "+refs/heads/${REGISTRY_BRANCH}:refs/remotes/origin/${REGISTRY_BRANCH}"
+            git show "origin/${REGISTRY_BRANCH}:${LEDGER_PATH}" > "${live_ledger}"
+            echo "branch_exists=true" >> "${GITHUB_OUTPUT}"
+            echo "authority_commit=$(git rev-parse "origin/${REGISTRY_BRANCH}")" >> "${GITHUB_OUTPUT}"
+          else
+            cp "${bootstrap_ledger}" "${live_ledger}"
+            echo "branch_exists=false" >> "${GITHUB_OUTPUT}"
+            echo "authority_commit=BOOTSTRAP_FROM_MAIN" >> "${GITHUB_OUTPUT}"
+          fi
+
+          python -m lisjong_arena.seed_registry --ledger "${live_ledger}" validate-ledger
+          python -m lisjong_arena.seed_registry --ledger "${live_ledger}" validate-branch \
+            --base-ledger "${bootstrap_ledger}"
+          echo "live_ledger=${live_ledger}" >> "${GITHUB_OUTPUT}"
+
+      - name: Apply registry operation
+        id: operation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ledger="${{ steps.authority.outputs.live_ledger }}"
+          require_value() {
+            local name="$1"
+            local value="$2"
+            if [[ -z "${value}" ]]; then
+              echo "STOP / INVALID: ${name} is required for ${OPERATION}" >&2
+              exit 2
+            fi
+          }
+
+          changed=false
+          result=""
+          case "${OPERATION}" in
+            validate)
+              python -m lisjong_arena.seed_registry --ledger "${ledger}" validate-ledger
+              ;;
+            list)
+              args=(--ledger "${ledger}" list)
+              if [[ -n "${SEED_DOMAIN}" ]]; then
+                args+=(--seed-domain "${SEED_DOMAIN}")
+              fi
+              python -m lisjong_arena.seed_registry "${args[@]}"
+              ;;
+            show)
+              require_value allocation_identity "${ALLOCATION_IDENTITY}"
+              python -m lisjong_arena.seed_registry --ledger "${ledger}" show "${ALLOCATION_IDENTITY}"
+              ;;
+            check)
+              require_value seed_domain "${SEED_DOMAIN}"
+              require_value seeds "${SEEDS}"
+              python -m lisjong_arena.seed_registry --ledger "${ledger}" check \
+                --seed-domain "${SEED_DOMAIN}" --seeds "${SEEDS}"
+              ;;
+            reserve)
+              require_value owner_issue "${OWNER_ISSUE}"
+              require_value protocol "${PROTOCOL}"
+              require_value seed_domain "${SEED_DOMAIN}"
+              require_value purpose "${PURPOSE}"
+              require_value population "${POPULATION}"
+              require_value seeds "${SEEDS}"
+              require_value arena_revision "${ARENA_REVISION}"
+              require_value protocol_revision "${PROTOCOL_REVISION}"
+              require_value provenance_reference "${PROVENANCE_REFERENCE}"
+              if [[ ! "${ARENA_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "STOP / INVALID: arena_revision must be a full lowercase SHA" >&2
+                exit 2
+              fi
+              git cat-file -e "${ARENA_REVISION}^{commit}"
+              if ! git merge-base --is-ancestor "${ARENA_REVISION}" origin/main; then
+                echo "STOP / INVALID: arena_revision is not merged into Arena main" >&2
+                exit 2
+              fi
+              args=(
+                --ledger "${ledger}" reserve
+                --owner-issue "${OWNER_ISSUE}"
+                --protocol "${PROTOCOL}"
+                --seed-domain "${SEED_DOMAIN}"
+                --purpose "${PURPOSE}"
+                --population "${POPULATION}"
+                --seeds "${SEEDS}"
+                --arena-revision "${ARENA_REVISION}"
+                --protocol-revision "${PROTOCOL_REVISION}"
+                --provenance-reference "${PROVENANCE_REFERENCE}"
+              )
+              if [[ -n "${SPLIT}" ]]; then
+                args+=(--split "${SPLIT}")
+              fi
+              result="$(python -m lisjong_arena.seed_registry "${args[@]}")"
+              echo "${result}"
+              echo "result=${result}" >> "${GITHUB_OUTPUT}"
+              changed=true
+              ;;
+            commit|retire)
+              require_value allocation_identity "${ALLOCATION_IDENTITY}"
+              target_state=COMMITTED
+              if [[ "${OPERATION}" == "retire" ]]; then
+                target_state=RETIRED
+              fi
+              result="$(python -m lisjong_arena.seed_registry --ledger "${ledger}" commit \
+                "${ALLOCATION_IDENTITY}" --state "${target_state}")"
+              echo "${result}"
+              echo "result=${result}" >> "${GITHUB_OUTPUT}"
+              changed=true
+              ;;
+            *)
+              echo "STOP / INVALID: unsupported operation ${OPERATION}" >&2
+              exit 2
+              ;;
+          esac
+
+          echo "changed=${changed}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Arena seed registry"
+            echo
+            echo "- operation: \`${OPERATION}\`"
+            echo "- authority before: \`${{ steps.authority.outputs.authority_commit }}\`"
+            echo "- live branch existed: \`${{ steps.authority.outputs.branch_exists }}\`"
+            if [[ -n "${result}" ]]; then
+              echo "- result: \`${result}\`"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish live authority state
+        if: steps.operation.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          live_ledger="${{ steps.authority.outputs.live_ledger }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ "${{ steps.authority.outputs.branch_exists }}" == "true" ]]; then
+            git switch -C "${REGISTRY_BRANCH}" "origin/${REGISTRY_BRANCH}"
+          else
+            git switch -C "${REGISTRY_BRANCH}" main
+          fi
+
+          cp "${live_ledger}" "${LEDGER_PATH}"
+          git add "${LEDGER_PATH}"
+          if git diff --cached --quiet; then
+            echo "No authority-state change to publish."
+            exit 0
+          fi
+
+          git commit -m "seed-registry: ${OPERATION}"
+          # Never force-push. A concurrent/manual authority update produces a
+          # non-fast-forward rejection and therefore fails closed.
+          git push origin "HEAD:refs/heads/${REGISTRY_BRANCH}"
+          echo "- authority after: \`$(git rev-parse HEAD)\`" >> "${GITHUB_STEP_SUMMARY}"

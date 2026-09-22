@@ -15,6 +15,7 @@ from lisjong.policies.two_step_ukeire import TwoStepUkeireCandidateEvaluation as
 from lisjong.policy_contract import DecisionTraceRecorder, execute_policy_with_trace
 from lisjong.policy_contract.action import AnkanAction, RiichiAction
 
+from lisjong_arena import seed_registry
 from lisjong_arena.offense_foundation import corpus, qualification
 from lisjong_arena.offense_foundation.__main__ import main
 from lisjong_arena.offense_foundation.fixtures import discard, probes
@@ -49,7 +50,7 @@ from lisjong_arena.riichienv.local_game_runner import SeatDecisionObservation
 
 
 def request(phase="P2"):
-    # Only metadata for a replaced game boundary; these are not seed allocations.
+    # Protocol metadata fixtures only. These do not confer allocation authority.
     populations = (
         {"QUALIFICATION": list(range(20))}
         if phase == "P2"
@@ -59,12 +60,47 @@ def request(phase="P2"):
             "OFFLINE-EVAL": list(range(220, 240)),
         }
     )
+    bindings = {}
+    for index, (split, seeds) in enumerate(populations.items(), start=1):
+        bindings[split] = {
+            "allocation_identity": f"{index:064x}",
+            "ledger_revision": "f" * 64,
+            "owner_repository": seed_registry.OWNER_REPOSITORY,
+            "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+            "seed_membership_identity": seed_registry.seed_membership_identity(seeds),
+        }
     return {
+        "allocation_bindings": bindings,
         "phase": phase,
         "populations": populations,
-        "known_used_seeds": [],
-        "freshness_evidence": ["synthetic test fixture; not scientific evidence"],
     }
+
+
+def authoritative_request(phase="P2"):
+    value = request(phase)
+    ledger = seed_registry.new_ledger()
+    identities = {}
+    for split, seeds in value["populations"].items():
+        ledger, record = seed_registry.reserve_allocation(
+            ledger,
+            owner_issue="lisbun/lisjong-arena#332",
+            protocol="offense-foundation-v1",
+            seed_domain=seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+            purpose="synthetic offense-foundation test allocation",
+            population="offense-foundation",
+            split=split,
+            seeds=seeds,
+            arena_revision="a" * 40,
+            protocol_revision="synthetic-offense-test-v1",
+            provenance_reference="synthetic test fixture",
+            allocation_timestamp="2026-09-22T00:00:00Z",
+        )
+        identities[split] = record["allocation_identity"]
+    value["allocation_bindings"] = {
+        split: seed_registry.allocation_binding(ledger, identity)
+        for split, identity in identities.items()
+    }
+    return value, ledger
 
 
 def observation(probe):
@@ -546,8 +582,10 @@ class ProtocolTest(unittest.TestCase):
         for mutate in (
             lambda r: r["populations"]["QUALIFICATION"].pop(),
             lambda r: r["populations"]["QUALIFICATION"].reverse(),
-            lambda r: r["known_used_seeds"].append(3),
-            lambda r: r.update(freshness_evidence=[]),
+            lambda r: r["allocation_bindings"].pop("QUALIFICATION"),
+            lambda r: r["allocation_bindings"]["QUALIFICATION"].update(
+                seed_domain="wrong-domain"
+            ),
             lambda r: r["populations"]["QUALIFICATION"].__setitem__(0, False),
         ):
             value = request()
@@ -588,35 +626,62 @@ class ProtocolTest(unittest.TestCase):
                 self.assertEqual(report["p0"], P0_PASS)
                 run.assert_not_called()
 
-    def test_request_validation_cli_is_read_only_and_phase_specific(self):
+    def test_historical_lock_survives_later_ledger_state_transition(self):
+        value, ledger = authoritative_request()
+        binding_revision = value["allocation_bindings"]["QUALIFICATION"][
+            "ledger_revision"
+        ]
+        allocation_identity = value["allocation_bindings"]["QUALIFICATION"][
+            "allocation_identity"
+        ]
+        lock = make_lock(value, qualify({}))
+        committed = seed_registry.transition_allocation(
+            ledger,
+            allocation_identity,
+            state=seed_registry.COMMITTED,
+        )
+        self.assertNotEqual(
+            seed_registry.ledger_revision(committed),
+            binding_revision,
+        )
+        validate_lock(lock)
+
+    def test_allocation_authority_cli_requires_explicit_seed_ledger(self):
+        for command in ("validate-request", "lock"):
+            with self.subTest(command=command), self.assertRaises(SystemExit):
+                main([command])
+
+    def test_request_validation_cli_requires_current_seed_allocation_authority(self):
         with tempfile.TemporaryDirectory() as tmp:
             request_path = Path(tmp) / "request.json"
-            request_path.write_text(json.dumps(request()), encoding="utf-8")
-            self.assertEqual(
-                main(
-                    [
-                        "validate-request",
-                        "--request",
-                        str(request_path),
-                        "--phase",
-                        "P2",
-                    ]
-                ),
-                0,
+            ledger_path = Path(tmp) / "ledger.json"
+            value, ledger = authoritative_request()
+            request_path.write_text(json.dumps(value), encoding="utf-8")
+            seed_registry.write_ledger(ledger_path, ledger)
+            command = [
+                "validate-request",
+                "--request",
+                str(request_path),
+                "--seed-ledger",
+                str(ledger_path),
+            ]
+            self.assertEqual(main(command + ["--phase", "P2"]), 0)
+            self.assertEqual(main(command + ["--phase", "SCIENTIFIC"]), 2)
+
+            allocation_identity = value["allocation_bindings"]["QUALIFICATION"][
+                "allocation_identity"
+            ]
+            committed = seed_registry.transition_allocation(
+                ledger, allocation_identity, state=seed_registry.COMMITTED
             )
-            self.assertEqual(
-                main(
-                    [
-                        "validate-request",
-                        "--request",
-                        str(request_path),
-                        "--phase",
-                        "SCIENTIFIC",
-                    ]
-                ),
-                2,
+            seed_registry.write_ledger(ledger_path, committed)
+            self.assertEqual(main(command + ["--phase", "P2"]), 0)
+
+            retired = seed_registry.transition_allocation(
+                committed, allocation_identity, state=seed_registry.RETIRED
             )
-            self.assertEqual([request_path], list(Path(tmp).iterdir()))
+            seed_registry.write_ledger(ledger_path, retired)
+            self.assertEqual(main(command + ["--phase", "P2"]), 2)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     name: quality
@@ -31,6 +35,20 @@ jobs:
       - name: Verify internal VCS dependency identity
         run: python -m lisjong_arena.environment_verify --project pyproject.toml
 
+      - name: Validate Arena seed ledger bootstrap
+        shell: bash
+        run: |
+          python -m lisjong_arena.seed_registry validate-bootstrap
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git fetch --no-tags origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+            base_ledger="${RUNNER_TEMP}/base-seed-ledger.json"
+            if git show "origin/${{ github.base_ref }}:src/lisjong_arena/seed-ledger.json" > "$base_ledger" 2>/dev/null; then
+              python -m lisjong_arena.seed_registry validate-branch --base-ledger "$base_ledger"
+            else
+              python -m lisjong_arena.seed_registry validate-branch
+            fi
+          fi
+
       - name: Check formatting
         run: python -m ruff format --check .
 
@@ -40,10 +58,14 @@ jobs:
       - name: Run tests
         run: python -m unittest discover -s tests -v --durations 30
 
-  ml-tests:
-    name: ml-tests
+  ml-test-shards:
+    name: ml-tests-shard-${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
 
     steps:
       - name: Check out repository
@@ -67,13 +89,26 @@ jobs:
       - name: Verify locked CPU PyTorch
         run: python -c "import torch; assert torch.__version__ == '2.13.0+cpu'; assert not torch.cuda.is_available()"
 
-      - name: Run all test modules with ML dependency in isolated interpreters
+      - name: Run assigned test modules with ML dependency in isolated interpreters
         shell: bash
+        env:
+          ML_TEST_SHARD: "${{ matrix.shard }}"
+          ML_TEST_SHARD_COUNT: "3"
         run: |
           mapfile -d '' -t test_files < <(
             find tests -type f -name 'test*.py' -print0 | sort -z
           )
           ((${#test_files[@]} > 0))
+
+          selected_files=()
+          for index in "${!test_files[@]}"; do
+            if (( index % ML_TEST_SHARD_COUNT == ML_TEST_SHARD )); then
+              selected_files+=("${test_files[$index]}")
+            fi
+          done
+          ((${#selected_files[@]} > 0))
+
+          echo "ML test shard ${ML_TEST_SHARD}/${ML_TEST_SHARD_COUNT}: ${#selected_files[@]} of ${#test_files[@]} modules"
 
           # The runner lives under RUNNER_TEMP, so explicitly keep the repository
           # root importable for namespace-package imports such as `from tests import ...`.
@@ -104,7 +139,7 @@ jobs:
           PY
 
           declare -A seen_patterns=()
-          for test_file in "${test_files[@]}"; do
+          for test_file in "${selected_files[@]}"; do
             pattern="$(basename "$test_file")"
             if [[ -n "${seen_patterns[$pattern]:-}" ]]; then
               echo "Duplicate test filename cannot be isolated safely: $pattern" >&2
@@ -116,3 +151,21 @@ jobs:
 
             python "$test_runner" "$pattern" "$test_file"
           done
+
+  ml-tests:
+    name: ml-tests
+    needs: ml-test-shards
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require all ML test shards to pass
+        shell: bash
+        env:
+          ML_SHARDS_RESULT: "${{ needs.ml-test-shards.result }}"
+        run: |
+          if [[ "$ML_SHARDS_RESULT" != "success" ]]; then
+            echo "ML test shards did not all pass: $ML_SHARDS_RESULT" >&2
+            exit 1
+          fi

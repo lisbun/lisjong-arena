@@ -12,6 +12,7 @@ from unittest.mock import patch
 from lisjong.policies import TwoStepUkeirePolicy
 from lisjong.policy_contract import DecisionTraceRecorder, execute_policy_with_trace
 
+from lisjong_arena import seed_registry
 from lisjong_arena.offense_foundation import corpus, source_record
 from lisjong_arena.offense_foundation.__main__ import main
 from lisjong_arena.offense_foundation.fixtures import probes
@@ -27,11 +28,21 @@ from lisjong_arena.riichienv.local_game_runner import SeatDecisionObservation
 
 
 def _request():
+    seeds = list(range(20))
     return {
+        "allocation_bindings": {
+            "QUALIFICATION": {
+                "allocation_identity": "1" * 64,
+                "ledger_revision": "2" * 64,
+                "owner_repository": "lisbun/lisjong-arena",
+                "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+                "seed_membership_identity": seed_registry.seed_membership_identity(
+                    seeds
+                ),
+            }
+        },
         "phase": "P2",
-        "populations": {"QUALIFICATION": list(range(20))},
-        "known_used_seeds": [],
-        "freshness_evidence": ["synthetic #342 test fixture; not scientific evidence"],
+        "populations": {"QUALIFICATION": seeds},
     }
 
 

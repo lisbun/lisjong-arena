@@ -1,9 +1,20 @@
 """Purpose-specific pre-execution locks for #331, shared by local and AWS runs."""
 
+from lisjong_arena.seed_registry import (
+    RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+    SeedRegistryError,
+    load_ledger,
+    require_allocation_binding,
+    validate_binding_shape,
+)
+
 from .qualification import P2_PASS, SCHEMA, seal, unseal, validate_qualification
 from .semantics import OffenseError
 
 GAME_MODE = "4p-red-half"
+ALLOCATION_OWNER_ISSUE = "lisbun/lisjong-arena#332"
+ALLOCATION_PROTOCOL = "offense-foundation-v1"
+ALLOCATION_SEED_DOMAIN = RIICHIENV_HALF_HANCHAN_SEED_DOMAIN
 SUPPORT = {
     "choice_rows": 3000,
     "winning_opportunities": 50,
@@ -49,10 +60,9 @@ def _seeds(values, count=None):
 
 def validate_request(request):
     if type(request) is not dict or set(request) != {
+        "allocation_bindings",
         "phase",
         "populations",
-        "known_used_seeds",
-        "freshness_evidence",
     }:
         raise OffenseError("invalid population request fields")
     phase = request["phase"]
@@ -66,24 +76,51 @@ def validate_request(request):
     populations = request["populations"]
     if type(populations) is not dict or set(populations) != set(expected):
         raise OffenseError("unexpected population split")
+    bindings = request["allocation_bindings"]
+    if type(bindings) is not dict or set(bindings) != set(expected):
+        raise OffenseError("allocation bindings must exactly match population splits")
     seen = set()
     for split, size in expected.items():
         _seeds(populations[split], size)
         if seen.intersection(populations[split]):
             raise OffenseError("cross-split seed leakage")
         seen.update(populations[split])
-    _seeds(request["known_used_seeds"])
-    if seen.intersection(request["known_used_seeds"]):
-        raise OffenseError("known prior scientific seed reuse")
-    evidence = request["freshness_evidence"]
-    if (
-        type(evidence) is not list
-        or not evidence
-        or any(type(e) is not str or not e.strip() for e in evidence)
-    ):
-        raise OffenseError(
-            "operator's current evidence/history scan references required"
-        )
+        try:
+            binding = validate_binding_shape(bindings[split], seeds=populations[split])
+        except SeedRegistryError as error:
+            raise OffenseError(
+                f"invalid {split} allocation binding: {error}"
+            ) from error
+        if binding["seed_domain"] != ALLOCATION_SEED_DOMAIN:
+            raise OffenseError(
+                "offense-foundation allocation uses the wrong seed_domain"
+            )
+
+
+def require_request_allocations(request, ledger=None):
+    """Require current canonical Arena allocation authority for every split.
+
+    This check is performed before lock creation. Historical lock readback
+    validates the embedded binding without consulting a newer ledger, so later
+    COMMITTED/RETIRED transitions do not rewrite old scientific evidence.
+    """
+
+    validate_request(request)
+    current = load_ledger() if ledger is None else ledger
+    try:
+        for split, seeds in request["populations"].items():
+            require_allocation_binding(
+                current,
+                request["allocation_bindings"][split],
+                seeds=seeds,
+                owner_issue=ALLOCATION_OWNER_ISSUE,
+                protocol=ALLOCATION_PROTOCOL,
+                seed_domain=ALLOCATION_SEED_DOMAIN,
+                population="offense-foundation",
+                split=split,
+            )
+    except SeedRegistryError as error:
+        raise OffenseError(f"seed allocation authority invalid: {error}") from error
 
 
 def make_lock(request, qualification, p2=None):
@@ -148,8 +185,8 @@ def ordered_games(lock):
 def validate_p2_evidence(p2):
     """Validate the retained P2 manifest embedded in a scientific corpus.
 
-    Generation additionally strict-reads the original P2 payload files. Embedded
-    evidence is a provenance receipt, not permission to skip that readback.
+    Generation additionally strict-reads the original P2 payload files.
+    Embedded evidence is a provenance receipt, not permission to skip readback.
     """
     body = unseal(p2)
     if (
@@ -177,7 +214,12 @@ def validate_p2_evidence(p2):
     counts = dict.fromkeys(SUPPORT, 0)
     for (split, seed), game in zip(games, p2["games"], strict=True):
         unseal(game)
-        if (game["split"], game["seed"], game["game_mode"], game["lock_identity"]) != (
+        if (
+            game["split"],
+            game["seed"],
+            game["game_mode"],
+            game["lock_identity"],
+        ) != (
             split,
             seed,
             GAME_MODE,
