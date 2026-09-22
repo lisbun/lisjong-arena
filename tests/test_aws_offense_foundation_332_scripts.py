@@ -402,7 +402,7 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                 "  $global:LASTEXITCODE = 51",
                 '  throw "unexpected AWS call: $joined"',
                 "}",
-                f"$global:seedLedgerJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{ledgerB64Expr}'))",
+                f"$global:seedLedgerJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{ledger_b64}'))",
                 "function global:git {",
                 "  $joined = $args -join ' '",
                 "  $global:LASTEXITCODE = 0",
