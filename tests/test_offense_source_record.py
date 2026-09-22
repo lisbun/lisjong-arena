@@ -24,14 +24,25 @@ from lisjong_arena.offense_foundation.qualification import (
 )
 from lisjong_arena.offense_foundation.semantics import OffenseError
 from lisjong_arena.riichienv.local_game_runner import SeatDecisionObservation
+from lisjong_arena import seed_registry
 
 
 def _request():
+    seeds = list(range(20))
     return {
+        "allocation_bindings": {
+            "QUALIFICATION": {
+                "allocation_identity": "1" * 64,
+                "ledger_revision": "2" * 64,
+                "owner_repository": "lisbun/lisjong-arena",
+                "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+                "seed_membership_identity": seed_registry.seed_membership_identity(
+                    seeds
+                ),
+            }
+        },
         "phase": "P2",
-        "populations": {"QUALIFICATION": list(range(20))},
-        "known_used_seeds": [],
-        "freshness_evidence": ["synthetic #342 test fixture; not scientific evidence"],
+        "populations": {"QUALIFICATION": seeds},
     }
 
 
