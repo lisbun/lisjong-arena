@@ -199,6 +199,28 @@
       "state": "RESERVED"
     },
     {
+      "allocation_identity": "ed9831ce99835f80bd8112974dc1bdc4995cc857c015aa6621f4dd6113aa1e87",
+      "allocation_timestamp": "2026-09-22T13:12:46.490640Z",
+      "arena_revision": "adf1edf94a033c380f67d0327c780865eba0d440",
+      "owner_issue": "lisbun/lisjong-arena#332",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "offense-foundation",
+      "protocol": "offense-foundation-v1",
+      "protocol_revision": "adf1edf94a033c380f67d0327c780865eba0d440",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/332#issuecomment-5777101122",
+      "purpose": "offense foundation Phase B SELECT",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 70140,
+        "kind": "range",
+        "last": 70159
+      },
+      "seed_membership_identity": "04250fcd4c7c7405c19dadef970cd793f9fd743d0fa54b8ab47ec497321da087",
+      "split": "SELECT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
