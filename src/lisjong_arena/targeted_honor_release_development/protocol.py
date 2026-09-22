@@ -187,27 +187,12 @@ def require_phase_b_population(seeds: object) -> tuple[int, ...]:
 
 
 def repository_declared_allocated_seeds() -> frozenset[int]:
-    """Return repository-declared allocations known before #263.
+    """Return Arena allocations other than #263's own population."""
 
-    This intentionally reuses the latest existing allocation audit and adds the
-    completed #252 populations, which are not part of the older learned-policy
-    allocation chain.
-    """
-    from lisjong_arena.learned_policy_offline_q.p6_higher_fidelity import (
-        DEFAULT_ORDERED_SEEDS as ISSUE_185_SEEDS,
-    )
-    from lisjong_arena.learned_policy_offline_q.p6_higher_fidelity import (
-        declared_allocated_seeds as declared_before_263,
-    )
-    from lisjong_arena.progression_development.protocol import (
-        PHASE_A_SEEDS as ISSUE_252_TECHNICAL_SEEDS,
-    )
+    from lisjong_arena.seed_registry import allocated_seeds
 
-    return (
-        frozenset(declared_before_263())
-        | frozenset(ISSUE_185_SEEDS)
-        | frozenset(ISSUE_252_TECHNICAL_SEEDS)
-        | frozenset(ISSUE_252_PARENT_SEEDS)
+    return allocated_seeds(
+        exclude_owner_issues={"lisbun/lisjong-arena#263"}
     )
 
 
