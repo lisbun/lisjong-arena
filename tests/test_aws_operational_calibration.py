@@ -850,6 +850,16 @@ class CalibrationAdmissionTest(unittest.TestCase):
         self.assertFalse(record["workload_submission_authorized"])
         self.assertFalse(record["scientific_submission_authorized"])
 
+    def test_calibration_rejects_atomic_only_durable_evidence_requirement(self):
+        requirement = fixtures.calibration_requirement(
+            target={"durable_evidence_level": "atomic-operational-progress"}
+        )
+        with self.assertRaisesRegex(
+            calibration.AwsOperationalCalibrationError,
+            "calibration target.durable_evidence_level must be",
+        ):
+            _admit_calibration(requirement=requirement)
+
     def test_calibration_cost_bound_is_the_worst_case_boot_clock_window(self):
         record = _admit_calibration()
         cost = record["cost_prediction"]
