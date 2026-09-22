@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lisjong_arena import seed_registry as registry
+import lisjong_arena.seed_registry as registry
 
 
 ARENA_REVISION = "a" * 40
