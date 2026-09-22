@@ -817,11 +817,9 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertFalse((run_dir / "ssm-run.json").exists())
         self.assertFalse((run_dir / "state.json").exists())
 
-    def test_missing_per_seed_receipt_capability_is_the_only_remaining_blocker(self):
-        # Issue #340 blocker: #332 declares the required per-seed durable
-        # receipt level and stays NO-GO until that capability really exists.
-        # With an otherwise perfectly matching calibration, the durable
-        # evidence gate must be the single blocking reason.
+    def test_atomic_progress_is_sufficient_for_production_preflight(self):
+        # Issue #351: calibration keeps stronger per-seed receipts, while the
+        # production generator may be admitted with atomic operational progress.
         if os.name != "nt":
             self.skipTest("PowerShell launcher uses the Windows operator path")
         if shutil.which("pwsh") is None:
@@ -850,30 +848,30 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             ],
         )
         output = _normalize_console_output(result.stdout + result.stderr)
-        self.assertNotEqual(0, result.returncode, output)
+        self.assertEqual(0, result.returncode, output)
         admission = json.loads(
             (run_dir / "admission-phase-1.json").read_text(encoding="utf-8")
         )
-        self.assertEqual("NO-GO", admission["decision"], admission["blocking_reasons"])
-        self.assertEqual(1, len(admission["blocking_reasons"]), admission["gates"])
-        reason = admission["blocking_reasons"][0]
-        self.assertTrue(reason.startswith("durable-evidence-support:"), reason)
-        self.assertIn(instrumentation.PER_SEED_RECEIPT_FOLLOW_UP, reason)
-        self.assertIn("per-seed-durable-receipt", reason)
+        self.assertEqual("GO", admission["decision"], admission["blocking_reasons"])
+        self.assertEqual([], admission["blocking_reasons"])
+        self.assertTrue(admission["billable_resource_creation_authorized"])
+        self.assertFalse(admission["scientific_submission_authorized"])
         self.assertEqual(
-            instrumentation.REQUIRED_DURABLE_EVIDENCE_LEVEL,
+            instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL,
+            admission["target"]["durable_evidence_level"],
+        )
+        self.assertEqual(
+            "atomic-operational-progress",
             admission["target"]["durable_evidence_level"],
         )
         self.assertEqual(
             instrumentation.GENERATION_INSTRUMENTATION_IDENTITY,
             admission["target"]["instrumentation_identity"],
         )
-        # Every other Phase 1 gate, including the calibration match against
-        # canonical seed-registry authority, passed.
-        failing = [g["name"] for g in admission["gates"] if g["status"] == "FAIL"]
-        self.assertEqual(["durable-evidence-support"], failing)
         self.assertNotIn("create-volume", aws_calls)
         self.assertNotIn("run-instances", aws_calls)
+        self.assertNotIn("send-command", aws_calls)
+
 
 
 if __name__ == "__main__":
