@@ -100,11 +100,27 @@ lock is created, not retroactively during historical readback.
 
 ## Historical bootstrap
 
-The initial ledger records the repository-declared historical chain through
-`751..850`, fixed raw-corpus seeds `1000..1007`, the #270 allocation
-`50000..52199`, the completed #297 allocation `52200..52299`, and the failed /
-incomplete #326 qualification allocation `2000..2095`. The #326 population is
-retired even though the run did not complete: failure never returns an
+The initial ledger records known Arena-owned historical allocations, including:
+
+- the legacy repository-declared chain `100..646` in the bootstrap-only legacy
+  domain;
+- #252 / #263 single-round populations `647..850`;
+- fixed raw-corpus seeds `1000..1007`;
+- the failed / incomplete #326 half-game qualification population
+  `2000..2095`;
+- #196 exposed single-round populations `22700..22899`;
+- #211 completed source-pilot population `23000..23099`;
+- #216's consumed invalid predecessor plus valid Gate 1 successor
+  `35000..35199`;
+- #217 completed Gate 2 population `35200..37699`;
+- #259's write-once locked downstream population `37700..37905`, retired after
+  the downstream route never ran;
+- #270 confirmation `50000..52199`;
+- completed #297 screen `52200..52299`; and
+- completed #281 formal Overall half-game population `60000..60099`.
+
+Failed, incomplete, or locked-but-never-executed populations remain retired:
+failure or a terminal route does not return an authoritative historical
 allocation to FREE.
 
 Conditional #322 scientific TRAIN/SELECT/EVAL ranges `2100..2259` are not
