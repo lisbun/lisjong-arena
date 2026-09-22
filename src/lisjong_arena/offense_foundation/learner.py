@@ -254,7 +254,9 @@ def open_training_view(
     )
     actual_membership = tuple((split, seed) for _, split, seed, _ in selected)
     if actual_membership != expected_membership:
-        raise OffenseError("TRAIN/SELECT membership ordering differs from protocol lock")
+        raise OffenseError(
+            "TRAIN/SELECT membership ordering differs from protocol lock"
+        )
     return CorpusTrainingView(
         corpus_path=corpus_path,
         corpus_identity=manifest["identity"],
