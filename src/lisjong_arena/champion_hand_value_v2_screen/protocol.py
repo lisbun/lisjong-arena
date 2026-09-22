@@ -107,8 +107,12 @@ def require_population(seeds: object) -> tuple[int, ...]:
 
 
 def repository_declared_allocated_seeds() -> frozenset[int]:
-    return frozenset(prior_declared_allocated_seeds()) | frozenset(
-        ISSUE_270_CONFIRMATION_SEEDS
+    """Return Arena allocations other than #297's own population."""
+
+    from lisjong_arena.seed_registry import allocated_seeds
+
+    return allocated_seeds(
+        exclude_owner_issues={"lisbun/lisjong-arena#297"}
     )
 
 
