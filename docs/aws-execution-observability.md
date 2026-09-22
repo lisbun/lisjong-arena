@@ -28,6 +28,11 @@ call. `-HourlyPriceUsd` is an explicit injection intended for controlled tests o
 an operator-supplied rate; its provenance is recorded as `explicit-injection`.
 There is no built-in EC2 or public IPv4 price.
 
+Issue #340 builds the admission gate on top of this plan: it produces the
+calibrated runtime and cost ranges, and it must reach `GO` before a billable
+resource is created. See
+[AWS operational calibration / launch admission](aws-operational-calibration.md).
+
 Scientific runtime and EC2 billable runtime are separate prediction windows.
 Without matching scientific calibration, the plan deliberately reports:
 

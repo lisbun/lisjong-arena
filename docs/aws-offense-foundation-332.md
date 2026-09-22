@@ -75,9 +75,15 @@ contract checks, canonical protocol-lock materialization, compute discovery,
 pricing lookup and PLAN creation. It does not call `create-volume`,
 `run-instances`, or scientific `send-command`.
 
-Billable execution additionally requires an operator-supplied calibrated
-scientific runtime range and basis. Defaults are `c7i.4xlarge`, 16 workers and
-20 hanchan. The output is retained on a separate encrypted 8 GiB gp3 volume
+Billable execution additionally requires a `GO` from the #340 Phase 1 launch
+admission gate, which derives the calibrated scientific runtime range from a
+matching dedicated calibration rather than from an operator assertion. Pass
+`-CalibrationEvidencePath`, a priced `-ChargesPath` and `-CostBudgetUsd`; see
+[AWS operational calibration / launch admission](aws-operational-calibration.md).
+No matching calibration exists yet, so billable Phase A is currently No-Go by
+construction. Defaults are `c7i.4xlarge`, 16 workers and 20 hanchan.
+
+The output is retained on a separate encrypted 8 GiB gp3 volume
 tagged with the Phase A run-id. The volume retains both `p2-corpus` and the
 strict-read `p2-source-record`; completion evidence/tagging includes the
 source-record identity. P2 support is absent from progress and is
@@ -165,6 +171,14 @@ readback also passes; the retained volume is tagged with its source-record
 identity. Local monitor detach does not restart, resubmit,
 terminate or otherwise mutate the remote scientific workload; the independent
 instance-side fail-safe remains the last-resort compute bound.
+
+After the instance is running and its hard fail-safe is armed, the #340
+Phase 2 gate runs one non-scientific SSM probe that mounts the retained volume,
+persists the recovery identity under `.lisjong-admission/`, verifies a real
+write/read probe and unmounts. A Phase 2 `NO-GO` submits no scientific seed and
+falls through to the existing bounded cleanup: the instance is terminated and
+the unused output volume is deleted. A retained Phase A input volume is never
+deleted or retagged.
 
 Worker oversubscription is rejected unless the launcher's explicit
 `-AllowWorkerOversubscription` mechanism is selected and propagated to the

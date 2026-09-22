@@ -15,11 +15,15 @@ param(
     [int]$MaxWorkers = 0,
     [int]$FailSafeHours = 12,
     [Nullable[double]]$HourlyPriceUsd = $null,
-    [Nullable[double]]$PredictedScientificRuntimeMinHours = $null,
-    [Nullable[double]]$PredictedScientificRuntimeMaxHours = $null,
-    [string]$ScientificRuntimeEstimateBasis = "",
-    [Nullable[double]]$PredictedBillableRuntimeMinHours = $null,
-    [Nullable[double]]$PredictedBillableRuntimeMaxHours = $null,
+    [string]$CalibrationEvidencePath = "",
+    [string]$ChargesPath = "",
+    [double]$HeadroomFactor = 1.5,
+    [int]$SetupOverheadMinutes = 20,
+    [int]$PostProcessingMinutes = 20,
+    [int]$TeardownMinutes = 15,
+    [Nullable[double]]$NormalDeadlineHours = $null,
+    [Nullable[double]]$ExecutionBudgetHours = $null,
+    [Nullable[double]]$CostBudgetUsd = $null,
     [Nullable[double]]$RetainedEbsEstimateUsd = $null,
     [switch]$AllowWorkerOversubscription,
     [string]$ArenaRevision = "",
@@ -37,6 +41,17 @@ if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
 }
 if ($FailSafeHours -lt 4 -or $FailSafeHours -gt 24) {
     throw "FailSafeHours must be between 4 and 24 inclusive."
+}
+if ($HeadroomFactor -lt 1.0) {
+    throw "HeadroomFactor must be at least 1.0."
+}
+foreach ($overheadMinutes in @($SetupOverheadMinutes, $PostProcessingMinutes, $TeardownMinutes)) {
+    if ($overheadMinutes -lt 0) { throw "Runtime overhead minutes must be non-negative." }
+}
+foreach ($optionalFile in @($CalibrationEvidencePath, $ChargesPath)) {
+    if (-not [string]::IsNullOrWhiteSpace($optionalFile) -and -not (Test-Path -LiteralPath $optionalFile -PathType Leaf)) {
+        throw "Supplied admission input file does not exist: $optionalFile"
+    }
 }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -425,14 +440,147 @@ if ($Phase -eq "A") {
     )
 }
 
-$hasScientificRuntimeRange = (
-    $null -ne $PredictedScientificRuntimeMinHours -and
-    $null -ne $PredictedScientificRuntimeMaxHours -and
-    [double]$PredictedScientificRuntimeMinHours -gt 0 -and
-    [double]$PredictedScientificRuntimeMaxHours -ge [double]$PredictedScientificRuntimeMinHours -and
-    -not [string]::IsNullOrWhiteSpace($ScientificRuntimeEstimateBasis)
-)
+# Issue #340: billable admission is derived from dedicated calibration evidence,
+# never from an operator-asserted runtime range. The Phase 1 gate is evaluated
+# here, before any create-volume / run-instances call.
+$remoteProgressPath = "/mnt/lisjong-332-output/issue-332/phase-$Phase/operational/progress.json"
 $invariant = [Globalization.CultureInfo]::InvariantCulture
+$teacherText = (& $localPython -c 'from lisjong_arena.offense_foundation.qualification import TEACHER; print(TEACHER)' 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($teacherText)) {
+    throw "Could not resolve the locked #332 teacher identity: $teacherText"
+}
+$teacherIdentity = "$teacherText x4"
+$lisjongMatch = [regex]::Match($projectText, 'lisjong\.git@([0-9a-f]{40})')
+$engineMatch = [regex]::Match($projectText, 'lisjong-engine\.git@([0-9a-f]{40})')
+$riichienvMatch = [regex]::Match($projectText, 'riichienv==([0-9][0-9A-Za-z.\-]*)')
+if (-not ($lisjongMatch.Success -and $engineMatch.Success -and $riichienvMatch.Success)) {
+    throw "Could not resolve the locked dependency identity from pyproject.toml."
+}
+$setupSeconds = [double]($SetupOverheadMinutes * 60)
+$postProcessingSeconds = [double]($PostProcessingMinutes * 60)
+$teardownSeconds = [double]($TeardownMinutes * 60)
+$hardFailSafeSeconds = [double]($FailSafeHours * 3600)
+$normalDeadlineSeconds = if ($null -ne $NormalDeadlineHours) {
+    [double]$NormalDeadlineHours * 3600
+} else {
+    $hardFailSafeSeconds - $teardownSeconds
+}
+$executionBudgetSeconds = if ($null -ne $ExecutionBudgetHours) {
+    [double]$ExecutionBudgetHours * 3600
+} else {
+    $normalDeadlineSeconds - $setupSeconds - $postProcessingSeconds
+}
+if ($normalDeadlineSeconds -le 0 -or $executionBudgetSeconds -le 0) {
+    throw "The declared normal deadline / execution budget leaves no workload time."
+}
+if (-not [string]::IsNullOrWhiteSpace($ChargesPath)) {
+    $admissionCharges = @(Get-Content -Raw -LiteralPath $ChargesPath | ConvertFrom-Json)
+} else {
+    # Fail-closed default: an unpriced material charge is never treated as zero.
+    $admissionCharges = @(
+        [ordered]@{
+            label = "retained encrypted 8 GiB gp3 output artifact volume"
+            material = $true
+            max_usd = $null
+            reason = $null
+            usd = $(if ($null -ne $RetainedEbsEstimateUsd) { [double]$RetainedEbsEstimateUsd } else { $null })
+        },
+        [ordered]@{ label = "public IPv4 address hours"; material = $true; max_usd = $null; reason = $null; usd = $null },
+        [ordered]@{ label = "data transfer out"; material = $true; max_usd = $null; reason = $null; usd = $null }
+    )
+}
+$productionAllocationIdentities = @()
+$productionMembershipIdentities = @()
+foreach ($bindingProperty in $request.allocation_bindings.PSObject.Properties) {
+    $productionAllocationIdentities += [string]$bindingProperty.Value.allocation_identity
+    $productionMembershipIdentities += [string]$bindingProperty.Value.seed_membership_identity
+}
+$protocolLockDetail = if ($Phase -eq "A") {
+    "Phase A protocol lock materialized locally from the merged-main qualification $qualificationIdentity"
+} else {
+    "Phase B scientific lock is materialized on the instance from the strict-read Phase A corpus (qualification $phaseAQualificationIdentity)"
+}
+$admissionRequirementPath = Join-Path $runDir "admission-requirement.json"
+$phaseOneAdmissionPath = Join-Path $runDir "admission-phase-1.json"
+Write-JsonFile -Path $admissionRequirementPath -Value ([ordered]@{
+        schema_version = "arena-aws-admission-requirement-v1"
+        budget = [ordered]@{
+            cost_budget_usd = $(if ($null -ne $CostBudgetUsd) { [double]$CostBudgetUsd } else { 0.0 })
+            execution_budget_seconds = $executionBudgetSeconds
+            hard_fail_safe_seconds = $hardFailSafeSeconds
+            headroom_factor = [double]$HeadroomFactor
+            normal_deadline_seconds = $normalDeadlineSeconds
+            post_processing_seconds = $postProcessingSeconds
+            setup_seconds = $setupSeconds
+            teardown_seconds = $teardownSeconds
+        }
+        calibration_policy = [ordered]@{
+            freshness_max_age_seconds = 2592000.0
+            minimum_task_count = 8
+            minimum_tasks_per_worker = 1.0
+        }
+        charges = @($admissionCharges)
+        consumer = "lisbun/lisjong-arena#332 Phase $Phase"
+        gates = [ordered]@{
+            artifact_destination = [ordered]@{
+                status = "PASS"
+                detail = "new encrypted 8 GiB gp3 volume tagged with the run id, retained after teardown"
+            }
+            durable_evidence = [ordered]@{
+                status = "PASS"
+                detail = "atomic operational progress at $remoteProgressPath; the #331 corpus generator publishes no #339 per-seed receipt, so an interrupted run retains no completed hanchan"
+            }
+            protocol_lock = [ordered]@{ status = "PASS"; detail = $protocolLockDetail }
+            reattach = [ordered]@{
+                status = "PASS"
+                detail = "lisjong-run-id tag discovery with -ReattachRunId and status-run.ps1; local monitor detachment never resubmits"
+            }
+            seed_registry = [ordered]@{
+                status = "PASS"
+                detail = "canonical seed-registry ledger $seedLedgerRevision validated from $seedLedgerSource; same-domain collision audit and legacy quarantine passed; request allocations active"
+            }
+        }
+        pricing = [ordered]@{
+            checked_at = [string]$price.CheckedAt
+            instance_hourly_rate_usd = $(if ($null -ne $price.Rate) { [double]$price.Rate } else { $null })
+            region = $Region
+            source = [string]$price.Source
+        }
+        production_allocation = [ordered]@{
+            allocation_identities = @($productionAllocationIdentities)
+            seed_membership_identities = @($productionMembershipIdentities)
+        }
+        run_id = $runId
+        target = [ordered]@{
+            arena_revision = $ArenaRevision
+            durable_evidence_level = "atomic-operational-progress"
+            game_mode = "4p-red-half"
+            instance_type = $InstanceType
+            instrumentation_identity = "offense-foundation-332/phase-$Phase/atomic-operational-progress/v1"
+            lisjong_engine_revision = $engineMatch.Groups[1].Value
+            lisjong_revision = $lisjongMatch.Groups[1].Value
+            riichienv_version = $riichienvMatch.Groups[1].Value
+            teacher_identity = $teacherIdentity
+            total_units = $totalUnits
+            vcpu = $instanceVcpu
+            worker_count = $MaxWorkers
+            workload_identity = "offense-foundation-332-phase-$($Phase.ToLowerInvariant())-$($expectedRequestPhase.ToLowerInvariant())"
+        }
+    })
+$admissionArguments = @(
+    "-m", "lisjong_arena.aws_operational_calibration", "admit-phase-1",
+    "--requirement", $admissionRequirementPath, "--output", $phaseOneAdmissionPath
+)
+if (-not [string]::IsNullOrWhiteSpace($CalibrationEvidencePath)) {
+    $admissionArguments += @("--calibration", $CalibrationEvidencePath)
+}
+$admissionText = (& $localPython @admissionArguments 2>&1 | Out-String).Trim()
+$admissionExitCode = $LASTEXITCODE
+if ($admissionExitCode -ne 0 -and $admissionExitCode -ne 3) {
+    throw "Phase 1 launch admission evaluation failed: $admissionText"
+}
+$phaseOneAdmission = Get-Content -Raw -LiteralPath $phaseOneAdmissionPath | ConvertFrom-Json
+$hasScientificRuntimeRange = ([string]$phaseOneAdmission.decision -eq "GO")
 $planArguments = @(
     "-m", "lisjong_arena.aws_execution_observability", "plan",
     "--output-path", $genericPlanPath, "--run-id", $runId,
@@ -448,17 +596,17 @@ $planArguments = @(
 )
 if ($null -ne $price.Rate) { $planArguments += @("--instance-hourly-rate-usd", ([double]$price.Rate).ToString($invariant)) }
 if ($hasScientificRuntimeRange) {
+    # Both prediction windows come from the admitted calibration, so the PLAN
+    # can never report CALIBRATED confidence without a Phase 1 GO behind it.
+    $admittedRuntime = $phaseOneAdmission.runtime_prediction
+    $admittedBillable = $phaseOneAdmission.cost_prediction.predicted_ec2_billable_runtime_range_seconds
     $planArguments += @(
-        "--predicted-scientific-runtime-min-seconds", ([double]$PredictedScientificRuntimeMinHours * 3600).ToString($invariant),
-        "--predicted-scientific-runtime-max-seconds", ([double]$PredictedScientificRuntimeMaxHours * 3600).ToString($invariant),
-        "--scientific-estimate-basis", $ScientificRuntimeEstimateBasis
-    )
-}
-if ($null -ne $PredictedBillableRuntimeMinHours -and $null -ne $PredictedBillableRuntimeMaxHours) {
-    $planArguments += @(
-        "--predicted-ec2-billable-runtime-min-seconds", ([double]$PredictedBillableRuntimeMinHours * 3600).ToString($invariant),
-        "--predicted-ec2-billable-runtime-max-seconds", ([double]$PredictedBillableRuntimeMaxHours * 3600).ToString($invariant),
-        "--billable-estimate-basis", "operator-supplied matching calibration"
+        "--predicted-scientific-runtime-min-seconds", ([double]$admittedRuntime.predicted_lower_seconds).ToString($invariant),
+        "--predicted-scientific-runtime-max-seconds", ([double]$admittedRuntime.predicted_upper_seconds).ToString($invariant),
+        "--scientific-estimate-basis", [string]$admittedRuntime.basis,
+        "--predicted-ec2-billable-runtime-min-seconds", ([double]$admittedBillable[0]).ToString($invariant),
+        "--predicted-ec2-billable-runtime-max-seconds", ([double]$admittedBillable[1]).ToString($invariant),
+        "--billable-estimate-basis", "issue #340 phase 1 admission $([string]$phaseOneAdmission.admission_identity)"
     )
 }
 if ($null -ne $RetainedEbsEstimateUsd) { $planArguments += @("--retained-ebs-estimate-usd", ([double]$RetainedEbsEstimateUsd).ToString($invariant)) }
@@ -488,17 +636,26 @@ Write-JsonFile -Path $preflightPath -Value ([ordered]@{
         phase_a_arena_revision_match = $(if ($Phase -eq "B") { $true } else { $null })
         phase_a_qualification_identity = $(if ($Phase -eq "B") { $phaseAQualificationIdentity } else { $null })
         output_volume_size_gib = 8; billable_resource_created = $false; scientific_ssm_submitted = $false
+        admission_requirement_path = $admissionRequirementPath
+        phase_one_admission_path = $phaseOneAdmissionPath
+        phase_one_admission_decision = [string]$phaseOneAdmission.decision
+        phase_one_admission_identity = [string]$phaseOneAdmission.admission_identity
+        calibration_identity = $phaseOneAdmission.calibration.identity
     })
 
 Write-Host "Issue #332 Phase $Phase run id: $runId"
 Write-Host "PLAN: $planPath"
 Write-Host "Instance: $InstanceType / vCPU: $instanceVcpu / memory MiB: $instanceMemoryMiB / workers: $MaxWorkers"
+Write-Host "Phase 1 launch admission: $([string]$phaseOneAdmission.decision) ($phaseOneAdmissionPath)"
+foreach ($blockingReason in @($phaseOneAdmission.blocking_reasons)) {
+    Write-Warning "Phase 1 NO-GO: $blockingReason"
+}
 if ($PreflightOnly) {
-    Write-Host "PASS: ISSUE #332 PHASE $Phase AWS PREFLIGHT ONLY"
+    Write-Host "PASS: ISSUE #332 PHASE $Phase AWS PREFLIGHT ONLY (launch admission: $([string]$phaseOneAdmission.decision))"
     Write-Host "No create-volume, run-instances, or scientific SSM submission was performed."
     return
 }
-if (-not $hasScientificRuntimeRange) { throw "Billable execution requires a calibrated scientific runtime range and basis. PLAN was saved before resource creation." }
+if (-not $hasScientificRuntimeRange) { throw "Phase 1 launch admission is NO-GO; no billable resource was created. PLAN and admission record were saved: $phaseOneAdmissionPath" }
 if ($null -eq $price.Rate) { throw "Billable execution requires pricing provenance and an hourly rate." }
 
 $artifactVolumeId = ""
@@ -509,7 +666,6 @@ $commandTerminal = $false
 $monitorDetached = $false
 $failsafeArmed = $false
 try {
-    $remoteProgressPath = "/mnt/lisjong-332-output/issue-332/phase-$Phase/operational/progress.json"
     $volume = Invoke-AwsJson -Arguments @(
         "ec2", "create-volume", "--availability-zone", $availabilityZone,
         "--size", "8", "--volume-type", "gp3", "--encrypted", "--tag-specifications",
@@ -590,6 +746,112 @@ try {
     $failSafeDeadlineUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$deadlineMatch.Groups[1].Value).UtcDateTime.ToString("o")
     $failsafeArmed = $true
 
+    # Issue #340 Phase 2: after provisioning and before the first scientific
+    # seed is submitted, verify the actual environment, that the hard fail-safe
+    # is really armed on this instance, that the retained destination is
+    # writable, and that the recovery identity is durably persisted there.
+    $recoveryIdentityPath = Join-Path $runDir "recovery-identity.json"
+    Write-JsonFile -Path $recoveryIdentityPath -Value ([ordered]@{
+            issue = "332"; phase = $Phase; run_id = $runId; region = $Region
+            arena_revision = $ArenaRevision; instance_id = $instanceId
+            artifact_volume_id = $artifactVolumeId
+            fail_safe_deadline_utc = $failSafeDeadlineUtc
+            phase_one_admission_identity = [string]$phaseOneAdmission.admission_identity
+            reattach_command = ".\scripts\aws\start-offense-foundation-332.ps1 -ReattachRunId '$runId'"
+            status_command = ".\scripts\aws\status-run.ps1 -RunId '$runId'"
+        })
+    $recoveryIdentityB64 = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes((Get-Content -Raw -LiteralPath $recoveryIdentityPath))
+    )
+    $probeRequestPath = Join-Path $runDir "ssm-phase2-probe.json"
+    $probeCommandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds 600 -RequestPath $probeRequestPath -Commands @(
+        'set -eu',
+        ("SERIAL=" + $artifactVolumeId.Replace('-', '')),
+        ("RECOVERY_B64='" + $recoveryIdentityB64 + "'"),
+        'ADMISSION_DIR=/mnt/lisjong-332-output/.lisjong-admission',
+        'DEVICE=""',
+        'for _ in $(seq 1 60); do DEVICE="$(lsblk -ndo NAME,SERIAL 2>/dev/null | awk -v s="$SERIAL" ''$2 == s {print "/dev/" $1; exit}'')"; if [ -n "$DEVICE" ] && [ -b "$DEVICE" ]; then break; fi; sleep 2; done',
+        'test -n "$DEVICE"',
+        'mkdir -p /mnt/lisjong-332-output',
+        'blkid "$DEVICE" >/dev/null 2>&1 || mkfs.ext4 -F "$DEVICE" >/dev/null 2>&1',
+        'mount "$DEVICE" /mnt/lisjong-332-output',
+        'chmod 700 /mnt/lisjong-332-output',
+        'mkdir -p "$ADMISSION_DIR"',
+        'chmod 700 "$ADMISSION_DIR"',
+        'printf ''%s'' "$RECOVERY_B64" | base64 -d >"$ADMISSION_DIR/recovery-identity.json"',
+        'chmod 600 "$ADMISSION_DIR/recovery-identity.json"',
+        'printf ''write-probe'' >"$ADMISSION_DIR/write-probe"',
+        'sync',
+        'test "$(cat "$ADMISSION_DIR/write-probe")" = "write-probe"',
+        'test -s "$ADMISSION_DIR/recovery-identity.json"',
+        'rm -f "$ADMISSION_DIR/write-probe"',
+        'sync',
+        'umount /mnt/lisjong-332-output',
+        'echo LISJONG_332_PHASE2_OBSERVED_EPOCH=$(date +%s)',
+        'echo LISJONG_332_PHASE2_PROBE=PASS'
+    )
+    $probeInvocation = Wait-SsmInvocation -CommandId $probeCommandId -InstanceId $instanceId
+    $probeOutput = [string]$probeInvocation.StandardOutputContent
+    $probePassed = (
+        ([string]$probeInvocation.Status -eq "Success") -and
+        ($probeOutput -match "LISJONG_332_PHASE2_PROBE=PASS")
+    )
+    $observedEpochMatch = [regex]::Match($probeOutput, "LISJONG_332_PHASE2_OBSERVED_EPOCH=([0-9]+)")
+    $observedEpoch = if ($observedEpochMatch.Success) {
+        [long]$observedEpochMatch.Groups[1].Value
+    } else {
+        [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    }
+    $failSafeDeadlineEpoch = [long]$deadlineMatch.Groups[1].Value
+    $failSafeArmEpoch = $failSafeDeadlineEpoch - [long]($FailSafeHours * 3600)
+    $observationPath = Join-Path $runDir "phase-2-observation.json"
+    $phaseTwoAdmissionPath = Join-Path $runDir "admission-phase-2.json"
+    Write-JsonFile -Path $observationPath -Value ([ordered]@{
+            schema_version = "arena-aws-phase2-observation-v1"
+            arena_revision = $ArenaRevision
+            availability_zone = $availabilityZone
+            fail_safe_arm_epoch = $failSafeArmEpoch
+            fail_safe_armed = $failsafeArmed
+            fail_safe_deadline_epoch = $failSafeDeadlineEpoch
+            instance_id = $instanceId
+            instance_type = $InstanceType
+            observed_at_epoch = $observedEpoch
+            phase_one_admission_identity = [string]$phaseOneAdmission.admission_identity
+            recovery_identity = [ordered]@{
+                path = "/mnt/lisjong-332-output/.lisjong-admission/recovery-identity.json"
+                run_id = $runId
+                status = $(if ($probePassed) { "PASS" } else { "FAIL" })
+                verified_on_instance_id = $instanceId
+            }
+            retained_destination = [ordered]@{
+                encrypted = $true
+                path = "/mnt/lisjong-332-output"
+                retention = "retained after teardown"
+                size_gib = 8
+                verified_on_instance_id = $instanceId
+                volume_id = $artifactVolumeId
+                write_probe = $(if ($probePassed) { "PASS" } else { "FAIL" })
+            }
+            run_id = $runId
+            vcpu = $instanceVcpu
+            worker_count = $MaxWorkers
+        })
+    $phaseTwoText = (& $localPython -m lisjong_arena.aws_operational_calibration admit-phase-2 `
+            --admission $phaseOneAdmissionPath --observation $observationPath `
+            --output $phaseTwoAdmissionPath 2>&1 | Out-String).Trim()
+    $phaseTwoExitCode = $LASTEXITCODE
+    if ($phaseTwoExitCode -ne 0 -and $phaseTwoExitCode -ne 3) {
+        throw "Phase 2 launch admission evaluation failed: $phaseTwoText"
+    }
+    $phaseTwoAdmission = Get-Content -Raw -LiteralPath $phaseTwoAdmissionPath | ConvertFrom-Json
+    Write-Host "Phase 2 launch admission: $([string]$phaseTwoAdmission.decision) ($phaseTwoAdmissionPath)"
+    foreach ($blockingReason in @($phaseTwoAdmission.blocking_reasons)) {
+        Write-Warning "Phase 2 NO-GO: $blockingReason"
+    }
+    if ([string]$phaseTwoAdmission.decision -ne "GO") {
+        throw "Phase 2 launch admission is NO-GO; no scientific seed was submitted. Bounded cleanup follows: $phaseTwoAdmissionPath"
+    }
+
     $hourlyRateText = ([double]$price.Rate).ToString($invariant)
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-offense-foundation-332.sh"
     $phaseArguments = if ($Phase -eq "B") {
@@ -613,6 +875,10 @@ try {
             phase_a_input_run_id = $(if ($Phase -eq "B") { $phaseARunId } else { $null })
             instance_type = $InstanceType; instance_vcpu = $instanceVcpu; max_workers = $MaxWorkers
             fail_safe_armed = $true; fail_safe_hours = $FailSafeHours; fail_safe_deadline_utc = $failSafeDeadlineUtc
+            phase_one_admission_identity = [string]$phaseOneAdmission.admission_identity
+            phase_two_admission_identity = [string]$phaseTwoAdmission.admission_identity
+            calibration_identity = $phaseOneAdmission.calibration.identity
+            recovery_identity_path = "/mnt/lisjong-332-output/.lisjong-admission/recovery-identity.json"
             pricing_source = [string]$price.Source; pricing_checked_at = [string]$price.CheckedAt; instance_hourly_rate_usd = [double]$price.Rate
         })
     Write-Host "Phase $Phase workload submitted through SSM. Command id: $commandId"

@@ -7,9 +7,10 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from lisjong_arena import seed_registry
+from lisjong_arena import aws_operational_calibration, seed_registry
 
 _ROOT = Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "scripts" / "aws" / "start-offense-foundation-332.ps1"
@@ -265,13 +266,51 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("if ($monitorDetached) { throw }", launcher)
         self.assertIn("it was not terminated or resubmitted", launcher)
 
-    def _run_phase_b_preflight(self, arena_revision, phase_a_arena_revision_tag=None):
-        """Run the real PowerShell Phase B preflight against a mocked `aws` CLI.
+    def test_billable_admission_is_never_an_operator_assertion(self):
+        # Issue #340: the launcher no longer accepts an asserted runtime range;
+        # the calibrated range is produced by the Phase 1 admission record.
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        for removed in (
+            "PredictedScientificRuntimeMinHours",
+            "PredictedScientificRuntimeMaxHours",
+            "ScientificRuntimeEstimateBasis",
+            "PredictedBillableRuntimeMinHours",
+            "PredictedBillableRuntimeMaxHours",
+            "operator-supplied matching calibration",
+        ):
+            self.assertNotIn(removed, text)
+        self.assertIn("$CalibrationEvidencePath", text)
+        self.assertIn("aws_operational_calibration", text)
+        self.assertIn("admit-phase-1", text)
+        self.assertIn("admit-phase-2", text)
+        self.assertIn("$phaseOneAdmission.runtime_prediction", text)
+        self.assertIn("$phaseOneAdmission.cost_prediction", text)
 
-        ``phase_a_arena_revision_tag`` is the ``lisjong-arena-revision`` tag
-        value on the mocked retained Phase A volume; omit it to simulate a
-        volume with no such tag at all (Blocker 2 missing-tag case).
-        """
+    def test_admission_gates_precede_the_actions_they_guard(self):
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        phase_one = text.index("admit-phase-1")
+        self.assertLess(phase_one, text.index('"ec2", "create-volume"'))
+        self.assertLess(phase_one, text.index('"ec2", "run-instances"'))
+        no_go = "Phase 1 launch admission is NO-GO"
+        self.assertIn(no_go, text)
+        self.assertLess(text.index(no_go), text.index('"ec2", "create-volume"'))
+        phase_two = text.index("admit-phase-2")
+        self.assertLess(phase_two, text.index("bootstrap-offense-foundation-332.sh"))
+        self.assertLess(
+            phase_two, text.index('$longRequestPath = Join-Path $runDir "ssm-run.json"')
+        )
+        self.assertLess(phase_two, text.index("$scientificSubmitted = $true"))
+        self.assertIn("Phase 2 launch admission is NO-GO", text)
+        self.assertIn("LISJONG_332_PHASE2_PROBE=PASS", text)
+        self.assertIn("recovery-identity.json", text)
+
+    def test_unpriced_material_charges_default_to_fail_closed(self):
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("an unpriced material charge is never treated as zero", text)
+        self.assertIn('label = "public IPv4 address hours"; material = $true', text)
+        self.assertIn('label = "data transfer out"; material = $true', text)
+
+    def _launcher_environment(self, arena_revision, phase_a_arena_revision_tag):
         populations = {
             "TRAIN": list(range(100, 200)),
             "SELECT": list(range(200, 220)),
@@ -310,8 +349,6 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         }
         request_path = root / "request.json"
         request_path.write_text(json.dumps(request), encoding="utf-8")
-        wrapper = root / "preflight.ps1"
-        calls = root / "aws-calls.txt"
         phase_a_tags = [
             {"Key": "Issue", "Value": "332"},
             {"Key": "Purpose", "Value": "offense-foundation-output"},
@@ -326,6 +363,34 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             phase_a_tags.append(
                 {"Key": "lisjong-arena-revision", "Value": phase_a_arena_revision_tag}
             )
+        return root, ledger_path, request_path, phase_a_tags
+
+    def _run_phase_b_launcher(
+        self,
+        arena_revision,
+        *,
+        phase_a_arena_revision_tag=None,
+        preflight=True,
+        extra_arguments=(),
+        probe_outcome="PASS",
+    ):
+        """Run the real PowerShell Phase B launcher against a mocked `aws` CLI.
+
+        ``preflight=False`` exercises the billable path; the mock records every
+        call so a test can assert that no billable mutation or scientific
+        submission happened.
+        """
+        root, ledger_path, request_path, phase_a_tags = self._launcher_environment(
+            arena_revision, phase_a_arena_revision_tag
+        )
+        wrapper = root / "launch.ps1"
+        calls = root / "aws-calls.txt"
+        arm_epoch = 1_790_000_000
+        stdout = (
+            f"LISJONG_FAILSAFE_DEADLINE_EPOCH={arm_epoch + 12 * 3600}\\n"
+            f"LISJONG_332_PHASE2_OBSERVED_EPOCH={arm_epoch + 600}\\n"
+            f"LISJONG_332_PHASE2_PROBE={probe_outcome}\\n"
+        )
         payloads = {
             "get-caller-identity": {"Account": "1"},
             "describe-instance-types": {
@@ -376,7 +441,60 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                 ]
             },
             "ami-amazon-linux": {"Parameter": {"Value": "ami-1234abcd"}},
+            "create-volume": {"VolumeId": "vol-b1"},
+            "run-instances": {
+                "Instances": [
+                    {
+                        "InstanceId": "i-0123456789abcdef0",
+                        "LaunchTime": "2026-09-21T00:00:00Z",
+                    }
+                ]
+            },
+            "describe-instance-attribute": {
+                "InstanceInitiatedShutdownBehavior": {"Value": "terminate"}
+            },
+            "describe-instance-information": {
+                "InstanceInformationList": [
+                    {"InstanceId": "i-0123456789abcdef0", "PingStatus": "Online"}
+                ]
+            },
+            "describe-instances": {
+                "Reservations": [
+                    {
+                        "Instances": [
+                            {
+                                "InstanceId": "i-0123456789abcdef0",
+                                "MetadataOptions": {"HttpTokens": "required"},
+                                "BlockDeviceMappings": [
+                                    {
+                                        "Ebs": {
+                                            "DeleteOnTermination": True,
+                                            "VolumeId": "vol-root",
+                                        }
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            },
+            "get-command-invocation": {
+                "Status": "Success",
+                "StandardOutputContent": stdout,
+                "StandardErrorContent": "",
+            },
+            "send-command": {"Command": {"CommandId": "cmd-1"}},
         }
+        silent = (
+            "wait volume-available",
+            "wait volume-in-use",
+            "wait instance-running",
+            "wait instance-terminated",
+            "attach-volume",
+            "terminate-instances",
+            "delete-volume",
+            "create-tags",
+        )
         lines = [
             "$global:calls = [Collections.Generic.List[string]]::new()",
             "function global:aws {",
@@ -385,6 +503,8 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             "  $global:LASTEXITCODE = 0",
             "  if ($joined -eq '--version') { 'aws-cli/2.test'; return }",
         ]
+        for needle in silent:
+            lines.extend([f"  if ($joined.Contains('{needle}')) {{ return }}"])
         for needle, payload in payloads.items():
             encoded = json.dumps(payload, separators=(",", ":")).replace("'", "''")
             lines.extend(
@@ -395,6 +515,18 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                     "  }",
                 ]
             )
+        launcher_arguments = [
+            "-Phase B",
+            f"-RequestPath '{str(request_path).replace("'", "''")}'",
+            "-PhaseAArtifactVolumeId 'vol-a1'",
+            "-AwsProfile fake",
+            "-HourlyPriceUsd 1.0",
+            f"-ArenaRevision '{arena_revision}'",
+            f"-OutputRoot '{str(root).replace("'", "''")}'",
+        ]
+        if preflight:
+            launcher_arguments.append("-PreflightOnly")
+        launcher_arguments.extend(extra_arguments)
         lines.extend(
             [
                 "  $global:LASTEXITCODE = 51",
@@ -409,15 +541,22 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                 "  $global:LASTEXITCODE = 52",
                 '  throw "unexpected git call: $joined"',
                 "}",
+                '$global:launcherError = ""',
+                "try {",
                 (
-                    f"& '{str(_LAUNCHER).replace("'", "''")}' -Phase B "
-                    f"-RequestPath '{str(request_path).replace("'", "''")}' "
-                    "-PhaseAArtifactVolumeId 'vol-a1' "
-                    "-AwsProfile fake -PreflightOnly -HourlyPriceUsd 1.0 "
-                    f"-ArenaRevision '{arena_revision}' "
-                    f"-OutputRoot '{str(root).replace("'", "''")}'"
+                    f"  & '{str(_LAUNCHER).replace("'", "''")}' "
+                    + " ".join(launcher_arguments)
                 ),
+                "} catch {",
+                "  $global:launcherError = [string]$_.Exception.Message",
+                "}",
+                # The recorded call list must survive a thrown launcher, so a
+                # test can prove which AWS mutations did not happen.
                 f"$global:calls | Set-Content -LiteralPath '{str(calls).replace("'", "''")}'",
+                'if ($global:launcherError -ne "") {',
+                '  Write-Host "LAUNCHER ERROR: $global:launcherError"',
+                "  exit 1",
+                "}",
             ]
         )
         wrapper.write_text("\n".join(lines), encoding="utf-8")
@@ -436,7 +575,106 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             cwd=_ROOT,
         )
         aws_calls = calls.read_text(encoding="utf-8") if calls.exists() else ""
+        run_dirs = sorted(
+            path for path in root.iterdir() if path.is_dir() and "phase-B-" in path.name
+        )
+        return result, aws_calls, (run_dirs[-1] if run_dirs else None)
+
+    def _run_phase_b_preflight(self, arena_revision, phase_a_arena_revision_tag=None):
+        result, aws_calls, _run_dir = self._run_phase_b_launcher(
+            arena_revision, phase_a_arena_revision_tag=phase_a_arena_revision_tag
+        )
         return result, aws_calls
+
+    def _write_phase_b_admission_inputs(self, directory, arena_revision):
+        """Write a matching Phase B calibration plus a fully priced charge list."""
+        project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        lisjong = re.search(r"lisjong\.git@([0-9a-f]{40})", project).group(1)
+        engine = re.search(r"lisjong-engine\.git@([0-9a-f]{40})", project).group(1)
+        riichienv = re.search(r"riichienv==([0-9][0-9A-Za-z.\-]*)", project).group(1)
+        start = datetime.now(UTC).replace(microsecond=0) - timedelta(hours=1)
+        tasks = []
+        for index in range(64):
+            began = start + timedelta(seconds=(index // 32) * 60)
+            tasks.append(
+                {
+                    "seed": 950_000 + index,
+                    "started_at": began.isoformat(timespec="seconds").replace(
+                        "+00:00", "Z"
+                    ),
+                    "completed_at": (began + timedelta(seconds=60))
+                    .isoformat(timespec="seconds")
+                    .replace("+00:00", "Z"),
+                }
+            )
+        evidence = aws_operational_calibration.build_calibration_evidence(
+            calibration_run_id="synthetic-phase-b-calibration",
+            calibrated_at=start + timedelta(minutes=5),
+            seed_allocation={
+                "allocation_identity": "a" * 64,
+                "ledger_revision": "b" * 64,
+                "owner_repository": "lisbun/lisjong-arena",
+                "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+                "seed_membership_identity": "d" * 64,
+            },
+            seed_allocation_population=aws_operational_calibration.CALIBRATION_POPULATION,
+            seed_ledger_revision="b" * 64,
+            arena_revision=arena_revision,
+            lisjong_revision=lisjong,
+            lisjong_engine_revision=engine,
+            riichienv_version=riichienv,
+            workload_identity="offense-foundation-332-phase-b-scientific",
+            teacher_identity="lisjong.policies.TwoStepUkeirePolicy x4",
+            game_mode="4p-red-half",
+            instance_type="c7i.8xlarge",
+            vcpu=32,
+            worker_count_requested=32,
+            workers_active_observed=32,
+            tasks=tasks,
+            batch_scientific_wall_clock_seconds=125.0,
+            ec2_billable_runtime_seconds=2400.0,
+            setup_overhead_seconds=900.0,
+            teardown_overhead_seconds=400.0,
+            durable_evidence_level="atomic-operational-progress",
+            instrumentation_identity=(
+                "offense-foundation-332/phase-B/atomic-operational-progress/v1"
+            ),
+            instrumentation_path="issue-332/phase-B/operational/progress.json",
+        )
+        calibration_path = directory / "calibration.json"
+        aws_operational_calibration.write_calibration_evidence(
+            calibration_path, evidence
+        )
+        charges_path = directory / "charges.json"
+        charges_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "label": "retained encrypted 8 GiB gp3 output artifact volume",
+                        "material": True,
+                        "max_usd": None,
+                        "reason": None,
+                        "usd": 0.96,
+                    },
+                    {
+                        "label": "public IPv4 address hours",
+                        "material": True,
+                        "max_usd": 0.07,
+                        "reason": None,
+                        "usd": None,
+                    },
+                    {
+                        "label": "data transfer out",
+                        "material": False,
+                        "max_usd": None,
+                        "reason": "artifacts stay on the retained EBS volume",
+                        "usd": None,
+                    },
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return calibration_path, charges_path
 
     def test_preflight_executes_without_billable_aws_mutation(self):
         if os.name != "nt":
@@ -497,6 +735,121 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertNotIn("create-volume", aws_calls)
         self.assertNotIn("run-instances", aws_calls)
         self.assertNotIn("send-command", aws_calls)
+
+    def test_phase_one_no_go_creates_no_billable_resource(self):
+        # Issue #340: without a matching calibration the launcher must reach
+        # NO-GO and stop before create-volume / run-instances.
+        if os.name != "nt":
+            self.skipTest("PowerShell launcher uses the Windows operator path")
+        if shutil.which("pwsh") is None:
+            self.skipTest("pwsh is unavailable")
+        arena_revision = "a" * 40
+        result, aws_calls, run_dir = self._run_phase_b_launcher(
+            arena_revision,
+            phase_a_arena_revision_tag=arena_revision,
+            preflight=False,
+        )
+        output = _normalize_console_output(result.stdout + result.stderr)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("Phase 1 launch admission is NO-GO", output)
+        self.assertNotIn("create-volume", aws_calls)
+        self.assertNotIn("run-instances", aws_calls)
+        self.assertNotIn("send-command", aws_calls)
+        self.assertIsNotNone(run_dir)
+        admission = json.loads(
+            (run_dir / "admission-phase-1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("NO-GO", admission["decision"])
+        self.assertFalse(admission["billable_resource_creation_authorized"])
+        self.assertFalse(admission["scientific_submission_authorized"])
+        self.assertFalse((run_dir / "ssm-run.json").exists())
+        self.assertFalse((run_dir / "state.json").exists())
+
+    def test_phase_two_no_go_submits_no_scientific_workload(self):
+        # Issue #340: a Phase 2 failure after provisioning must submit no
+        # scientific seed and must proceed to bounded cleanup.
+        if os.name != "nt":
+            self.skipTest("PowerShell launcher uses the Windows operator path")
+        if shutil.which("pwsh") is None:
+            self.skipTest("pwsh is unavailable")
+        arena_revision = "a" * 40
+        inputs_root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, inputs_root, True)
+        calibration_path, charges_path = self._write_phase_b_admission_inputs(
+            inputs_root, arena_revision
+        )
+        result, aws_calls, run_dir = self._run_phase_b_launcher(
+            arena_revision,
+            phase_a_arena_revision_tag=arena_revision,
+            preflight=False,
+            probe_outcome="FAIL",
+            extra_arguments=[
+                f"-CalibrationEvidencePath '{str(calibration_path).replace("'", "''")}'",
+                f"-ChargesPath '{str(charges_path).replace("'", "''")}'",
+                "-CostBudgetUsd 20.0",
+            ],
+        )
+        output = _normalize_console_output(result.stdout + result.stderr)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIsNotNone(run_dir)
+        phase_one = json.loads(
+            (run_dir / "admission-phase-1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("GO", phase_one["decision"], output)
+        phase_two = json.loads(
+            (run_dir / "admission-phase-2.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("NO-GO", phase_two["decision"])
+        self.assertFalse(phase_two["scientific_submission_authorized"])
+        self.assertIn("Phase 2 launch admission is NO-GO", output)
+        # The instance exists, but no scientific SSM workload was ever built.
+        self.assertIn("run-instances", aws_calls)
+        self.assertFalse((run_dir / "ssm-run.json").exists())
+        self.assertFalse((run_dir / "state.json").exists())
+        self.assertNotIn("bootstrap-offense-foundation-332.sh", aws_calls)
+        # Bounded cleanup: the instance is terminated and the unused output
+        # volume is deleted; the retained Phase A input volume is untouched.
+        self.assertIn("terminate-instances", aws_calls)
+        self.assertIn("delete-volume", aws_calls)
+        self.assertNotIn("delete-volume --volume-id vol-a1", aws_calls)
+
+    def test_phase_one_go_produces_a_calibrated_plan(self):
+        if os.name != "nt":
+            self.skipTest("PowerShell launcher uses the Windows operator path")
+        if shutil.which("pwsh") is None:
+            self.skipTest("pwsh is unavailable")
+        arena_revision = "a" * 40
+        inputs_root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, inputs_root, True)
+        calibration_path, charges_path = self._write_phase_b_admission_inputs(
+            inputs_root, arena_revision
+        )
+        result, aws_calls, run_dir = self._run_phase_b_launcher(
+            arena_revision,
+            phase_a_arena_revision_tag=arena_revision,
+            extra_arguments=[
+                f"-CalibrationEvidencePath '{str(calibration_path).replace("'", "''")}'",
+                f"-ChargesPath '{str(charges_path).replace("'", "''")}'",
+                "-CostBudgetUsd 20.0",
+            ],
+        )
+        output = result.stdout + result.stderr
+        self.assertEqual(0, result.returncode, output)
+        self.assertNotIn("create-volume", aws_calls)
+        self.assertNotIn("run-instances", aws_calls)
+        plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
+        estimate = plan["operational_plan"]["scientific_runtime_estimate"]
+        self.assertEqual("CALIBRATED", estimate["confidence"])
+        self.assertIn("arena-aws-calibration-evidence-v1:", estimate["basis"])
+        billable = plan["operational_plan"]["ec2_billable_runtime_estimate"]
+        self.assertEqual("CALIBRATED", billable["confidence"])
+        self.assertGreater(billable["range_seconds"][0], estimate["range_seconds"][0])
+        admission = json.loads(
+            (run_dir / "admission-phase-1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("GO", admission["decision"])
+        self.assertEqual(140, admission["target"]["total_units"])
+        self.assertEqual(32, admission["target"]["worker_count"])
 
 
 if __name__ == "__main__":
