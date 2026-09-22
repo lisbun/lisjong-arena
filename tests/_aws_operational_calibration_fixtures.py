@@ -31,7 +31,8 @@ VCPU = 16
 WORKERS = 16
 TOTAL_UNITS = 20
 INSTRUMENTATION_IDENTITY = "offense-foundation-332/operational-progress/v1"
-DURABLE_LEVEL = "per-seed-durable-receipt"
+CALIBRATION_DURABLE_LEVEL = "per-seed-durable-receipt"
+PRODUCTION_DURABLE_LEVEL = "atomic-operational-progress"
 
 SEED_DOMAIN = seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN
 PRODUCTION_SEEDS = tuple(range(70_000, 70_020))
@@ -187,7 +188,7 @@ def evidence(*, shape: str = "default", **overrides: object) -> dict[str, object
         "ec2_billable_runtime_seconds": MEASURED_BILLABLE_SECONDS,
         "setup_overhead_seconds": MEASURED_SETUP_SECONDS,
         "teardown_overhead_seconds": MEASURED_TEARDOWN_SECONDS,
-        "durable_evidence_level": DURABLE_LEVEL,
+        "durable_evidence_level": CALIBRATION_DURABLE_LEVEL,
         "instrumentation_identity": INSTRUMENTATION_IDENTITY,
         "instrumentation_path": "issue-332/phase-A/operational/progress.json",
     }
@@ -224,7 +225,7 @@ def charges() -> list[dict[str, object]]:
 def target(**overrides: object) -> dict[str, object]:
     document: dict[str, object] = {
         "arena_revision": ARENA_REVISION,
-        "durable_evidence_level": DURABLE_LEVEL,
+        "durable_evidence_level": PRODUCTION_DURABLE_LEVEL,
         "game_mode": GAME_MODE,
         "instance_type": INSTANCE_TYPE,
         "instrumentation_identity": INSTRUMENTATION_IDENTITY,
@@ -274,7 +275,7 @@ def requirement(**overrides: object) -> dict[str, object]:
             },
             "durable_evidence": {
                 "status": "PASS",
-                "detail": "per-seed durable receipts beside atomic progress",
+                "detail": "atomic operational progress; incomplete scientific phases are full-rerun only",
             },
             "protocol_lock": {
                 "status": "PASS",
@@ -360,7 +361,7 @@ def calibration_requirement(**overrides: object) -> dict[str, object]:
         },
         "run_id": "calibration-20260921T000000Z-abcd1234",
         "seeds": seeds,
-        "target": target(),
+        "target": target(durable_evidence_level=CALIBRATION_DURABLE_LEVEL),
     }
     for key, value in overrides.items():
         if key in ("budget", "target", "bounds", "gates") and isinstance(value, dict):

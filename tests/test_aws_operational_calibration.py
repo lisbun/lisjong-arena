@@ -55,6 +55,14 @@ class CalibrationEvidenceTest(unittest.TestCase):
         )
         self.assertTrue(all(g["status"] == "PASS" for g in record["gates"]))
         self.assertEqual(
+            "atomic-operational-progress",
+            record["target"]["durable_evidence_level"],
+        )
+        self.assertEqual(
+            "per-seed-durable-receipt",
+            fixtures.evidence()["durable_evidence_level"],
+        )
+        self.assertEqual(
             fixtures.evidence()["calibration_identity"],
             record["calibration"]["identity"],
         )
@@ -262,11 +270,9 @@ class CalibrationMatchingTest(unittest.TestCase):
             _gate(record, "matching-calibration")["detail"],
         )
 
-    def test_weaker_durable_evidence_level_is_no_go(self):
+    def test_evidence_weaker_than_production_atomic_progress_is_no_go(self):
         record = _admit(
-            evidence_documents=[
-                fixtures.evidence(durable_evidence_level="atomic-operational-progress")
-            ]
+            evidence_documents=[fixtures.evidence(durable_evidence_level="none")]
         )
         self.assertEqual("NO-GO", record["decision"])
         self.assertIn(
@@ -834,11 +840,25 @@ class CalibrationAdmissionTest(unittest.TestCase):
         )
         self.assertFalse(record["runtime_prediction"]["available"])
         self.assertIn("circular", record["runtime_prediction"]["reason"])
+        self.assertEqual(
+            "per-seed-durable-receipt",
+            record["target"]["durable_evidence_level"],
+        )
         # Phase 0 authorizes creating the bounded billable resources only.
         # Only phase 2 may authorize the workload, exactly as in production.
         self.assertTrue(record["billable_resource_creation_authorized"])
         self.assertFalse(record["workload_submission_authorized"])
         self.assertFalse(record["scientific_submission_authorized"])
+
+    def test_calibration_rejects_atomic_only_durable_evidence_requirement(self):
+        requirement = fixtures.calibration_requirement(
+            target={"durable_evidence_level": "atomic-operational-progress"}
+        )
+        with self.assertRaisesRegex(
+            calibration.AwsOperationalCalibrationError,
+            "calibration target.durable_evidence_level must be",
+        ):
+            _admit_calibration(requirement=requirement)
 
     def test_calibration_cost_bound_is_the_worst_case_boot_clock_window(self):
         record = _admit_calibration()

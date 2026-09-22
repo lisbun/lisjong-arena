@@ -66,10 +66,12 @@ OWNER_REPOSITORY: Final = seed_registry.OWNER_REPOSITORY
 CALIBRATION_POPULATION: Final = "operational-calibration"
 CALIBRATION_PROTOCOL: Final = "aws-operational-calibration-v1"
 
-#: Ordered from weakest to strongest.  An admission requirement declares the
-#: minimum level the production run must provide; the calibration must have
-#: been measured with at least that same level, because the durable write path
-#: is part of the runtime being predicted.
+#: Ordered from weakest to strongest. An admission requirement declares the
+#: minimum durability the production run must provide. Calibration evidence may
+#: be stronger than that minimum: #351 intentionally keeps #339 per-seed timing
+#: receipts for calibration while #332 production requires only atomic
+#: operational progress. Matching therefore accepts observed >= required; the
+#: performance-relevant instrumentation identity remains an exact match.
 DURABLE_EVIDENCE_LEVELS: Final = (
     "none",
     "atomic-operational-progress",
@@ -2285,6 +2287,10 @@ def validate_calibration_admission_requirement(document: object) -> dict[str, ob
         target["durable_evidence_level"] in DURABLE_EVIDENCE_LEVELS
         and target["durable_evidence_level"] != "none",
         "target.durable_evidence_level must be a recognized non-'none' level",
+    )
+    _require(
+        target["durable_evidence_level"] == "per-seed-durable-receipt",
+        "calibration target.durable_evidence_level must be 'per-seed-durable-receipt'",
     )
 
     bounds = requirement["bounds"]
