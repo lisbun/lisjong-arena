@@ -34,6 +34,11 @@ class SeedRegistryWorkflowTest(unittest.TestCase):
             text,
         )
         self.assertIn("validate-bootstrap", text)
+        self.assertIn(
+            'python -m lisjong_arena.seed_registry --ledger "${live_ledger}" validate-branch',
+            text,
+        )
+        self.assertIn('--base-ledger "${bootstrap_ledger}"', text)
 
     def test_workflow_exposes_read_and_mutating_operations(self):
         text = _WORKFLOW.read_text(encoding="utf-8")
