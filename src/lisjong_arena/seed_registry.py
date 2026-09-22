@@ -356,8 +356,7 @@ def collision_records(
         record_domain = record["seed_domain"]
         same_domain = record_domain == seed_domain
         legacy_quarantine = (
-            seed_domain != LEGACY_SEED_DOMAIN
-            and record_domain == LEGACY_SEED_DOMAIN
+            seed_domain != LEGACY_SEED_DOMAIN and record_domain == LEGACY_SEED_DOMAIN
         )
         if not (same_domain or legacy_quarantine):
             continue
