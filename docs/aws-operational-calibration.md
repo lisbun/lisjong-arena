@@ -42,7 +42,7 @@ nesting depth, so a scientific result cannot leak into an operational record.
 
 ## Calibration evidence
 
-A calibration run measures the exact production shape. The evidence document
+A calibration run measures the same performance-relevant production shape, plus the\ncalibration-only #339 timing receipt. The evidence document
 (`arena-aws-calibration-evidence-v1`) binds:
 
 ```text
