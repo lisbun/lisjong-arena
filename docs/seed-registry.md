@@ -1,193 +1,269 @@
 # Arena seed allocation ledger
 
-`src/lisjong_arena/seed-ledger.json` is the canonical owner ledger for populations
-that **lisjong-arena executes or evaluates**. It implements the Arena side of
-`lisbun/lisjong-project#77`; it is not an ecosystem-global seed registry and it
-does not own populations produced by `lisjong` itself.
+Arena owns the allocation authority for populations that **lisjong-arena executes
+or evaluates**, even when the scientific owner Issue lives in another repository.
+This is the Arena child of `lisbun/lisjong-project#77`; it is not an
+ecosystem-global integer registry.
+
+The implementation deliberately separates two Git identities:
+
+```text
+Arena main
+    code / schema / historical bootstrap
+    changes only through normal reviewed PRs
+
+seed-registry branch
+    live RESERVED / COMMITTED / RETIRED authority
+    updated directly by the Arena Seed Registry workflow
+```
+
+Ordinary seed allocation therefore does **not** change the Arena scientific code
+revision and does not require a PR/merge.
+
+## Canonical files and refs
+
+`src/lisjong_arena/seed-ledger.json` on `main` is the immutable bootstrap
+snapshot. CI requires that this snapshot contain no live `RESERVED` or
+`COMMITTED` rows.
+
+The same path on `refs/heads/seed-registry` is the live authority. The first
+mutating registry workflow creates that branch from the merged bootstrap when
+the branch does not yet exist. Later mutations change only the ledger file on
+that branch.
+
+A local checkout, feature branch, or locally edited ledger is never allocation
+authority.
 
 ## Seed domains
 
 Collision authority is scoped by `seed_domain`. Equal integers in different
-domains do not collide merely because their numeric value is equal. Current
-explicit domains are:
+explicit domains do not collide merely because the numeric value is equal.
 
-- `riichienv-4p-red-half-hanchan-v1` — one Arena hanchan seed under the current
-  RiichiEnv half-game seed semantics;
-- `riichienv-4p-red-single-v1` — one Arena single-round seed block under the
-  current RiichiEnv single-round semantics;
-- `arena-legacy-declared-v1` — bootstrap-only historical quarantine for
-  allocations whose exact overlapping producer/environment boundaries cannot
-  be reconstructed safely. New allocations must not use this legacy domain.
+Current domains are:
 
-Two explicit non-legacy domains do not collide merely because their integers
-match. The legacy domain is the one conservative exception: because its finer
-semantics are unknown, a legacy-quarantined integer blocks reuse in every
-Arena seed domain. This is an explicit ambiguity rule, not an ecosystem-global
-integer namespace.
+- `riichienv-4p-red-half-hanchan-v1`
+- `riichienv-4p-red-single-v1`
+- `arena-legacy-declared-v1`
 
-Purpose-specific protocols may still be stricter than domain collision.
-Historical scientific code that deliberately excludes every known Arena
-allocation uses the common union lookup.
+The legacy domain is bootstrap-only. It quarantines historical allocations whose
+original producer/environment boundaries cannot be reconstructed safely. A
+legacy-quarantined integer conservatively blocks future reuse in every Arena
+domain. New allocations cannot use the legacy domain.
 
-## Record lifecycle
+Purpose-specific protocols may impose stricter exclusions than domain collision.
+Those scientific rules remain protocol-owned.
 
-Every allocation has a stable `allocation_identity`, a deterministic
-`seed_membership_identity`, and one of:
+## Allocation lifecycle
 
-- `RESERVED` — assigned before execution and unavailable to other allocations;
-- `COMMITTED` — execution/evidence adopted for the allocation;
-- `RETIRED` — permanently retained as consumed / never reuse.
+Each allocation has a stable `allocation_identity`, deterministic
+`seed_membership_identity`, ownership/protocol metadata and one of:
 
-A failed or incomplete execution does not free seeds. Transitions only advance
-`RESERVED -> COMMITTED/RETIRED -> RETIRED`; deletion and regression are invalid.
-Historical bootstrap entries are `RETIRED` because they must never become free.
-Unknown historical revisions/timestamps are represented as `null` rather than
-invented retroactively. Active allocations require an exact Arena commit,
-protocol revision, and UTC allocation timestamp.
+- `RESERVED` — assigned and unavailable for any other allocation;
+- `COMMITTED` — retained/adopted execution evidence exists;
+- `RETIRED` — permanently consumed / never reuse.
 
-The record's `arena_revision` is allocation/protocol provenance: the exact Arena
-source revision against which the reservation was authored. It is **not** the
-Git commit that makes the ledger row authoritative and is not a substitute for
-a scientific execution revision. Allocation authority comes from the canonical
-merged ledger and its independent SHA-256 `ledger_revision`.
-
-## CLI
-
-Run from a clean Arena checkout whose `main` is current:
+Allowed transitions are:
 
 ```text
-python -m lisjong_arena.seed_registry validate-ledger
-python -m lisjong_arena.seed_registry list
-python -m lisjong_arena.seed_registry show <allocation-identity>
-python -m lisjong_arena.seed_registry check \
-  --seed-domain riichienv-4p-red-half-hanchan-v1 \
-  --seeds 70000..70019
+RESERVED -> COMMITTED
+RESERVED -> RETIRED
+COMMITTED -> RETIRED
 ```
 
-To reserve a population, use the exact merged-main Arena revision and a stable
-protocol revision/provenance reference:
+There is no FREE transition. A failed, incomplete, invalid, or abandoned run
+does not return seeds to the pool.
+
+The record's `arena_revision` is the exact reviewed Arena code revision the
+allocation was authored for. It is independent of the Git commit on the
+`seed-registry` branch.
+
+## Allocation binding semantics
+
+A protocol binding contains:
 
 ```text
-python -m lisjong_arena.seed_registry reserve \
-  --owner-issue lisbun/lisjong-arena#332 \
-  --protocol offense-foundation-v1 \
-  --seed-domain riichienv-4p-red-half-hanchan-v1 \
-  --purpose "offense foundation P2 qualification" \
-  --population offense-foundation \
-  --split QUALIFICATION \
-  --seeds 70000..70019 \
-  --arena-revision <merged-main-sha> \
-  --protocol-revision <protocol-identity-or-reviewed-revision> \
-  --provenance-reference <issue-comment-or-lock-reference>
+owner_repository
+allocation_identity
+seed_domain
+seed_membership_identity
+ledger_revision
 ```
 
-`reserve` edits the ledger but does **not** itself grant allocation authority.
-The reservation becomes authoritative only after the ledger change is reviewed
-and merged to current `main`. A local branch being collision-free is not
-allocation authority.
+`ledger_revision` is the SHA-256 of the canonical live-ledger snapshot that
+authorized the binding. It is retained for audit; it is **not** required to equal
+the current global ledger revision forever.
 
-After successful adoption:
+When a retained binding is checked against current live authority, validation
+requires:
+
+- the same immutable `allocation_identity`;
+- exact seed domain and membership identity;
+- exact expected owner/protocol/population/split when requested; and
+- current state `RESERVED` or `COMMITTED`.
+
+Therefore unrelated reservations and `RESERVED -> COMMITTED` transitions do
+not invalidate a scientific lock. A transition to `RETIRED` does make the
+allocation unusable for a new execution. Historical artifact readback does not
+retroactively consult a newer ledger.
+
+## Normal operation — no PR required
+
+Use the **Arena Seed Registry** GitHub Actions workflow for live operations.
+
+Read-only operations:
 
 ```text
-python -m lisjong_arena.seed_registry commit <allocation-identity>
+validate
+list
+show
+check
 ```
 
-Use `--state RETIRED` when a reservation must remain permanently consumed
-without being treated as successful/adopted evidence.
-
-## Concurrency and CI
-
-The quality workflow validates canonical serialization and compares the PR
-ledger against the latest fetched base branch. A stale branch that omits a
-main allocation, regresses state, mutates immutable allocation fields, or adds
-a same-domain overlap fails closed. This catches two branches reserving the same
-population even when both were locally free when they started.
-
-The ledger revision is the SHA-256 of canonical ledger JSON. Protocol locks bind
-`owner_repository`, `allocation_identity`, `seed_domain`,
-`seed_membership_identity`, and `ledger_revision`. A lock may remain readable
-after a later state transition; current-ledger authority is required when the
-lock is created, not retroactively during historical readback.
-
-### Exact execution revision boundary
-
-A Git-managed ledger mutation advances Arena `main`, while some scientific
-protocols bind an exact Arena execution revision. Those identities must not be
-collapsed into one concept.
-
-For an exact-revision protocol, use this ordering:
+Mutating operations:
 
 ```text
-merge all reservations needed by the revision-sensitive execution sequence
-    -> freeze the resulting Arena execution revision
-    -> generate / strict-read final qualification on that exact revision
-    -> create protocol lock(s) using the canonical allocation bindings
-    -> execute the revision-sensitive sequence without another required ledger commit
-    -> record COMMITTED / RETIRED state afterward
+reserve
+commit
+retire
 ```
 
-A `RESERVED` row already prevents reuse, so the Git state transition does not
-need to race the execution-start boundary. #339 durable execution receipts own
-the per-seed execution fact while the revision-sensitive run is in progress.
-Later `RESERVED -> COMMITTED/RETIRED` changes the ledger revision but not the
-allocation identity and does not retroactively invalidate retained protocol
-locks.
-
-For #332 specifically, the current safe plan is:
+For example, after the #346 implementation itself has merged:
 
 ```text
-#346 implementation merge
-    -> ledger-backed calibration allocation + matching calibration
-    -> one reservation merge containing P2 and any Phase-B splits that must run
-       under the same exact Arena revision
-    -> final P0/P1 qualification on that merged revision
-    -> Phase A / Phase B using that exact revision
-    -> state transition after the revision-sensitive sequence
+gh workflow run seed-registry.yml \
+  -f operation=reserve \
+  -f owner_issue=lisbun/lisjong-arena#332 \
+  -f protocol=offense-foundation-v1 \
+  -f seed_domain=riichienv-4p-red-half-hanchan-v1 \
+  -f purpose="offense foundation P2 qualification" \
+  -f population=offense-foundation \
+  -f split=QUALIFICATION \
+  -f seeds=70000..70019 \
+  -f arena_revision=<exact-reviewed-main-sha> \
+  -f protocol_revision=<stable-protocol-revision> \
+  -f provenance_reference=<issue-comment-or-protocol-reference>
 ```
 
-This preserves #332's exact Arena-revision binding rather than weakening it to
-accommodate ledger churn.
+The workflow verifies that `arena_revision` is a commit already merged into
+Arena `main`. It loads the latest live authority, performs the normal fail-closed
+collision/schema checks, writes the new canonical ledger atomically, and pushes a
+normal fast-forward commit to `refs/heads/seed-registry`.
+
+The workflow has a repository-wide concurrency group. It never force-pushes.
+A manual or concurrent authority update that races the workflow causes a
+non-fast-forward failure rather than silently overwriting state.
+
+The resulting Action summary contains the allocation result. Use `show` against
+that allocation to obtain the binding for a protocol request.
+
+## Local read-only inspection
+
+To inspect live state from a checkout:
+
+```text
+git fetch --no-tags origin \
+  +refs/heads/seed-registry:refs/remotes/origin/seed-registry
+
+git show \
+  origin/seed-registry:src/lisjong_arena/seed-ledger.json \
+  > <temporary-ledger-path>
+
+python -m lisjong_arena.seed_registry \
+  --ledger <temporary-ledger-path> list
+```
+
+The local CLI can mutate a supplied file for testing, but a local mutation is
+not authoritative. Production mutations go through the workflow.
+
+## Concurrency / freshness authority
+
+The workflow serializes normal registry operations and loads the current live
+branch at the start of every run. Collision, duplicate membership, malformed
+state, immutable-field mutation, or state regression fails closed.
+
+The final Git push is also a concurrency boundary: it is fast-forward only. Thus
+two branches or operators cannot both establish authority merely because the same
+range looked locally free.
+
+The `main` CI separately validates:
+
+- deterministic/canonical bootstrap serialization;
+- no active live rows in the bootstrap;
+- bootstrap history is not silently deleted or regressed by a PR.
+
+## #332 exact-revision boundary
+
+The live branch removes the revision-churn trap discovered during #346.
+
+For #332 the intended flow is:
+
+```text
+merge #346
+    -> Arena code revision X
+
+reserve P2 on seed-registry branch
+    arena_revision = X
+    seeds = 70000..70019
+    -> Arena main remains X
+
+generate / strict-read final P0/P1 qualification on X
+    -> build P2 request from canonical allocation binding
+    -> launcher fetches live seed-registry read-only
+    -> local preflight validates against that ledger
+    -> the exact same ledger snapshot is carried to AWS
+    -> Phase A executes code revision X
+
+after Phase A
+    RESERVED -> COMMITTED or RETIRED on seed-registry
+    -> Arena main still X
+
+if P2 qualifies
+    reserve TRAIN / SELECT / OFFLINE-EVAL exactly once on seed-registry
+    with arena_revision = X
+    -> build scientific request
+    -> Phase B executes the same exact code revision X
+```
+
+Phase-B allocation is not a result-driven rescue. It is created only after the
+predeclared P2 gate permits Phase B and must obey the locked fresh/non-overlap
+rules. No failed or exposed population is replaced or extended.
+
+The #332 launcher defaults to fetching `seed-registry` read-only. It materializes
+that ledger without switching the Arena worktree, validates the request, and
+passes the exact authority snapshot into the AWS bootstrap. The scientific
+Arena checkout remains pinned to X throughout.
+
+#339 remains separate: #346 records population allocation authority; #339 records
+per-seed durable execution completion.
 
 ## Historical bootstrap
 
-The initial ledger records known Arena-owned historical allocations, including:
+The bootstrap records known Arena-owned historical allocations, including:
 
-- pre-ledger reused strength populations covering `0..2499`, represented as
-  non-overlapping legacy-quarantine intervals around exact later records;
+- pre-ledger reused strength populations covering `0..2499`, represented by
+  conservative non-overlapping legacy quarantine;
 - #252 / #263 single-round populations `647..850`;
 - fixed raw-corpus seeds `1000..1007`;
 - historical fresh strength populations `10000..12499`,
-  `20000..20099`, `20100..20199`, and `20200..22699` from
-  `lisbun/lisjong#121`;
-- the failed / incomplete #326 half-game qualification population
-  `2000..2095`;
-- #196 exposed single-round populations `22700..22899`;
-- #211 completed source-pilot population `23000..23099`;
+  `20000..20099`, `20100..20199`, and `20200..22699`;
+- failed/incomplete #326 half-game qualification `2000..2095`;
+- #196 populations `22700..22899`;
+- #211 source-pilot `23000..23099`;
 - the Arena-hosted `lisbun/lisjong#161` screen `23100..23199`;
-- #216's consumed invalid predecessor plus valid Gate 1 successor
-  `35000..35199`;
-- #217 completed Gate 2 population `35200..37699`;
-- #259's write-once locked downstream population `37700..37905`, retired after
-  the downstream route never ran;
+- #216 populations `35000..35199`;
+- #217 Gate 2 `35200..37699`;
+- #259 write-once locked downstream population `37700..37905`;
 - #270 confirmation `50000..52199`;
-- completed #297 screen `52200..52299`; and
-- completed #281 formal Overall half-game population `60000..60099`.
+- #297 screen `52200..52299`; and
+- #281 formal Overall half-game population `60000..60099`.
 
-Legacy history reused some seed integers before this ledger contract existed.
-The bootstrap therefore preserves **future non-reuse** rather than inventing
-multiple overlapping canonical records for those old runs.
+Legacy history reused some integers before this contract existed. Bootstrap
+preserves future non-reuse rather than inventing overlapping canonical records.
 
-Failed, incomplete, or locked-but-never-executed populations remain retired:
-failure or a terminal route does not return an authoritative historical
-allocation to FREE.
+Conditional #322 scientific TRAIN/SELECT/OFFLINE-EVAL ranges `2100..2259` are
+not bootstrapped as allocations: F1/F2 never qualified, generation never
+started, and #322 requires a newly reviewed allocation plan.
 
-Conditional #322 scientific TRAIN/SELECT/EVAL ranges `2100..2259` are not
-bootstrapped as allocations: F1/F2 never qualified, generation never started,
-and #322 explicitly requires a newly reviewed allocation plan before any future
-attempt.
-
-`repository_declared_allocated_seeds()`-style recent helpers now delegate to the
-common ledger lookup while retaining their purpose-specific exclusion boundary.
-Older protocol-local historical constants remain unchanged for reproducibility;
-they are provenance sources for bootstrap rather than being retroactively
-rewritten.
+Recent `repository_declared_allocated_seeds()` helpers delegate to common
+ledger lookup while retaining purpose-specific scientific exclusion boundaries.
+Older constants remain unchanged for historical reproducibility.
