@@ -67,14 +67,14 @@
       "state": "RETIRED"
     },
     {
-      "allocation_identity": "4f1c62ecc48dae5eb58de0a025082cb00fd4f71142d7e4797ef9fa19e3f8ec2f",
+      "allocation_identity": "18649fea8955ee6b3f937156f65b825c2ccfed45fe4e9b44b658229919401f79",
       "allocation_timestamp": "2026-09-22T01:09:20Z",
       "arena_revision": "a9bcbc0184a6b3628eb609e3821ca33b924ba2c2",
       "owner_issue": "lisbun/lisjong-arena#332",
       "owner_repository": "lisbun/lisjong-arena",
       "population": "offense-foundation",
       "protocol": "offense-foundation-v1",
-      "protocol_revision": "c77531adc77d712f4b920c75ee866061be7b08b737fb68c5ba91bd359268cd27",
+      "protocol_revision": "a9bcbc0184a6b3628eb609e3821ca33b924ba2c2",
       "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/346#issuecomment-5769753555",
       "purpose": "offense foundation Phase A P2 qualification",
       "schema_version": "arena-seed-allocation-v1",
