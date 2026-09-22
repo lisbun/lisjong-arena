@@ -50,8 +50,9 @@ class SeedRegistryTest(unittest.TestCase):
             registry.seed_membership_document((1, 1))
         ledger, _ = reserved(registry.new_ledger(), range(10, 20))
         for candidate in ((10,), (19, 20), range(15, 25)):
-            with self.subTest(candidate=tuple(candidate)), self.assertRaises(
-                registry.SeedRegistryError
+            with (
+                self.subTest(candidate=tuple(candidate)),
+                self.assertRaises(registry.SeedRegistryError),
             ):
                 reserved(ledger, candidate, issue="lisbun/lisjong-arena#1000")
 
@@ -92,20 +93,14 @@ class SeedRegistryTest(unittest.TestCase):
                 registry.load_ledger(path)
             tampered = json.loads(registry.canonical_json_text(ledger))
             tampered["allocations"][0]["seed_membership"]["last"] = 36
-            path.write_text(
-                registry.canonical_json_text(tampered), encoding="utf-8"
-            )
+            path.write_text(registry.canonical_json_text(tampered), encoding="utf-8")
             with self.assertRaises(registry.SeedRegistryError):
                 registry.load_ledger(path)
 
     def test_binding_carries_identity_membership_domain_and_ledger_revision(self):
         ledger, record = reserved(registry.new_ledger(), range(40, 45))
-        binding = registry.allocation_binding(
-            ledger, record["allocation_identity"]
-        )
-        self.assertEqual(
-            binding["ledger_revision"], registry.ledger_revision(ledger)
-        )
+        binding = registry.allocation_binding(ledger, record["allocation_identity"])
+        self.assertEqual(binding["ledger_revision"], registry.ledger_revision(ledger))
         self.assertEqual(binding["seed_domain"], DOMAIN)
         registry.require_allocation_binding(
             ledger,
@@ -119,15 +114,11 @@ class SeedRegistryTest(unittest.TestCase):
         stale = dict(binding)
         stale["ledger_revision"] = "0" * 64
         with self.assertRaises(registry.SeedRegistryError):
-            registry.require_allocation_binding(
-                ledger, stale, seeds=range(40, 45)
-            )
+            registry.require_allocation_binding(ledger, stale, seeds=range(40, 45))
 
     def test_branch_validation_detects_concurrent_main_reservation(self):
         base = registry.new_ledger()
-        branch, _ = reserved(
-            base, range(50, 60), issue="lisbun/lisjong-arena#1001"
-        )
+        branch, _ = reserved(base, range(50, 60), issue="lisbun/lisjong-arena#1001")
         current_main, _ = reserved(
             base, range(55, 65), issue="lisbun/lisjong-arena#1002"
         )
@@ -157,13 +148,9 @@ class SeedRegistryTest(unittest.TestCase):
             seeds=range(70000, 70020),
         )
         self.assertEqual(len(collisions), 1)
-        self.assertEqual(
-            collisions[0]["owner_issue"], "lisbun/lisjong-arena#332"
-        )
+        self.assertEqual(collisions[0]["owner_issue"], "lisbun/lisjong-arena#332")
         self.assertEqual(collisions[0]["state"], registry.RESERVED)
-        record = registry.find_allocation(
-            ledger, collisions[0]["allocation_identity"]
-        )
+        record = registry.find_allocation(ledger, collisions[0]["allocation_identity"])
         self.assertEqual(record["split"], "QUALIFICATION")
         self.assertEqual(
             registry.seeds_from_membership(record["seed_membership"]),
@@ -222,9 +209,7 @@ class SeedRegistryTest(unittest.TestCase):
                 0,
             )
             self.assertEqual(
-                registry.find_allocation(
-                    registry.load_ledger(path), identity
-                )["state"],
+                registry.find_allocation(registry.load_ledger(path), identity)["state"],
                 registry.COMMITTED,
             )
 
