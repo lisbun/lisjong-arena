@@ -417,11 +417,12 @@ def save_checkpoint(
 ) -> LoadedOffenseCheckpoint:
     """Publish a write-once checkpoint and immediately strict-read it."""
 
-    import torch
-
     destination = Path(destination)
     if destination.exists():
         raise FileExistsError(destination)
+
+    import torch
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
         mkdtemp(prefix=f".{destination.name}-staging-", dir=destination.parent)
