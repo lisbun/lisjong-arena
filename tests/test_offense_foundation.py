@@ -663,9 +663,19 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(main(command + ["--phase", "P2"]), 0)
             self.assertEqual(main(command + ["--phase", "SCIENTIFIC"]), 2)
 
-            stale = copy.deepcopy(value)
-            stale["allocation_bindings"]["QUALIFICATION"]["ledger_revision"] = "0" * 64
-            request_path.write_text(json.dumps(stale), encoding="utf-8")
+            allocation_identity = value["allocation_bindings"]["QUALIFICATION"][
+                "allocation_identity"
+            ]
+            committed = seed_registry.transition_allocation(
+                ledger, allocation_identity, state=seed_registry.COMMITTED
+            )
+            seed_registry.write_ledger(ledger_path, committed)
+            self.assertEqual(main(command + ["--phase", "P2"]), 0)
+
+            retired = seed_registry.transition_allocation(
+                committed, allocation_identity, state=seed_registry.RETIRED
+            )
+            seed_registry.write_ledger(ledger_path, retired)
             self.assertEqual(main(command + ["--phase", "P2"]), 2)
 
 
