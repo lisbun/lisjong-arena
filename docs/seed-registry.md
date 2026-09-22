@@ -45,6 +45,12 @@ Unknown historical revisions/timestamps are represented as `null` rather than
 invented retroactively. Active allocations require an exact Arena commit,
 protocol revision, and UTC allocation timestamp.
 
+The record's `arena_revision` is allocation/protocol provenance: the exact Arena
+source revision against which the reservation was authored. It is **not** the
+Git commit that makes the ledger row authoritative and is not a substitute for
+a scientific execution revision. Allocation authority comes from the canonical
+merged ledger and its independent SHA-256 `ledger_revision`.
+
 ## CLI
 
 Run from a clean Arena checkout whose `main` is current:
@@ -102,6 +108,45 @@ The ledger revision is the SHA-256 of canonical ledger JSON. Protocol locks bind
 `seed_membership_identity`, and `ledger_revision`. A lock may remain readable
 after a later state transition; current-ledger authority is required when the
 lock is created, not retroactively during historical readback.
+
+### Exact execution revision boundary
+
+A Git-managed ledger mutation advances Arena `main`, while some scientific
+protocols bind an exact Arena execution revision. Those identities must not be
+collapsed into one concept.
+
+For an exact-revision protocol, use this ordering:
+
+```text
+merge all reservations needed by the revision-sensitive execution sequence
+    -> freeze the resulting Arena execution revision
+    -> generate / strict-read final qualification on that exact revision
+    -> create protocol lock(s) using the canonical allocation bindings
+    -> execute the revision-sensitive sequence without another required ledger commit
+    -> record COMMITTED / RETIRED state afterward
+```
+
+A `RESERVED` row already prevents reuse, so the Git state transition does not
+need to race the execution-start boundary. #339 durable execution receipts own
+the per-seed execution fact while the revision-sensitive run is in progress.
+Later `RESERVED -> COMMITTED/RETIRED` changes the ledger revision but not the
+allocation identity and does not retroactively invalidate retained protocol
+locks.
+
+For #332 specifically, the current safe plan is:
+
+```text
+#346 implementation merge
+    -> ledger-backed calibration allocation + matching calibration
+    -> one reservation merge containing P2 and any Phase-B splits that must run
+       under the same exact Arena revision
+    -> final P0/P1 qualification on that merged revision
+    -> Phase A / Phase B using that exact revision
+    -> state transition after the revision-sensitive sequence
+```
+
+This preserves #332's exact Arena-revision binding rather than weakening it to
+accommodate ledger churn.
 
 ## Historical bootstrap
 
