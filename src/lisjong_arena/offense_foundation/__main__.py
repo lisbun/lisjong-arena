@@ -1,4 +1,4 @@
-"""#331 prerequisite CLI. No implicit seeds, training, or AWS resource creation."""
+"""#331 O0 CLI. No implicit seeds, hidden rescue, or AWS resource creation."""
 
 import argparse
 import json
@@ -16,7 +16,9 @@ from lisjong_arena.aws_execution_observability import ProgressTracker, write_pro
 from lisjong_arena.seed_registry import load_ledger
 
 from .corpus import generate, read_corpus
+from .evaluation import evaluate_offline
 from .instrumentation import describe_generation_instrumentation
+from .learner import load_checkpoint, train_once
 from .operational_calibration import require_calibration_allocation, run_calibration
 from .protocol import make_lock, require_request_allocations, validate_request
 from .qualification import (
@@ -30,6 +32,7 @@ from .qualification import (
     runtime_binding,
     write_document,
 )
+from .rollout import make_rollout_lock, run_rollout
 from .source_record import read_source_record
 
 
@@ -116,6 +119,46 @@ def main(argv=None):
     calibrate.add_argument("--output", required=True)
     calibrate.add_argument("--workers", type=int, default=1)
     calibrate.add_argument("--operational-progress-path")
+
+    training = commands.add_parser(
+        "train",
+        help="one-shot O0 flat-BC training from retained TRAIN + SELECT only",
+    )
+    training.add_argument("--corpus", required=True)
+    training.add_argument("--source-record", required=True)
+    training.add_argument("--checkpoint", required=True)
+    training.add_argument("--expected-corpus-identity", required=True)
+
+    offline_eval = commands.add_parser(
+        "offline-eval",
+        help="support-gate then expose OFFLINE-EVAL once to the frozen checkpoint",
+    )
+    offline_eval.add_argument("--corpus", required=True)
+    offline_eval.add_argument("--source-record", required=True)
+    offline_eval.add_argument("--checkpoint", required=True)
+    offline_eval.add_argument("--expected-corpus-identity", required=True)
+    offline_eval.add_argument("--output", required=True)
+
+    rollout_lock = commands.add_parser(
+        "rollout-lock",
+        help="bind a fresh 20-seed rollout allocation after offline qualification",
+    )
+    rollout_lock.add_argument("--seeds", required=True)
+    rollout_lock.add_argument("--seed-ledger", required=True)
+    rollout_lock.add_argument("--allocation-binding", required=True)
+    rollout_lock.add_argument("--checkpoint", required=True)
+    rollout_lock.add_argument("--offline-result", required=True)
+    rollout_lock.add_argument("--output", required=True)
+
+    rollout = commands.add_parser(
+        "rollout",
+        help="run the frozen 20x4 learner-vs-teacher shadow-audit population",
+    )
+    rollout.add_argument("--lock", required=True)
+    rollout.add_argument("--checkpoint", required=True)
+    rollout.add_argument("--offline-result", required=True)
+    rollout.add_argument("--output", required=True)
+
     args = parser.parse_args(argv)
     try:
         if args.command == "durable-evidence":
@@ -152,6 +195,79 @@ def main(argv=None):
                             "workers_active_observed"
                         ],
                     },
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.command == "train":
+            checkpoint = train_once(
+                args.corpus,
+                args.source_record,
+                args.checkpoint,
+                expected_corpus_identity=args.expected_corpus_identity,
+            )
+            print(
+                json.dumps(
+                    {
+                        "checkpoint_identity": checkpoint.identity,
+                        "weights_sha256": checkpoint.weights_sha256,
+                        "selected_epoch": checkpoint.manifest["selected_epoch"],
+                        "select_choice_masked_ce": checkpoint.manifest[
+                            "select_choice_masked_ce"
+                        ],
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.command == "offline-eval":
+            result = evaluate_offline(
+                args.corpus,
+                args.source_record,
+                args.checkpoint,
+                args.output,
+                expected_corpus_identity=args.expected_corpus_identity,
+            )
+            print(
+                json.dumps(
+                    {"identity": result["identity"], "outcome": result["outcome"]},
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.command == "rollout-lock":
+            seeds = _parse_seed_spec(args.seeds)
+            binding = parse_json_text(
+                Path(args.allocation_binding).read_text(encoding="utf-8")
+            )
+            checkpoint = load_checkpoint(args.checkpoint)
+            offline = read_document(args.offline_result)
+            ledger = load_ledger(args.seed_ledger)
+            result = make_rollout_lock(
+                seeds=seeds,
+                allocation_binding=binding,
+                seed_ledger=ledger,
+                checkpoint=checkpoint,
+                offline_result=offline,
+            )
+            write_document(args.output, result)
+            print(
+                json.dumps(
+                    {"identity": result["identity"], "hanchan": result["hanchan"]},
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.command == "rollout":
+            result = run_rollout(
+                rollout_lock_path=args.lock,
+                checkpoint_path=args.checkpoint,
+                offline_result_path=args.offline_result,
+                result_path=args.output,
+            )
+            print(
+                json.dumps(
+                    {"identity": result["identity"], "outcome": result["outcome"]},
                     sort_keys=True,
                 )
             )
