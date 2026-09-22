@@ -118,13 +118,14 @@ class LearnerCheckpointTest(unittest.TestCase):
             )
             self.assertEqual(saved.identity, loaded.identity)
             self.assertEqual(saved.weights_sha256, loaded.weights_sha256)
-            self.assertEqual(
-                loaded.manifest["scientific_corpus_identity"], "2" * 64
-            )
+            self.assertEqual(loaded.manifest["scientific_corpus_identity"], "2" * 64)
             self.assertEqual(loaded.manifest["source_record_identity"], "3" * 64)
             self.assertFalse(loaded.model.training)
             self.assertTrue(
-                all(not parameter.requires_grad for parameter in loaded.model.parameters())
+                all(
+                    not parameter.requires_grad
+                    for parameter in loaded.model.parameters()
+                )
             )
 
     def test_tampered_weights_fail_closed(self):
