@@ -60,6 +60,7 @@ class TrainingViewTest(unittest.TestCase):
 
         self.assertEqual(view.train_seeds, (10, 11))
         self.assertEqual(view.select_seeds, (12,))
+        self.assertEqual(view.offline_eval_seeds, (13,))
         self.assertEqual(
             tuple((split, seed) for _, split, seed, _ in view.game_entries),
             (("TRAIN", 10), ("TRAIN", 11), ("SELECT", 12)),
@@ -100,6 +101,7 @@ class TrainingViewTest(unittest.TestCase):
             source_record_identity="3" * 64,
             train_seeds=(10,),
             select_seeds=(11,),
+            offline_eval_seeds=(12,),
             game_entries=(),
         )
         with self.assertRaisesRegex(OffenseError, "must not open split OFFLINE-EVAL"):
