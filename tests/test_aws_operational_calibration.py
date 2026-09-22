@@ -262,11 +262,9 @@ class CalibrationMatchingTest(unittest.TestCase):
             _gate(record, "matching-calibration")["detail"],
         )
 
-    def test_weaker_durable_evidence_level_is_no_go(self):
+    def test_evidence_weaker_than_production_atomic_progress_is_no_go(self):
         record = _admit(
-            evidence_documents=[
-                fixtures.evidence(durable_evidence_level="atomic-operational-progress")
-            ]
+            evidence_documents=[fixtures.evidence(durable_evidence_level="none")]
         )
         self.assertEqual("NO-GO", record["decision"])
         self.assertIn(
