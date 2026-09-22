@@ -626,6 +626,26 @@ class ProtocolTest(unittest.TestCase):
                 self.assertEqual(report["p0"], P0_PASS)
                 run.assert_not_called()
 
+    def test_historical_lock_survives_later_ledger_state_transition(self):
+        value, ledger = authoritative_request()
+        binding_revision = value["allocation_bindings"]["QUALIFICATION"][
+            "ledger_revision"
+        ]
+        allocation_identity = value["allocation_bindings"]["QUALIFICATION"][
+            "allocation_identity"
+        ]
+        lock = make_lock(value, qualify({}))
+        committed = seed_registry.transition_allocation(
+            ledger,
+            allocation_identity,
+            state=seed_registry.COMMITTED,
+        )
+        self.assertNotEqual(
+            seed_registry.ledger_revision(committed),
+            binding_revision,
+        )
+        validate_lock(lock)
+
     def test_request_validation_cli_requires_current_seed_allocation_authority(self):
         with tempfile.TemporaryDirectory() as tmp:
             request_path = Path(tmp) / "request.json"
