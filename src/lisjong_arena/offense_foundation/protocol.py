@@ -78,9 +78,7 @@ def validate_request(request):
         raise OffenseError("unexpected population split")
     bindings = request["allocation_bindings"]
     if type(bindings) is not dict or set(bindings) != set(expected):
-        raise OffenseError(
-            "allocation bindings must exactly match population splits"
-        )
+        raise OffenseError("allocation bindings must exactly match population splits")
     seen = set()
     for split, size in expected.items():
         _seeds(populations[split], size)
@@ -88,9 +86,7 @@ def validate_request(request):
             raise OffenseError("cross-split seed leakage")
         seen.update(populations[split])
         try:
-            binding = validate_binding_shape(
-                bindings[split], seeds=populations[split]
-            )
+            binding = validate_binding_shape(bindings[split], seeds=populations[split])
         except SeedRegistryError as error:
             raise OffenseError(
                 f"invalid {split} allocation binding: {error}"
@@ -124,9 +120,7 @@ def require_request_allocations(request, ledger=None):
                 split=split,
             )
     except SeedRegistryError as error:
-        raise OffenseError(
-            f"seed allocation authority invalid: {error}"
-        ) from error
+        raise OffenseError(f"seed allocation authority invalid: {error}") from error
 
 
 def make_lock(request, qualification, p2=None):
@@ -142,10 +136,7 @@ def make_lock(request, qualification, p2=None):
         if p2["lock"]["qualification"] != qualification:
             raise OffenseError("P2 teacher/runtime qualification mismatch")
         seeds = p2["lock"]["request"]["populations"]["QUALIFICATION"]
-        if any(
-            set(seeds).intersection(v)
-            for v in request["populations"].values()
-        ):
+        if any(set(seeds).intersection(v) for v in request["populations"].values()):
             raise OffenseError("qualification population cannot be reused")
         p2_reference = {"identity": p2["identity"], "seeds": seeds}
     elif p2 is not None:
@@ -188,9 +179,7 @@ def ordered_games(lock):
         if lock["request"]["phase"] == "P2"
         else ("TRAIN", "SELECT", "OFFLINE-EVAL")
     )
-    return tuple(
-        (split, seed) for split in splits for seed in populations[split]
-    )
+    return tuple((split, seed) for split in splits for seed in populations[split])
 
 
 def validate_p2_evidence(p2):
@@ -216,10 +205,7 @@ def validate_p2_evidence(p2):
         or p2["kind"] != "corpus"
     ):
         raise OffenseError("invalid P2 evidence")
-    if (
-        p2["p2_evidence"] is not None
-        or p2["lock"]["request"]["phase"] != "P2"
-    ):
+    if p2["p2_evidence"] is not None or p2["lock"]["request"]["phase"] != "P2":
         raise OffenseError("P2 evidence must be qualification-only")
     validate_lock(p2["lock"])
     games = ordered_games(p2["lock"])
