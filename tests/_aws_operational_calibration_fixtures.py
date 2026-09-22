@@ -274,7 +274,7 @@ def requirement(**overrides: object) -> dict[str, object]:
             },
             "durable_evidence": {
                 "status": "PASS",
-                "detail": "per-seed durable receipts beside atomic progress",
+                "detail": "atomic operational progress; incomplete scientific phases are full-rerun only",
             },
             "protocol_lock": {
                 "status": "PASS",
@@ -360,7 +360,7 @@ def calibration_requirement(**overrides: object) -> dict[str, object]:
         },
         "run_id": "calibration-20260921T000000Z-abcd1234",
         "seeds": seeds,
-        "target": target(),
+        "target": target(durable_evidence_level=CALIBRATION_DURABLE_LEVEL),
     }
     for key, value in overrides.items():
         if key in ("budget", "target", "bounds", "gates") and isinstance(value, dict):
