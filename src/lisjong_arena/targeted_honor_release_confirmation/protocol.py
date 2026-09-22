@@ -75,13 +75,12 @@ def require_confirmation_population(seeds: object) -> tuple[int, ...]:
 
 
 def repository_declared_allocated_seeds() -> frozenset[int]:
-    """Known repository/public allocations that #270 must never reuse.
+    """Return Arena allocations other than #270's own population."""
 
-    The live Issue/local/private audit remains mandatory because public/operator
-    allocations can exist without a repository constant.
-    """
-    return frozenset(declared_before_confirmation()) | frozenset(
-        ISSUE_263_DEVELOPMENT_SEEDS
+    from lisjong_arena.seed_registry import allocated_seeds
+
+    return allocated_seeds(
+        exclude_owner_issues={"lisbun/lisjong-arena#270"}
     )
 
 
