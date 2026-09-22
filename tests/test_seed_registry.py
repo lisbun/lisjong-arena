@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from lisjong_arena import seed_registry
 
@@ -97,6 +98,25 @@ class SeedRegistryTest(unittest.TestCase):
             )
             with self.assertRaises(seed_registry.SeedRegistryError):
                 seed_registry.load_ledger(path)
+
+    def test_atomic_replace_failure_preserves_previous_ledger(self):
+        original = seed_registry.new_ledger()
+        updated, _ = reserved(original, range(35, 40))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.json"
+            seed_registry.write_ledger(path, original)
+            previous = path.read_bytes()
+            with (
+                patch.object(
+                    seed_registry.os,
+                    "replace",
+                    side_effect=OSError("synthetic replace failure"),
+                ),
+                self.assertRaisesRegex(OSError, "synthetic replace failure"),
+            ):
+                seed_registry.write_ledger(path, updated)
+            self.assertEqual(path.read_bytes(), previous)
+            self.assertEqual(list(path.parent.glob(".ledger.json.*.tmp")), [])
 
     def test_binding_carries_identity_membership_domain_and_ledger_revision(self):
         ledger, record = reserved(seed_registry.new_ledger(), range(40, 45))
