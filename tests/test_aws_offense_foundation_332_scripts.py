@@ -873,6 +873,5 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertNotIn("send-command", aws_calls)
 
 
-
 if __name__ == "__main__":
     unittest.main()
