@@ -19,6 +19,7 @@ from lisjong_arena.targeted_honor_release_development.protocol import (
     require_exact_candidate_semantics,
     require_exact_comparator,
 )
+
 PROTOCOL_ID = "targeted-honor-release-confirmation-v1"
 CLASSIFICATION_RULE_ID = "paired-seed-block-normal-approx-95-confirmation-v1"
 ROLE = "INDEPENDENT CONFIRMATION"
@@ -75,9 +76,7 @@ def repository_declared_allocated_seeds() -> frozenset[int]:
 
     from lisjong_arena.seed_registry import allocated_seeds
 
-    return allocated_seeds(
-        exclude_owner_issues={"lisbun/lisjong-arena#270"}
-    )
+    return allocated_seeds(exclude_owner_issues={"lisbun/lisjong-arena#270"})
 
 
 def seed_freshness_block(
