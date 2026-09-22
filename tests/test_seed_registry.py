@@ -78,10 +78,7 @@ class SeedRegistryTest(unittest.TestCase):
                 )
                 self.assertTrue(collisions)
                 self.assertTrue(
-                    any(
-                        record["owner_issue"] is None
-                        for record in collisions
-                    )
+                    any(record["owner_issue"] is None for record in collisions)
                 )
                 with self.assertRaises(seed_registry.SeedRegistryError):
                     reserved(
