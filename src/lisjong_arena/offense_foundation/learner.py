@@ -77,6 +77,7 @@ class CorpusTrainingView:
     source_record_identity: str
     train_seeds: tuple[int, ...]
     select_seeds: tuple[int, ...]
+    offline_eval_seeds: tuple[int, ...]
     game_entries: tuple[tuple[int, str, int, dict], ...]
 
 
@@ -264,6 +265,7 @@ def open_training_view(
         source_record_identity=source_manifest["identity"],
         train_seeds=tuple(populations["TRAIN"]),
         select_seeds=tuple(populations["SELECT"]),
+        offline_eval_seeds=tuple(populations["OFFLINE-EVAL"]),
         game_entries=tuple(selected),
     )
 
@@ -390,6 +392,7 @@ def checkpoint_identity(manifest: dict) -> str:
         "protocol_lock_identity",
         "train_seeds",
         "select_seeds",
+        "offline_eval_seeds",
         "feature",
         "vocabulary",
         "model",
@@ -444,6 +447,7 @@ def save_checkpoint(
             "protocol_lock_identity": view.lock_identity,
             "train_seeds": list(view.train_seeds),
             "select_seeds": list(view.select_seeds),
+            "offline_eval_seeds": list(view.offline_eval_seeds),
             "feature": feature_block(),
             "vocabulary": vocabulary_block(),
             "model": locked_model_block(),
