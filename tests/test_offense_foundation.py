@@ -646,6 +646,11 @@ class ProtocolTest(unittest.TestCase):
         )
         validate_lock(lock)
 
+    def test_allocation_authority_cli_requires_explicit_seed_ledger(self):
+        for command in ("validate-request", "lock"):
+            with self.subTest(command=command), self.assertRaises(SystemExit):
+                main([command])
+
     def test_request_validation_cli_requires_current_seed_allocation_authority(self):
         with tempfile.TemporaryDirectory() as tmp:
             request_path = Path(tmp) / "request.json"
