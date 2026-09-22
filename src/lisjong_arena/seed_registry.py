@@ -353,7 +353,13 @@ def collision_records(
     requested = set(_seeds(seeds))
     result = []
     for record in ledger["allocations"]:
-        if record["seed_domain"] != seed_domain:
+        record_domain = record["seed_domain"]
+        same_domain = record_domain == seed_domain
+        legacy_quarantine = (
+            seed_domain != LEGACY_SEED_DOMAIN
+            and record_domain == LEGACY_SEED_DOMAIN
+        )
+        if not (same_domain or legacy_quarantine):
             continue
         overlap = requested.intersection(
             seeds_from_membership(record["seed_membership"])
@@ -478,6 +484,8 @@ def reserve_allocation(
     allocation_timestamp: str,
 ) -> tuple[dict[str, object], dict[str, object]]:
     ledger = deepcopy(validate_ledger(document))
+    if seed_domain == LEGACY_SEED_DOMAIN:
+        raise SeedRegistryError("legacy seed domain is bootstrap-only")
     collisions = collision_records(ledger, seed_domain=seed_domain, seeds=seeds)
     if collisions:
         raise SeedRegistryError(f"seed collision: {collisions!r}")
