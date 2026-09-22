@@ -12,6 +12,7 @@ from unittest.mock import patch
 from lisjong.policies import TwoStepUkeirePolicy
 from lisjong.policy_contract import DecisionTraceRecorder, execute_policy_with_trace
 
+from lisjong_arena import seed_registry
 from lisjong_arena.offense_foundation import corpus, source_record
 from lisjong_arena.offense_foundation.__main__ import main
 from lisjong_arena.offense_foundation.fixtures import probes
@@ -24,7 +25,6 @@ from lisjong_arena.offense_foundation.qualification import (
 )
 from lisjong_arena.offense_foundation.semantics import OffenseError
 from lisjong_arena.riichienv.local_game_runner import SeatDecisionObservation
-from lisjong_arena import seed_registry
 
 
 def _request():
