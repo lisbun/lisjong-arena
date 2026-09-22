@@ -63,6 +63,7 @@ class LearnerTensorTest(unittest.TestCase):
                 source_record_identity="3" * 64,
                 train_seeds=(10,),
                 select_seeds=(11,),
+                offline_eval_seeds=(12,),
                 game_entries=(
                     (0, "TRAIN", 10, train_game),
                     (1, "SELECT", 11, select_game),
@@ -91,6 +92,7 @@ class LearnerCheckpointTest(unittest.TestCase):
             source_record_identity="3" * 64,
             train_seeds=(10,),
             select_seeds=(11,),
+            offline_eval_seeds=(12,),
             game_entries=(),
         )
 
@@ -126,6 +128,7 @@ class LearnerCheckpointTest(unittest.TestCase):
             self.assertEqual(saved.weights_sha256, loaded.weights_sha256)
             self.assertEqual(loaded.manifest["scientific_corpus_identity"], "2" * 64)
             self.assertEqual(loaded.manifest["source_record_identity"], "3" * 64)
+            self.assertEqual(loaded.manifest["offline_eval_seeds"], [12])
             self.assertFalse(loaded.model.training)
             self.assertTrue(
                 all(
