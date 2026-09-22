@@ -15,14 +15,19 @@ explicit domains are:
   RiichiEnv half-game seed semantics;
 - `riichienv-4p-red-single-v1` — one Arena single-round seed block under the
   current RiichiEnv single-round semantics;
-- `arena-legacy-declared-v1` — bootstrap-only historical allocations whose
-  finer producer/environment semantics cannot be reconstructed safely. New
-  allocations must not use this legacy domain.
+- `arena-legacy-declared-v1` — bootstrap-only historical quarantine for
+  allocations whose exact overlapping producer/environment boundaries cannot
+  be reconstructed safely. New allocations must not use this legacy domain.
 
-Purpose-specific protocols may be stricter than domain collision. Historical
-scientific code that deliberately excludes every known Arena allocation uses
-the common union lookup rather than turning the ledger into a global integer
-namespace.
+Two explicit non-legacy domains do not collide merely because their integers
+match. The legacy domain is the one conservative exception: because its finer
+semantics are unknown, a legacy-quarantined integer blocks reuse in every
+Arena seed domain. This is an explicit ambiguity rule, not an ecosystem-global
+integer namespace.
+
+Purpose-specific protocols may still be stricter than domain collision.
+Historical scientific code that deliberately excludes every known Arena
+allocation uses the common union lookup.
 
 ## Record lifecycle
 
@@ -102,14 +107,18 @@ lock is created, not retroactively during historical readback.
 
 The initial ledger records known Arena-owned historical allocations, including:
 
-- the legacy repository-declared chain `100..646` in the bootstrap-only legacy
-  domain;
+- pre-ledger reused strength populations covering `0..2499`, represented as
+  non-overlapping legacy-quarantine intervals around exact later records;
 - #252 / #263 single-round populations `647..850`;
 - fixed raw-corpus seeds `1000..1007`;
+- historical fresh strength populations `10000..12499`,
+  `20000..20099`, `20100..20199`, and `20200..22699` from
+  `lisbun/lisjong#121`;
 - the failed / incomplete #326 half-game qualification population
   `2000..2095`;
 - #196 exposed single-round populations `22700..22899`;
 - #211 completed source-pilot population `23000..23099`;
+- the Arena-hosted `lisbun/lisjong#161` screen `23100..23199`;
 - #216's consumed invalid predecessor plus valid Gate 1 successor
   `35000..35199`;
 - #217 completed Gate 2 population `35200..37699`;
@@ -118,6 +127,10 @@ The initial ledger records known Arena-owned historical allocations, including:
 - #270 confirmation `50000..52199`;
 - completed #297 screen `52200..52299`; and
 - completed #281 formal Overall half-game population `60000..60099`.
+
+Legacy history reused some seed integers before this ledger contract existed.
+The bootstrap therefore preserves **future non-reuse** rather than inventing
+multiple overlapping canonical records for those old runs.
 
 Failed, incomplete, or locked-but-never-executed populations remain retired:
 failure or a terminal route does not return an authoritative historical
