@@ -42,7 +42,7 @@ function Invoke-AwsJson {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     $text = Invoke-AwsText -Arguments ($Arguments + @("--output", "json"))
     if ([string]::IsNullOrWhiteSpace($text)) { return $null }
-    return $text | ConvertFrom-Json
+    return $text | ConvertFrom-Json -DateKind String
 }
 
 function Get-TagValue {

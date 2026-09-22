@@ -78,6 +78,10 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("ALLOW_WORKER_OVERSUBSCRIPTION", bootstrap)
         self.assertIn("--allow-worker-oversubscription", text)
 
+    def test_collector_preserves_aws_json_timestamp_strings(self):
+        collector = _COLLECTOR.read_text(encoding="utf-8")
+        self.assertIn("ConvertFrom-Json -DateKind String", collector)
+
     def test_retained_volumes_are_distinct_encrypted_8_gib_gp3_resources(self):
         launcher = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn('"--size", "8"', launcher)
