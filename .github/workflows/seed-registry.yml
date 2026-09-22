@@ -105,18 +105,24 @@ jobs:
         run: |
           set -euo pipefail
           live_ledger="${RUNNER_TEMP}/seed-ledger.json"
+          bootstrap_ledger="${RUNNER_TEMP}/seed-ledger-bootstrap.json"
+          cp "${LEDGER_PATH}" "${bootstrap_ledger}"
+          python -m lisjong_arena.seed_registry --ledger "${bootstrap_ledger}" validate-bootstrap
+
           if git ls-remote --exit-code --heads origin "refs/heads/${REGISTRY_BRANCH}" >/dev/null 2>&1; then
             git fetch --no-tags origin "+refs/heads/${REGISTRY_BRANCH}:refs/remotes/origin/${REGISTRY_BRANCH}"
             git show "origin/${REGISTRY_BRANCH}:${LEDGER_PATH}" > "${live_ledger}"
             echo "branch_exists=true" >> "${GITHUB_OUTPUT}"
             echo "authority_commit=$(git rev-parse "origin/${REGISTRY_BRANCH}")" >> "${GITHUB_OUTPUT}"
           else
-            cp "${LEDGER_PATH}" "${live_ledger}"
-            python -m lisjong_arena.seed_registry --ledger "${live_ledger}" validate-bootstrap
+            cp "${bootstrap_ledger}" "${live_ledger}"
             echo "branch_exists=false" >> "${GITHUB_OUTPUT}"
             echo "authority_commit=BOOTSTRAP_FROM_MAIN" >> "${GITHUB_OUTPUT}"
           fi
+
           python -m lisjong_arena.seed_registry --ledger "${live_ledger}" validate-ledger
+          python -m lisjong_arena.seed_registry --ledger "${live_ledger}" validate-branch \
+            --base-ledger "${bootstrap_ledger}"
           echo "live_ledger=${live_ledger}" >> "${GITHUB_OUTPUT}"
 
       - name: Apply registry operation
