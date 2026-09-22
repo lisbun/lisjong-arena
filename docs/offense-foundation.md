@@ -1,14 +1,19 @@
 # Offense Foundation O0 prerequisites (#331)
 
 [Issue #331](https://github.com/lisbun/lisjong-arena/issues/331) is the scientific
-authority. [Issue #332](https://github.com/lisbun/lisjong-arena/issues/332) runs
-this same generator on AWS; #329/#330 own AWS planning, billing, retention,
-reattachment and teardown. This package does not create AWS resources.
+authority. [Issue #332](https://github.com/lisbun/lisjong-arena/issues/332)
+generated and retained the P2/scientific source corpus on AWS. This package does
+not create AWS resources.
 
 Implemented here: P0 exact teacher qualification, P1 canonical semantic audit,
-and the first-party generator needed for the later P2/scientific executions.
-No training, checkpoint selection, learner inference or rollout is implemented
-or invoked. Implementing P2 accounting does **not** qualify population support.
+the first-party P2/scientific generator, and the pre-checkpoint O0 learner path
+that strict-reads **TRAIN + SELECT only**, reuses the established flat-BC
+trainer unchanged, and publishes a write-once frozen checkpoint.
+
+OFFLINE-EVAL semantic qualification, learner serving/interactive rollout, and
+shadow-teacher audit remain intentionally outside the pre-checkpoint learner
+path. Implementing P2 accounting does **not** qualify population support, and
+implementing the learner path does **not** qualify offense skill.
 
 ## P0/P1 qualification (no games or scientific seeds)
 
