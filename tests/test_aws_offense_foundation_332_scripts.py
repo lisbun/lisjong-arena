@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -158,7 +159,9 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
     def test_seed_registry_authority_is_decoupled_from_arena_code_revision(self):
         launcher = _LAUNCHER.read_text(encoding="utf-8")
         bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn('[string]$SeedRegistryBranch = "seed-registry"', launcher)
+        self.assertIn('$seedRegistryBranch = "seed-registry"', launcher)
+        self.assertNotIn("SeedLedgerPath", launcher)
+        self.assertNotIn("SeedRegistryBranch", launcher)
         self.assertIn("git -C $repoRoot fetch --no-tags origin $fetchSpec", launcher)
         self.assertIn("--seed-ledger $resolvedSeedLedgerPath", launcher)
         self.assertIn("--seed-ledger-json-b64", launcher)
@@ -393,10 +396,20 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                     "  }",
                 ]
             )
+        ledger_b64 = base64.b64encode(ledger_path.read_bytes()).decode("ascii")
         lines.extend(
             [
                 "  $global:LASTEXITCODE = 51",
                 '  throw "unexpected AWS call: $joined"',
+                "}",
+                f"$global:seedLedgerJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{ledgerB64Expr}'))",
+                "function global:git {",
+                "  $joined = $args -join ' '",
+                "  $global:LASTEXITCODE = 0",
+                "  if ($joined.Contains(' fetch ')) { return }",
+                "  if ($joined.Contains(' show ')) { $global:seedLedgerJson; return }",
+                "  $global:LASTEXITCODE = 52",
+                '  throw "unexpected git call: $joined"',
                 "}",
                 (
                     f"& '{str(_LAUNCHER).replace("'", "''")}' -Phase B "
@@ -404,7 +417,6 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                     "-PhaseAArtifactVolumeId 'vol-a1' "
                     "-AwsProfile fake -PreflightOnly -HourlyPriceUsd 1.0 "
                     f"-ArenaRevision '{arena_revision}' "
-                    f"-SeedLedgerPath '{str(ledger_path).replace("'", "''")}' "
                     f"-OutputRoot '{str(root).replace("'", "''")}'"
                 ),
                 f"$global:calls | Set-Content -LiteralPath '{str(calls).replace("'", "''")}'",
