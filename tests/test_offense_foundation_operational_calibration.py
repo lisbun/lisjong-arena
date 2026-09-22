@@ -45,7 +45,7 @@ class InstrumentationCapabilityTest(unittest.TestCase):
             described["required_durable_evidence_level"],
         )
         self.assertIsNone(described["follow_up"])
-        self.assertIn("full", described["limitation"])
+        self.assertIn("from the beginning", described["limitation"])
         self.assertIn("locked phase", described["limitation"])
 
     def test_the_calibration_path_keeps_the_stronger_receipt_requirement(self):
