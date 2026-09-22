@@ -75,25 +75,32 @@ This API runs no learner and does not produce OFFLINE-EVAL qualification.
 **Do not run these generation commands as part of the prerequisite PR.**
 No actual population or scientific seed range is supplied by this documentation.
 
-Before #332 execution, the operator must scan current Arena evidence and retained
-artifact history, then supply a JSON request with exactly these fields:
+Before #332 execution, reserve every split in the canonical Arena seed ledger
+described in `docs/seed-registry.md`, merge that reservation to current
+`main`, and then supply a JSON request with exactly these fields:
 
 | Field | P2 | SCIENTIFIC |
 | --- | --- | --- |
 | `phase` | `"P2"` | `"SCIENTIFIC"` |
 | `populations` | `{"QUALIFICATION": [20 explicit seeds]}` | `{"TRAIN": [100 explicit seeds], "SELECT": [20 explicit seeds], "OFFLINE-EVAL": [20 explicit seeds]}` |
-| `known_used_seeds` | explicit array from the evidence/history scan | updated explicit array from that scan |
-| `freshness_evidence` | nonempty array of scan evidence references | nonempty array of scan evidence references |
+| `allocation_bindings` | canonical QUALIFICATION allocation binding | canonical TRAIN / SELECT / OFFLINE-EVAL allocation bindings |
+
+Each binding carries the Arena owner, allocation identity, seed domain,
+membership identity and the exact canonical ledger revision. A locally free
+range is not allocation authority: validation fails unless the binding resolves
+against the current packaged ledger in `RESERVED` or `COMMITTED` state and is
+owned by `lisbun/lisjong-arena#332` / `offense-foundation-v1`.
 
 The bracketed seed descriptions above are explanatory, not valid JSON or
 recommended seeds. Each split must be an ascending contiguous unsigned 32-bit
-range. Populations must not overlap each other, known prior seeds, or P2 seeds.
-There is no default seed allocation, extension, replacement or row reshuffling.
-The tool can check the supplied inventory; it cannot discover every external
-retained artifact automatically. Completeness of the evidence/history scan is
-an operator precondition, not inferred from an empty `known_used_seeds` array.
+range. Scientific splits must not overlap each other or P2 seeds. There is no
+default seed allocation, extension, result-driven replacement or row
+reshuffling. Historical/private scans were used to bootstrap the ledger; normal
+fresh allocation now uses the canonical ledger plus PR/main concurrency
+validation rather than repeating a full artifact scan.
 
 ```text
+python -m lisjong_arena.offense_foundation validate-request --request p2-request.json --phase P2
 python -m lisjong_arena.offense_foundation lock --request p2-request.json --qualification o0-qualification.json --output p2-lock.json
 python -m lisjong_arena.offense_foundation generate --lock p2-lock.json --output retained/p2-corpus --source-record-output retained/p2-source-record
 python -m lisjong_arena.offense_foundation readback --lock p2-lock.json --corpus retained/p2-corpus
