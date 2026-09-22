@@ -646,7 +646,7 @@ try {
     if (-not $observationMatch.Success) { throw "The calibration observation was not returned." }
     $rawObservationPath = Join-Path $runDir "calibration-observation.json"
     [IO.File]::WriteAllBytes($rawObservationPath, [Convert]::FromBase64String($observationMatch.Groups[1].Value))
-    $rawObservation = Get-Content -Raw -LiteralPath $rawObservationPath | ConvertFrom-Json
+    $rawObservation = Get-Content -Raw -LiteralPath $rawObservationPath | ConvertFrom-Json -DateKind String
 
     [void](Invoke-AwsText -Arguments @("ec2", "terminate-instances", "--instance-ids", $instanceId))
     [void](Invoke-AwsText -Arguments @("ec2", "wait", "instance-terminated", "--instance-ids", $instanceId))
@@ -659,8 +659,14 @@ try {
 
     # Scientific runtime comes from the instance-side measurement; billable
     # runtime is the EC2 window from LaunchTime through confirmed termination.
-    $workloadStartEpoch = [long](([datetime]::Parse([string]$rawObservation.started_at).ToUniversalTime() - [datetime]::UnixEpoch).TotalSeconds)
-    $workloadEndEpoch = [long](([datetime]::Parse([string]$rawObservation.completed_at).ToUniversalTime() - [datetime]::UnixEpoch).TotalSeconds)
+    $workloadStartEpoch = [long]([DateTimeOffset]::Parse(
+            [string]$rawObservation.started_at,
+            [Globalization.CultureInfo]::InvariantCulture
+        ).ToUnixTimeSeconds())
+    $workloadEndEpoch = [long]([DateTimeOffset]::Parse(
+            [string]$rawObservation.completed_at,
+            [Globalization.CultureInfo]::InvariantCulture
+        ).ToUnixTimeSeconds())
     $evidenceInputPath = Join-Path $runDir "calibration-evidence-input.json"
     Write-JsonFile -Path $evidenceInputPath -Value ([ordered]@{
             arena_revision = [string]$rawObservation.arena_revision
