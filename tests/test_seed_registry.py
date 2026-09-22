@@ -144,19 +144,30 @@ class SeedRegistryTest(unittest.TestCase):
         with self.assertRaises(registry.SeedRegistryError):
             registry.validate_branch_against_base(base, committed)
 
-    def test_bootstrap_contains_known_recent_allocations_and_candidate_70000_is_free(self):
+    def test_bootstrap_contains_history_and_the_332_candidate_is_reserved(self):
         ledger = registry.load_ledger()
         all_seeds = registry.allocated_seeds(ledger)
         self.assertTrue(set(range(647, 851)) <= all_seeds)
         self.assertTrue(set(range(1000, 1008)) <= all_seeds)
         self.assertTrue(set(range(2000, 2096)) <= all_seeds)
         self.assertTrue(set(range(50000, 52300)) <= all_seeds)
-        self.assertFalse(
-            registry.collision_records(
-                ledger,
-                seed_domain=registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
-                seeds=range(70000, 70020),
-            )
+        collisions = registry.collision_records(
+            ledger,
+            seed_domain=registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+            seeds=range(70000, 70020),
+        )
+        self.assertEqual(len(collisions), 1)
+        self.assertEqual(
+            collisions[0]["owner_issue"], "lisbun/lisjong-arena#332"
+        )
+        self.assertEqual(collisions[0]["state"], registry.RESERVED)
+        record = registry.find_allocation(
+            ledger, collisions[0]["allocation_identity"]
+        )
+        self.assertEqual(record["split"], "QUALIFICATION")
+        self.assertEqual(
+            registry.seeds_from_membership(record["seed_membership"]),
+            tuple(range(70000, 70020)),
         )
 
     def test_cli_reserve_collision_commit_and_validate(self):
