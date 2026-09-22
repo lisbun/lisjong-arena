@@ -362,9 +362,7 @@ def find_allocation(document: object, allocation_identity: str) -> dict[str, obj
     return matches[0]
 
 
-def allocation_binding(
-    document: object, allocation_identity: str
-) -> dict[str, object]:
+def allocation_binding(document: object, allocation_identity: str) -> dict[str, object]:
     ledger = validate_ledger(document)
     record = find_allocation(ledger, allocation_identity)
     return {
@@ -395,9 +393,7 @@ def validate_binding_shape(binding: object, *, seeds: object) -> dict[str, objec
     ):
         value = binding[field]
         if type(value) is not str or not _SHA256.fullmatch(value):
-            raise SeedRegistryError(
-                f"allocation binding {field} must be SHA-256 hex"
-            )
+            raise SeedRegistryError(f"allocation binding {field} must be SHA-256 hex")
     if binding["owner_repository"] != OWNER_REPOSITORY:
         raise SeedRegistryError("allocation binding is not Arena-owned")
     domain = binding["seed_domain"]
@@ -496,9 +492,7 @@ def transition_allocation(
         RETIRED: {RETIRED},
     }
     if state not in allowed[record["state"]]:
-        raise SeedRegistryError(
-            "allocation state cannot move backward or become FREE"
-        )
+        raise SeedRegistryError("allocation state cannot move backward or become FREE")
     record["state"] = state
     validate_ledger(ledger)
     return ledger
@@ -534,9 +528,7 @@ def validate_branch_against_base(branch: object, base: object) -> None:
             seeds=seeds_from_membership(record["seed_membership"]),
         )
         if overlap:
-            raise SeedRegistryError(
-                "new branch allocation collides with current main"
-            )
+            raise SeedRegistryError("new branch allocation collides with current main")
 
 
 def parse_seed_spec(value: str) -> tuple[int, ...]:
@@ -559,9 +551,7 @@ def parse_seed_spec(value: str) -> tuple[int, ...]:
         raise SeedRegistryError("seed list contains non-integer") from None
 
 
-def _write(
-    path: Path, document: dict[str, object], **extra: object
-) -> None:
+def _write(path: Path, document: dict[str, object], **extra: object) -> None:
     write_ledger(path, document)
     print(
         json.dumps(
@@ -599,9 +589,7 @@ def main(argv: list[str] | None = None) -> int:
     reserve.add_argument("--allocation-timestamp")
     commit = commands.add_parser("commit")
     commit.add_argument("allocation_identity")
-    commit.add_argument(
-        "--state", choices=(COMMITTED, RETIRED), default=COMMITTED
-    )
+    commit.add_argument("--state", choices=(COMMITTED, RETIRED), default=COMMITTED)
     commands.add_parser("validate-ledger")
     branch = commands.add_parser("validate-branch")
     branch.add_argument("--base-ledger")
@@ -614,8 +602,7 @@ def main(argv: list[str] | None = None) -> int:
             values = [
                 record
                 for record in ledger["allocations"]
-                if args.seed_domain is None
-                or record["seed_domain"] == args.seed_domain
+                if args.seed_domain is None or record["seed_domain"] == args.seed_domain
             ]
             print(
                 canonical_json_text(
@@ -632,9 +619,7 @@ def main(argv: list[str] | None = None) -> int:
                 canonical_json_text(
                     {
                         "allocation": record,
-                        "binding": allocation_binding(
-                            ledger, args.allocation_identity
-                        ),
+                        "binding": allocation_binding(ledger, args.allocation_identity),
                     }
                 ),
                 end="",
@@ -658,10 +643,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0 if not collisions else 2
         elif args.command == "reserve":
-            timestamp = (
-                args.allocation_timestamp
-                or datetime.now(UTC).isoformat().replace("+00:00", "Z")
-            )
+            timestamp = args.allocation_timestamp or datetime.now(
+                UTC
+            ).isoformat().replace("+00:00", "Z")
             updated, record = reserve_allocation(
                 ledger,
                 owner_issue=args.owner_issue,
@@ -703,11 +687,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         else:
-            base = (
-                load_ledger(args.base_ledger)
-                if args.base_ledger
-                else new_ledger()
-            )
+            base = load_ledger(args.base_ledger) if args.base_ledger else new_ledger()
             validate_branch_against_base(ledger, base)
             print(json.dumps({"status": "PASS"}, sort_keys=True))
         return 0
