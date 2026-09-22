@@ -2290,8 +2290,7 @@ def validate_calibration_admission_requirement(document: object) -> dict[str, ob
     )
     _require(
         target["durable_evidence_level"] == "per-seed-durable-receipt",
-        "calibration target.durable_evidence_level must be "
-        "'per-seed-durable-receipt'",
+        "calibration target.durable_evidence_level must be 'per-seed-durable-receipt'",
     )
 
     bounds = requirement["bounds"]
