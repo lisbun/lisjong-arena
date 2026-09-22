@@ -155,6 +155,21 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertIn("--expected-qualification-contract-b64", launcher)
         self.assertNotIn("--expected-qualification-identity", launcher)
 
+    def test_seed_registry_authority_is_decoupled_from_arena_code_revision(self):
+        launcher = _LAUNCHER.read_text(encoding="utf-8")
+        bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn('[string]$SeedRegistryBranch = "seed-registry"', launcher)
+        self.assertIn("git -C $repoRoot fetch --no-tags origin $fetchSpec", launcher)
+        self.assertIn("--seed-ledger $resolvedSeedLedgerPath", launcher)
+        self.assertIn("--seed-ledger-json-b64", launcher)
+        self.assertIn("--seed-ledger-json-b64)", bootstrap)
+        self.assertIn('--seed-ledger "$INPUT_ROOT/seed-ledger.json"', bootstrap)
+        self.assertIn("lisjong_arena.seed_registry", bootstrap)
+        self.assertLess(
+            launcher.index("Canonical seed ledger validation failed"),
+            launcher.index('"ec2", "create-volume"'),
+        )
+
     def test_phase_b_arena_revision_bound_before_billable_mutation(self):
         # Blocker 2: Phase B must bind to the exact Phase A Arena revision
         # before any billable AWS resource is created.
@@ -260,29 +275,37 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             "SELECT": list(range(200, 220)),
             "OFFLINE-EVAL": list(range(220, 240)),
         }
+        temp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, temp, True)
+        root = Path(temp)
+        ledger_path = root / "seed-ledger.json"
+        ledger = seed_registry.new_ledger()
+        identities = {}
+        for split, seeds in populations.items():
+            ledger, record = seed_registry.reserve_allocation(
+                ledger,
+                owner_issue="lisbun/lisjong-arena#332",
+                protocol="offense-foundation-v1",
+                seed_domain=seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+                purpose="synthetic AWS preflight allocation",
+                population="offense-foundation",
+                split=split,
+                seeds=seeds,
+                arena_revision=arena_revision,
+                protocol_revision="synthetic-test-v1",
+                provenance_reference="synthetic test fixture",
+                allocation_timestamp="2026-09-22T00:00:00Z",
+            )
+            identities[split] = record["allocation_identity"]
+        seed_registry.write_ledger(ledger_path, ledger)
         request = {
             "phase": "SCIENTIFIC",
             "populations": populations,
             "allocation_bindings": {
-                split: {
-                    "allocation_identity": identity * 64,
-                    "ledger_revision": "f" * 64,
-                    "owner_repository": "lisbun/lisjong-arena",
-                    "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
-                    "seed_membership_identity": seed_registry.seed_membership_identity(
-                        seeds
-                    ),
-                }
-                for split, seeds, identity in (
-                    ("TRAIN", populations["TRAIN"], "1"),
-                    ("SELECT", populations["SELECT"], "2"),
-                    ("OFFLINE-EVAL", populations["OFFLINE-EVAL"], "3"),
-                )
+                split: seed_registry.allocation_binding(ledger, identity)
+                for split, identity in identities.items()
             },
         }
-        temp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, temp, True)
-        root = Path(temp)
         request_path = root / "request.json"
         request_path.write_text(json.dumps(request), encoding="utf-8")
         wrapper = root / "preflight.ps1"
@@ -380,7 +403,9 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                     f"-RequestPath '{str(request_path).replace("'", "''")}' "
                     "-PhaseAArtifactVolumeId 'vol-a1' "
                     "-AwsProfile fake -PreflightOnly -HourlyPriceUsd 1.0 "
-                    f"-ArenaRevision '{arena_revision}' -OutputRoot '{str(root).replace("'", "''")}'"
+                    f"-ArenaRevision '{arena_revision}' "
+                    f"-SeedLedgerPath '{str(ledger_path).replace("'", "''")}' "
+                    f"-OutputRoot '{str(root).replace("'", "''")}'"
                 ),
                 f"$global:calls | Set-Content -LiteralPath '{str(calls).replace("'", "''")}'",
             ]
