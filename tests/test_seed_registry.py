@@ -272,7 +272,8 @@ class SeedRegistryTest(unittest.TestCase):
             issue="lisbun/lisjong-arena#1001",
         )
         with self.assertRaisesRegex(
-            seed_registry.SeedRegistryError, "bootstrap ledger contains live allocations"
+            seed_registry.SeedRegistryError,
+            "bootstrap ledger contains live allocations",
         ):
             seed_registry.validate_bootstrap_ledger(live)
 
