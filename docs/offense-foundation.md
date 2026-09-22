@@ -95,8 +95,9 @@ an operator precondition, not inferred from an empty `known_used_seeds` array.
 
 ```text
 python -m lisjong_arena.offense_foundation lock --request p2-request.json --qualification o0-qualification.json --output p2-lock.json
-python -m lisjong_arena.offense_foundation generate --lock p2-lock.json --output retained/p2-corpus
+python -m lisjong_arena.offense_foundation generate --lock p2-lock.json --output retained/p2-corpus --source-record-output retained/p2-source-record
 python -m lisjong_arena.offense_foundation readback --lock p2-lock.json --corpus retained/p2-corpus
+python -m lisjong_arena.offense_foundation source-readback --lock p2-lock.json --corpus retained/p2-corpus --source-record retained/p2-source-record
 ```
 
 The generator reexecutes P0/P1 fixtures and requires the report/runtime to match
@@ -122,8 +123,9 @@ request, then execute as a separate AWS run-id:
 
 ```text
 python -m lisjong_arena.offense_foundation lock --request scientific-request.json --qualification o0-qualification.json --p2-corpus retained/p2-corpus --output scientific-lock.json
-python -m lisjong_arena.offense_foundation generate --lock scientific-lock.json --p2-corpus retained/p2-corpus --output retained/scientific-corpus
+python -m lisjong_arena.offense_foundation generate --lock scientific-lock.json --p2-corpus retained/p2-corpus --output retained/scientific-corpus --source-record-output retained/scientific-source-record
 python -m lisjong_arena.offense_foundation readback --lock scientific-lock.json --corpus retained/scientific-corpus
+python -m lisjong_arena.offense_foundation source-readback --lock scientific-lock.json --corpus retained/scientific-corpus --source-record retained/scientific-source-record
 ```
 
 Both locking and generation strict-read the original P2 corpus. Scientific
@@ -133,6 +135,13 @@ resume-from-partial or successful-game adoption is provided. A new lock does
 not authorize a result-driven population change.
 
 ## Corpus artifact and handoff
+
+Issue #342 adds a separate reusable player-safe source record beside this locked
+corpus. Its schema and strict-read contract are documented in
+[`offense-source-record.md`](offense-source-record.md). The sidecar is projected
+from the same actual decisions but is not referenced by this corpus manifest, so
+#331 corpus bytes, feature/vocabulary identities, support rules and scientific
+identity remain unchanged.
 
 `manifest.json` binds the protocol/qualification, ordered hanchan identities,
 per-file SHA-256/lengths, support, zero failures, and final P2 outcome (null for
@@ -156,10 +165,9 @@ Generation is serial by default and accepts bounded hanchan-level process
 parallelism through `generate --workers N` (maximum 32). Each game writes only
 its protocol-indexed staging directory; completion order is operational, while
 the manifest and final directories remain in exact protocol order. Worker count
-does not enter scientific identity. Any worker failure discards the entire
-staging directory. The complete output is published only after strict readback.
-Strict readback
-checks exact files, ordered seeds/splits, checksums, feature dimensions/finiteness,
+does not enter scientific identity. Any worker failure discards the paired staging root. Corpus and source record
+are both strict-read before publication; source record is published first so a
+completed corpus is never exposed without it. Strict corpus readback checks exact files, ordered seeds/splits, checksums, feature dimensions/finiteness,
 legal label/mask consistency, candidate coverage/missingness, teacher hierarchy,
 decision order, per-game counts and final support. It never reruns tile-efficiency
 calculations. Keep the original P2 corpus with the scientific corpus for audit;

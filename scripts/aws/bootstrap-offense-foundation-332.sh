@@ -204,6 +204,7 @@ if [[ "$PHASE" == "A" ]]; then
     EXPECTED_CONTRACT="$OPERATIONAL_ROOT/local-qualification-contract.json"
     LOCK="$ARTIFACT_ROOT/p2-lock.json"
     CORPUS="$ARTIFACT_ROOT/p2-corpus"
+    SOURCE_RECORD="$ARTIFACT_ROOT/p2-source-record"
     "$PYTHON" -m lisjong_arena.offense_foundation qualify --output "$QUALIFICATION" >>"$BOOTSTRAP_LOG" 2>&1
     "$PYTHON" -m lisjong_arena.offense_foundation qualification-contract \
         --qualification "$QUALIFICATION" --output "$REMOTE_CONTRACT" >>"$BOOTSTRAP_LOG" 2>&1
@@ -221,20 +222,27 @@ if [[ "$PHASE" == "A" ]]; then
     "$PYTHON" -m lisjong_arena.offense_foundation generate \
         --lock "$LOCK" \
         --output "$CORPUS" \
+        --source-record-output "$SOURCE_RECORD" \
         --workers "$MAX_WORKERS" \
         --operational-progress-path "$PROGRESS_PATH" \
         --operational-run-id "$RUN_ID" >>"$BOOTSTRAP_LOG" 2>&1
     "$PYTHON" -m lisjong_arena.offense_foundation readback \
         --lock "$LOCK" --corpus "$CORPUS" >>"$BOOTSTRAP_LOG" 2>&1
+    "$PYTHON" -m lisjong_arena.offense_foundation source-readback \
+        --lock "$LOCK" --corpus "$CORPUS" --source-record "$SOURCE_RECORD" >>"$BOOTSTRAP_LOG" 2>&1
 else
     PHASE_A_ROOT="$INPUT_MOUNT/issue-332/phase-A"
     QUALIFICATION="$PHASE_A_ROOT/qualification.json"
     P2_LOCK="$PHASE_A_ROOT/p2-lock.json"
     P2_CORPUS="$PHASE_A_ROOT/p2-corpus"
+    P2_SOURCE_RECORD="$PHASE_A_ROOT/p2-source-record"
     LOCK="$ARTIFACT_ROOT/scientific-lock.json"
     CORPUS="$ARTIFACT_ROOT/scientific-corpus"
+    SOURCE_RECORD="$ARTIFACT_ROOT/scientific-source-record"
     "$PYTHON" -m lisjong_arena.offense_foundation readback \
         --lock "$P2_LOCK" --corpus "$P2_CORPUS" >>"$BOOTSTRAP_LOG" 2>&1
+    "$PYTHON" -m lisjong_arena.offense_foundation source-readback \
+        --lock "$P2_LOCK" --corpus "$P2_CORPUS" --source-record "$P2_SOURCE_RECORD" >>"$BOOTSTRAP_LOG" 2>&1
     "$PYTHON" -m lisjong_arena.offense_foundation lock \
         --request "$INPUT_ROOT/request.json" \
         --qualification "$QUALIFICATION" \
@@ -244,11 +252,14 @@ else
         --lock "$LOCK" \
         --p2-corpus "$P2_CORPUS" \
         --output "$CORPUS" \
+        --source-record-output "$SOURCE_RECORD" \
         --workers "$MAX_WORKERS" \
         --operational-progress-path "$PROGRESS_PATH" \
         --operational-run-id "$RUN_ID" >>"$BOOTSTRAP_LOG" 2>&1
     "$PYTHON" -m lisjong_arena.offense_foundation readback \
         --lock "$LOCK" --corpus "$CORPUS" >>"$BOOTSTRAP_LOG" 2>&1
+    "$PYTHON" -m lisjong_arena.offense_foundation source-readback \
+        --lock "$LOCK" --corpus "$CORPUS" --source-record "$SOURCE_RECORD" >>"$BOOTSTRAP_LOG" 2>&1
 fi
 
 STOP_EPOCH="$(date +%s)"
@@ -257,7 +268,7 @@ ELAPSED_SECONDS="$((STOP_EPOCH - START_EPOCH))"
 sync
 
 SUMMARY_JSON="$(
-    "$PYTHON" - "$PHASE" "$CORPUS" "$LOCK" "$ARTIFACT_VOLUME_ID" \
+    "$PYTHON" - "$PHASE" "$CORPUS" "$SOURCE_RECORD" "$LOCK" "$ARTIFACT_VOLUME_ID" \
         "$PHASE_A_VOLUME_ID" "$PHASE_A_RUN_ID" "$ARENA_REVISION" "$RUN_ID" \
         "$START_UTC" "$STOP_UTC" "$ELAPSED_SECONDS" "$EXPECTED_GAMES" \
         "$LOCAL_QUALIFICATION_IDENTITY" <<'PY'
@@ -267,10 +278,12 @@ from pathlib import Path
 
 from lisjong_arena.offense_foundation.corpus import read_corpus
 from lisjong_arena.offense_foundation.qualification import P2_PASS, read_document
+from lisjong_arena.offense_foundation.source_record import read_source_record
 
 (
     phase,
     corpus_path,
+    source_record_path,
     lock_path,
     output_volume_id,
     phase_a_volume_id,
@@ -283,7 +296,11 @@ from lisjong_arena.offense_foundation.qualification import P2_PASS, read_documen
     expected_games,
     local_qualification_identity,
 ) = sys.argv[1:]
-manifest = read_corpus(corpus_path, expected_lock=read_document(lock_path))
+lock = read_document(lock_path)
+manifest = read_corpus(corpus_path, expected_lock=lock)
+source_manifest = read_source_record(
+    source_record_path, expected_lock=lock, corpus_path=corpus_path
+)
 if len(manifest["games"]) != int(expected_games):
     raise SystemExit("unexpected final hanchan count")
 if phase == "A" and manifest["p2_outcome"] not in (
@@ -302,6 +319,8 @@ summary = {
     "phase_a_input_volume_id": phase_a_volume_id or None,
     "phase_a_input_run_id": phase_a_run_id or None,
     "corpus_identity": manifest["identity"],
+    "source_record_identity": source_manifest["identity"],
+    "source_record_strict_readback": "PASS",
     "protocol_lock_identity": manifest["lock"]["identity"],
     # Actual execution qualification embedded in this phase's own protocol
     # lock; this is the qualification that scientifically binds this corpus,

@@ -27,6 +27,7 @@ from .qualification import (
     runtime_binding,
     write_document,
 )
+from .source_record import read_source_record
 
 
 def main(argv=None):
@@ -67,12 +68,17 @@ def main(argv=None):
     generation.add_argument("--lock", required=True)
     generation.add_argument("--p2-corpus")
     generation.add_argument("--output", required=True)
+    generation.add_argument("--source-record-output")
     generation.add_argument("--workers", type=int, default=1)
     generation.add_argument("--operational-progress-path")
     generation.add_argument("--operational-run-id")
     readback = commands.add_parser("readback")
     readback.add_argument("--corpus", required=True)
     readback.add_argument("--lock", required=True)
+    source_readback = commands.add_parser("source-readback")
+    source_readback.add_argument("--source-record", required=True)
+    source_readback.add_argument("--corpus", required=True)
+    source_readback.add_argument("--lock", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "qualify":
@@ -171,9 +177,16 @@ def main(argv=None):
                 p2_path=args.p2_corpus,
                 progress=progress,
                 workers=args.workers,
+                source_record_destination=args.source_record_output,
             )
-        else:
+        elif args.command == "readback":
             result = read_corpus(args.corpus, expected_lock=read_document(args.lock))
+        else:
+            result = read_source_record(
+                args.source_record,
+                expected_lock=read_document(args.lock),
+                corpus_path=args.corpus,
+            )
         print(
             json.dumps(
                 {"identity": result["identity"], "p2_outcome": result.get("p2_outcome")}

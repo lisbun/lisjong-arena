@@ -7,6 +7,7 @@ import sys
 from array import array
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from lisjong.action_vocabulary import (
     build_legal_action_mask,
@@ -21,7 +22,7 @@ from lisjong.policies.two_step_ukeire import (
 from lisjong.policy_contract import DecisionContext, DecisionTrace, Seat
 from lisjong.policy_contract.action import DiscardAction, RiichiAction
 
-from lisjong_arena._artifact_io import parse_json_text, staged_artifact_directory
+from lisjong_arena._artifact_io import parse_json_text
 from lisjong_arena.learned_policy_input import build_policy_input_feature, tensor_values
 from lisjong_arena.learned_policy_stage2.recording import (
     RecordedDecision,
@@ -32,6 +33,7 @@ from lisjong_arena.riichienv.local_game_runner import (
     LocalGameRunner,
 )
 
+from . import source_record
 from .protocol import (
     GAME_MODE,
     SUPPORT,
@@ -125,7 +127,7 @@ def _record_game(seed):
     return result, recorder.snapshot()
 
 
-def _write_game(path, split, seed, lock_identity):
+def _write_game(path, source_path, game_ordinal, split, seed, lock_identity):
     result, inspection = _record_game(seed)
     if result.seed != seed or result.game_mode != GAME_MODE:
         raise OffenseError("executed game identity mismatch")
@@ -167,7 +169,7 @@ def _write_game(path, split, seed, lock_identity):
         or not choices
     ):
         raise OffenseError("incomplete game/decision accounting")
-    return seal(
+    scientific_summary = seal(
         {
             "seed": seed,
             "split": split,
@@ -184,6 +186,16 @@ def _write_game(path, split, seed, lock_identity):
             },
         }
     )
+    source_summary = source_record.write_game(
+        source_path,
+        game_ordinal=game_ordinal,
+        split=split,
+        seed=seed,
+        lock_identity=lock_identity,
+        result=result,
+        inspection=inspection,
+    )
+    return scientific_summary, source_summary
 
 
 def _read_row(row):
@@ -390,6 +402,7 @@ def generate(
     p2_path=None,
     progress=None,
     workers=1,
+    source_record_destination=None,
 ):
     """Publish only a complete, strict-read corpus. Operational progress is separate."""
     if type(workers) is not int or not 1 <= workers <= MAX_PROCESS_WORKERS:
@@ -397,8 +410,20 @@ def generate(
             f"workers must be an integer from 1 through {MAX_PROCESS_WORKERS}"
         )
     destination = Path(destination)
-    if destination.exists():
-        raise FileExistsError(destination)
+    source_destination = (
+        Path(source_record_destination)
+        if source_record_destination is not None
+        else destination.with_name(destination.name + "-source-record")
+    )
+    if destination == source_destination:
+        raise OffenseError("corpus and source-record destinations must differ")
+    if destination.parent != source_destination.parent:
+        raise OffenseError(
+            "corpus and source-record destinations must share a parent for paired publish"
+        )
+    for target in (destination, source_destination):
+        if target.exists():
+            raise FileExistsError(target)
     binding = runtime_binding(project)
     require_qualification(lock["qualification"], binding)
     p2 = read_corpus(p2_path) if p2_path is not None else None
@@ -407,12 +432,25 @@ def generate(
     games = ordered_games(lock)
     if workers > len(games):
         raise OffenseError("workers must not exceed the hanchan count")
-    with staged_artifact_directory(destination) as staging:
+    with TemporaryDirectory(
+        prefix=f".{destination.name}-paired-staging-", dir=destination.parent
+    ) as staging_root_name:
+        staging_root = Path(staging_root_name)
+        staging = staging_root / "corpus"
+        source_staging = staging_root / "source-record"
+        staging.mkdir()
+        source_staging.mkdir()
         summaries = [None] * len(games)
+        source_summaries = [None] * len(games)
         if workers == 1:
             for i, (split, seed) in enumerate(games):
-                summaries[i] = _write_game(
-                    staging / f"game-{i:03d}", split, seed, lock["identity"]
+                summaries[i], source_summaries[i] = _write_game(
+                    staging / f"game-{i:03d}",
+                    source_staging / f"game-{i:03d}",
+                    i,
+                    split,
+                    seed,
+                    lock["identity"],
                 )
                 if progress is not None:
                     progress(i + 1, len(games))
@@ -422,6 +460,8 @@ def generate(
                 executor.submit(
                     _write_game,
                     staging / f"game-{i:03d}",
+                    source_staging / f"game-{i:03d}",
+                    i,
                     split,
                     seed,
                     lock["identity"],
@@ -431,7 +471,8 @@ def generate(
             completed = 0
             try:
                 for future in as_completed(futures):
-                    summaries[futures[future]] = future.result()
+                    i = futures[future]
+                    summaries[i], source_summaries[i] = future.result()
                     completed += 1
                     if progress is not None:
                         progress(completed, len(games))
@@ -441,7 +482,9 @@ def generate(
                 raise
             finally:
                 executor.shutdown(wait=True, cancel_futures=True)
-        if any(summary is None for summary in summaries):
+        if any(summary is None for summary in summaries) or any(
+            summary is None for summary in source_summaries
+        ):
             raise OffenseError("incomplete parallel hanchan collection")
         counts = {key: sum(g["support"][key] for g in summaries) for key in SUPPORT}
         manifest = seal(
@@ -459,5 +502,27 @@ def generate(
             }
         )
         write_document(staging / "manifest.json", manifest)
+        source_manifest = source_record.write_manifest(
+            source_staging, lock, manifest["identity"], source_summaries
+        )
         read_corpus(staging, expected_lock=lock)
+        if (
+            source_record.read_source_record(
+                source_staging, expected_lock=lock, corpus_path=staging
+            )
+            != source_manifest
+        ):
+            raise OffenseError("source-record strict readback mismatch")
+
+        # Publish the reusable source first. A process interruption can leave an
+        # orphan source record, but never a visible scientific corpus without it.
+        source_staging.rename(source_destination)
+        try:
+            staging.rename(destination)
+        except BaseException:
+            try:
+                source_destination.rename(source_staging)
+            except OSError:
+                pass
+            raise
     return manifest
