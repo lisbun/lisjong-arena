@@ -75,17 +75,11 @@ class InstrumentationCapabilityTest(unittest.TestCase):
         levels = aws_operational_calibration.DURABLE_EVIDENCE_LEVELS
         self.assertEqual(
             levels.index(instrumentation.GENERATION_DURABLE_EVIDENCE_LEVEL),
-            levels.index(
-                instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL
-            ),
+            levels.index(instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL),
         )
         self.assertLess(
-            levels.index(
-                instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL
-            ),
-            levels.index(
-                instrumentation.CALIBRATION_REQUIRED_DURABLE_EVIDENCE_LEVEL
-            ),
+            levels.index(instrumentation.PRODUCTION_REQUIRED_DURABLE_EVIDENCE_LEVEL),
+            levels.index(instrumentation.CALIBRATION_REQUIRED_DURABLE_EVIDENCE_LEVEL),
         )
 
     def test_the_cli_probe_is_machine_readable(self):
