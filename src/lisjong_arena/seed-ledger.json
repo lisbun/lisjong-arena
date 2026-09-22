@@ -133,6 +133,28 @@
       "state": "RETIRED"
     },
     {
+      "allocation_identity": "6a2d4149b0ae5e2b23fb8a31a60c529d03ecf59b2020ac054b922df50a7e8d60",
+      "allocation_timestamp": "2026-09-22T11:57:20.325607Z",
+      "arena_revision": "adf1edf94a033c380f67d0327c780865eba0d440",
+      "owner_issue": "lisbun/lisjong-arena#332",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "operational-calibration",
+      "protocol": "aws-operational-calibration-v1",
+      "protocol_revision": "48662a463d77a5cf3379240198653689ab236dd9",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/332#issuecomment-5776016737",
+      "purpose": "matching Phase-A operational calibration for #332",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 70020,
+        "kind": "range",
+        "last": 70039
+      },
+      "seed_membership_identity": "4042ec65502880787fec54cd7922054ab5a626e8c013f47ee59add6d6f3165c8",
+      "split": null,
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
