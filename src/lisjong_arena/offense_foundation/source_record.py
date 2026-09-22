@@ -15,6 +15,7 @@ from pathlib import Path
 
 from lisjong.action_vocabulary import encode_action
 
+from lisjong_arena import seed_registry
 from lisjong_arena._artifact_io import ArtifactValidationError, parse_json_text
 from lisjong_arena.durable_local_game_record import (
     _action_to_value,
@@ -27,7 +28,22 @@ from .protocol import GAME_MODE, ordered_games
 from .qualification import read_document, seal, unseal, write_document
 from .semantics import OffenseError
 
-SOURCE_SCHEMA = "arena-offense-o0-player-safe-source-record-v1"
+SOURCE_SCHEMA_V1 = "arena-offense-o0-player-safe-source-record-v1"
+"""Historical schema. Frozen: no allocation provenance field. Readback-only —
+new generation always writes ``SOURCE_SCHEMA_V2``.
+"""
+
+SOURCE_SCHEMA_V2 = "arena-offense-o0-player-safe-source-record-v2"
+"""Adds ``allocation_bindings``: the exact per-split Arena seed-allocation
+binding (lisbun/lisjong-arena#346/#347) that produced the request population,
+copied verbatim from the locked ``request.allocation_bindings``. This lets a
+standalone reader of the source record alone (no access to the live seed
+ledger or the full protocol lock) see and propagate the allocation provenance
+that authorized the underlying seeds.
+"""
+
+SUPPORTED_SOURCE_SCHEMAS = frozenset({SOURCE_SCHEMA_V1, SOURCE_SCHEMA_V2})
+
 SOURCE_KIND = "player-safe-source-record"
 SOURCE_FILENAME = "source-record.jsonl"
 
@@ -165,15 +181,25 @@ def write_game(
 
 
 def build_manifest(lock, scientific_corpus_identity, game_summaries):
-    """Seal an independent source-record manifest without entering corpus identity."""
+    """Seal an independent source-record manifest without entering corpus identity.
+
+    Always writes the current ``SOURCE_SCHEMA_V2``: every lock built by
+    ``protocol.make_lock`` since #347 already carries a
+    ``request.allocation_bindings`` entry for each population split, so the
+    allocation provenance backing this generation run is always available
+    here and is copied through verbatim (Arena remains the sole owner and
+    generator of the allocation ledger; this only republishes the exact
+    binding that already authorized the request).
+    """
     return seal(
         {
-            "schema": SOURCE_SCHEMA,
+            "schema": SOURCE_SCHEMA_V2,
             "kind": SOURCE_KIND,
             "lock_identity": lock["identity"],
             "scientific_corpus_identity": scientific_corpus_identity,
             "game_mode": GAME_MODE,
             "source_contract": lock["qualification"]["binding"],
+            "allocation_bindings": lock["request"]["allocation_bindings"],
             "games": game_summaries,
         }
     )
@@ -339,6 +365,35 @@ def _read_game(
         raise OffenseError("source-record game accounting mismatch")
 
 
+def _require_allocation_bindings(manifest, expected_lock):
+    """Bind the manifest's per-split allocation provenance to the exact
+    binding recorded in the locked ``request.allocation_bindings``.
+
+    ``lock_identity`` already ties the manifest to one exact sealed lock, so
+    this is defense-in-depth (matching how ``source_contract`` is also
+    re-checked explicitly above), and it validates the binding *shape* the
+    same way a standalone downstream reader must: no access to the live
+    ledger is required or performed here, only the shape and the exact
+    values already authorized by this lock.
+    """
+    expected_bindings = expected_lock["request"]["allocation_bindings"]
+    bindings = manifest["allocation_bindings"]
+    populations = expected_lock["request"]["populations"]
+    if type(bindings) is not dict or set(bindings) != set(populations):
+        raise OffenseError("source-record allocation bindings do not match splits")
+    for split, seeds in populations.items():
+        try:
+            binding = seed_registry.validate_binding_shape(bindings[split], seeds=seeds)
+        except seed_registry.SeedRegistryError as error:
+            raise OffenseError(
+                f"invalid {split} source-record allocation binding: {error}"
+            ) from error
+        if binding != expected_bindings[split]:
+            raise OffenseError(
+                f"source-record {split} allocation binding differs from the locked request"
+            )
+
+
 def read_source_record(path, *, expected_lock, corpus_path):
     """Strict-read source records and bind every decision to the locked corpus."""
     from .corpus import read_corpus
@@ -348,7 +403,10 @@ def read_source_record(path, *, expected_lock, corpus_path):
     corpus = read_corpus(corpus_path, expected_lock=expected_lock)
     manifest = read_document(path / "manifest.json")
     body = unseal(manifest)
-    if set(body) != {
+    schema = body.get("schema")
+    if schema not in SUPPORTED_SOURCE_SCHEMAS:
+        raise OffenseError("unsupported source-record schema")
+    expected_fields = {
         "schema",
         "kind",
         "lock_identity",
@@ -356,17 +414,21 @@ def read_source_record(path, *, expected_lock, corpus_path):
         "game_mode",
         "source_contract",
         "games",
-    }:
+    }
+    if schema == SOURCE_SCHEMA_V2:
+        expected_fields = expected_fields | {"allocation_bindings"}
+    if set(body) != expected_fields:
         raise OffenseError("invalid source-record manifest fields")
     if (
-        manifest["schema"] != SOURCE_SCHEMA
-        or manifest["kind"] != SOURCE_KIND
+        manifest["kind"] != SOURCE_KIND
         or manifest["lock_identity"] != expected_lock["identity"]
         or manifest["scientific_corpus_identity"] != corpus["identity"]
         or manifest["game_mode"] != GAME_MODE
         or manifest["source_contract"] != expected_lock["qualification"]["binding"]
     ):
         raise OffenseError("source-record schema/provenance identity mismatch")
+    if schema == SOURCE_SCHEMA_V2:
+        _require_allocation_bindings(manifest, expected_lock)
 
     games = ordered_games(expected_lock)
     if type(manifest["games"]) is not list or len(manifest["games"]) != len(games):
@@ -397,7 +459,9 @@ def read_source_record(path, *, expected_lock, corpus_path):
 __all__ = [
     "SOURCE_FILENAME",
     "SOURCE_KIND",
-    "SOURCE_SCHEMA",
+    "SOURCE_SCHEMA_V1",
+    "SOURCE_SCHEMA_V2",
+    "SUPPORTED_SOURCE_SCHEMAS",
     "build_manifest",
     "encode_observation",
     "read_source_record",
