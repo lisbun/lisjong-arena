@@ -31,7 +31,8 @@ VCPU = 16
 WORKERS = 16
 TOTAL_UNITS = 20
 INSTRUMENTATION_IDENTITY = "offense-foundation-332/operational-progress/v1"
-CALIBRATION_DURABLE_LEVEL = "per-seed-durable-receipt"\nPRODUCTION_DURABLE_LEVEL = "atomic-operational-progress"
+CALIBRATION_DURABLE_LEVEL = "per-seed-durable-receipt"
+PRODUCTION_DURABLE_LEVEL = "atomic-operational-progress"
 
 SEED_DOMAIN = seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN
 PRODUCTION_SEEDS = tuple(range(70_000, 70_020))
