@@ -43,7 +43,7 @@ def main(argv=None):
         "validate-request", help="validate an operator-supplied population request"
     )
     request_validation.add_argument("--request", required=True)
-    request_validation.add_argument("--seed-ledger")
+    request_validation.add_argument("--seed-ledger", required=True)
     request_validation.add_argument(
         "--phase", choices=("P2", "SCIENTIFIC"), required=True
     )
@@ -63,7 +63,7 @@ def main(argv=None):
         "lock", help="bind operator-supplied fresh population before generation"
     )
     lock.add_argument("--request", required=True)
-    lock.add_argument("--seed-ledger")
+    lock.add_argument("--seed-ledger", required=True)
     lock.add_argument("--qualification", required=True)
     lock.add_argument("--p2-corpus")
     lock.add_argument("--output", required=True)
@@ -102,7 +102,7 @@ def main(argv=None):
             validate_request(request)
             if request["phase"] != args.phase:
                 raise ValueError("population request phase differs from expected phase")
-            ledger = load_ledger(args.seed_ledger) if args.seed_ledger else None
+            ledger = load_ledger(args.seed_ledger)
             require_request_allocations(request, ledger)
             print(json.dumps({"phase": args.phase, "status": "PASS"}))
             return 0
@@ -126,7 +126,7 @@ def main(argv=None):
             report = read_document(args.qualification)
             require_qualification(report, runtime_binding(args.project))
             request = parse_json_text(Path(args.request).read_text(encoding="utf-8"))
-            ledger = load_ledger(args.seed_ledger) if args.seed_ledger else None
+            ledger = load_ledger(args.seed_ledger)
             require_request_allocations(request, ledger)
             p2 = read_corpus(args.p2_corpus) if args.p2_corpus else None
             result = make_lock(request, report, p2)
