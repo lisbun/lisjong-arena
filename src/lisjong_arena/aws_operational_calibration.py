@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Mapping, Sequence
 
+from lisjong_arena import seed_registry
 from lisjong_arena.durable_seed_checkpoint import verify_seed_checkpoint_set
 from lisjong_arena.riichilab_corpus.models import canonical_json_bytes
 from lisjong_arena.riichilab_corpus.persistence import atomic_replace
@@ -50,8 +51,18 @@ INCOMPLETE_OBSERVATION_SCHEMA_VERSION: Final = (
     "arena-aws-incomplete-execution-observation-v1"
 )
 
-OWNER_REPOSITORY: Final = "lisbun/lisjong-arena"
+CALIBRATION_REQUIREMENT_SCHEMA_VERSION: Final = (
+    "arena-aws-calibration-admission-requirement-v1"
+)
+
+OWNER_REPOSITORY: Final = seed_registry.OWNER_REPOSITORY
+
+#: A calibration allocation is a dedicated, ledger-resolved population. These
+#: two values are what makes an allocation a calibration allocation; the owner
+#: Issue is recorded but intentionally not constrained, because a calibration
+#: may be owned by the study it serves.
 CALIBRATION_POPULATION: Final = "operational-calibration"
+CALIBRATION_PROTOCOL: Final = "aws-operational-calibration-v1"
 
 #: Ordered from weakest to strongest.  An admission requirement declares the
 #: minimum level the production run must provide; the calibration must have
@@ -223,6 +234,31 @@ _REQUIREMENT_GATE_NAMES: Final = (
     "reattach",
 )
 
+_CALIBRATION_REQUIREMENT_GATE_NAMES: Final = (
+    "durable_evidence",
+    "artifact_destination",
+    "teardown_confirmation",
+)
+
+_CALIBRATION_BOUNDS_FIELDS: Final = frozenset({"max_unit_count", "max_worker_count"})
+
+_CALIBRATION_REQUIREMENT_FIELDS: Final = frozenset(
+    {
+        "allocation_binding",
+        "bounds",
+        "budget",
+        "calibration_cost_budget_usd",
+        "charges",
+        "consumer",
+        "gates",
+        "pricing",
+        "run_id",
+        "schema_version",
+        "seeds",
+        "target",
+    }
+)
+
 _OBSERVATION_FIELDS: Final = frozenset(
     {
         "arena_revision",
@@ -231,6 +267,7 @@ _OBSERVATION_FIELDS: Final = frozenset(
         "fail_safe_armed",
         "fail_safe_deadline_epoch",
         "instance_id",
+        "instance_launch_epoch",
         "instance_type",
         "observed_at_epoch",
         "phase_one_admission_identity",
@@ -265,6 +302,26 @@ PHASE_TWO_GATE_NAMES: Final = (
     "recovery-identity-persisted",
     "remaining-budget-sufficient",
 )
+
+#: The bounded calibration run has its own admission. It deliberately contains
+#: no matching-calibration gate: requiring calibration evidence in order to
+#: calibrate would be circular. Its cost bound is therefore the worst case --
+#: the full independent hard fail-safe window -- not a prediction.
+PHASE_ZERO_GATE_NAMES: Final = (
+    "calibration-allocation-authority",
+    "calibration-scope-bounded",
+    "calibration-cost-budget",
+    "hard-fail-safe",
+    "durable-evidence-support",
+    "artifact-destination-retention",
+    "teardown-confirmation",
+)
+
+GATE_NAMES_BY_PHASE: Final = {
+    0: PHASE_ZERO_GATE_NAMES,
+    1: PHASE_ONE_GATE_NAMES,
+    2: PHASE_TWO_GATE_NAMES,
+}
 
 CLOCK_ORIGINS: Final = {
     "execution_budget_seconds": "scientific workload start",
@@ -878,7 +935,13 @@ def validate_admission_requirement(document: object) -> dict[str, object]:
     allocation = requirement["production_allocation"]
     _require(
         type(allocation) is dict
-        and set(allocation) == {"allocation_identities", "seed_membership_identities"},
+        and set(allocation)
+        == {
+            "allocation_identities",
+            "seed_domain",
+            "seed_membership_identities",
+            "seeds",
+        },
         "production_allocation is invalid",
     )
     for name in ("allocation_identities", "seed_membership_identities"):
@@ -886,7 +949,51 @@ def validate_admission_requirement(document: object) -> dict[str, object]:
         _require(type(values) is list and bool(values), f"{name} must be non-empty")
         for value in values:
             _sha256_text(value, name)
+    _text(allocation["seed_domain"], "production_allocation.seed_domain")
+    seeds = allocation["seeds"]
+    _require(
+        type(seeds) is list and bool(seeds), "production_allocation.seeds is required"
+    )
+    for value in seeds:
+        _require(
+            type(value) is int and 0 <= value < 2**32,
+            "production_allocation.seeds must be unsigned 32-bit integers",
+        )
     return requirement
+
+
+def calibration_seeds(evidence: Mapping[str, object]) -> tuple[int, ...]:
+    """Return the seeds the calibration actually executed, in ledger order."""
+
+    return tuple(sorted(int(task["seed"]) for task in evidence["tasks"]))  # type: ignore[index]
+
+
+def resolve_calibration_allocation(
+    evidence: Mapping[str, object], ledger: object
+) -> dict[str, object]:
+    """Resolve the calibration binding against canonical seed-ledger authority.
+
+    This is the #346 ``require_allocation_binding`` contract, not a shape
+    check: the immutable allocation identity must be uniquely present in the
+    canonical ledger, still active, in the declared domain, owned by the
+    dedicated calibration population/protocol, and its membership must be
+    exactly the seeds the calibration executed. Unrelated later reservations
+    do not invalidate it, matching the retained-binding semantics.
+    """
+
+    seeds = calibration_seeds(evidence)
+    record = seed_registry.require_allocation_binding(
+        ledger,
+        evidence["seed_allocation"],
+        seeds=seeds,
+        protocol=CALIBRATION_PROTOCOL,
+        population=CALIBRATION_POPULATION,
+    )
+    if record["split"] is not None:
+        raise seed_registry.SeedRegistryError(
+            "a calibration allocation must not declare a scientific split"
+        )
+    return record
 
 
 def evaluate_calibration_match(
@@ -894,8 +1001,15 @@ def evaluate_calibration_match(
     requirement: Mapping[str, object],
     *,
     now: datetime,
+    ledger: object = None,
 ) -> dict[str, object]:
-    """Evaluate one calibration against the production admission requirement."""
+    """Evaluate one calibration against the production admission requirement.
+
+    ``ledger`` is the canonical seed-registry authority. It is not optional in
+    practice: without it the calibration allocation cannot be resolved and the
+    authority check fails closed, because a locally fabricated binding of
+    well-formed SHA-256 values would otherwise satisfy the shape check alone.
+    """
 
     candidate = validate_calibration_evidence(dict(evidence))
     required = validate_admission_requirement(dict(requirement))
@@ -1026,21 +1140,58 @@ def evaluate_calibration_match(
         ),
     )
 
+    executed_seeds = set(calibration_seeds(candidate))
+    production_seeds = set(int(seed) for seed in allocation["seeds"])
+    overlapping = sorted(executed_seeds & production_seeds)
     isolated = (
         candidate["seed_allocation_population"] == CALIBRATION_POPULATION
         and candidate["seed_allocation"]["allocation_identity"]
         not in set(allocation["allocation_identities"])
         and candidate["seed_allocation"]["seed_membership_identity"]
         not in set(allocation["seed_membership_identities"])
+        and not overlapping
     )
     record(
         "calibration-seed-isolation",
         isolated,
         (
             "calibration must use a dedicated "
-            f"{CALIBRATION_POPULATION!r} allocation that is not a production allocation"
+            f"{CALIBRATION_POPULATION!r} allocation that is not a production "
+            f"allocation; seeds shared with the production population: "
+            f"{overlapping!r}"
         ),
     )
+
+    if ledger is None:
+        record(
+            "calibration-allocation-authority",
+            False,
+            "canonical seed-registry ledger was not supplied; a calibration "
+            "binding is never accepted on its shape alone",
+        )
+    else:
+        try:
+            resolved = resolve_calibration_allocation(candidate, ledger)
+        except seed_registry.SeedRegistryError as error:
+            record(
+                "calibration-allocation-authority",
+                False,
+                f"calibration allocation does not resolve against canonical "
+                f"seed-registry authority: {error}",
+            )
+        else:
+            same_domain = resolved["seed_domain"] == allocation["seed_domain"]
+            record(
+                "calibration-allocation-authority",
+                same_domain,
+                (
+                    f"calibration allocation {resolved['allocation_identity']} is "
+                    f"{resolved['state']} in domain {resolved['seed_domain']!r}; "
+                    f"the production population uses "
+                    f"{allocation['seed_domain']!r}. Both must share a domain so "
+                    "the ledger's same-domain non-overlap invariant applies."
+                ),
+            )
 
     reasons = [
         f"{check['name']}: {check['detail']}"
@@ -1064,6 +1215,7 @@ def select_matching_calibration(
     requirement: Mapping[str, object],
     *,
     now: datetime,
+    ledger: object = None,
 ) -> dict[str, object]:
     """Pick the freshest matching calibration, or report why none matched.
 
@@ -1073,7 +1225,7 @@ def select_matching_calibration(
     """
 
     reports = [
-        evaluate_calibration_match(candidate, requirement, now=now)
+        evaluate_calibration_match(candidate, requirement, now=now, ledger=ledger)
         for candidate in calibrations
     ]
     matched = [report for report in reports if report["status"] == "MATCH"]
@@ -1166,20 +1318,100 @@ def unavailable_runtime(reason: str) -> dict[str, object]:
     return {"available": False, "reason": _text(reason, "reason")}
 
 
-def predict_cost(
-    runtime: Mapping[str, object], requirement: Mapping[str, object]
+def measured_billable_overhead(
+    calibration: Mapping[str, object] | None, budget: Mapping[str, object]
 ) -> dict[str, object]:
-    """Price the predicted EC2 billable window plus declared material charges."""
+    """Combine the planned overhead allowance with the measured calibration one.
+
+    A planned setup/teardown allowance smaller than the measured matching basis
+    must never make the predicted cost cheaper, so each component is the
+    element-wise maximum of planned and measured. The calibration's own
+    residual billable time -- the part of its EC2 billable runtime that is
+    neither setup, scientific wall clock nor teardown -- is carried through as
+    well, so launch/attach/SSM-wait overhead is not silently dropped.
+    """
+
+    planned_setup = float(budget["setup_seconds"])
+    planned_post = float(budget["post_processing_seconds"])
+    planned_teardown = float(budget["teardown_seconds"])
+    measured_setup = None
+    measured_teardown = None
+    measured_residual = None
+    if calibration is not None:
+        measured_setup = calibration["setup_overhead_seconds"]
+        measured_teardown = calibration["teardown_overhead_seconds"]
+        billable = calibration["ec2_billable_runtime_seconds"]
+        if (
+            billable is not None
+            and measured_setup is not None
+            and measured_teardown is not None
+        ):
+            measured_residual = max(
+                0.0,
+                float(billable)
+                - float(measured_setup)
+                - float(calibration["batch_scientific_wall_clock_seconds"])
+                - float(measured_teardown),
+            )
+    effective_setup = max(
+        planned_setup, 0.0 if measured_setup is None else float(measured_setup)
+    )
+    effective_teardown = max(
+        planned_teardown, 0.0 if measured_teardown is None else float(measured_teardown)
+    )
+    effective_residual = 0.0 if measured_residual is None else float(measured_residual)
+    return {
+        "effective_residual_seconds": _round(effective_residual),
+        "effective_setup_seconds": _round(effective_setup),
+        "effective_teardown_seconds": _round(effective_teardown),
+        "measured_residual_seconds": (
+            None if measured_residual is None else _round(measured_residual)
+        ),
+        "measured_setup_seconds": (
+            None if measured_setup is None else _round(float(measured_setup))
+        ),
+        "measured_teardown_seconds": (
+            None if measured_teardown is None else _round(float(measured_teardown))
+        ),
+        "planned_post_processing_seconds": _round(planned_post),
+        "planned_setup_seconds": _round(planned_setup),
+        "planned_teardown_seconds": _round(planned_teardown),
+        "planned_allowance_below_measured": bool(
+            (measured_setup is not None and planned_setup < float(measured_setup))
+            or (
+                measured_teardown is not None
+                and planned_teardown < float(measured_teardown)
+            )
+        ),
+        "total_seconds": _round(
+            effective_setup + planned_post + effective_teardown + effective_residual
+        ),
+    }
+
+
+def predict_cost(
+    runtime: Mapping[str, object],
+    requirement: Mapping[str, object],
+    calibration: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Price the predicted EC2 billable window plus declared material charges.
+
+    The billable window is built from the *measured* calibration overhead
+    combined conservatively with the planned allowance, so a calibration with a
+    longer observed launch/setup/teardown really does predict a higher cost.
+    """
 
     required = validate_admission_requirement(dict(requirement))
     budget = required["budget"]
     pricing = required["pricing"]
     charges = required["charges"]
-    overhead = (
-        float(budget["setup_seconds"])
-        + float(budget["post_processing_seconds"])
-        + float(budget["teardown_seconds"])
+    matched = (
+        None
+        if calibration is None
+        else validate_calibration_evidence(dict(calibration))
     )
+    overhead_basis = measured_billable_overhead(matched, budget)
+    overhead = float(overhead_basis["total_seconds"])
     unbounded = sorted(
         str(charge["label"])
         for charge in charges
@@ -1197,8 +1429,18 @@ def predict_cost(
         "bounded_charges_usd": _round(bounded),
         "unbounded_material_charges": unbounded,
         "is_finalized_aws_invoice": False,
+        "overhead_basis": overhead_basis,
         "pricing": pricing,
     }
+    if matched is None and runtime.get("available"):
+        return {
+            "available": False,
+            "reason": (
+                "predicted EC2 cost requires the measured billable-overhead basis "
+                "from the matching calibration"
+            ),
+            **common,
+        }
     if not runtime.get("available"):
         return {
             "available": False,
@@ -1312,6 +1554,7 @@ def build_phase_one_admission(
     calibrations: Sequence[Mapping[str, object]],
     *,
     now: datetime,
+    ledger: object = None,
 ) -> dict[str, object]:
     """Evaluate the pre-billing admission gate. No-Go forbids billable creation."""
 
@@ -1319,7 +1562,9 @@ def build_phase_one_admission(
     target = required["target"]
     gates_input = required["gates"]
     evaluated_at = _aware(now, "now")
-    selection = select_matching_calibration(calibrations, required, now=evaluated_at)
+    selection = select_matching_calibration(
+        calibrations, required, now=evaluated_at, ledger=ledger
+    )
     selected = selection["selected"]
 
     if selected is None:
@@ -1335,7 +1580,7 @@ def build_phase_one_admission(
             worker_count=int(target["worker_count"]),
             headroom_factor=float(required["budget"]["headroom_factor"]),
         )
-    cost = predict_cost(runtime, required)
+    cost = predict_cost(runtime, required, selected)
     budget_checks = evaluate_budget(runtime, required)
 
     calibration_reasons: list[str] = []
@@ -1465,6 +1710,7 @@ def build_phase_one_admission(
         "runtime_prediction": runtime,
         "scientific_submission_authorized": False,
         "target": target,
+        "workload_submission_authorized": False,
     }
     document["admission_identity"] = _digest(
         {key: value for key, value in document.items() if key != "admission_identity"}
@@ -1500,6 +1746,7 @@ def validate_phase_two_observation(document: object) -> dict[str, object]:
     for name in (
         "fail_safe_arm_epoch",
         "fail_safe_deadline_epoch",
+        "instance_launch_epoch",
         "observed_at_epoch",
     ):
         _require(type(observation[name]) is int, f"{name} must be an int")
@@ -1536,10 +1783,13 @@ def build_phase_two_admission(
     """Evaluate the post-provisioning gate before the first scientific submission."""
 
     admitted = validate_admission_record(dict(phase_one))
-    _require(admitted["admission_phase"] == 1, "phase 2 requires a phase 1 record")
+    _require(
+        admitted["admission_phase"] in (0, 1),
+        "phase 2 requires a calibration (phase 0) or production (phase 1) record",
+    )
     _require(
         admitted["decision"] == "GO",
-        "phase 2 requires a phase 1 GO; a NO-GO run creates no instance",
+        "phase 2 requires a prior GO; a NO-GO run creates no instance",
     )
     observed = validate_phase_two_observation(dict(observation))
     evaluated_at = _aware(now, "now")
@@ -1572,6 +1822,7 @@ def build_phase_two_admission(
     arm_epoch = int(observed["fail_safe_arm_epoch"])
     deadline_epoch = int(observed["fail_safe_deadline_epoch"])
     observed_at = int(observed["observed_at_epoch"])
+    launch_epoch = int(observed["instance_launch_epoch"])
     armed = (
         instance_present
         and bool(observed["fail_safe_armed"])
@@ -1596,24 +1847,82 @@ def build_phase_two_admission(
     )
 
     elapsed = observed_at - arm_epoch
+    realized_billable = float(observed_at - launch_epoch)
+    cost = admitted["cost_prediction"]
+    overhead_basis = cost.get("overhead_basis") or {}
+    effective_teardown = float(
+        overhead_basis.get("effective_teardown_seconds", budget["teardown_seconds"])
+    )
+    post_processing = float(budget["post_processing_seconds"])
     if runtime.get("available"):
-        remaining_required = (
-            elapsed
-            + float(runtime["headroom_adjusted_upper_seconds"])
-            + float(budget["post_processing_seconds"])
-            + float(budget["teardown_seconds"])
+        remaining_workload = float(runtime["headroom_adjusted_upper_seconds"])
+        remaining_basis = "headroom-adjusted predicted runtime"
+    elif admitted["admission_phase"] == 0:
+        # A calibration has no prior prediction by design, so its remaining
+        # exposure is bounded by its own independent hard fail-safe window.
+        remaining_workload = max(
+            0.0,
+            hard_fail_safe - float(elapsed) - post_processing - effective_teardown,
         )
-        budget_ok = elapsed >= 0 and _fits(remaining_required, hard_fail_safe)
-        budget_detail = (
-            f"elapsed since fail-safe arm {elapsed}s + headroom-adjusted runtime "
-            f"{runtime['headroom_adjusted_upper_seconds']}s + post-processing "
-            f"{budget['post_processing_seconds']}s + teardown "
-            f"{budget['teardown_seconds']}s = {_round(remaining_required)}s against "
+        remaining_basis = "worst-case remaining hard fail-safe window"
+    else:
+        remaining_workload = None
+        remaining_basis = "unavailable"
+
+    ordering_ok = launch_epoch <= arm_epoch <= observed_at
+    if remaining_workload is None:
+        time_ok = False
+        time_detail = "the admitted runtime prediction was unavailable"
+        cost_ok = False
+        cost_detail = "the admitted runtime prediction was unavailable"
+    else:
+        remaining_required = (
+            float(elapsed) + remaining_workload + post_processing + effective_teardown
+        )
+        time_ok = ordering_ok and _fits(remaining_required, hard_fail_safe)
+        time_detail = (
+            f"time: elapsed since fail-safe arm {elapsed}s + {remaining_basis} "
+            f"{_round(remaining_workload)}s + post-processing {post_processing}s + "
+            f"teardown {effective_teardown}s = {_round(remaining_required)}s against "
             f"hard fail-safe {hard_fail_safe}s"
         )
-    else:
-        budget_ok = False
-        budget_detail = "phase 1 runtime prediction was unavailable"
+        rate = cost["pricing"]["instance_hourly_rate_usd"]
+        cost_budget = float(budget["cost_budget_usd"])
+        if rate is None or not cost.get("available"):
+            cost_ok = False
+            cost_detail = (
+                "cost: the admitted cost prediction is unavailable, so remaining "
+                "monetary budget cannot be re-evaluated"
+            )
+        else:
+            projected_billable = (
+                realized_billable
+                + remaining_workload
+                + post_processing
+                + effective_teardown
+            )
+            projected_cost = (
+                projected_billable / 3600.0 * float(rate)
+                + float(cost["known_charges_usd"])
+                + float(cost["bounded_charges_usd"])
+            )
+            cost_ok = ordering_ok and _fits(projected_cost, cost_budget)
+            cost_detail = (
+                f"cost: realized billable {_round(realized_billable)}s since "
+                f"instance launch + remaining {_round(remaining_workload + post_processing + effective_teardown)}s "
+                f"at {rate} USD/h + known {cost['known_charges_usd']} USD + bounded "
+                f"{cost['bounded_charges_usd']} USD = {_round(projected_cost)} USD "
+                f"against cost budget {cost_budget} USD"
+            )
+    budget_ok = time_ok and cost_ok
+    budget_detail = (
+        f"{time_detail}; {cost_detail}"
+        if ordering_ok
+        else (
+            f"instance launch {launch_epoch} / fail-safe arm {arm_epoch} / "
+            f"observation {observed_at} are not in order; {time_detail}; {cost_detail}"
+        )
+    )
 
     gates = [
         _gate(
@@ -1682,15 +1991,20 @@ def build_phase_two_admission(
             if decision == "GO"
             else [
                 *admitted["limitations"],
-                "phase 2 No-Go: submit no scientific seed and proceed to bounded "
+                "phase 2 No-Go: submit no workload and proceed to bounded "
                 "cleanup, recording any residual resource",
             ]
         ),
         "phase_one_admission_identity": admitted["admission_identity"],
         "run_id": admitted["run_id"],
         "runtime_prediction": runtime,
-        "scientific_submission_authorized": decision == "GO",
+        # A calibration run never becomes permission to submit a scientific
+        # seed, however its own phase 2 turns out.
+        "scientific_submission_authorized": (
+            decision == "GO" and admitted["admission_phase"] == 1
+        ),
         "target": target,
+        "workload_submission_authorized": decision == "GO",
     }
     document["admission_identity"] = _digest(
         {key: value for key, value in document.items() if key != "admission_identity"}
@@ -1719,6 +2033,7 @@ _ADMISSION_FIELDS: Final = frozenset(
         "schema_version",
         "scientific_submission_authorized",
         "target",
+        "workload_submission_authorized",
     }
 )
 
@@ -1732,7 +2047,9 @@ def validate_admission_record(document: object) -> dict[str, object]:
         "unsupported admission record schema",
     )
     assert_no_scientific_fields(record, context="admission record")
-    _require(record["admission_phase"] in (1, 2), "admission_phase must be 1 or 2")
+    _require(
+        record["admission_phase"] in (0, 1, 2), "admission_phase must be 0, 1 or 2"
+    )
     _require(record["decision"] in ("GO", "NO-GO"), "decision must be GO or NO-GO")
     identity = _sha256_text(record["admission_identity"], "admission_identity")
     _require(
@@ -1743,9 +2060,7 @@ def validate_admission_record(document: object) -> dict[str, object]:
         "admission record identity mismatch",
     )
     gates = record["gates"]
-    expected = (
-        PHASE_ONE_GATE_NAMES if record["admission_phase"] == 1 else PHASE_TWO_GATE_NAMES
-    )
+    expected = GATE_NAMES_BY_PHASE[int(record["admission_phase"])]
     _require(type(gates) is list, "gates must be a list")
     _require(
         tuple(str(gate["name"]) for gate in gates) == expected,
@@ -1760,10 +2075,27 @@ def validate_admission_record(document: object) -> dict[str, object]:
         len(record["blocking_reasons"]) == len(failing),
         "blocking reasons are inconsistent with the failing gates",
     )
-    if record["admission_phase"] == 1:
+    if record["admission_phase"] == 0:
         _require(
             record["scientific_submission_authorized"] is False,
-            "phase 1 never authorizes scientific submission",
+            "a calibration admission never authorizes scientific submission",
+        )
+        _require(
+            record["billable_resource_creation_authorized"]
+            == (record["decision"] == "GO")
+            and record["workload_submission_authorized"]
+            == (record["decision"] == "GO"),
+            "calibration admission authorization is inconsistent",
+        )
+        _require(
+            record["phase_one_admission_identity"] is None,
+            "a calibration admission does not reference an earlier admission",
+        )
+    elif record["admission_phase"] == 1:
+        _require(
+            record["scientific_submission_authorized"] is False
+            and record["workload_submission_authorized"] is False,
+            "phase 1 never authorizes submission",
         )
         _require(
             record["billable_resource_creation_authorized"]
@@ -1779,10 +2111,370 @@ def validate_admission_record(document: object) -> dict[str, object]:
             record["phase_one_admission_identity"], "phase_one_admission_identity"
         )
         _require(
-            record["scientific_submission_authorized"] == (record["decision"] == "GO"),
+            record["workload_submission_authorized"] == (record["decision"] == "GO"),
             "phase 2 submission authorization is inconsistent",
         )
+        _require(
+            record["scientific_submission_authorized"] is False
+            or record["workload_submission_authorized"] is True,
+            "scientific submission cannot outrank workload submission",
+        )
     return record
+
+
+def validate_calibration_admission_requirement(document: object) -> dict[str, object]:
+    """Validate the bounded calibration run's own admission requirement."""
+
+    _require(type(document) is dict, "calibration requirement must be an object")
+    requirement = dict(document)
+    _require(
+        set(requirement) == _CALIBRATION_REQUIREMENT_FIELDS,
+        "calibration requirement fields are invalid",
+    )
+    _require(
+        requirement["schema_version"] == CALIBRATION_REQUIREMENT_SCHEMA_VERSION,
+        "unsupported calibration requirement schema",
+    )
+    assert_no_scientific_fields(requirement, context="calibration requirement")
+    _text(requirement["consumer"], "consumer")
+    _text(requirement["run_id"], "run_id")
+
+    target = requirement["target"]
+    _require(
+        type(target) is dict and set(target) == _TARGET_FIELDS,
+        "calibration target is invalid",
+    )
+    for name in ("arena_revision", "lisjong_revision", "lisjong_engine_revision"):
+        _sha1_text(target[name], f"target.{name}")
+    for name in (
+        "riichienv_version",
+        "workload_identity",
+        "teacher_identity",
+        "game_mode",
+        "instance_type",
+        "instrumentation_identity",
+    ):
+        _text(target[name], f"target.{name}")
+    _positive_int(target["vcpu"], "target.vcpu")
+    _positive_int(target["worker_count"], "target.worker_count")
+    _positive_int(target["total_units"], "target.total_units")
+    _require(
+        target["durable_evidence_level"] in DURABLE_EVIDENCE_LEVELS
+        and target["durable_evidence_level"] != "none",
+        "target.durable_evidence_level must be a recognized non-'none' level",
+    )
+
+    bounds = requirement["bounds"]
+    _require(
+        type(bounds) is dict and set(bounds) == _CALIBRATION_BOUNDS_FIELDS,
+        "calibration bounds are invalid",
+    )
+    _positive_int(bounds["max_unit_count"], "bounds.max_unit_count")
+    _positive_int(bounds["max_worker_count"], "bounds.max_worker_count")
+
+    budget = requirement["budget"]
+    _require(
+        type(budget) is dict and set(budget) == _BUDGET_FIELDS,
+        "calibration budget is invalid",
+    )
+    _require(
+        _number(budget["headroom_factor"], "headroom_factor") >= 1.0,
+        "headroom_factor must be at least 1.0",
+    )
+    for name in (
+        "execution_budget_seconds",
+        "hard_fail_safe_seconds",
+        "normal_deadline_seconds",
+    ):
+        _positive_number(budget[name], f"budget.{name}")
+    for name in ("post_processing_seconds", "setup_seconds", "teardown_seconds"):
+        _non_negative_number(budget[name], f"budget.{name}")
+    _non_negative_number(budget["cost_budget_usd"], "budget.cost_budget_usd")
+    _non_negative_number(
+        requirement["calibration_cost_budget_usd"], "calibration_cost_budget_usd"
+    )
+
+    pricing = requirement["pricing"]
+    _require(type(pricing) is dict, "pricing must be an object")
+    _require(
+        set(pricing) == {"checked_at", "instance_hourly_rate_usd", "region", "source"},
+        "pricing provenance fields are invalid",
+    )
+    _text(pricing["source"], "pricing.source")
+    _text(pricing["region"], "pricing.region")
+    _parse_timestamp(pricing["checked_at"], "pricing.checked_at")
+    if pricing["instance_hourly_rate_usd"] is not None:
+        _non_negative_number(
+            pricing["instance_hourly_rate_usd"], "instance_hourly_rate_usd"
+        )
+
+    charges = requirement["charges"]
+    _require(type(charges) is list, "charges must be a list")
+    requirement["charges"] = [
+        _validate_charge(charge, index) for index, charge in enumerate(charges)
+    ]
+
+    gates = requirement["gates"]
+    _require(
+        type(gates) is dict and set(gates) == set(_CALIBRATION_REQUIREMENT_GATE_NAMES),
+        "calibration requirement gates are invalid",
+    )
+    for name in _CALIBRATION_REQUIREMENT_GATE_NAMES:
+        entry = gates[name]
+        _require(type(entry) is dict, f"gate {name} must be an object")
+        _require(
+            entry.get("status") in ("PASS", "FAIL"),
+            f"gate {name} status must be PASS or FAIL",
+        )
+        _text(entry.get("detail"), f"gate {name} detail")
+
+    _validate_binding_shape(requirement["allocation_binding"], "allocation_binding")
+    seeds = requirement["seeds"]
+    _require(type(seeds) is list and bool(seeds), "calibration seeds are required")
+    for value in seeds:
+        _require(
+            type(value) is int and 0 <= value < 2**32,
+            "calibration seeds must be unsigned 32-bit integers",
+        )
+    _require(len(set(seeds)) == len(seeds), "calibration seeds contain a duplicate")
+    return requirement
+
+
+def build_calibration_admission(
+    requirement: Mapping[str, object],
+    *,
+    now: datetime,
+    ledger: object = None,
+) -> dict[str, object]:
+    """Admit the bounded calibration run itself.
+
+    There is deliberately no matching-calibration gate here: requiring
+    calibration evidence to run a calibration would be circular. The monetary
+    bound is instead the worst case -- the whole independent hard fail-safe
+    window at the current rate plus every declared charge -- so the run is
+    self-authorizing within an explicitly approved calibration budget.
+    """
+
+    required = validate_calibration_admission_requirement(dict(requirement))
+    target = required["target"]
+    bounds = required["bounds"]
+    budget = required["budget"]
+    pricing = required["pricing"]
+    charges = required["charges"]
+    gates_input = required["gates"]
+    evaluated_at = _aware(now, "now")
+    seeds = [int(seed) for seed in required["seeds"]]
+
+    authority_detail = "canonical seed-registry ledger was not supplied"
+    authority_ok = False
+    if ledger is not None:
+        probe = {
+            "seed_allocation": required["allocation_binding"],
+            "tasks": [{"seed": seed} for seed in seeds],
+        }
+        try:
+            resolved = resolve_calibration_allocation(probe, ledger)
+        except seed_registry.SeedRegistryError as error:
+            authority_detail = (
+                "calibration allocation does not resolve against canonical "
+                f"seed-registry authority: {error}"
+            )
+        else:
+            authority_ok = True
+            authority_detail = (
+                f"calibration allocation {resolved['allocation_identity']} is "
+                f"{resolved['state']} in domain {resolved['seed_domain']!r} for "
+                f"population {resolved['population']!r} / protocol "
+                f"{resolved['protocol']!r} with exactly {len(seeds)} seeds"
+            )
+
+    units = int(target["total_units"])
+    workers = int(target["worker_count"])
+    scope_ok = (
+        units == len(seeds)
+        and units <= int(bounds["max_unit_count"])
+        and workers <= int(bounds["max_worker_count"])
+        and workers <= units
+    )
+    hard_fail_safe = float(budget["hard_fail_safe_seconds"])
+    teardown = float(budget["teardown_seconds"])
+    unbounded = sorted(
+        str(charge["label"])
+        for charge in charges
+        if charge["material"] and charge["usd"] is None and charge["max_usd"] is None
+    )
+    known = sum(float(charge["usd"]) for charge in charges if charge["usd"] is not None)
+    bounded = sum(
+        float(charge["max_usd"])
+        for charge in charges
+        if charge["usd"] is None and charge["max_usd"] is not None
+    )
+    rate = pricing["instance_hourly_rate_usd"]
+    calibration_budget = float(required["calibration_cost_budget_usd"])
+    if rate is None:
+        cost_ok = False
+        worst_case = None
+        cost_detail = "instance hourly rate unavailable; pricing provenance incomplete"
+        cost_prediction: dict[str, object] = {
+            "available": False,
+            "reason": "instance hourly rate unavailable",
+            "bounded_charges_usd": _round(bounded),
+            "charges": charges,
+            "is_finalized_aws_invoice": False,
+            "known_charges_usd": _round(known),
+            "overhead_basis": None,
+            "pricing": pricing,
+            "unbounded_material_charges": unbounded,
+        }
+    elif unbounded:
+        cost_ok = False
+        worst_case = None
+        cost_detail = (
+            "unknown material charge is unbounded and is never treated as zero: "
+            f"{unbounded!r}"
+        )
+        cost_prediction = {
+            "available": False,
+            "reason": cost_detail,
+            "bounded_charges_usd": _round(bounded),
+            "charges": charges,
+            "is_finalized_aws_invoice": False,
+            "known_charges_usd": _round(known),
+            "overhead_basis": None,
+            "pricing": pricing,
+            "unbounded_material_charges": unbounded,
+        }
+    else:
+        worst_case = (
+            (hard_fail_safe + teardown) / 3600.0 * float(rate) + known + bounded
+        )
+        cost_ok = _fits(worst_case, calibration_budget)
+        cost_detail = (
+            f"worst case = whole hard fail-safe window {hard_fail_safe}s + teardown "
+            f"{teardown}s at {rate} USD/h + known {_round(known)} USD + bounded "
+            f"{_round(bounded)} USD = {_round(worst_case)} USD against the approved "
+            f"calibration budget {calibration_budget} USD"
+        )
+        cost_prediction = {
+            "available": True,
+            "bounded_charges_usd": _round(bounded),
+            "charges": charges,
+            "is_finalized_aws_invoice": False,
+            "known_charges_usd": _round(known),
+            "overhead_basis": None,
+            "predicted_ec2_billable_runtime_range_seconds": [
+                0.0,
+                _round(hard_fail_safe + teardown),
+            ],
+            "predicted_ec2_cost_range_usd": [
+                0.0,
+                _round((hard_fail_safe + teardown) / 3600.0 * float(rate)),
+            ],
+            "predicted_total_cost_range_usd": [
+                _round(known),
+                _round(worst_case),
+            ],
+            "pricing": pricing,
+            "reason": None,
+            "unbounded_material_charges": unbounded,
+        }
+
+    fail_safe_ok = (
+        _fits(float(budget["normal_deadline_seconds"]) + teardown, hard_fail_safe)
+        and hard_fail_safe > 0
+    )
+    gates = [
+        _gate("calibration-allocation-authority", authority_ok, authority_detail),
+        _gate(
+            "calibration-scope-bounded",
+            scope_ok,
+            (
+                f"{units} units over {len(seeds)} allocated seeds with {workers} "
+                f"workers against caps {bounds['max_unit_count']} units / "
+                f"{bounds['max_worker_count']} workers"
+            ),
+        ),
+        _gate("calibration-cost-budget", cost_ok, cost_detail),
+        _gate(
+            "hard-fail-safe",
+            fail_safe_ok,
+            (
+                f"independent calibration fail-safe {hard_fail_safe}s with normal "
+                f"deadline {budget['normal_deadline_seconds']}s + teardown "
+                f"{teardown}s"
+            ),
+        ),
+        _gate(
+            "durable-evidence-support",
+            gates_input["durable_evidence"]["status"] == "PASS",
+            str(gates_input["durable_evidence"]["detail"]),
+        ),
+        _gate(
+            "artifact-destination-retention",
+            gates_input["artifact_destination"]["status"] == "PASS",
+            str(gates_input["artifact_destination"]["detail"]),
+        ),
+        _gate(
+            "teardown-confirmation",
+            gates_input["teardown_confirmation"]["status"] == "PASS",
+            str(gates_input["teardown_confirmation"]["detail"]),
+        ),
+    ]
+    _require(
+        tuple(str(gate["name"]) for gate in gates) == PHASE_ZERO_GATE_NAMES,
+        "calibration gate set is incomplete",
+    )
+    blocking = [
+        f"{gate['name']}: {gate['detail']}"
+        for gate in gates
+        if gate["status"] == "FAIL"
+    ]
+    decision = "NO-GO" if blocking else "GO"
+    document: dict[str, object] = {
+        "schema_version": ADMISSION_SCHEMA_VERSION,
+        "admission_identity": "",
+        "admission_phase": 0,
+        "billable_resource_creation_authorized": decision == "GO",
+        "blocking_reasons": blocking,
+        "budget": budget,
+        "calibration": {
+            "calibrated_at": None,
+            "identity": None,
+            "match_reports": [],
+            "run_id": None,
+            "supported_worker_counts": [],
+        },
+        "clock_origins": dict(CLOCK_ORIGINS),
+        "consumer": required["consumer"],
+        "cost_prediction": cost_prediction,
+        "decision": decision,
+        "evaluated_at": _timestamp(evaluated_at),
+        "gates": gates,
+        "limitations": [
+            "a calibration run produces operational timing evidence only; it is "
+            "never qualification, TRAIN, SELECT or OFFLINE-EVAL evidence",
+            "a calibration GO authorizes this bounded measurement only; it does "
+            "not authorize any scientific execution",
+            "the cost bound is the worst-case fail-safe window, not a prediction: "
+            "no prior calibration is required to run a calibration",
+        ],
+        "phase_one_admission_identity": None,
+        "run_id": required["run_id"],
+        "runtime_prediction": {
+            "available": False,
+            "reason": (
+                "a calibration is the measurement; requiring a prior calibrated "
+                "runtime here would be circular"
+            ),
+        },
+        "scientific_submission_authorized": False,
+        "target": target,
+        "workload_submission_authorized": decision == "GO",
+    }
+    document["admission_identity"] = _digest(
+        {key: value for key, value in document.items() if key != "admission_identity"}
+    )
+    return validate_admission_record(document)
 
 
 def write_admission_record(path: str | Path, document: object) -> None:
@@ -1920,11 +2612,20 @@ def _parser() -> argparse.ArgumentParser:
         "validate-evidence", help="strict-read existing calibration evidence"
     )
     validate.add_argument("--calibration", required=True)
+    calibration_gate = commands.add_parser(
+        "admit-calibration",
+        help="bounded calibration admission; requires no prior calibration",
+    )
+    calibration_gate.add_argument("--requirement", required=True)
+    calibration_gate.add_argument("--seed-ledger", required=True)
+    calibration_gate.add_argument("--output", required=True)
+    calibration_gate.add_argument("--now")
     phase_one = commands.add_parser(
         "admit-phase-1", help="pre-billing admission gate; No-Go forbids creation"
     )
     phase_one.add_argument("--requirement", required=True)
     phase_one.add_argument("--calibration", action="append", default=[])
+    phase_one.add_argument("--seed-ledger", required=True)
     phase_one.add_argument("--output", required=True)
     phase_one.add_argument("--now")
     phase_two = commands.add_parser(
@@ -1987,11 +2688,18 @@ def main(argv: list[str] | None = None) -> int:
                 atomic_replace(destination, canonical_json_bytes(document))
             print(json.dumps(document, sort_keys=True, separators=(",", ":")))
             return 0
-        if args.command == "admit-phase-1":
+        if args.command == "admit-calibration":
+            record = build_calibration_admission(
+                _read_json(args.requirement, "calibration requirement"),
+                now=_now(args.now),
+                ledger=seed_registry.load_ledger(args.seed_ledger),
+            )
+        elif args.command == "admit-phase-1":
             record = build_phase_one_admission(
                 _read_json(args.requirement, "admission requirement"),
                 [read_calibration_evidence(path) for path in args.calibration],
                 now=_now(args.now),
+                ledger=seed_registry.load_ledger(args.seed_ledger),
             )
         else:
             record = build_phase_two_admission(
@@ -2013,6 +2721,9 @@ def main(argv: list[str] | None = None) -> int:
                     "scientific_submission_authorized": record[
                         "scientific_submission_authorized"
                     ],
+                    "workload_submission_authorized": record[
+                        "workload_submission_authorized"
+                    ],
                 },
                 sort_keys=True,
             )
@@ -2032,6 +2743,8 @@ __all__ = [
     "AwsOperationalCalibrationError",
     "BURSTABLE_INSTANCE_FAMILIES",
     "CALIBRATION_POPULATION",
+    "CALIBRATION_PROTOCOL",
+    "CALIBRATION_REQUIREMENT_SCHEMA_VERSION",
     "DEFAULT_HEADROOM_FACTOR",
     "DURABLE_EVIDENCE_LEVELS",
     "EVIDENCE_SCHEMA_VERSION",
@@ -2039,25 +2752,31 @@ __all__ = [
     "OBSERVATION_SCHEMA_VERSION",
     "PHASE_ONE_GATE_NAMES",
     "PHASE_TWO_GATE_NAMES",
+    "PHASE_ZERO_GATE_NAMES",
     "REQUIREMENT_SCHEMA_VERSION",
     "assert_no_scientific_fields",
+    "build_calibration_admission",
     "build_calibration_evidence",
     "build_calibration_evidence_from_document",
     "build_phase_one_admission",
     "build_phase_two_admission",
     "evaluate_budget",
     "evaluate_calibration_match",
+    "calibration_seeds",
     "historical_incomplete_observation",
     "instance_family",
+    "measured_billable_overhead",
     "nearest_rank_percentile",
     "predict_cost",
     "predict_runtime",
     "read_admission_record",
     "read_calibration_evidence",
+    "resolve_calibration_allocation",
     "select_matching_calibration",
     "tasks_from_durable_receipts",
     "validate_admission_record",
     "validate_admission_requirement",
+    "validate_calibration_admission_requirement",
     "validate_calibration_evidence",
     "validate_phase_two_observation",
     "write_admission_record",

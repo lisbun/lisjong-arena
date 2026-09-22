@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from lisjong_arena import aws_operational_calibration, seed_registry
+from lisjong_arena.offense_foundation import instrumentation
 
 _ROOT = Path(__file__).resolve().parents[1]
 _LAUNCHER = _ROOT / "scripts" / "aws" / "start-offense-foundation-332.ps1"
@@ -338,7 +339,24 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                 allocation_timestamp="2026-09-22T00:00:00Z",
             )
             identities[split] = record["allocation_identity"]
+        ledger, calibration_record = seed_registry.reserve_allocation(
+            ledger,
+            owner_issue="lisbun/lisjong-arena#340",
+            protocol=aws_operational_calibration.CALIBRATION_PROTOCOL,
+            seed_domain=seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
+            purpose="synthetic operational calibration population",
+            population=aws_operational_calibration.CALIBRATION_POPULATION,
+            split=None,
+            seeds=list(range(906_000, 906_064)),
+            arena_revision=arena_revision,
+            protocol_revision="synthetic-test-v1",
+            provenance_reference="synthetic test fixture",
+            allocation_timestamp="2026-09-22T00:00:00Z",
+        )
         seed_registry.write_ledger(ledger_path, ledger)
+        calibration_binding = seed_registry.allocation_binding(
+            ledger, calibration_record["allocation_identity"]
+        )
         request = {
             "phase": "SCIENTIFIC",
             "populations": populations,
@@ -363,7 +381,7 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             phase_a_tags.append(
                 {"Key": "lisjong-arena-revision", "Value": phase_a_arena_revision_tag}
             )
-        return root, ledger_path, request_path, phase_a_tags
+        return root, ledger_path, request_path, phase_a_tags, calibration_binding
 
     def _run_phase_b_launcher(
         self,
@@ -373,6 +391,7 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         preflight=True,
         extra_arguments=(),
         probe_outcome="PASS",
+        environment=None,
     ):
         """Run the real PowerShell Phase B launcher against a mocked `aws` CLI.
 
@@ -380,9 +399,16 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         call so a test can assert that no billable mutation or scientific
         submission happened.
         """
-        root, ledger_path, request_path, phase_a_tags = self._launcher_environment(
-            arena_revision, phase_a_arena_revision_tag
-        )
+        if environment is None:
+            (
+                root,
+                ledger_path,
+                request_path,
+                phase_a_tags,
+                _calibration_binding,
+            ) = self._launcher_environment(arena_revision, phase_a_arena_revision_tag)
+        else:
+            root, ledger_path, request_path, phase_a_tags = environment
         wrapper = root / "launch.ps1"
         calls = root / "aws-calls.txt"
         arm_epoch = 1_790_000_000
@@ -586,7 +612,9 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         )
         return result, aws_calls
 
-    def _write_phase_b_admission_inputs(self, directory, arena_revision):
+    def _write_phase_b_admission_inputs(
+        self, directory, arena_revision, calibration_binding
+    ):
         """Write a matching Phase B calibration plus a fully priced charge list."""
         project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         lisjong = re.search(r"lisjong\.git@([0-9a-f]{40})", project).group(1)
@@ -598,7 +626,7 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             began = start + timedelta(seconds=(index // 32) * 60)
             tasks.append(
                 {
-                    "seed": 950_000 + index,
+                    "seed": 906_000 + index,
                     "started_at": began.isoformat(timespec="seconds").replace(
                         "+00:00", "Z"
                     ),
@@ -610,15 +638,9 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         evidence = aws_operational_calibration.build_calibration_evidence(
             calibration_run_id="synthetic-phase-b-calibration",
             calibrated_at=start + timedelta(minutes=5),
-            seed_allocation={
-                "allocation_identity": "a" * 64,
-                "ledger_revision": "b" * 64,
-                "owner_repository": "lisbun/lisjong-arena",
-                "seed_domain": seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN,
-                "seed_membership_identity": "d" * 64,
-            },
+            seed_allocation=calibration_binding,
             seed_allocation_population=aws_operational_calibration.CALIBRATION_POPULATION,
-            seed_ledger_revision="b" * 64,
+            seed_ledger_revision=calibration_binding["ledger_revision"],
             arena_revision=arena_revision,
             lisjong_revision=lisjong,
             lisjong_engine_revision=engine,
@@ -635,10 +657,8 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             ec2_billable_runtime_seconds=2400.0,
             setup_overhead_seconds=900.0,
             teardown_overhead_seconds=400.0,
-            durable_evidence_level="atomic-operational-progress",
-            instrumentation_identity=(
-                "offense-foundation-332/phase-B/atomic-operational-progress/v1"
-            ),
+            durable_evidence_level=instrumentation.CALIBRATION_DURABLE_EVIDENCE_LEVEL,
+            instrumentation_identity=instrumentation.GENERATION_INSTRUMENTATION_IDENTITY,
             instrumentation_path="issue-332/phase-B/operational/progress.json",
         )
         calibration_path = directory / "calibration.json"
@@ -676,7 +696,10 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         )
         return calibration_path, charges_path
 
-    def test_preflight_executes_without_billable_aws_mutation(self):
+    def test_preflight_does_not_report_success_on_a_no_go_admission(self):
+        # Issue #340 blocker: preflight is a mechanical Go/No-Go gate, so a
+        # NO-GO decision must not exit successfully even though preflight
+        # creates no billable resource.
         if os.name != "nt":
             self.skipTest(
                 "PowerShell launcher preflight uses the Windows operator path"
@@ -684,15 +707,23 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         if shutil.which("pwsh") is None:
             self.skipTest("pwsh is unavailable")
         arena_revision = "a" * 40
-        result, aws_calls = self._run_phase_b_preflight(
+        result, aws_calls, run_dir = self._run_phase_b_launcher(
             arena_revision, phase_a_arena_revision_tag=arena_revision
         )
-        output = result.stdout + result.stderr
-        self.assertEqual(0, result.returncode, output)
-        self.assertIn("PREFLIGHT ONLY", output)
+        output = _normalize_console_output(result.stdout + result.stderr)
+        self.assertNotEqual(0, result.returncode, output)
+        self.assertIn("Phase 1 launch admission is NO-GO", output)
+        self.assertIn(
+            "No create-volume, run-instances, or scientific SSM submission", output
+        )
         self.assertNotIn("create-volume", aws_calls)
         self.assertNotIn("run-instances", aws_calls)
         self.assertNotIn("send-command", aws_calls)
+        admission = json.loads(
+            (run_dir / "admission-phase-1.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual("NO-GO", admission["decision"])
+        self.assertFalse(admission["billable_resource_creation_authorized"])
 
     def test_phase_b_preflight_rejects_arena_revision_mismatch(self):
         # Blocker 2: a Phase B revision that differs from the Phase A
@@ -765,9 +796,11 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self.assertFalse((run_dir / "ssm-run.json").exists())
         self.assertFalse((run_dir / "state.json").exists())
 
-    def test_phase_two_no_go_submits_no_scientific_workload(self):
-        # Issue #340: a Phase 2 failure after provisioning must submit no
-        # scientific seed and must proceed to bounded cleanup.
+    def test_missing_per_seed_receipt_capability_is_the_only_remaining_blocker(self):
+        # Issue #340 blocker: #332 declares the required per-seed durable
+        # receipt level and stays NO-GO until that capability really exists.
+        # With an otherwise perfectly matching calibration, the durable
+        # evidence gate must be the single blocking reason.
         if os.name != "nt":
             self.skipTest("PowerShell launcher uses the Windows operator path")
         if shutil.which("pwsh") is None:
@@ -775,14 +808,20 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         arena_revision = "a" * 40
         inputs_root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, inputs_root, True)
+        (
+            root,
+            ledger_path,
+            request_path,
+            phase_a_tags,
+            calibration_binding,
+        ) = self._launcher_environment(arena_revision, arena_revision)
         calibration_path, charges_path = self._write_phase_b_admission_inputs(
-            inputs_root, arena_revision
+            inputs_root, arena_revision, calibration_binding
         )
         result, aws_calls, run_dir = self._run_phase_b_launcher(
             arena_revision,
             phase_a_arena_revision_tag=arena_revision,
-            preflight=False,
-            probe_outcome="FAIL",
+            environment=(root, ledger_path, request_path, phase_a_tags),
             extra_arguments=[
                 f"-CalibrationEvidencePath '{str(calibration_path).replace("'", "''")}'",
                 f"-ChargesPath '{str(charges_path).replace("'", "''")}'",
@@ -791,65 +830,29 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         )
         output = _normalize_console_output(result.stdout + result.stderr)
         self.assertNotEqual(0, result.returncode, output)
-        self.assertIsNotNone(run_dir)
-        phase_one = json.loads(
-            (run_dir / "admission-phase-1.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual("GO", phase_one["decision"], output)
-        phase_two = json.loads(
-            (run_dir / "admission-phase-2.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual("NO-GO", phase_two["decision"])
-        self.assertFalse(phase_two["scientific_submission_authorized"])
-        self.assertIn("Phase 2 launch admission is NO-GO", output)
-        # The instance exists, but no scientific SSM workload was ever built.
-        self.assertIn("run-instances", aws_calls)
-        self.assertFalse((run_dir / "ssm-run.json").exists())
-        self.assertFalse((run_dir / "state.json").exists())
-        self.assertNotIn("bootstrap-offense-foundation-332.sh", aws_calls)
-        # Bounded cleanup: the instance is terminated and the unused output
-        # volume is deleted; the retained Phase A input volume is untouched.
-        self.assertIn("terminate-instances", aws_calls)
-        self.assertIn("delete-volume", aws_calls)
-        self.assertNotIn("delete-volume --volume-id vol-a1", aws_calls)
-
-    def test_phase_one_go_produces_a_calibrated_plan(self):
-        if os.name != "nt":
-            self.skipTest("PowerShell launcher uses the Windows operator path")
-        if shutil.which("pwsh") is None:
-            self.skipTest("pwsh is unavailable")
-        arena_revision = "a" * 40
-        inputs_root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, inputs_root, True)
-        calibration_path, charges_path = self._write_phase_b_admission_inputs(
-            inputs_root, arena_revision
-        )
-        result, aws_calls, run_dir = self._run_phase_b_launcher(
-            arena_revision,
-            phase_a_arena_revision_tag=arena_revision,
-            extra_arguments=[
-                f"-CalibrationEvidencePath '{str(calibration_path).replace("'", "''")}'",
-                f"-ChargesPath '{str(charges_path).replace("'", "''")}'",
-                "-CostBudgetUsd 20.0",
-            ],
-        )
-        output = result.stdout + result.stderr
-        self.assertEqual(0, result.returncode, output)
-        self.assertNotIn("create-volume", aws_calls)
-        self.assertNotIn("run-instances", aws_calls)
-        plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
-        estimate = plan["operational_plan"]["scientific_runtime_estimate"]
-        self.assertEqual("CALIBRATED", estimate["confidence"])
-        self.assertIn("arena-aws-calibration-evidence-v1:", estimate["basis"])
-        billable = plan["operational_plan"]["ec2_billable_runtime_estimate"]
-        self.assertEqual("CALIBRATED", billable["confidence"])
-        self.assertGreater(billable["range_seconds"][0], estimate["range_seconds"][0])
         admission = json.loads(
             (run_dir / "admission-phase-1.json").read_text(encoding="utf-8")
         )
-        self.assertEqual("GO", admission["decision"])
-        self.assertEqual(140, admission["target"]["total_units"])
-        self.assertEqual(32, admission["target"]["worker_count"])
+        self.assertEqual("NO-GO", admission["decision"], admission["blocking_reasons"])
+        self.assertEqual(1, len(admission["blocking_reasons"]), admission["gates"])
+        reason = admission["blocking_reasons"][0]
+        self.assertTrue(reason.startswith("durable-evidence-support:"), reason)
+        self.assertIn(instrumentation.PER_SEED_RECEIPT_FOLLOW_UP, reason)
+        self.assertIn("per-seed-durable-receipt", reason)
+        self.assertEqual(
+            instrumentation.REQUIRED_DURABLE_EVIDENCE_LEVEL,
+            admission["target"]["durable_evidence_level"],
+        )
+        self.assertEqual(
+            instrumentation.GENERATION_INSTRUMENTATION_IDENTITY,
+            admission["target"]["instrumentation_identity"],
+        )
+        # Every other Phase 1 gate, including the calibration match against
+        # canonical seed-registry authority, passed.
+        failing = [g["name"] for g in admission["gates"] if g["status"] == "FAIL"]
+        self.assertEqual(["durable-evidence-support"], failing)
+        self.assertNotIn("create-volume", aws_calls)
+        self.assertNotIn("run-instances", aws_calls)
 
 
 if __name__ == "__main__":

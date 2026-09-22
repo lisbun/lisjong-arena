@@ -1,10 +1,13 @@
 # AWS operational calibration and launch admission (#340)
 
-Issue #340 adds two things on top of the #329 observability contract:
+Issue #340 adds three things on top of the #329 observability contract:
 
-1. a dedicated **operational calibration evidence** document produced by a
-   bounded, calibration-only run; and
-2. a machine-readable **launch admission** record that must reach `GO` before
+1. a **bounded calibration execution path** that can run the exact production
+   shape on a dedicated calibration-only population, under its own approved
+   budget, without requiring any pre-existing calibration;
+2. a dedicated **operational calibration evidence** document produced by that
+   run; and
+3. a machine-readable **launch admission** record that must reach `GO` before
    any billable production resource is created (Phase 1), and again before the
    first scientific unit is submitted (Phase 2).
 
@@ -136,6 +139,29 @@ required to equal the current ledger revision: an unrelated reservation or a
 `RESERVED -> COMMITTED` transition must not invalidate a matching calibration.
 This matches the binding semantics in [seed-registry.md](seed-registry.md).
 
+### The calibration allocation is resolved, not just shaped
+
+`calibration-allocation-authority` runs the #346 `require_allocation_binding`
+contract against the canonical `seed-registry` ledger. A well-formed binding of
+arbitrary SHA-256 values is never enough. Resolution requires:
+
+```text
+the immutable allocation identity is uniquely present in the canonical ledger
+the record is still RESERVED or COMMITTED
+its seed domain and membership identity match the binding
+its membership is exactly the seeds the calibration executed
+its population is "operational-calibration" and its protocol is
+    "aws-operational-calibration-v1"
+it declares no scientific split
+its domain equals the production population's domain, so the ledger's
+    same-domain non-overlap invariant applies
+```
+
+Phase 1 therefore takes `--seed-ledger`, and a missing ledger is a No-Go rather
+than a skipped check. `calibration-seed-isolation` additionally intersects the
+executed calibration seeds with the production seeds carried in the admission
+requirement, so overlap is rejected explicitly and not only by inference.
+
 ### Worker counts are never extrapolated
 
 There is no interpolation and no division by worker count. The admission record
@@ -187,12 +213,34 @@ not zero.
 
 ## Cost prediction
 
+The billable window is built from the **measured** calibration overhead,
+combined conservatively with the operator's planned allowance:
+
 ```text
-billable_lower = setup + predicted_lower  + post_processing + teardown
-billable_upper = setup + headroom         + post_processing + teardown
+effective_setup     = max(planned setup,    measured setup_overhead_seconds)
+effective_teardown  = max(planned teardown, measured teardown_overhead_seconds)
+measured_residual   = measured ec2_billable_runtime
+                      - measured setup - measured wall clock - measured teardown
+billable_overhead   = effective_setup + planned post_processing
+                      + effective_teardown + max(0, measured_residual)
+
+billable_lower = billable_overhead + predicted_lower
+billable_upper = billable_overhead + headroom
 ec2 cost       = billable / 3600 * instance_hourly_rate_usd
 total          = ec2 cost + known charges (+ bounded charges on the upper bound)
 ```
+
+Two calibrations with identical per-task timings but different observed
+billable runtime, setup or teardown therefore produce different predicted
+costs. A planned allowance smaller than the measured basis never makes the
+prediction cheaper, and the residual billable time the calibration observed but
+did not attribute to setup or teardown -- launch, attach and SSM wait -- is
+carried through rather than dropped. The whole decomposition is recorded in
+`cost_prediction.overhead_basis`, including
+`planned_allowance_below_measured`.
+
+Without a matched calibration there is no measured basis, so the cost
+prediction is unavailable and the launch is a No-Go.
 
 Every non-EC2 charge is declared explicitly:
 
@@ -244,21 +292,101 @@ authorized` is `false` in Phase 1 regardless.
 ### Phase 2 — after provisioning, before the first scientific seed
 
 ```text
-actual-environment-identity       run id, phase 1 identity, instance type,
-                                  vCPU, workers and Arena revision all match
+actual-environment-identity       run id, prior admission identity, instance
+                                  type, vCPU, workers and Arena revision match
 hard-fail-safe-armed              armed on this instance, deadline - arm epoch
                                   equals the admitted hard fail-safe, and the
                                   deadline is still in the future
 retained-destination-writable     a real write probe on this instance
 recovery-identity-persisted       recovery identity written on this instance
-remaining-budget-sufficient       elapsed since arm + headroom + post + teardown
-                                  still fits the hard fail-safe
+remaining-budget-sufficient       time AND cost, both re-evaluated after setup
 ```
+
+`remaining-budget-sufficient` now carries two subchecks in one gate:
+
+```text
+time  elapsed since fail-safe arm + remaining workload + post_processing
+      + effective teardown <= hard fail-safe
+
+cost  realized billable since the EC2 launch epoch + remaining workload
+      + post_processing + effective teardown, priced at the admitted rate,
+      plus known and bounded charges <= cost_budget_usd
+```
+
+Setup that consumed far more billable time than planned therefore fails the
+gate on cost even when the time budget still fits. The observation carries
+`instance_launch_epoch` for that reason: the billable clock starts at the EC2
+launch, not at the fail-safe arm. The three epochs must be in order
+(`launch <= arm <= observation`) or the gate fails.
 
 None of these can pass for a nonexistent instance: every one requires an
 `i-...` instance id, and the destination/recovery evidence must name that same
 instance. On `NO-GO` the caller must submit no scientific seed and proceed to
 bounded cleanup; the record says so in its limitations.
+
+## Running the bounded calibration
+
+`scripts/aws/start-operational-calibration-340.ps1` plus
+`scripts/aws/bootstrap-operational-calibration-340.sh` execute the calibration
+itself. The launcher has no population request, no protocol lock and no corpus
+publication path, so it structurally cannot submit a scientific population; its
+admission record's `scientific_submission_authorized` is always `false`.
+
+```powershell
+.\scripts\aws\start-operational-calibration-340.ps1 `
+  -QualificationPath <retained-qualification.json> `
+  -AllocationIdentity <calibration allocation identity> `
+  -FirstSeed <first calibration seed> -UnitCount 20 `
+  -InstanceType c7i.4xlarge -MaxWorkers 16 `
+  -FailSafeHours 4 `
+  -CalibrationCostBudgetUsd <approved budget> `
+  -ChargesPath <charges.json> `
+  -AwsProfile <profile> `
+  -PreflightOnly
+```
+
+On the instance, the bootstrap regenerates qualification, requires the same
+cross-platform qualification-contract match as #332, and runs
+`offense_foundation calibrate`. That runner executes the same per-hanchan
+generation the production path executes -- the same teacher, the same paired
+corpus and player-safe source-record writes -- and then:
+
+```text
+publishes  a #339 per-seed durable receipt whose payload is timing only
+           #329 atomic operational progress
+           a raw calibration observation document
+seals      nothing: no manifest, no support aggregation, no P2 outcome
+deletes    the scratch game artifacts before teardown
+```
+
+After the instance terminates, the launcher derives the measured billable
+window from the EC2 clock (`LaunchTime` -> confirmed termination), splits out
+setup and teardown around the instance-side workload interval, and calls
+`aws_operational_calibration evidence`.
+
+### The calibration admission (phase 0)
+
+```text
+calibration-allocation-authority   resolved against canonical ledger authority
+calibration-scope-bounded          units == allocated seeds, within the caps
+calibration-cost-budget            worst case fits the approved budget
+hard-fail-safe                     independent, bounded, teardown reserved
+durable-evidence-support           per-seed receipts plus atomic progress
+artifact-destination-retention
+teardown-confirmation
+```
+
+There is deliberately **no matching-calibration gate**: requiring calibration
+evidence in order to calibrate would be circular. The monetary bound is
+therefore the worst case -- the entire hard fail-safe window plus the teardown
+reserve at the current rate, plus every declared charge -- rather than a
+prediction. The record's `runtime_prediction` is explicitly unavailable with
+that reason, which is what makes the absence of circularity auditable.
+
+The same Phase 2 gate then runs before the calibration workload is submitted.
+Because the prior record is a calibration admission, its remaining-budget check
+uses the worst-case remaining fail-safe window, and its
+`scientific_submission_authorized` stays `false` however it turns out.
 
 ## Using it from the #332 launcher
 
@@ -293,6 +421,11 @@ Defaults, all fixed in the pre-launch plan:
 `-CostBudgetUsd` has no default: an omitted budget is evaluated as `0 USD`, so
 the `cost-budget` gate fails and the launch is No-Go until a budget is declared.
 
+`-PreflightOnly` creates no billable resource, but it is still the same
+mechanical gate: a NO-GO decision exits non-zero after the PLAN and the
+admission record have been saved, so a machine caller never reads a No-Go as a
+successful preflight.
+
 Without `-ChargesPath` the launcher emits the fail-closed default charge list:
 the retained EBS volume (priced only if `-RetainedEbsEstimateUsd` is supplied),
 public IPv4 hours and data transfer, all material and unbounded. That is a
@@ -316,13 +449,31 @@ verifies a write/read probe, and unmounts. That directory is outside the
 `issue-332/` artifact root, so the bootstrap's artifact-root freshness check is
 unaffected.
 
-### #332 Phase A durable-evidence limitation
+### #332 is No-Go until the per-seed receipt capability exists
 
-The #331 corpus generator publishes atomic operational progress but no #339
-per-seed receipt, so an interrupted Phase A retains no completed hanchan. The
-launcher declares `durable_evidence_level = "atomic-operational-progress"` and
-records that limitation in the `durable-evidence-support` gate detail, rather
-than claiming a durability the execution path does not have.
+#340 Phase 1 requires `per-seed-durable-receipt`. The launcher does not assert
+that capability; it probes it:
+
+```text
+python -m lisjong_arena.offense_foundation durable-evidence
+
+durable_evidence_level             atomic-operational-progress
+required_durable_evidence_level    per-seed-durable-receipt
+per_seed_durable_receipt_supported false
+status                             FAIL
+follow_up                          lisbun/lisjong-arena#350
+```
+
+The probe reports what `corpus.generate` really does today: atomic operational
+progress, no #339 per-seed receipt, so an interrupted production run retains no
+completed hanchan. The `durable-evidence-support` gate takes its status
+directly from that probe, so **billable #332 Phase A and Phase B are No-Go by
+construction until [#350](https://github.com/lisbun/lisjong-arena/issues/350)
+lands**, and the gate flips on its own when the capability does.
+
+The declared level and instrumentation identity both come from
+`offense_foundation/instrumentation.py`, so a change to the real write path
+also invalidates calibrations measured against the old one.
 
 ## Historical #326 observation
 
@@ -358,8 +509,14 @@ python -m lisjong_arena.aws_operational_calibration evidence \
 python -m lisjong_arena.aws_operational_calibration validate-evidence \
     --calibration <calibration.json>
 
+python -m lisjong_arena.aws_operational_calibration admit-calibration \
+    --requirement <calibration-requirement.json> \
+    --seed-ledger <canonical-seed-ledger.json> \
+    --output <admission-calibration.json>
+
 python -m lisjong_arena.aws_operational_calibration admit-phase-1 \
     --requirement <requirement.json> --calibration <calibration.json> \
+    --seed-ledger <canonical-seed-ledger.json> \
     --output <admission-phase-1.json>
 
 python -m lisjong_arena.aws_operational_calibration admit-phase-2 \
@@ -375,7 +532,21 @@ overwritten.
 
 ## Status of live calibration
 
-No live AWS calibration has been performed for this contract. A synthetic
-fixture is never a fresh calibration: fixtures exercise the decision logic
+No live AWS calibration has been performed for this contract, and no
+calibration seeds have been reserved yet. A synthetic fixture is never a
+fresh calibration: fixtures exercise the decision logic
 only, and the admission gate requires evidence whose identity, worker count,
-concurrency and freshness are all real measurements of the production shape.
+concurrency and freshness are all real measurements of the production shape,
+resolved against canonical seed-registry authority.
+
+The ordering that follows from this contract is:
+
+```text
+#350 (per-seed receipts in the generation path)
+  -> reserve the dedicated calibration population on the seed-registry branch
+  -> calibration preflight and explicit cost review
+  -> bounded calibration execution
+  -> calibration evidence
+  -> #332 Phase 1 admission
+  -> billable production execution
+```

@@ -80,8 +80,16 @@ admission gate, which derives the calibrated scientific runtime range from a
 matching dedicated calibration rather than from an operator assertion. Pass
 `-CalibrationEvidencePath`, a priced `-ChargesPath` and `-CostBudgetUsd`; see
 [AWS operational calibration / launch admission](aws-operational-calibration.md).
-No matching calibration exists yet, so billable Phase A is currently No-Go by
-construction. Defaults are `c7i.4xlarge`, 16 workers and 20 hanchan.
+
+Billable Phase A and Phase B are currently **No-Go by construction**, for two
+independent reasons: no matching calibration has been produced, and the
+`durable-evidence-support` gate probes
+`python -m lisjong_arena.offense_foundation durable-evidence` and finds that
+the generator publishes no #339 per-seed receipt
+([#350](https://github.com/lisbun/lisjong-arena/issues/350)). `-PreflightOnly`
+reports that decision and exits non-zero without creating any resource.
+
+Defaults are `c7i.4xlarge`, 16 workers and 20 hanchan.
 
 The output is retained on a separate encrypted 8 GiB gp3 volume
 tagged with the Phase A run-id. The volume retains both `p2-corpus` and the

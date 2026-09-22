@@ -450,6 +450,11 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($teacherText)) {
     throw "Could not resolve the locked #332 teacher identity: $teacherText"
 }
 $teacherIdentity = "$teacherText x4"
+$instrumentationText = (& $localPython -m lisjong_arena.offense_foundation durable-evidence 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($instrumentationText)) {
+    throw "Could not probe the #332 generation instrumentation capability: $instrumentationText"
+}
+$instrumentation = $instrumentationText | ConvertFrom-Json
 $lisjongMatch = [regex]::Match($projectText, 'lisjong\.git@([0-9a-f]{40})')
 $engineMatch = [regex]::Match($projectText, 'lisjong-engine\.git@([0-9a-f]{40})')
 $riichienvMatch = [regex]::Match($projectText, 'riichienv==([0-9][0-9A-Za-z.\-]*)')
@@ -491,9 +496,15 @@ if (-not [string]::IsNullOrWhiteSpace($ChargesPath)) {
 }
 $productionAllocationIdentities = @()
 $productionMembershipIdentities = @()
+$productionSeedDomain = ""
 foreach ($bindingProperty in $request.allocation_bindings.PSObject.Properties) {
     $productionAllocationIdentities += [string]$bindingProperty.Value.allocation_identity
     $productionMembershipIdentities += [string]$bindingProperty.Value.seed_membership_identity
+    $productionSeedDomain = [string]$bindingProperty.Value.seed_domain
+}
+$productionSeeds = @()
+foreach ($populationProperty in $request.populations.PSObject.Properties) {
+    foreach ($seed in @($populationProperty.Value)) { $productionSeeds += [int]$seed }
 }
 $protocolLockDetail = if ($Phase -eq "A") {
     "Phase A protocol lock materialized locally from the merged-main qualification $qualificationIdentity"
@@ -527,8 +538,8 @@ Write-JsonFile -Path $admissionRequirementPath -Value ([ordered]@{
                 detail = "new encrypted 8 GiB gp3 volume tagged with the run id, retained after teardown"
             }
             durable_evidence = [ordered]@{
-                status = "PASS"
-                detail = "atomic operational progress at $remoteProgressPath; the #331 corpus generator publishes no #339 per-seed receipt, so an interrupted run retains no completed hanchan"
+                status = [string]$instrumentation.status
+                detail = "probed generation capability: durable_evidence_level=$([string]$instrumentation.durable_evidence_level), required=$([string]$instrumentation.required_durable_evidence_level), progress at $remoteProgressPath. $([string]$instrumentation.limitation)"
             }
             protocol_lock = [ordered]@{ status = "PASS"; detail = $protocolLockDetail }
             reattach = [ordered]@{
@@ -548,15 +559,17 @@ Write-JsonFile -Path $admissionRequirementPath -Value ([ordered]@{
         }
         production_allocation = [ordered]@{
             allocation_identities = @($productionAllocationIdentities)
+            seed_domain = $productionSeedDomain
             seed_membership_identities = @($productionMembershipIdentities)
+            seeds = @($productionSeeds)
         }
         run_id = $runId
         target = [ordered]@{
             arena_revision = $ArenaRevision
-            durable_evidence_level = "atomic-operational-progress"
+            durable_evidence_level = [string]$instrumentation.required_durable_evidence_level
             game_mode = "4p-red-half"
             instance_type = $InstanceType
-            instrumentation_identity = "offense-foundation-332/phase-$Phase/atomic-operational-progress/v1"
+            instrumentation_identity = [string]$instrumentation.instrumentation_identity
             lisjong_engine_revision = $engineMatch.Groups[1].Value
             lisjong_revision = $lisjongMatch.Groups[1].Value
             riichienv_version = $riichienvMatch.Groups[1].Value
@@ -569,7 +582,8 @@ Write-JsonFile -Path $admissionRequirementPath -Value ([ordered]@{
     })
 $admissionArguments = @(
     "-m", "lisjong_arena.aws_operational_calibration", "admit-phase-1",
-    "--requirement", $admissionRequirementPath, "--output", $phaseOneAdmissionPath
+    "--requirement", $admissionRequirementPath, "--output", $phaseOneAdmissionPath,
+    "--seed-ledger", $resolvedSeedLedgerPath
 )
 if (-not [string]::IsNullOrWhiteSpace($CalibrationEvidencePath)) {
     $admissionArguments += @("--calibration", $CalibrationEvidencePath)
@@ -650,12 +664,17 @@ Write-Host "Phase 1 launch admission: $([string]$phaseOneAdmission.decision) ($p
 foreach ($blockingReason in @($phaseOneAdmission.blocking_reasons)) {
     Write-Warning "Phase 1 NO-GO: $blockingReason"
 }
+if (-not $hasScientificRuntimeRange) {
+    # Preflight is still a mechanical Go/No-Go gate: it creates no billable
+    # resource either way, but it never reports success on a NO-GO decision.
+    Write-Host "No create-volume, run-instances, or scientific SSM submission was performed."
+    throw "Phase 1 launch admission is NO-GO; no billable resource was created. PLAN and admission record were saved: $phaseOneAdmissionPath"
+}
 if ($PreflightOnly) {
-    Write-Host "PASS: ISSUE #332 PHASE $Phase AWS PREFLIGHT ONLY (launch admission: $([string]$phaseOneAdmission.decision))"
+    Write-Host "PASS: ISSUE #332 PHASE $Phase AWS PREFLIGHT ONLY (launch admission: GO)"
     Write-Host "No create-volume, run-instances, or scientific SSM submission was performed."
     return
 }
-if (-not $hasScientificRuntimeRange) { throw "Phase 1 launch admission is NO-GO; no billable resource was created. PLAN and admission record were saved: $phaseOneAdmissionPath" }
 if ($null -eq $price.Rate) { throw "Billable execution requires pricing provenance and an hourly rate." }
 
 $artifactVolumeId = ""
@@ -701,6 +720,7 @@ try {
     $instance = @($launched.Instances)[0]
     $instanceId = [string]$instance.InstanceId
     $launchTimeUtc = [datetime]$instance.LaunchTime
+    $instanceLaunchEpoch = [long](($launchTimeUtc.ToUniversalTime() - [datetime]::UnixEpoch).TotalSeconds)
     [void](Invoke-AwsText -Arguments @("ec2", "wait", "instance-running", "--instance-ids", $instanceId))
     $live = @((Invoke-AwsJson -Arguments @("ec2", "describe-instances", "--instance-ids", $instanceId)).Reservations[0].Instances)[0]
     if ([string]$live.MetadataOptions.HttpTokens -ne "required") { throw "IMDSv2 is not required." }
@@ -814,6 +834,7 @@ try {
             fail_safe_armed = $failsafeArmed
             fail_safe_deadline_epoch = $failSafeDeadlineEpoch
             instance_id = $instanceId
+            instance_launch_epoch = $instanceLaunchEpoch
             instance_type = $InstanceType
             observed_at_epoch = $observedEpoch
             phase_one_admission_identity = [string]$phaseOneAdmission.admission_identity
@@ -848,7 +869,7 @@ try {
     foreach ($blockingReason in @($phaseTwoAdmission.blocking_reasons)) {
         Write-Warning "Phase 2 NO-GO: $blockingReason"
     }
-    if ([string]$phaseTwoAdmission.decision -ne "GO") {
+    if ($phaseTwoAdmission.scientific_submission_authorized -ne $true) {
         throw "Phase 2 launch admission is NO-GO; no scientific seed was submitted. Bounded cleanup follows: $phaseTwoAdmissionPath"
     }
 

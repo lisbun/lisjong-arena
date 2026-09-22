@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -12,6 +13,7 @@ from pathlib import Path
 import _aws_operational_calibration_fixtures as fixtures
 
 from lisjong_arena import aws_operational_calibration as calibration
+from lisjong_arena import seed_registry
 from lisjong_arena.durable_seed_checkpoint import publish_seed_checkpoint
 
 
@@ -22,11 +24,20 @@ def _gate(record, name):
     raise AssertionError(f"missing gate {name!r}")
 
 
-def _admit(requirement=None, evidence_documents=None, now=fixtures.NOW):
+def _admit(requirement=None, evidence_documents=None, now=fixtures.NOW, ledger=True):
     return calibration.build_phase_one_admission(
         fixtures.requirement() if requirement is None else requirement,
         [fixtures.evidence()] if evidence_documents is None else evidence_documents,
         now=now,
+        ledger=fixtures.ledger() if ledger is True else ledger,
+    )
+
+
+def _admit_calibration(requirement=None, now=fixtures.NOW, ledger=True):
+    return calibration.build_calibration_admission(
+        fixtures.calibration_requirement() if requirement is None else requirement,
+        now=now,
+        ledger=fixtures.ledger() if ledger is True else ledger,
     )
 
 
@@ -37,6 +48,7 @@ class CalibrationEvidenceTest(unittest.TestCase):
         self.assertEqual([], record["blocking_reasons"])
         self.assertTrue(record["billable_resource_creation_authorized"])
         self.assertFalse(record["scientific_submission_authorized"])
+        self.assertFalse(record["workload_submission_authorized"])
         self.assertEqual(
             calibration.PHASE_ONE_GATE_NAMES,
             tuple(gate["name"] for gate in record["gates"]),
@@ -57,9 +69,10 @@ class CalibrationEvidenceTest(unittest.TestCase):
         )
         self.assertEqual(10.0, calibration.nearest_rank_percentile([10.0], 90))
         started = fixtures.CALIBRATION_START
+        first_seed, count = fixtures.CALIBRATION_SEED_SETS["percentile"]
         varied = [
             {
-                "seed": 900_000 + index,
+                "seed": first_seed + index,
                 "started_at": started.isoformat(timespec="seconds").replace(
                     "+00:00", "Z"
                 ),
@@ -67,9 +80,10 @@ class CalibrationEvidenceTest(unittest.TestCase):
                 .isoformat(timespec="seconds")
                 .replace("+00:00", "Z"),
             }
-            for index in range(10)
+            for index in range(count)
         ]
         evidence = fixtures.evidence(
+            shape="percentile",
             tasks=varied,
             worker_count_requested=10,
             workers_active_observed=10,
@@ -143,21 +157,9 @@ class CalibrationMatchingTest(unittest.TestCase):
         self.assertFalse(record["billable_resource_creation_authorized"])
 
     def test_concurrency_not_exercised_is_no_go(self):
-        started = fixtures.CALIBRATION_START
-        serialized = [
-            {
-                "seed": 900_000 + index,
-                "started_at": (started + timedelta(seconds=60 * index))
-                .isoformat(timespec="seconds")
-                .replace("+00:00", "Z"),
-                "completed_at": (started + timedelta(seconds=60 * (index + 1)))
-                .isoformat(timespec="seconds")
-                .replace("+00:00", "Z"),
-            }
-            for index in range(20)
-        ]
         evidence = fixtures.evidence(
-            tasks=serialized,
+            shape="serial",
+            tasks=fixtures.tasks(shape="serial", serial=True),
             batch_scientific_wall_clock_seconds=1205.0,
             ec2_billable_runtime_seconds=3600.0,
         )
@@ -170,10 +172,10 @@ class CalibrationMatchingTest(unittest.TestCase):
 
     def test_worker_mismatch_is_no_go_and_names_supported_worker_counts(self):
         evidence = fixtures.evidence(
-            tasks=fixtures.tasks(count=16, workers=8),
+            shape="workers8",
+            tasks=fixtures.tasks(shape="workers8", workers=8),
             worker_count_requested=8,
             workers_active_observed=8,
-            batch_scientific_wall_clock_seconds=125.0,
         )
         record = _admit(evidence_documents=[evidence])
         self.assertEqual("NO-GO", record["decision"])
@@ -188,10 +190,10 @@ class CalibrationMatchingTest(unittest.TestCase):
         # A 4-hanchan, 2-worker observation is exactly the shape Issue #340
         # forbids extrapolating to a 16-worker production run.
         evidence = fixtures.evidence(
-            tasks=fixtures.tasks(count=4, workers=2),
+            shape="workers2",
+            tasks=fixtures.tasks(shape="workers2", workers=2),
             worker_count_requested=2,
             workers_active_observed=2,
-            batch_scientific_wall_clock_seconds=125.0,
         )
         record = _admit(evidence_documents=[evidence])
         self.assertEqual("NO-GO", record["decision"])
@@ -199,9 +201,7 @@ class CalibrationMatchingTest(unittest.TestCase):
         self.assertIsNone(record["calibration"]["identity"])
 
     def test_stale_calibration_is_no_go(self):
-        record = _admit(
-            now=fixtures.CALIBRATED_AT + timedelta(seconds=2_592_001),
-        )
+        record = _admit(now=fixtures.CALIBRATED_AT + timedelta(seconds=2_592_001))
         self.assertEqual("NO-GO", record["decision"])
         self.assertIn("freshness", _gate(record, "matching-calibration")["detail"])
 
@@ -264,9 +264,9 @@ class CalibrationMatchingTest(unittest.TestCase):
 
     def test_weaker_durable_evidence_level_is_no_go(self):
         record = _admit(
-            requirement=fixtures.requirement(
-                target={"durable_evidence_level": "per-seed-durable-receipt"}
-            )
+            evidence_documents=[
+                fixtures.evidence(durable_evidence_level="atomic-operational-progress")
+            ]
         )
         self.assertEqual("NO-GO", record["decision"])
         self.assertIn(
@@ -275,55 +275,60 @@ class CalibrationMatchingTest(unittest.TestCase):
 
     def test_burstable_family_requires_an_explicit_sustained_basis(self):
         target = {"instance_type": "t3.small", "vcpu": 2, "worker_count": 2}
-        without = fixtures.evidence(
-            instance_type="t3.small",
-            vcpu=2,
-            worker_count_requested=2,
-            workers_active_observed=2,
-            tasks=fixtures.tasks(count=8, workers=2),
-            batch_scientific_wall_clock_seconds=245.0,
-        )
+        shared = {
+            "shape": "burstable",
+            "instance_type": "t3.small",
+            "vcpu": 2,
+            "worker_count_requested": 2,
+            "workers_active_observed": 2,
+            "tasks": fixtures.tasks(shape="burstable", workers=2),
+            "batch_scientific_wall_clock_seconds": 245.0,
+            "ec2_billable_runtime_seconds": 2400.0,
+        }
         record = _admit(
             requirement=fixtures.requirement(target=target),
-            evidence_documents=[without],
+            evidence_documents=[fixtures.evidence(**shared)],
         )
         self.assertEqual("NO-GO", record["decision"])
         self.assertIn(
             "burstable-sustained-basis",
             _gate(record, "matching-calibration")["detail"],
         )
-        with_basis = fixtures.evidence(
-            instance_type="t3.small",
-            vcpu=2,
-            worker_count_requested=2,
-            workers_active_observed=2,
-            tasks=fixtures.tasks(count=8, workers=2),
-            batch_scientific_wall_clock_seconds=245.0,
-            burstable_sustained_basis="unlimited mode disabled; baseline-only "
-            "throughput observed for the full window with surplus charges priced",
-        )
         record = _admit(
             requirement=fixtures.requirement(target=target),
-            evidence_documents=[with_basis],
+            evidence_documents=[
+                fixtures.evidence(
+                    burstable_sustained_basis="unlimited mode disabled; baseline-only "
+                    "throughput observed for the full window with surplus charges "
+                    "priced",
+                    **shared,
+                )
+            ],
         )
-        self.assertEqual("GO", record["decision"])
+        self.assertEqual("GO", record["decision"], record["blocking_reasons"])
 
     def test_calibration_seeds_must_be_a_dedicated_non_production_allocation(self):
+        production_binding = seed_registry.allocation_binding(
+            fixtures.ledger(), fixtures.production_identity()
+        )
         shared = fixtures.evidence(
-            seed_allocation={
-                "allocation_identity": fixtures.PRODUCTION_ALLOCATION_IDENTITY,
-                "ledger_revision": fixtures.LEDGER_REVISION,
-                "owner_repository": "lisbun/lisjong-arena",
-                "seed_domain": "riichienv-4p-red-half-hanchan-v1",
-                "seed_membership_identity": fixtures.PRODUCTION_MEMBERSHIP_IDENTITY,
-            }
+            seed_allocation=production_binding,
+            tasks=[
+                {
+                    "seed": seed,
+                    "started_at": task["started_at"],
+                    "completed_at": task["completed_at"],
+                }
+                for seed, task in zip(
+                    fixtures.PRODUCTION_SEEDS, fixtures.tasks(), strict=True
+                )
+            ],
         )
         record = _admit(evidence_documents=[shared])
         self.assertEqual("NO-GO", record["decision"])
-        self.assertIn(
-            "calibration-seed-isolation",
-            _gate(record, "matching-calibration")["detail"],
-        )
+        detail = _gate(record, "matching-calibration")["detail"]
+        self.assertIn("calibration-seed-isolation", detail)
+        self.assertIn("calibration-allocation-authority", detail)
         scientific_population = fixtures.evidence(
             seed_allocation_population="offense-foundation"
         )
@@ -334,12 +339,56 @@ class CalibrationMatchingTest(unittest.TestCase):
             _gate(record, "matching-calibration")["detail"],
         )
 
+    def test_calibration_allocation_must_resolve_against_ledger_authority(self):
+        record = _admit(ledger=None)
+        self.assertEqual("NO-GO", record["decision"])
+        detail = _gate(record, "matching-calibration")["detail"]
+        self.assertIn("calibration-allocation-authority", detail)
+        self.assertIn("never accepted on its shape alone", detail)
+
+    def test_a_locally_fabricated_binding_is_rejected(self):
+        fabricated = dict(fixtures.evidence()["seed_allocation"])
+        fabricated["allocation_identity"] = "9" * 64
+        record = _admit(
+            evidence_documents=[fixtures.evidence(seed_allocation=fabricated)]
+        )
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertIn(
+            "does not resolve against canonical seed-registry authority",
+            _gate(record, "matching-calibration")["detail"],
+        )
+
+    def test_a_retired_calibration_allocation_is_rejected(self):
+        ledger = copy.deepcopy(fixtures.ledger())
+        identity = fixtures.evidence()["seed_allocation"]["allocation_identity"]
+        ledger = seed_registry.transition_allocation(
+            ledger, identity, state=seed_registry.RETIRED
+        )
+        record = _admit(ledger=ledger)
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertIn(
+            "allocation is not active",
+            _gate(record, "matching-calibration")["detail"],
+        )
+
+    def test_calibration_seeds_overlapping_production_seeds_are_rejected(self):
+        first_seed, count = fixtures.CALIBRATION_SEED_SETS["default"]
+        requirement = fixtures.requirement()
+        allocation = dict(requirement["production_allocation"])
+        allocation["seeds"] = list(range(first_seed, first_seed + count))
+        requirement["production_allocation"] = allocation
+        record = _admit(requirement=requirement)
+        self.assertEqual("NO-GO", record["decision"])
+        detail = _gate(record, "matching-calibration")["detail"]
+        self.assertIn("calibration-seed-isolation", detail)
+        self.assertIn("seeds shared with the production population", detail)
+
     def test_unrelated_ledger_revision_movement_does_not_make_calibration_stale(self):
         # Seed ledger revision travels with the evidence for audit, but an
         # unrelated reservation must not invalidate a matching calibration.
         evidence = fixtures.evidence(seed_ledger_revision="9" * 64)
         record = _admit(evidence_documents=[evidence])
-        self.assertEqual("GO", record["decision"])
+        self.assertEqual("GO", record["decision"], record["blocking_reasons"])
 
 
 class RuntimeAndCostBoundaryTest(unittest.TestCase):
@@ -365,6 +414,89 @@ class RuntimeAndCostBoundaryTest(unittest.TestCase):
                 worker_count=32,
                 headroom_factor=1.5,
             )
+
+    def test_measured_billable_overhead_drives_the_cost_prediction(self):
+        requirement = fixtures.requirement()
+        runtime = calibration.predict_runtime(
+            fixtures.evidence(), total_units=20, worker_count=16, headroom_factor=1.5
+        )
+        cheap = calibration.predict_cost(runtime, requirement, fixtures.evidence())
+        expensive = calibration.predict_cost(
+            runtime,
+            requirement,
+            fixtures.evidence(
+                setup_overhead_seconds=2400.0,
+                teardown_overhead_seconds=1800.0,
+                ec2_billable_runtime_seconds=7200.0,
+            ),
+        )
+        self.assertGreater(
+            expensive["predicted_ec2_billable_runtime_range_seconds"][1],
+            cheap["predicted_ec2_billable_runtime_range_seconds"][1],
+        )
+        self.assertGreater(
+            expensive["predicted_total_cost_range_usd"][1],
+            cheap["predicted_total_cost_range_usd"][1],
+        )
+        # The residual billable time the calibration observed but did not
+        # attribute to setup/teardown is carried through, not dropped.
+        self.assertEqual(
+            round(
+                fixtures.MEASURED_BILLABLE_SECONDS
+                - fixtures.MEASURED_SETUP_SECONDS
+                - fixtures.WALL_CLOCK_SECONDS
+                - fixtures.MEASURED_TEARDOWN_SECONDS,
+                6,
+            ),
+            cheap["overhead_basis"]["measured_residual_seconds"],
+        )
+
+    def test_a_planned_allowance_below_the_measured_basis_is_not_cheaper(self):
+        runtime = calibration.predict_runtime(
+            fixtures.evidence(), total_units=20, worker_count=16, headroom_factor=1.5
+        )
+        optimistic = fixtures.requirement(
+            budget={"setup_seconds": 10.0, "teardown_seconds": 10.0}
+        )
+        cost = calibration.predict_cost(runtime, optimistic, fixtures.evidence())
+        basis = cost["overhead_basis"]
+        self.assertTrue(basis["planned_allowance_below_measured"])
+        self.assertEqual(
+            fixtures.MEASURED_SETUP_SECONDS, basis["effective_setup_seconds"]
+        )
+        self.assertEqual(
+            fixtures.MEASURED_TEARDOWN_SECONDS, basis["effective_teardown_seconds"]
+        )
+        # The optimistic plan is never priced below the measured basis: its
+        # billable window still contains the full measured setup, teardown and
+        # residual, not the 10-second allowance the operator declared.
+        measured_floor = (
+            fixtures.MEASURED_SETUP_SECONDS
+            + fixtures.MEASURED_TEARDOWN_SECONDS
+            + basis["measured_residual_seconds"]
+            + basis["planned_post_processing_seconds"]
+            + runtime["predicted_lower_seconds"]
+        )
+        self.assertGreaterEqual(
+            cost["predicted_ec2_billable_runtime_range_seconds"][0], measured_floor
+        )
+        naive = (
+            10.0
+            + 10.0
+            + basis["planned_post_processing_seconds"]
+            + runtime["predicted_lower_seconds"]
+        )
+        self.assertGreater(
+            cost["predicted_ec2_billable_runtime_range_seconds"][0], naive
+        )
+
+    def test_cost_is_unavailable_without_a_measured_billable_basis(self):
+        runtime = calibration.predict_runtime(
+            fixtures.evidence(), total_units=20, worker_count=16, headroom_factor=1.5
+        )
+        cost = calibration.predict_cost(runtime, fixtures.requirement(), None)
+        self.assertFalse(cost["available"])
+        self.assertIn("measured billable-overhead basis", cost["reason"])
 
     def test_runtime_headroom_boundary(self):
         for budget_seconds, expected in ((187.5, "PASS"), (187.49, "FAIL")):
@@ -414,8 +546,7 @@ class RuntimeAndCostBoundaryTest(unittest.TestCase):
         self.assertEqual("FAIL", _gate(record, "cost-prediction")["status"])
         self.assertEqual("FAIL", _gate(record, "cost-budget")["status"])
         self.assertIn(
-            "instance hourly rate unavailable",
-            record["cost_prediction"]["reason"],
+            "instance hourly rate unavailable", record["cost_prediction"]["reason"]
         )
 
     def test_unknown_material_charge_is_never_treated_as_zero(self):
@@ -501,8 +632,9 @@ class PhaseGateTest(unittest.TestCase):
         phase_two = calibration.build_phase_two_admission(
             phase_one, fixtures.observation(phase_one), now=fixtures.NOW
         )
-        self.assertEqual("GO", phase_two["decision"])
+        self.assertEqual("GO", phase_two["decision"], phase_two["blocking_reasons"])
         self.assertTrue(phase_two["scientific_submission_authorized"])
+        self.assertTrue(phase_two["workload_submission_authorized"])
         self.assertEqual(
             phase_one["admission_identity"],
             phase_two["phase_one_admission_identity"],
@@ -536,11 +668,54 @@ class PhaseGateTest(unittest.TestCase):
                 )
                 self.assertEqual("NO-GO", phase_two["decision"])
                 self.assertFalse(phase_two["scientific_submission_authorized"])
+                self.assertFalse(phase_two["workload_submission_authorized"])
                 self.assertEqual("FAIL", _gate(phase_two, gate_name)["status"])
-                self.assertIn(
-                    "submit no scientific seed",
-                    " ".join(phase_two["limitations"]),
-                )
+                self.assertIn("submit no workload", " ".join(phase_two["limitations"]))
+
+    def test_phase_two_re_evaluates_remaining_monetary_budget(self):
+        phase_one = _admit(
+            requirement=fixtures.requirement(budget={"cost_budget_usd": 2.5})
+        )
+        self.assertEqual("GO", phase_one["decision"], phase_one["blocking_reasons"])
+        # Setup consumed far more billable time than planned, so the remaining
+        # monetary budget no longer fits even though the time budget does.
+        phase_two = calibration.build_phase_two_admission(
+            phase_one,
+            fixtures.observation(
+                phase_one,
+                instance_launch_epoch=fixtures.FAIL_SAFE_ARM_EPOCH - 7200,
+                observed_at_epoch=fixtures.FAIL_SAFE_ARM_EPOCH + 600,
+            ),
+            now=fixtures.NOW,
+        )
+        gate = _gate(phase_two, "remaining-budget-sufficient")
+        self.assertEqual("FAIL", gate["status"])
+        self.assertIn("cost:", gate["detail"])
+        self.assertIn("realized billable", gate["detail"])
+        self.assertIn("against cost budget", gate["detail"])
+        self.assertEqual("NO-GO", phase_two["decision"])
+        # The same run inside budget passes both subchecks.
+        healthy = calibration.build_phase_two_admission(
+            phase_one, fixtures.observation(phase_one), now=fixtures.NOW
+        )
+        healthy_gate = _gate(healthy, "remaining-budget-sufficient")
+        self.assertEqual("PASS", healthy_gate["status"])
+        self.assertIn("time:", healthy_gate["detail"])
+        self.assertIn("cost:", healthy_gate["detail"])
+
+    def test_phase_two_rejects_out_of_order_billing_epochs(self):
+        phase_one = _admit()
+        phase_two = calibration.build_phase_two_admission(
+            phase_one,
+            fixtures.observation(
+                phase_one,
+                instance_launch_epoch=fixtures.FAIL_SAFE_ARM_EPOCH + 300,
+            ),
+            now=fixtures.NOW,
+        )
+        gate = _gate(phase_two, "remaining-budget-sufficient")
+        self.assertEqual("FAIL", gate["status"])
+        self.assertIn("are not in order", gate["detail"])
 
     def test_phase_two_never_passes_for_a_nonexistent_instance(self):
         phase_one = _admit()
@@ -591,9 +766,7 @@ class PhaseGateTest(unittest.TestCase):
         self.assertEqual("NO-GO", no_go["decision"])
         with self.assertRaises(calibration.AwsOperationalCalibrationError):
             calibration.build_phase_two_admission(
-                no_go,
-                fixtures.observation(no_go),
-                now=fixtures.NOW,
+                no_go, fixtures.observation(no_go), now=fixtures.NOW
             )
 
     def test_admission_record_decision_and_gates_cannot_disagree(self):
@@ -607,6 +780,136 @@ class PhaseGateTest(unittest.TestCase):
             calibration.validate_admission_record(forged)
 
 
+class CalibrationAdmissionTest(unittest.TestCase):
+    def test_a_calibration_needs_no_prior_calibration(self):
+        record = _admit_calibration()
+        self.assertEqual("GO", record["decision"], record["blocking_reasons"])
+        self.assertEqual(0, record["admission_phase"])
+        self.assertEqual(
+            calibration.PHASE_ZERO_GATE_NAMES,
+            tuple(gate["name"] for gate in record["gates"]),
+        )
+        self.assertNotIn(
+            "matching-calibration", [gate["name"] for gate in record["gates"]]
+        )
+        self.assertFalse(record["runtime_prediction"]["available"])
+        self.assertIn("circular", record["runtime_prediction"]["reason"])
+        self.assertTrue(record["billable_resource_creation_authorized"])
+        self.assertTrue(record["workload_submission_authorized"])
+        self.assertFalse(record["scientific_submission_authorized"])
+
+    def test_calibration_cost_bound_is_the_worst_case_fail_safe_window(self):
+        record = _admit_calibration()
+        cost = record["cost_prediction"]
+        hard = float(record["budget"]["hard_fail_safe_seconds"])
+        teardown = float(record["budget"]["teardown_seconds"])
+        expected = round(
+            (hard + teardown) / 3600.0 * fixtures.HOURLY_RATE_USD + 0.96 + 0.07, 6
+        )
+        self.assertEqual(expected, cost["predicted_total_cost_range_usd"][1])
+        self.assertIn(
+            "whole hard fail-safe window",
+            _gate(record, "calibration-cost-budget")["detail"],
+        )
+
+    def test_calibration_cost_budget_exceeded_is_no_go(self):
+        record = _admit_calibration(
+            fixtures.calibration_requirement(calibration_cost_budget_usd=0.5)
+        )
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertEqual("FAIL", _gate(record, "calibration-cost-budget")["status"])
+        self.assertFalse(record["billable_resource_creation_authorized"])
+
+    def test_calibration_unknown_material_charge_is_no_go(self):
+        charges = fixtures.charges()
+        charges.append(
+            {
+                "label": "unbounded transfer",
+                "material": True,
+                "max_usd": None,
+                "reason": None,
+                "usd": None,
+            }
+        )
+        record = _admit_calibration(fixtures.calibration_requirement(charges=charges))
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertIn(
+            "never treated as zero",
+            _gate(record, "calibration-cost-budget")["detail"],
+        )
+
+    def test_calibration_missing_pricing_is_no_go(self):
+        pricing = dict(fixtures.calibration_requirement()["pricing"])
+        pricing["instance_hourly_rate_usd"] = None
+        record = _admit_calibration(fixtures.calibration_requirement(pricing=pricing))
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertEqual("FAIL", _gate(record, "calibration-cost-budget")["status"])
+
+    def test_calibration_allocation_must_resolve_against_ledger_authority(self):
+        record = _admit_calibration(ledger=None)
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertEqual(
+            "FAIL", _gate(record, "calibration-allocation-authority")["status"]
+        )
+        fabricated = dict(fixtures.calibration_requirement()["allocation_binding"])
+        fabricated["allocation_identity"] = "9" * 64
+        record = _admit_calibration(
+            fixtures.calibration_requirement(allocation_binding=fabricated)
+        )
+        self.assertEqual("NO-GO", record["decision"])
+        self.assertIn(
+            "does not resolve against canonical",
+            _gate(record, "calibration-allocation-authority")["detail"],
+        )
+
+    def test_calibration_scope_must_stay_bounded(self):
+        for overrides in (
+            {"bounds": {"max_unit_count": 4}},
+            {"bounds": {"max_worker_count": 4}},
+            {"target": {"total_units": 19}},
+        ):
+            with self.subTest(overrides=overrides):
+                record = _admit_calibration(
+                    fixtures.calibration_requirement(**overrides)
+                )
+                self.assertEqual("NO-GO", record["decision"])
+                self.assertEqual(
+                    "FAIL", _gate(record, "calibration-scope-bounded")["status"]
+                )
+
+    def test_calibration_requirement_gates_fail_closed(self):
+        for name in (
+            "durable_evidence",
+            "artifact_destination",
+            "teardown_confirmation",
+        ):
+            with self.subTest(gate=name):
+                gates = {
+                    key: dict(value)
+                    for key, value in fixtures.calibration_requirement()[
+                        "gates"
+                    ].items()
+                }
+                gates[name] = {"status": "FAIL", "detail": "synthetic failure"}
+                record = _admit_calibration(
+                    fixtures.calibration_requirement(gates=gates)
+                )
+                self.assertEqual("NO-GO", record["decision"])
+
+    def test_calibration_phase_two_never_authorizes_a_scientific_seed(self):
+        phase_zero = _admit_calibration()
+        phase_two = calibration.build_phase_two_admission(
+            phase_zero, fixtures.observation(phase_zero), now=fixtures.NOW
+        )
+        self.assertEqual("GO", phase_two["decision"], phase_two["blocking_reasons"])
+        self.assertTrue(phase_two["workload_submission_authorized"])
+        self.assertFalse(phase_two["scientific_submission_authorized"])
+        self.assertIn(
+            "worst-case remaining hard fail-safe window",
+            _gate(phase_two, "remaining-budget-sufficient")["detail"],
+        )
+
+
 class InformationFlowTest(unittest.TestCase):
     def test_no_scientific_fields_in_calibration_or_admission(self):
         phase_one = _admit()
@@ -616,6 +919,8 @@ class InformationFlowTest(unittest.TestCase):
         for document, context in (
             (fixtures.evidence(), "calibration evidence"),
             (fixtures.requirement(), "admission requirement"),
+            (fixtures.calibration_requirement(), "calibration requirement"),
+            (_admit_calibration(), "calibration admission"),
             (phase_one, "phase 1 admission"),
             (phase_two, "phase 2 admission"),
             (calibration.historical_incomplete_observation(), "historical observation"),
@@ -628,8 +933,6 @@ class InformationFlowTest(unittest.TestCase):
 
     def test_a_scientific_field_anywhere_fails_closed(self):
         evidence = fixtures.evidence()
-        leaked = dict(evidence)
-        leaked["limitations"] = list(evidence["limitations"])
         with self.assertRaises(calibration.AwsOperationalCalibrationError):
             calibration.assert_no_scientific_fields(
                 {"gates": [{"detail": {"p2_outcome": "OFFENSE SUPPORT QUALIFIED"}}]},
@@ -637,7 +940,7 @@ class InformationFlowTest(unittest.TestCase):
             )
         with self.assertRaises(calibration.AwsOperationalCalibrationError) as caught:
             calibration.build_calibration_evidence_from_document(
-                {"score": 1.0, "tasks": leaked["tasks"]}
+                {"score": 1.0, "tasks": evidence["tasks"]}
             )
         self.assertIn("scientific fields are forbidden", str(caught.exception))
 
@@ -708,7 +1011,8 @@ class DurableReceiptSourceTest(unittest.TestCase):
             )
 
     def test_tasks_are_derived_from_durable_receipts(self):
-        seeds = list(range(900_000, 900_020))
+        first_seed, count = fixtures.CALIBRATION_SEED_SETS["default"]
+        seeds = list(range(first_seed, first_seed + count))
         self._publish(seeds)
         tasks = calibration.tasks_from_durable_receipts(
             self.root,
@@ -716,15 +1020,14 @@ class DurableReceiptSourceTest(unittest.TestCase):
             protocol_identity="a" * 64,
             expected_seeds=seeds,
         )
-        self.assertEqual(20, len(tasks))
-        evidence = fixtures.evidence(
-            tasks=tasks, durable_evidence_level="per-seed-durable-receipt"
-        )
+        self.assertEqual(count, len(tasks))
+        evidence = fixtures.evidence(tasks=tasks)
         self.assertEqual(16, evidence["peak_observed_concurrency"])
         self.assertEqual(60.0, evidence["p90_seconds_per_unit"])
 
     def test_an_incomplete_receipt_set_fails_closed(self):
-        seeds = list(range(900_000, 900_020))
+        first_seed, count = fixtures.CALIBRATION_SEED_SETS["default"]
+        seeds = list(range(first_seed, first_seed + count))
         self._publish(seeds[:-1])
         with self.assertRaises(Exception):
             calibration.tasks_from_durable_receipts(
@@ -739,45 +1042,47 @@ class CommandLineTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, True)
+        self.ledger_path = str(self.root / "seed-ledger.json")
+        seed_registry.write_ledger(self.ledger_path, fixtures.ledger())
 
     def _write(self, name, document):
         path = self.root / name
         path.write_text(json.dumps(document), encoding="utf-8")
         return str(path)
 
-    def test_cli_go_and_no_go_exit_codes(self):
-        evidence_input = {
-            "calibration_run_id": "calibration-cli",
-            "calibrated_at": "2026-09-20T00:10:00Z",
-            "seed_allocation": {
-                "allocation_identity": fixtures.CALIBRATION_ALLOCATION_IDENTITY,
-                "ledger_revision": fixtures.LEDGER_REVISION,
-                "owner_repository": "lisbun/lisjong-arena",
-                "seed_domain": "riichienv-4p-red-half-hanchan-v1",
-                "seed_membership_identity": fixtures.CALIBRATION_MEMBERSHIP_IDENTITY,
-            },
-            "seed_allocation_population": calibration.CALIBRATION_POPULATION,
-            "seed_ledger_revision": fixtures.LEDGER_REVISION,
-            "arena_revision": fixtures.ARENA_REVISION,
-            "lisjong_revision": fixtures.LISJONG_REVISION,
-            "lisjong_engine_revision": fixtures.LISJONG_ENGINE_REVISION,
-            "riichienv_version": fixtures.RIICHIENV_VERSION,
-            "workload_identity": fixtures.WORKLOAD_IDENTITY,
-            "teacher_identity": fixtures.TEACHER_IDENTITY,
-            "game_mode": fixtures.GAME_MODE,
-            "instance_type": fixtures.INSTANCE_TYPE,
-            "vcpu": fixtures.VCPU,
-            "worker_count_requested": fixtures.WORKERS,
-            "workers_active_observed": fixtures.WORKERS,
-            "tasks": fixtures.tasks(),
-            "batch_scientific_wall_clock_seconds": fixtures.WALL_CLOCK_SECONDS,
-            "ec2_billable_runtime_seconds": 2400.0,
-            "setup_overhead_seconds": 900.0,
-            "teardown_overhead_seconds": 400.0,
-            "durable_evidence_level": fixtures.DURABLE_LEVEL,
-            "instrumentation_identity": fixtures.INSTRUMENTATION_IDENTITY,
-            "instrumentation_path": "issue-332/phase-A/operational/progress.json",
+    def _evidence_input(self):
+        evidence = fixtures.evidence()
+        return {
+            key: evidence[key]
+            for key in (
+                "calibration_run_id",
+                "calibrated_at",
+                "seed_allocation",
+                "seed_allocation_population",
+                "seed_ledger_revision",
+                "arena_revision",
+                "lisjong_revision",
+                "lisjong_engine_revision",
+                "riichienv_version",
+                "workload_identity",
+                "teacher_identity",
+                "game_mode",
+                "instance_type",
+                "vcpu",
+                "worker_count_requested",
+                "workers_active_observed",
+                "tasks",
+                "batch_scientific_wall_clock_seconds",
+                "ec2_billable_runtime_seconds",
+                "setup_overhead_seconds",
+                "teardown_overhead_seconds",
+                "durable_evidence_level",
+                "instrumentation_identity",
+                "instrumentation_path",
+            )
         }
+
+    def test_cli_go_and_no_go_exit_codes(self):
         evidence_path = str(self.root / "calibration.json")
         self.assertEqual(
             0,
@@ -785,7 +1090,7 @@ class CommandLineTest(unittest.TestCase):
                 [
                     "evidence",
                     "--input",
-                    self._write("calibration-input.json", evidence_input),
+                    self._write("calibration-input.json", self._evidence_input()),
                     "--output",
                     evidence_path,
                 ]
@@ -804,6 +1109,8 @@ class CommandLineTest(unittest.TestCase):
                     self._write("requirement.json", fixtures.requirement()),
                     "--calibration",
                     evidence_path,
+                    "--seed-ledger",
+                    self.ledger_path,
                     "--output",
                     phase_one_path,
                     "--now",
@@ -836,6 +1143,8 @@ class CommandLineTest(unittest.TestCase):
                     "admit-phase-1",
                     "--requirement",
                     self._write("requirement-2.json", fixtures.requirement()),
+                    "--seed-ledger",
+                    self.ledger_path,
                     "--output",
                     str(self.root / "admission-no-go.json"),
                     "--now",
@@ -855,12 +1164,61 @@ class CommandLineTest(unittest.TestCase):
                     "admit-phase-1",
                     "--requirement",
                     self._write("broken.json", {"schema_version": "nope"}),
+                    "--seed-ledger",
+                    self.ledger_path,
                     "--output",
                     str(self.root / "unused.json"),
                 ]
             ),
         )
         self.assertFalse((self.root / "unused.json").exists())
+
+    def test_cli_admits_a_calibration_run(self):
+        output = str(self.root / "admission-calibration.json")
+        self.assertEqual(
+            0,
+            calibration.main(
+                [
+                    "admit-calibration",
+                    "--requirement",
+                    self._write(
+                        "calibration-requirement.json",
+                        fixtures.calibration_requirement(),
+                    ),
+                    "--seed-ledger",
+                    self.ledger_path,
+                    "--output",
+                    output,
+                    "--now",
+                    "2026-09-21T00:00:00Z",
+                ]
+            ),
+        )
+        record = calibration.read_admission_record(output)
+        self.assertEqual(0, record["admission_phase"])
+        self.assertTrue(record["workload_submission_authorized"])
+        self.assertFalse(record["scientific_submission_authorized"])
+        self.assertEqual(
+            3,
+            calibration.main(
+                [
+                    "admit-calibration",
+                    "--requirement",
+                    self._write(
+                        "calibration-requirement-2.json",
+                        fixtures.calibration_requirement(
+                            calibration_cost_budget_usd=0.01
+                        ),
+                    ),
+                    "--seed-ledger",
+                    self.ledger_path,
+                    "--output",
+                    str(self.root / "admission-calibration-no-go.json"),
+                    "--now",
+                    "2026-09-21T00:00:00Z",
+                ]
+            ),
+        )
 
     def test_cli_emits_the_historical_observation(self):
         output = str(self.root / "historical.json")
@@ -870,8 +1228,7 @@ class CommandLineTest(unittest.TestCase):
         document = json.loads(Path(output).read_text(encoding="utf-8"))
         self.assertIsNone(document["completed_units"])
         self.assertEqual(
-            2,
-            calibration.main(["historical-observation", "--output", output]),
+            2, calibration.main(["historical-observation", "--output", output])
         )
 
 
