@@ -46,6 +46,10 @@ from lisjong_arena.learned_policy_stage2.training import (
     locked_training_block,
     train_from_split_tensors,
 )
+from lisjong_arena.single_round_artifact import (
+    collect_execution_provenance,
+    execution_provenance_to_dict,
+)
 
 from . import source_record
 from .corpus import _file_info, _read_row
@@ -172,10 +176,12 @@ def _validate_scientific_manifest_metadata(corpus_path: Path) -> dict:
             raise OffenseError("scientific game membership/provenance mismatch")
         if set(game["files"]) != {"rows.jsonl", "features.f32", "legal-mask.u8"}:
             raise OffenseError("scientific game file contract mismatch")
-        if type(game["choice_rows"]) is not int or game["choice_rows"] <= 0:
-            raise OffenseError("scientific game has no choice rows")
-        # Deliberately do not inspect/aggregate support here, especially for
-        # OFFLINE-EVAL.  Payload and support exposure belongs to the evaluator.
+        if split in TRAINING_SPLITS and (
+            type(game["choice_rows"]) is not int or game["choice_rows"] <= 0
+        ):
+            raise OffenseError("TRAIN/SELECT scientific game has no choice rows")
+        # Deliberately do not inspect/aggregate OFFLINE-EVAL support or counts.
+        # Payload and support exposure belongs to the post-checkpoint evaluator.
 
     return manifest
 
@@ -242,10 +248,13 @@ def open_training_view(
             selected.append((ordinal, split, seed, game))
 
     populations = lock["request"]["populations"]
-    if tuple(split for _, split, _, _ in selected[: len(populations["TRAIN"])]) != (
-        "TRAIN",
-    ) * len(populations["TRAIN"]):
-        raise OffenseError("TRAIN membership ordering differs from protocol lock")
+    expected_membership = tuple(
+        [("TRAIN", seed) for seed in populations["TRAIN"]]
+        + [("SELECT", seed) for seed in populations["SELECT"]]
+    )
+    actual_membership = tuple((split, seed) for _, split, seed, _ in selected)
+    if actual_membership != expected_membership:
+        raise OffenseError("TRAIN/SELECT membership ordering differs from protocol lock")
     return CorpusTrainingView(
         corpus_path=corpus_path,
         corpus_identity=manifest["identity"],
@@ -380,8 +389,11 @@ def checkpoint_identity(manifest: dict) -> str:
         "vocabulary",
         "model",
         "training",
+        "consumer_provenance",
         "selected_epoch",
         "selected_select_choice_masked_ce",
+        "train_choice_masked_ce",
+        "select_choice_masked_ce",
         "parameter_count",
         "weights_sha256",
     )
@@ -416,6 +428,9 @@ def save_checkpoint(
         weights_path = staging / WEIGHTS_FILENAME
         torch.save(run.model.state_dict(), weights_path)
         weights = weights_path.read_bytes()
+        consumer_provenance = execution_provenance_to_dict(
+            collect_execution_provenance()
+        )
         manifest = {
             "checkpoint_schema": CHECKPOINT_SCHEMA,
             "scientific_corpus_identity": view.corpus_identity,
@@ -427,6 +442,7 @@ def save_checkpoint(
             "vocabulary": vocabulary_block(),
             "model": locked_model_block(),
             "training": locked_training_block(),
+            "consumer_provenance": consumer_provenance,
             "selected_epoch": run.selected_epoch,
             "selected_select_choice_masked_ce": run.selected_validation_choice_masked_ce,
             "train_choice_masked_ce": train_choice_masked_ce,
@@ -491,6 +507,25 @@ def load_checkpoint(
         raise OffenseError("checkpoint training config is not the locked flat BC")
     if manifest.get("parameter_count") != EXPECTED_PARAMETER_COUNT:
         raise OffenseError("checkpoint parameter count differs from locked model")
+    numeric_metrics = (
+        manifest.get("selected_select_choice_masked_ce"),
+        manifest.get("train_choice_masked_ce"),
+        manifest.get("select_choice_masked_ce"),
+    )
+    if (
+        type(manifest.get("selected_epoch")) is not int
+        or manifest["selected_epoch"] <= 0
+        or any(type(value) not in (int, float) or not math.isfinite(value) for value in numeric_metrics)
+        or not math.isclose(
+            manifest["selected_select_choice_masked_ce"],
+            manifest["select_choice_masked_ce"],
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    ):
+        raise OffenseError("checkpoint training metrics are invalid")
+    if type(manifest.get("consumer_provenance")) is not dict:
+        raise OffenseError("checkpoint consumer provenance is invalid")
     if manifest.get("checkpoint_identity") != checkpoint_identity(manifest):
         raise OffenseError("checkpoint identity mismatch")
     if (
