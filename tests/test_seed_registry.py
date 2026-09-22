@@ -5,7 +5,6 @@ from pathlib import Path
 
 from lisjong_arena import seed_registry
 
-
 ARENA_REVISION = "a" * 40
 PROTOCOL_REVISION = "protocol-v1"
 DOMAIN = seed_registry.RIICHIENV_HALF_HANCHAN_SEED_DOMAIN
