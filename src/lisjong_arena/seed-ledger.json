@@ -1,7 +1,7 @@
 {
   "allocations": [
     {
-      "allocation_identity": "484e7cb27f1480d9135996ff6b49a5e121fd1f829a584f08d21aa00ab1844290",
+      "allocation_identity": "7e2a4ae7f3361a09ed00c4c5836b2803a56c1caa6847b6666a1e6e022b15b733",
       "allocation_timestamp": null,
       "arena_revision": null,
       "owner_issue": null,
@@ -9,16 +9,38 @@
       "population": "historical-declared-chain",
       "protocol": "historical-arena-declared-seed-chain",
       "protocol_revision": null,
-      "provenance_reference": "src/lisjong_arena/stage3_scale_learning_curve/protocol.py:declared_occupied_seeds plus successor declared allocation helpers",
-      "purpose": "historical repository-declared allocations; exact legacy domain semantics were not reconstructed",
+      "provenance_reference": "historical Arena strength/evaluation records summarized in lisbun/lisjong#121 plus repository-declared allocation helpers",
+      "purpose": "historical pre-ledger quarantine; exact overlapping allocation boundaries are intentionally collapsed",
       "schema_version": "arena-seed-allocation-v1",
       "seed_domain": "arena-legacy-declared-v1",
       "seed_membership": {
-        "first": 100,
+        "first": 0,
         "kind": "range",
         "last": 646
       },
-      "seed_membership_identity": "2eafb36c96c42456095c2adbc8ddf1a990bcb5e0016f24f8e3fcd8a467915188",
+      "seed_membership_identity": "678e3acfd2b4dcb2f2a5b31682c8b581b00be39ce880ec44eaec116ea65a11cc",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "e872979f4f5fa885117d0922ea902b3e4b09f41b86c312dbb6e44b8570efa34a",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": null,
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "historical-preledger-quarantine-851-2499",
+      "protocol": "historical-arena-strength-evaluation",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/121",
+      "purpose": "historical pre-ledger single-round seeds; quarantined because legacy evaluations reused overlapping ranges",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "arena-legacy-declared-v1",
+      "seed_membership": {
+        "first": 851,
+        "kind": "range",
+        "last": 2499
+      },
+      "seed_membership_identity": "c4f43cf01e2295eade1607d33fa46da54f830c27280d923e0a47d8e704aa653f",
       "split": null,
       "state": "RETIRED"
     },
@@ -151,6 +173,94 @@
         "last": 850
       },
       "seed_membership_identity": "d3dfc8d152e29ede8dad7975ae99f20432585ea9629fdfb28d27f45f4b427ac2",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "b283456eb041cccd59ba082d4e1e69e08f393354822d3f41039d8cc5b29830aa",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong#121",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "combined-vs-finite-horizon-fresh-holdout",
+      "protocol": "historical-strength-abbb-single",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/121#issuecomment-5462935934",
+      "purpose": "historical fresh holdout Combined vs FiniteHorizon strength evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 10000,
+        "kind": "range",
+        "last": 12499
+      },
+      "seed_membership_identity": "b1b559f063dfcd6391c217072635df4aecfd0ffce3c6500111dead5f65de20a7",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "bed1de6e8a468401e4119420e0cad495af95d14557683c16372e8c5fa1df8ea6",
+      "allocation_timestamp": null,
+      "arena_revision": "f6bfa6936e07f60b1419e7fb9343fcb7c41fcada",
+      "owner_issue": "lisbun/lisjong#121",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "extended-combined-gate1",
+      "protocol": "historical-strength-abbb-single",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/121#issuecomment-5466162346",
+      "purpose": "historical Extended Combined vs Combined Gate 1 evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 20000,
+        "kind": "range",
+        "last": 20099
+      },
+      "seed_membership_identity": "8b68f4911a881940d76d9d6a726bc3c58df53d8f09a032c5a9a69288dbfb12f0",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "84fd0650579ca7c17ffa2d0aa7a6b0e94833b6570ad0e1475fddf0c957844c14",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong#121",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "yakuhai-call-gate1",
+      "protocol": "historical-strength-abbb-single",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/121#issuecomment-5467981835",
+      "purpose": "historical Yakuhai Call-aware vs Combined Gate 1 evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 20100,
+        "kind": "range",
+        "last": 20199
+      },
+      "seed_membership_identity": "bb70f1d793b8a9e6fc237d256294a4fa5e2f3c744fcdc7848fc6b275903f2d75",
+      "split": null,
+      "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "d8b9e8ff4ae07ecc3d0941ac25d5f1dccf0b35410aa05b7a934016db9910755b",
+      "allocation_timestamp": null,
+      "arena_revision": null,
+      "owner_issue": "lisbun/lisjong#121",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "yakuhai-call-gate2",
+      "protocol": "historical-strength-abbb-single",
+      "protocol_revision": null,
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/121#issuecomment-5471486662",
+      "purpose": "historical Yakuhai Call-aware vs Combined Gate 2 evaluation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 20200,
+        "kind": "range",
+        "last": 22699
+      },
+      "seed_membership_identity": "b64ce10763328e3abc8470674f07235991dbda3d35f453901cd859e1f4482ec4",
       "split": null,
       "state": "RETIRED"
     },
