@@ -135,10 +135,19 @@ probe="$RECORD_DIR/.write-probe"
 : >"$probe"
 rm "$probe"
 
-TOKEN="$(
-    aws secretsmanager get-secret-value         --region "$REGION"         --secret-id "$SECRET_ID"         --query SecretString         --output text
+# Retrieve the full response as JSON (rather than --output text) so any
+# CR/LF stored inside SecretString survives as a JSON escape sequence
+# instead of a raw trailing newline byte that command substitution would
+# strip before the secret-shape validator ever sees it (Issue #336).
+SECRET_RESPONSE_JSON="$(
+    aws secretsmanager get-secret-value         --region "$REGION"         --secret-id "$SECRET_ID"         --output json
 )"
-if [[ -z "$TOKEN" || "$TOKEN" == "None" ]]; then
+TOKEN="$(
+    printf '%s' "$SECRET_RESPONSE_JSON" |
+        "$PYTHON" -m lisjong_arena.riichilab.secret_contract
+)"
+unset SECRET_RESPONSE_JSON
+if [[ -z "$TOKEN" ]]; then
     echo "runtime secret could not be resolved" >&2
     exit 1
 fi
