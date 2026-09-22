@@ -16,6 +16,8 @@ from lisjong_arena.aws_execution_observability import ProgressTracker, write_pro
 from lisjong_arena.seed_registry import load_ledger
 
 from .corpus import generate, read_corpus
+from .instrumentation import describe_generation_instrumentation
+from .operational_calibration import require_calibration_allocation, run_calibration
 from .protocol import make_lock, require_request_allocations, validate_request
 from .qualification import (
     P0_PASS,
@@ -29,6 +31,19 @@ from .qualification import (
     write_document,
 )
 from .source_record import read_source_record
+
+
+def _parse_seed_spec(value):
+    """Parse ``first-last`` or a comma-separated explicit seed list."""
+
+    text = str(value).strip()
+    if "-" in text and "," not in text:
+        first, _, last = text.partition("-")
+        first, last = int(first), int(last)
+        if last < first:
+            raise ValueError("seed range is reversed")
+        return list(range(first, last + 1))
+    return [int(part) for part in text.split(",") if part.strip()]
 
 
 def main(argv=None):
@@ -82,8 +97,65 @@ def main(argv=None):
     source_readback.add_argument("--source-record", required=True)
     source_readback.add_argument("--corpus", required=True)
     source_readback.add_argument("--lock", required=True)
+    commands.add_parser(
+        "durable-evidence",
+        help="report what the production generation path actually instruments",
+    )
+    calibrate = commands.add_parser(
+        "calibrate",
+        help="bounded operational timing run; publishes no corpus and no outcome",
+    )
+    calibrate.add_argument("--qualification", required=True)
+    calibrate.add_argument("--seeds", required=True)
+    calibrate.add_argument("--seed-ledger", required=True)
+    calibrate.add_argument("--allocation-binding", required=True)
+    calibrate.add_argument("--run-id", required=True)
+    calibrate.add_argument("--workload-identity", required=True)
+    calibrate.add_argument("--scratch-dir", required=True)
+    calibrate.add_argument("--receipt-dir", required=True)
+    calibrate.add_argument("--output", required=True)
+    calibrate.add_argument("--workers", type=int, default=1)
+    calibrate.add_argument("--operational-progress-path")
     args = parser.parse_args(argv)
     try:
+        if args.command == "durable-evidence":
+            print(json.dumps(describe_generation_instrumentation(), sort_keys=True))
+            return 0
+        if args.command == "calibrate":
+            seeds = _parse_seed_spec(args.seeds)
+            binding = parse_json_text(
+                Path(args.allocation_binding).read_text(encoding="utf-8")
+            )
+            require_calibration_allocation(
+                seeds, binding=binding, seed_ledger_path=args.seed_ledger
+            )
+            observation = run_calibration(
+                seeds=seeds,
+                qualification_path=args.qualification,
+                scratch_dir=args.scratch_dir,
+                receipt_dir=args.receipt_dir,
+                run_id=args.run_id,
+                workload_identity=args.workload_identity,
+                workers=args.workers,
+                project=args.project,
+                progress_path=args.operational_progress_path,
+            )
+            write_new_artifact_file(Path(args.output), canonical_json_text(observation))
+            print(
+                json.dumps(
+                    {
+                        "batch_scientific_wall_clock_seconds": observation[
+                            "batch_scientific_wall_clock_seconds"
+                        ],
+                        "task_count": len(observation["tasks"]),
+                        "workers_active_observed": observation[
+                            "workers_active_observed"
+                        ],
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 0
         if args.command == "qualify":
             result = qualify(runtime_binding(args.project))
             write_document(args.output, result)
