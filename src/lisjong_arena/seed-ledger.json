@@ -152,7 +152,7 @@
       },
       "seed_membership_identity": "4042ec65502880787fec54cd7922054ab5a626e8c013f47ee59add6d6f3165c8",
       "split": null,
-      "state": "RESERVED"
+      "state": "COMMITTED"
     },
     {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
