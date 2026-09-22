@@ -145,9 +145,16 @@ gh workflow run seed-registry.yml \
 ```
 
 The workflow verifies that `arena_revision` is a commit already merged into
-Arena `main`. It loads the latest live authority, performs the normal fail-closed
-collision/schema checks, writes the new canonical ledger atomically, and pushes a
-normal fast-forward commit to `refs/heads/seed-registry`.
+Arena `main`. It validates the current `main` bootstrap first, then requires
+the live authority to contain that bootstrap without deletion, immutable-field
+changes, state regression, or newly introduced collision. It then performs the
+normal fail-closed collision/schema checks, writes the new canonical ledger
+atomically, and pushes a normal fast-forward commit to
+`refs/heads/seed-registry`.
+
+If a reviewed future PR changes the bootstrap/schema on `main`, live registry
+operations fail closed until the authority branch is migrated consistently.
+Ordinary reserve/commit/retire operations are not a bootstrap-migration path.
 
 The workflow has a repository-wide concurrency group. It never force-pushes.
 A manual or concurrent authority update that races the workflow causes a
