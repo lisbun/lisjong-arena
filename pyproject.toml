@@ -24,6 +24,9 @@ ml = ["torch==2.13.0"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+lisjong_arena = ["seed-ledger.json"]
+
 [tool.ruff]
 target-version = "py314"
 
