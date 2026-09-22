@@ -14,11 +14,30 @@ support accounting, dataset split membership, or corpus identity.
 
 ## Schema and layout
 
-Schema identity:
+Schema identity (current generation):
 
 ```text
-arena-offense-o0-player-safe-source-record-v1
+arena-offense-o0-player-safe-source-record-v2
 ```
+
+`v2` adds an `allocation_bindings` manifest field (below) that records the
+exact Arena seed-allocation ledger provenance (lisbun/lisjong-arena#346/#347)
+behind the request population. The historical
+`arena-offense-o0-player-safe-source-record-v1` schema (no allocation
+provenance) is frozen — the generator never writes it again — and this
+module still recognizes its schema string and (narrower) manifest field
+shape. That is **not** the same claim as "a genuinely historical (pre-#347)
+corpus can be read end to end today": `read_source_record()` calls
+`read_corpus() -> validate_lock() -> make_lock() -> validate_request()`
+before it ever inspects this schema, and #347 already narrowed
+`validate_request()` to require `allocation_bindings` unconditionally. A
+lock built from a genuinely pre-#347 request (`known_used_seeds` /
+`freshness_evidence`, no `allocation_bindings`) is rejected there,
+independent of the source-record's own schema. That is a pre-existing
+consequence of #347, not something this change restores or is responsible
+for fixing; extending legacy protocol/corpus compatibility is out of scope
+here. Restoring genuine end-to-end historical readback, if ever needed,
+belongs in its own Issue.
 
 A complete artifact is:
 
@@ -40,6 +59,12 @@ A complete artifact is:
 - the exact qualification `binding` used by that lock (Arena revision,
   installed lisjong/lisjong-engine identities, teacher identity, feature and
   vocabulary fingerprints, and runtime identities when present);
+- (`v2` only) `allocation_bindings`: one seed-allocation binding per
+  population split (`QUALIFICATION`, or `TRAIN`/`SELECT`/`OFFLINE-EVAL`),
+  copied verbatim from the locked `request.allocation_bindings`. Each binding
+  is the exact `seed_registry.allocation_binding()` shape:
+  `allocation_identity`, `ledger_revision`, `owner_repository`, `seed_domain`,
+  `seed_membership_identity`;
 - one sealed game summary per protocol-ordered hanchan;
 - source payload byte lengths and SHA-256 digests.
 
@@ -75,6 +100,42 @@ rewards, Q targets, or encoded learner tensors.
 Encoded `arena-policy-input-feature-v1` tensors are deliberately not the
 canonical source representation. Future lisjong Learning code must derive its
 own representation from the typed source row.
+
+## Allocation provenance binding (`v2`)
+
+Arena remains the sole owner and generator of the seed-allocation ledger
+(lisbun/lisjong-arena#346/#347, `seed_registry.py`). The source record does
+not re-derive, re-allocate, or independently authorize any seed; it only
+republishes the exact per-split binding that the protocol lock's
+`request.allocation_bindings` already recorded when `require_request_allocations`
+authorized that population against the live ledger.
+
+This exists so a **standalone reader of the source record alone** — with no
+access to the live seed ledger, no access to the full protocol lock object,
+and no re-query of current ledger state — can still see and propagate the
+allocation provenance that backs the decisions it reads. Before `v2`,
+`lock_identity` alone cryptographically bound the manifest to a lock that
+*happened* to contain `allocation_bindings`, but a downstream consumer that
+only has the source-record directory could not read those bindings out of it.
+
+Strict readback of a `v2` manifest:
+
+- requires `allocation_bindings` to have exactly one entry per population
+  split (`set(allocation_bindings) == set(populations)`); missing or extra
+  splits fail closed;
+- validates each split's binding shape with `seed_registry.validate_binding_shape()`
+  (SHA-256 identity fields, non-empty domain-pattern `seed_domain`, exact
+  `owner_repository`, and `seed_membership_identity` matching that split's
+  seed population) — this is the same shape check a standalone downstream
+  reader performs, and it does not consult the live ledger;
+- requires the manifest's binding to equal, field for field, the binding
+  already recorded in `expected_lock["request"]["allocation_bindings"]` for
+  that split (defense in depth alongside the existing `lock_identity` check).
+
+None of this re-queries live ledger state or freshness at read time: a
+historical artifact's readback never depends on later ledger churn
+(reservation, commit, or retirement of unrelated allocations do not affect
+an already-published source record).
 
 ## Canonical action binding
 
