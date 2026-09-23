@@ -7,9 +7,11 @@
 """
 
 import json
+import subprocess
 import tempfile
 import tomllib
 import unittest
+from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -23,6 +25,7 @@ from lisjong.learning import (
 from lisjong.learning import outcome_source as lisjong_outcome_source
 from lisjong.policy_contract import DecisionTrace, Seat, Wind
 
+from lisjong_arena.environment_identity import EnvironmentCheck, InstalledVcsIdentity
 from lisjong_arena.focal_outcome_source import source
 from lisjong_arena.focal_outcome_source.accounting import (
     FocalOutcomeSourceError,
@@ -559,8 +562,78 @@ def _fields(account):
     return {name: getattr(account, name) for name in account.__dataclass_fields__}
 
 
+class SourceContractTest(unittest.TestCase):
+    """``build_source_contract()``: 実git checkout + 差し替えた環境検証。"""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.checkout = Path(directory.name)
+        (self.checkout / "src").mkdir()
+        (self.checkout / "src" / "module.py").write_text("VALUE = 1\n")
+        (self.checkout / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+        for arguments in (
+            ("init", "-q"),
+            ("add", "-A"),
+            (
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-q",
+                "-m",
+                "fixture",
+            ),
+        ):
+            self._git(*arguments)
+        self.check = EnvironmentCheck(
+            identities=(
+                InstalledVcsIdentity(
+                    name="lisjong",
+                    version="0.1.0",
+                    repository_url="https://github.com/lisbun/lisjong.git",
+                    revision=source.PINNED_LISJONG_REVISION,
+                ),
+            ),
+            errors=(),
+            pip_check_output="",
+        )
+
+    def _git(self, *arguments):
+        return subprocess.run(
+            ["git", "-C", str(self.checkout), *arguments],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    def test_clean_checkout_builds_a_valid_contract(self):
+        with patch.object(source, "verify_environment", return_value=self.check):
+            contract = source.build_source_contract(self.checkout / "pyproject.toml")
+        self.assertEqual(contract["arena_revision"], self._git("rev-parse", "HEAD"))
+        self.assertEqual(
+            contract["dependencies"], {"lisjong": source.PINNED_LISJONG_REVISION}
+        )
+        self.assertEqual(
+            contract["backend"],
+            {"name": "riichienv", "version": metadata.version("riichienv")},
+        )
+        self.assertEqual(contract["game_mode"], source.GAME_MODE)
+        self.assertEqual(source.validate_source_contract(contract), contract)
+
+    def test_dirty_source_checkout_fails_closed(self):
+        (self.checkout / "src" / "module.py").write_text("VALUE = 2\n")
+        with (
+            patch.object(source, "verify_environment", return_value=self.check),
+            self.assertRaisesRegex(FocalOutcomeSourceError, "must be committed"),
+        ):
+            source.build_source_contract(self.checkout / "pyproject.toml")
+
+
 class ConfigurationTest(unittest.TestCase):
     def test_exactly_one_exploring_seat_and_constant_baseline_elsewhere(self):
+        previous_runtimes = []
         for focal in Seat:
             policies, adapter = source.build_game_policies(
                 seed=TEST_SEEDS[2], focal_seat=focal
@@ -580,6 +653,14 @@ class ConfigurationTest(unittest.TestCase):
                     policy.runtime.identity, CONSTANT_RESIDUAL_RUNTIME_IDENTITY
                 )
             self.assertEqual(len({id(policy) for policy in others}), 3)
+            # seatごとにfreshなruntime instance（seat間でもgame間でも共有しない）。
+            runtimes = [policy.runtime for policy in others]
+            for index, runtime in enumerate(runtimes):
+                self.assertFalse(
+                    any(runtime is other for other in runtimes[index + 1 :])
+                )
+                self.assertFalse(any(runtime is other for other in previous_runtimes))
+            previous_runtimes.extend(runtimes)
 
     def test_rotation_and_global_ordinal_across_train_select(self):
         games = [

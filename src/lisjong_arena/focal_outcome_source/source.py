@@ -283,11 +283,16 @@ class FocalGameExecution:
 def build_game_policies(
     *, seed: int, focal_seat: Seat
 ) -> tuple[dict[Seat, object], FocalExplorationPolicy]:
-    """1 game分のfresh Policy割当を作る。探索するseatはfocal seatだけである。"""
-    runtime = ConstantResidualRuntime()
+    """1 game分のfresh Policy割当を作る。探索するseatはfocal seatだけである。
+
+    non-focal seatはseatごとにfreshな``ConstantResidualRuntime``とPolicy instanceを
+    持ち、seat間・game間でruntimeを共有しない。
+    """
     adapter = FocalExplorationPolicy(game_seed=seed, focal_seat=focal_seat)
     policies = {
-        seat: adapter if seat == focal_seat else runtime.create_policy()
+        seat: adapter
+        if seat == focal_seat
+        else ConstantResidualRuntime().create_policy()
         for seat in Seat
     }
     return policies, adapter
