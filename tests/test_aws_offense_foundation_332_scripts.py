@@ -18,6 +18,23 @@ _LAUNCHER = _ROOT / "scripts" / "aws" / "start-offense-foundation-332.ps1"
 _BOOTSTRAP = _ROOT / "scripts" / "aws" / "bootstrap-offense-foundation-332.sh"
 _COLLECTOR = _ROOT / "scripts" / "aws" / "collect-offense-foundation-332.ps1"
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+_LOCKED_332_LISJONG_REVISION = "15799e5f0fe47f2e2b2c39060de804d99c51492d"
+
+
+def _locked_332_project_text():
+    """The #332 launcher's locked dependency contract as a pyproject view.
+
+    #332 is closed and its launcher only runs from a checkout that carries the
+    locked #332 dependency contract. Later Arena work may bump the current
+    lisjong pin, so the launcher behavior tests read this locked view instead of
+    the current ``pyproject.toml``; the launcher itself is not retargeted.
+    """
+    project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    return re.sub(
+        r"lisjong\.git@[0-9a-f]{40}",
+        f"lisjong.git@{_LOCKED_332_LISJONG_REVISION}",
+        project,
+    )
 
 
 def _normalize_console_output(text):
@@ -30,6 +47,10 @@ def _normalize_console_output(text):
     plain = _ANSI_ESCAPE.sub("", text)
     plain = re.sub(r"(?m)^\s*(?:\d+\s*)?\|\s?", " ", plain)
     return " ".join(plain.split())
+
+
+def _ps_quote(path):
+    return str(path).replace("'", "''")
 
 
 class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
@@ -436,6 +457,8 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
             root, ledger_path, request_path, phase_a_tags = environment
         wrapper = root / "launch.ps1"
         calls = root / "aws-calls.txt"
+        locked_project = root / "locked-332-pyproject.toml"
+        locked_project.write_text(_locked_332_project_text(), encoding="utf-8")
         arm_epoch = 1_790_000_000
         stdout = (
             f"LISJONG_FAILSAFE_DEADLINE_EPOCH={arm_epoch + 12 * 3600}\\n"
@@ -584,6 +607,17 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
                 '  throw "unexpected AWS call: $joined"',
                 "}",
                 f"$global:seedLedgerPath = '{str(ledger_path).replace("'", "''")}'",
+                f"$global:lockedProjectPath = '{_ps_quote(locked_project)}'",
+                f"$global:currentProjectPath = '{_ps_quote(_ROOT / 'pyproject.toml')}'",
+                "function global:Get-Content {",
+                "  $forwarded = @($args)",
+                "  for ($i = 0; $i -lt $forwarded.Count; $i++) {",
+                "    if ([string]$forwarded[$i] -eq $global:currentProjectPath) {",
+                "      $forwarded[$i] = $global:lockedProjectPath",
+                "    }",
+                "  }",
+                "  Microsoft.PowerShell.Management\\Get-Content @forwarded",
+                "}",
                 "function global:git {",
                 "  $joined = $args -join ' '",
                 "  $global:LASTEXITCODE = 0",
@@ -641,7 +675,7 @@ class AwsOffenseFoundation332ScriptTest(unittest.TestCase):
         self, directory, arena_revision, calibration_binding
     ):
         """Write a matching Phase B calibration plus a fully priced charge list."""
-        project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        project = _locked_332_project_text()
         lisjong = re.search(r"lisjong\.git@([0-9a-f]{40})", project).group(1)
         engine = re.search(r"lisjong-engine\.git@([0-9a-f]{40})", project).group(1)
         riichienv = re.search(r"riichienv==([0-9][0-9A-Za-z.\-]*)", project).group(1)
