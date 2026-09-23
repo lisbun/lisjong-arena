@@ -72,6 +72,14 @@ ryukyoku.deltas        points += deltas
 - 保存則`sum(after) + 1000 * sticks_after == sum(before) + 1000 * sticks_before`
 - eventの欠落・重複・順序矛盾、`RoundResult`との不一致はfail closed
 
+既知のbackend不整合（#364）: RiichiEnv 0.4.10は、全員聴牌の流局（exhaustive draw）で、
+`reach_accepted`で既に記録済みの供託1000点を`ryukyoku.deltas`にも再度含める
+（1〜3人聴牌の流局や四家立直では含めない）。producerはこのeventを保存則違反として
+rejectする（fail closed）。補正はせず、upstream smly/RiichiEnv#247で追跡している。
+このため、このkyoku patternを含むpopulationはRiichiEnv修正または依存version更新まで
+sourceを生成できない。regression testは`tests/test_focal_outcome_source.py`の
+minimal synthetic caseで固定している。
+
 ## Wire layout
 
 ```text

@@ -147,6 +147,35 @@ class ScoreBoundaryTest(unittest.TestCase):
         self.assertEqual(account.points_after_kyoku, (24000, 24000, 24000, 27000))
         self.assertEqual(account.riichi_sticks_after, 1)
 
+    # #364: RiichiEnv 0.4.10 emits riichi deposits already recorded by
+    # reach_accepted again in ryukyoku.deltas on an all-four-tenpai exhaustive
+    # draw (upstream smly/RiichiEnv#247). That event is inconsistent, and the
+    # producer must keep rejecting it. The minimal kyoku mirrors the one found
+    # by a diagnostic-only replay (not scientific data).
+    ALL_TENPAI_START = [32600, 23500, 17400, 26500]
+
+    def _all_tenpai_three_riichi_draw(self, deltas):
+        return game(
+            [
+                start_kyoku(self.ALL_TENPAI_START, honba=2),
+                *reach(3),
+                *reach(2),
+                *reach(0),
+                ryukyoku(deltas),
+            ]
+        )
+
+    def test_draw_deltas_repeating_accepted_riichi_deposits_fail_closed(self):
+        with self.assertRaisesRegex(
+            FocalOutcomeSourceError, "kyoku score/riichi-stick conservation is violated"
+        ):
+            account_events(self._all_tenpai_three_riichi_draw([-1000, 0, -1000, -1000]))
+
+    def test_all_tenpai_draw_without_transfer_conserves_three_deposits(self):
+        (account,) = account_events(self._all_tenpai_three_riichi_draw([0, 0, 0, 0]))
+        self.assertEqual(account.points_after_kyoku, (31600, 23500, 16400, 25500))
+        self.assertEqual(account.riichi_sticks_after, 3)
+
     def test_ron_on_the_riichi_declaration_tile_does_not_deduct_the_deposit(self):
         (account,) = account_events(
             game(
