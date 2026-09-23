@@ -287,6 +287,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "3f6a88c55df186748fd9e388241244aebac83a70d93692d1cbb44f9e7167d8d5",
+      "allocation_timestamp": "2026-09-23T11:53:02.355285Z",
+      "arena_revision": "1a14855832315abfe30244d68b7ea6498c3370a0",
+      "owner_issue": "lisbun/lisjong-arena#362",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "l0.3-outcome-scientific",
+      "protocol": "l0.3-outcome-scientific-v1",
+      "protocol_revision": "1a14855832315abfe30244d68b7ea6498c3370a0",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/362",
+      "purpose": "L0.3 scientific outcome source TRAIN",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 70236,
+        "kind": "range",
+        "last": 70635
+      },
+      "seed_membership_identity": "4ef10e429b58c91c16954aefd93e372054e570f6b6ff2427f70be3fa6645b135",
+      "split": "TRAIN",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
