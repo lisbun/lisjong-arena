@@ -46,7 +46,7 @@ class GenerateParallelOrderingTest(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.destination = Path(directory.name) / "source"
 
-    def _run(self, write_game, count=6, workers=3):
+    def _run(self, write_game, count=6, workers=3, on_failure=None):
         games, bindings = _population(count)
         captured = {}
 
@@ -73,6 +73,7 @@ class GenerateParallelOrderingTest(unittest.TestCase):
                 allocation_bindings=bindings,
                 source_contract=source_contract(),
                 workers=workers,
+                on_failure=on_failure,
             )
         return result, captured
 
@@ -120,6 +121,28 @@ class GenerateParallelOrderingTest(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "worker failure"):
             self._run(write_game)
+        self.assertFalse(self.destination.exists())
+        self.assertFalse(self.destination.with_name(".source.partial").exists())
+
+    def test_failed_game_yields_an_operational_record_outside_the_source(self):
+        records = []
+
+        def write_game(path, execution, *, game_ordinal, seed, split):
+            if game_ordinal == 3:
+                raise producer.FocalOutcomeSourceError("audit rejected game 3")
+            return {"game_ordinal": game_ordinal}
+
+        with self.assertRaises(producer.FocalOutcomeSourceError):
+            self._run(write_game, on_failure=records.append)
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(
+            {k: record[k] for k in ("game_ordinal", "seed", "split", "focal_seat")},
+            {"game_ordinal": 3, "seed": 900003, "split": "TRAIN", "focal_seat": 3},
+        )
+        self.assertTrue(record["exception_class"].endswith("FocalOutcomeSourceError"))
+        self.assertEqual(record["exception_message"], "audit rejected game 3")
+        self.assertIn("audit rejected game 3", record["traceback"])
         self.assertFalse(self.destination.exists())
         self.assertFalse(self.destination.with_name(".source.partial").exists())
 

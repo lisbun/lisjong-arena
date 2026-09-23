@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -71,6 +73,8 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                # A non-UTC zone exposes local-vs-UTC deadline parsing bugs.
+                env={**os.environ, "TZ": "Asia/Tokyo"},
             )
 
     def test_bootstrap_has_valid_bash_syntax(self) -> None:
@@ -294,7 +298,10 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
                     "Value": "/mnt/run/operational/progress.json",
                 },
                 {"Key": "lisjong-worker-count", "Value": "2"},
-                {"Key": "lisjong-failsafe-deadline", "Value": deadline.isoformat()},
+                {
+                    "Key": "lisjong-failsafe-deadline",
+                    "Value": deadline.strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
+                },
                 {"Key": "lisjong-instance-hourly-rate-usd", "Value": "0.1"},
                 {"Key": "lisjong-scientific-command-id", "Value": "cmd-science"},
             ],
@@ -346,6 +353,8 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
         self.assertIn("Progress: 37/96 hanchan (38.5%)", output)
         self.assertIn("Estimated fail-safe EC2 cost exposure: USD", output)
         self.assertIn("Estimated finish reaches or exceeds", output)
+        remaining = int(re.search(r"remaining seconds=(-?\d+)", output).group(1))
+        self.assertAlmostEqual(3600, remaining, delta=300)
 
     def test_terminated_status_executes_and_displays_final_calibration(self) -> None:
         rules = self._completed_status_rules(include_instance=True)

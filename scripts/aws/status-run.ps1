@@ -44,7 +44,9 @@ function Invoke-AwsJson {
     if ([string]::IsNullOrWhiteSpace($text)) {
         return $null
     }
-    return $text | ConvertFrom-Json
+    # Keep AWS timestamps (e.g. the fail-safe deadline tag) as their ISO text so
+    # a later [datetime] parse keeps the UTC offset instead of a local-kind value.
+    return $text | ConvertFrom-Json -DateKind String
 }
 
 function Get-TagValue {

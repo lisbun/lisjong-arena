@@ -26,6 +26,7 @@ import math
 import multiprocessing
 import shutil
 import sys
+import traceback
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -71,6 +72,21 @@ def _write_one(staging: str, game_ordinal: int, seed: int, split: str):
     )
 
 
+def _failure_record(ordinal, seed, split, error) -> dict[str, object]:
+    """Operational record of the game that aborted a run (never in the source)."""
+    remote = error.__cause__  # concurrent.futures attaches the worker traceback
+    return {
+        "exception_class": f"{type(error).__module__}.{type(error).__qualname__}",
+        "exception_message": str(error),
+        "focal_seat": ordinal % 4,
+        "game_ordinal": ordinal,
+        "seed": seed,
+        "split": split,
+        "traceback": "".join(traceback.format_exception(error))
+        + ("" if remote is None else str(remote)),
+    }
+
+
 def generate_parallel(
     destination,
     *,
@@ -80,11 +96,14 @@ def generate_parallel(
     source_contract,
     workers,
     progress=None,
+    on_failure=None,
 ):
     """Parallel equivalent of ``generate_focal_outcome_source()``.
 
     Pre-execution validation, staging, manifest, strict readback and the final
     rename are the producer's. Only the game loop is distributed.
+    ``on_failure`` receives an operational diagnostic record for the game that
+    aborted the run; it never enters the source.
     """
     population = producer.validate_population(
         population_role, games, allocation_bindings
@@ -107,7 +126,14 @@ def generate_parallel(
                 for ordinal, (seed, split) in enumerate(population)
             }
             for completed, future in enumerate(as_completed(futures), start=1):
-                summaries[futures[future]] = future.result()
+                ordinal = futures[future]
+                try:
+                    summaries[ordinal] = future.result()
+                except BaseException as error:
+                    if on_failure is not None:
+                        seed, split = population[ordinal]
+                        on_failure(_failure_record(ordinal, seed, split, error))
+                    raise
                 if progress is not None:
                     progress(completed, len(population))
         finally:
@@ -233,6 +259,21 @@ def _progress_writer(path: Path, run_id: str, total: int, workers: int):
     )
 
 
+def _failure_writer(path):
+    """Write the aborting game's record outside the source (operational only)."""
+    if not path:
+        return None
+
+    def write(record):
+        Path(path).write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+    return write
+
+
 def _generate_command(args) -> int:
     project = Path(args.project).resolve()
     games, bindings = c2_population(
@@ -253,6 +294,7 @@ def _generate_command(args) -> int:
         source_contract=contract,
         workers=workers,
         progress=progress,
+        on_failure=_failure_writer(args.failure_record),
     )
     print(
         json.dumps(
@@ -377,6 +419,7 @@ def _parser() -> argparse.ArgumentParser:
     generate.add_argument("--workers", type=int, required=True)
     generate.add_argument("--progress")
     generate.add_argument("--run-id", default="local")
+    generate.add_argument("--failure-record")
     check = commands.add_parser("readback")
     check.add_argument("--source", required=True)
     check.add_argument("--output")

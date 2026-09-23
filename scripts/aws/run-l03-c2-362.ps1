@@ -224,6 +224,15 @@ function Invoke-Collect {
         [IO.File]::WriteAllText((Join-Path $runDir "ssm-scientific-invocation.json"), ($invocation | ConvertTo-Json -Depth 10))
         $match = [regex]::Match([string]$invocation.StandardOutputContent, "LISJONG_362_COMPLETION_JSON_B64=([A-Za-z0-9+/=]+)")
         if ([string]$invocation.Status -ne "Success" -or -not $match.Success) {
+            $failureMatch = [regex]::Match([string]$invocation.StandardOutputContent, "LISJONG_362_FAILURE_RECORD_B64=([A-Za-z0-9+/=]+)")
+            if ($failureMatch.Success) {
+                $failureText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($failureMatch.Groups[1].Value))
+                [IO.File]::WriteAllText((Join-Path $runDir "failure-record.json"), $failureText)
+            }
+            Write-Host "--- remote SSM stdout"
+            Write-Host ([string]$invocation.StandardOutputContent)
+            Write-Host "--- remote SSM stderr"
+            Write-Host ([string]$invocation.StandardErrorContent)
             Write-Warning "Remote workload failed ($([string]$invocation.Status)); terminating compute. Volume and bucket are retained for inspection."
             [void](Invoke-AwsText -Arguments @("ec2", "terminate-instances", "--instance-ids", $instanceId))
             [void](Invoke-AwsText -Arguments @("ec2", "wait", "instance-terminated", "--instance-ids", $instanceId))
@@ -282,7 +291,7 @@ function Invoke-Collect {
     # Local strict readback with the repo venv (pinned lisjong).
     $readbackPath = Join-Path $runDir "readback.json"
     if (-not (Test-Path -LiteralPath $readbackPath)) {
-        $readback = Invoke-LocalPython -Arguments @($driverPath, "readback", "--source", $sourcePath, "--output", $readbackPath) -AllowedExitCodes @(0, 3)
+        [void](Invoke-LocalPython -Arguments @($driverPath, "readback", "--source", $sourcePath, "--output", $readbackPath) -AllowedExitCodes @(0, 3))
     }
     $report = Get-Content -Raw -LiteralPath $readbackPath | ConvertFrom-Json
     if ([string]$report.source_identity -ne [string]$completion.source_identity) {

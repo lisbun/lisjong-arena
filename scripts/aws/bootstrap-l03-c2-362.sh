@@ -80,6 +80,22 @@ fi
 mkdir -p "$WORK_ROOT"
 chmod 700 "$WORK_ROOT"
 BOOTSTRAP_LOG="$WORK_ROOT/bootstrap.log"
+FAILURE_RECORD=""
+# Operational diagnostics: on any failure, surface the driver's failure record
+# and the log tail in the SSM output (the root disk is deleted on termination).
+on_exit() {
+    local status=$?
+    if [[ "$status" -ne 0 ]]; then
+        echo "LISJONG_362_FAILED_EXIT=$status"
+        if [[ -n "$FAILURE_RECORD" && -s "$FAILURE_RECORD" ]]; then
+            echo "LISJONG_362_FAILURE_RECORD_B64=$(base64 -w0 "$FAILURE_RECORD")"
+        fi
+        echo "--- bootstrap log tail ($BOOTSTRAP_LOG)"
+        tail -n 60 "$BOOTSTRAP_LOG" 2>/dev/null || true
+        sync || true
+    fi
+}
+trap on_exit EXIT
 REPO_DIR="$WORK_ROOT/repo"
 DRIVER="$WORK_ROOT/driver/generate_l03_c2_362.py"
 OUTPUT_MOUNT="/mnt/lisjong-362-output"
@@ -117,6 +133,10 @@ if [[ -e "$ARTIFACT_ROOT" ]]; then
     exit 1
 fi
 mkdir -p "$OPERATIONAL_ROOT" "$INPUT_ROOT"
+# From here on the log lives on the retained artifact volume.
+cat "$BOOTSTRAP_LOG" >>"$OPERATIONAL_ROOT/bootstrap.log"
+BOOTSTRAP_LOG="$OPERATIONAL_ROOT/bootstrap.log"
+FAILURE_RECORD="$OPERATIONAL_ROOT/failure-record.json"
 printf '%s' "$REQUEST_JSON_B64" | base64 -d >"$INPUT_ROOT/request.json"
 chmod 600 "$INPUT_ROOT/request.json"
 
@@ -161,7 +181,8 @@ GENERATE_JSON="$("$PYTHON" "$DRIVER" generate \
     --destination "$SOURCE_DIR" \
     --workers "$MAX_WORKERS" \
     --progress "$OPERATIONAL_ROOT/progress.json" \
-    --run-id "$RUN_ID" 2>>"$BOOTSTRAP_LOG")"
+    --run-id "$RUN_ID" \
+    --failure-record "$FAILURE_RECORD" 2>>"$BOOTSTRAP_LOG")"
 END_EPOCH="$(date +%s)"
 printf '%s\n' "$GENERATE_JSON" >"$OPERATIONAL_ROOT/generate.json"
 SOURCE_IDENTITY="$(printf '%s' "$GENERATE_JSON" | "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); assert d["status"]=="SOURCE PUBLISHED" and d["hanchan"]=='"$EXPECTED_GAMES"'; print(d["source_identity"])')"
