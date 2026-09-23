@@ -559,7 +559,8 @@ Write-Host ($plan | ConvertTo-Json -Depth 10)
 
 if ($Action -eq "Preflight") {
     Write-Host "PASS: ISSUE #362 C2 AWS PREFLIGHT ONLY. No bucket, volume, instance or SSM command was created."
-    return
+    # The intentional --dry-run calls leave a non-zero native exit code behind.
+    exit 0
 }
 
 # ---------------------------------------------------------------------------
