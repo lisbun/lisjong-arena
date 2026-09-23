@@ -620,7 +620,7 @@ try {
     $commandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds $remainingSeconds -RequestFile (Join-Path $runDir "ssm-run.json") -Commands @($remoteCommand)
     $sweepSubmitted = $true
     [void](Invoke-AwsText -Arguments @("ec2", "create-tags", "--resources", $instanceId, "--tags",
-            "Key=lisjong-scientific-command-id,Value=$commandId", "Key=lisjong-failsafe-deadline,Value=$failSafeDeadlineUtc"))
+            "Key=lisjong-diagnostic-command-id,Value=$commandId", "Key=lisjong-failsafe-deadline,Value=$failSafeDeadlineUtc"))
     Write-JsonFile -Path (Join-Path $runDir "state.json") -Value ([ordered]@{
             run_id = $runId; issue = "367"; region = $Region; instance_id = $instanceId; command_id = $commandId
             launch_time_utc = $launchTimeUtc.ToString("o"); transfer_bucket = $bucket
