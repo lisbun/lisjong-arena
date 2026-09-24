@@ -105,6 +105,8 @@ class PlanPopulationTest(unittest.TestCase):
             ledger, "CALIBRATION", range(900800, 900816), revision="1" * 40
         )
         ledger, train = _reserve(ledger, "TRAIN", range(900900, 900916))
+        ledger, short = _reserve(ledger, "CALIBRATION", range(900920, 900935))
+        ledger, long = _reserve(ledger, "CALIBRATION", range(900940, 900957))
         ledger, excluded = _reserve(ledger, "CALIBRATION", range(910390, 910406))
         allocation = ("CALIBRATION", calibration["allocation_identity"], ledger)
         cases = {
@@ -129,6 +131,16 @@ class PlanPopulationTest(unittest.TestCase):
                 "excluded diagnostic",
             ),
             "duplicate": ("CALIBRATION", [allocation, allocation], "duplicate"),
+            "calibration short": (
+                "CALIBRATION",
+                [("CALIBRATION", short["allocation_identity"], ledger)],
+                "exactly 16",
+            ),
+            "calibration long": (
+                "CALIBRATION",
+                [("CALIBRATION", long["allocation_identity"], ledger)],
+                "exactly 16",
+            ),
             "missing split": ("SCIENTIFIC", [allocation], "requires exactly"),
             "role": ("DIAGNOSTIC", [allocation], "unsupported"),
         }
