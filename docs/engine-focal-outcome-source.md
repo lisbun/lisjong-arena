@@ -124,3 +124,31 @@ python scripts/smoke_l03_engine_source_370.py --arena-checkout <clean checkout> 
 
 seed `910000..910015`（focal seatごとに4 hanchan）をDIAGNOSTIC roleで生成し、strict
 readbackする。Seed Registry reservation、target構築、training、strength比較は行わない。
+
+## C0 / C2 runner（#372）
+
+`scripts/l03_engine_source_372.py`はSeed Registryで予約済みのCALIBRATION（C0）または
+TRAIN / SELECT（C2）allocationから、上記producerをsequentialに1回実行する。
+producerとsource schemaは変更しない。
+
+```text
+# producer環境（lisjong aed9c84 / lisjong-engine 96b9796、clean Arena checkout）
+python scripts/l03_engine_source_372.py generate --arena-checkout <checkout> \
+    --output-dir <new dir> --population-role CALIBRATION \
+    --owner-issue lisbun/lisjong-arena#372 --seed-ledger <live ledger> \
+    --allocation CALIBRATION <allocation_identity> <authorizing ledger>
+
+# consumer環境（lisjong 8d2ada48）
+python scripts/l03_engine_source_372.py readback --source <dir>/source \
+    --generation <dir>/generation.json --output <new report>
+```
+
+- `generate`はlive ledgerでallocationのowner / engine seed domain / split / active
+  stateを検証し、allocationの`arena_revision`が実行checkoutのHEADと一致すること、
+  diagnostic seed `910000..910399`と重ならないことを要求する
+- game順はsplit順（TRAIN -> SELECT）、split内はseed membership順。wall-clockと
+  worker数（1）は`generation.json`へ記録し、sourceには入れない
+- `readback`はlisjongだけをimportし、consumer revisionを照合してから
+  `summarize_outcome_targets()`をsplitごとに実行する。support sanity check
+  （CALIBRATIONまたはTRAINのcanonical-first / non-canonical-first selected >= 20%）と、
+  CALIBRATIONでは#372 §4のC1 sizing（`N = 4 * ceil(K / (4k))`、整数演算）を出す
