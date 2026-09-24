@@ -11,6 +11,11 @@ recordのschemaと意味は変更しない。
 
 実装は`src/lisjong_arena/focal_outcome_source/`にある。
 
+lisjong-engine backendの別lineage
+（`arena-offense-l0.3-lisjong-engine-focal-outcome-source-v1`、#370）は
+[engine-focal-outcome-source.md](engine-focal-outcome-source.md)を参照。
+このdocumentのschemaと意味はその追加で変更しない。
+
 ## Pinned consumer
 
 producerはlisjong `aed9c840bc120471e557fc0c8444965c0b81a9c3`
