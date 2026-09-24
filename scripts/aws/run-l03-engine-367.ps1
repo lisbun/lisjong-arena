@@ -268,7 +268,11 @@ function Invoke-Collect {
     }
     $launchTime = ([datetime]$state.launch_time_utc).ToUniversalTime()
     $endTime = $(if ($null -ne $live.StateTransitionReason -and [string]$live.StateTransitionReason -match "\((.+) GMT\)") {
-            [datetime]::Parse($Matches[1], $invariant).ToUniversalTime()
+            [datetime]::Parse(
+                $Matches[1],
+                $invariant,
+                [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+            )
         } else { (Get-Date).ToUniversalTime() })
     $billableSeconds = [math]::Max(0.0, ($endTime - $launchTime).TotalSeconds)
 
