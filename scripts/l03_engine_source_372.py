@@ -137,6 +137,8 @@ def plan_population(
         bindings[split] = binding
         records[split] = record
         games.extend((seed, split) for seed in seeds)
+    if population_role == "CALIBRATION" and len(games) != 16:
+        raise RunnerError("CALIBRATION requires exactly 16 games")
     return games, bindings, records
 
 
