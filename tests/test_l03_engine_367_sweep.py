@@ -291,6 +291,15 @@ class BoundaryTest(unittest.TestCase):
             text.index("$sweepSubmitted = $true"),
         )
 
+    def test_launcher_parses_ec2_termination_gmt_as_utc(self):
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("[Globalization.DateTimeStyles]::AssumeUniversal", text)
+        self.assertIn("[Globalization.DateTimeStyles]::AdjustToUniversal", text)
+        self.assertNotIn(
+            "[datetime]::Parse($Matches[1], $invariant).ToUniversalTime()",
+            text,
+        )
+
     def test_launcher_has_valid_powershell_syntax_when_pwsh_is_available(self):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
