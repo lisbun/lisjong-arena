@@ -251,6 +251,12 @@ class ReadbackAssessmentTest(unittest.TestCase):
         self.assertEqual(facts["eligible_rows_per_hanchan"], 100 / 16)
         self.assertEqual(facts["eligible_rows_per_eligible_kyoku"], 100 / 40)
 
+        short = {"CALIBRATION": runner.split_facts(_summary(hanchan=15))}
+        short_report = runner.assess("CALIBRATION", short)
+        self.assertEqual(short_report["result"], runner.RESULT_STOP)
+        self.assertNotIn("c1", short_report)
+        self.assertIn("exactly 16 hanchan", " ".join(short_report["hard_stops"]))
+
     def test_support_or_empty_support_stops(self):
         cases = {
             "canonical": (_summary(canonical=0.19), "canonical-first selected"),
