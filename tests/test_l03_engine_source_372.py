@@ -168,11 +168,11 @@ class GenerateTest(unittest.TestCase):
         ledger, record = _reserve(
             seed_registry.new_ledger(), "CALIBRATION", [SMOKE_SEED]
         )
-        games, bindings, records = _plan(
-            "CALIBRATION",
-            [("CALIBRATION", record["allocation_identity"], ledger)],
-            ledger,
-        )
+        identity = record["allocation_identity"]
+        games = [(SMOKE_SEED, "CALIBRATION")]
+        bindings = {"CALIBRATION": seed_registry.allocation_binding(ledger, identity)}
+        records = {"CALIBRATION": record}
+        engine_source.validate_population("CALIBRATION", games, bindings)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "c0"
             lines = []
