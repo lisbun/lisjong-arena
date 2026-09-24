@@ -301,12 +301,15 @@ def assess(population_role: str, splits: dict[str, dict]) -> dict[str, object]:
     report: dict[str, object] = {"support_check_split": checked}
     if population_role == "CALIBRATION":
         facts = splits["CALIBRATION"]
-        try:
-            report["c1"] = c1_sizing(
-                facts["unique_eligible_kyoku_count"], facts["hanchan_count"]
-            )
-        except RunnerError as error:
-            stops.append(str(error))
+        if facts["hanchan_count"] != 16:
+            stops.append("CALIBRATION requires exactly 16 hanchan")
+        else:
+            try:
+                report["c1"] = c1_sizing(
+                    facts["unique_eligible_kyoku_count"], facts["hanchan_count"]
+                )
+            except RunnerError as error:
+                stops.append(str(error))
         success = RESULT_C0_COMPLETE
     else:
         success = RESULT_SCIENTIFIC_READY
