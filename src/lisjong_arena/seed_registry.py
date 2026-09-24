@@ -32,6 +32,7 @@ ACTIVE_STATES = frozenset({RESERVED, COMMITTED})
 LEGACY_SEED_DOMAIN = "arena-legacy-declared-v1"
 RIICHIENV_HALF_HANCHAN_SEED_DOMAIN = "riichienv-4p-red-half-hanchan-v1"
 RIICHIENV_SINGLE_ROUND_SEED_DOMAIN = "riichienv-4p-red-single-v1"
+LISJONG_ENGINE_HANCHAN_SEED_DOMAIN = "lisjong-engine-project-standard-v1-hanchan-v1"
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SHA1 = re.compile(r"^[0-9a-f]{40}$")

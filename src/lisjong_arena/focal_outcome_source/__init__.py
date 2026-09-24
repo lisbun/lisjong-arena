@@ -1,4 +1,7 @@
-"""L0.3 B focal outcome source producer（lisbun/lisjong-arena#359）。"""
+"""L0.3 B focal outcome source producer（lisbun/lisjong-arena#359）。
+
+lisjong-engine backendの別lineage（#370）は``engine_source``にある。
+"""
 
 from .accounting import (
     FocalOutcomeSourceError,
