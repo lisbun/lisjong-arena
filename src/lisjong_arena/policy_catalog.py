@@ -2,7 +2,8 @@
 
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
 ``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call`` /
-``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression``の8つだけである。
+``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression`` /
+``placement-aware-speed-call``の9つだけである。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
 
@@ -34,6 +35,7 @@ from lisjong_arena.model import PolicySpec
 if TYPE_CHECKING:
     from lisjong.policies import (
         MechanismRiichiDefenseYakuhaiCallPolicy,
+        PlacementAwareSpeedCallPolicy,
         TargetedHonorReleaseTerminalProgressionPolicy,
     )
 
@@ -84,6 +86,14 @@ def create_targeted_honor_release_terminal_progression() -> (
     return TargetedHonorReleaseTerminalProgressionPolicy()
 
 
+def create_placement_aware_speed_call() -> PlacementAwareSpeedCallPolicy:
+    # #377 curated serving binding for the #375 evaluated identity. Keep import
+    # lazy for historical retained environments that predate this Policy.
+    from lisjong.policies import PlacementAwareSpeedCallPolicy
+
+    return PlacementAwareSpeedCallPolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "two-step": PolicySpec(identity="two-step", factory=create_two_step),
     "finite-horizon": PolicySpec(
@@ -104,6 +114,10 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
         identity="targeted-honor-release-terminal-progression",
         factory=create_targeted_honor_release_terminal_progression,
     ),
+    "placement-aware-speed-call": PolicySpec(
+        identity="placement-aware-speed-call",
+        factory=create_placement_aware_speed_call,
+    ),
 }
 """登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
 
@@ -115,6 +129,7 @@ __all__ = [
     "create_finite_horizon",
     "create_hand_value_aware",
     "create_mechanism_riichi_defense",
+    "create_placement_aware_speed_call",
     "create_targeted_honor_release_terminal_progression",
     "create_two_step",
     "create_yakuhai_call",
