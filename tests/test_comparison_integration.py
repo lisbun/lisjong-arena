@@ -104,13 +104,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # lisjong #174 targeted honor-release generationを含むrevisionへ、Arena #297で
         # exact Champion + HandValue-v2 compositionを含むrevisionへ、Arena #359で
         # L0.3 focal exploration selector / outcome source consumerを含む
-        # revisionへ更新した。
+        # revisionへ、Arena #375でlisjong #199 PlacementAwareSpeedCallPolicyを
+        # 含むrevisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "aed9c840bc120471e557fc0c8444965c0b81a9c3",
+            "2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1",
         )
 
 

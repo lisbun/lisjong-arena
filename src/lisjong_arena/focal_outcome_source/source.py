@@ -81,8 +81,16 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "aed9c840bc120471e557fc0c8444965c0b81a9c3"
-"""このproducerが準拠するlisjong consumer（#193 / PR #194のmerge revision）。"""
+PINNED_LISJONG_REVISION = "2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1"
+"""このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+#193 / PR #194のmerge revision ``aed9c84`` から、Arena #375でlisjong #199
+（PR #202）を含む ``2a9debe`` へ追随した。``aed9c84..2a9debe`` の
+``lisjong.learning`` 変更は#196 consumer（``8d2ada4``）と、#200のoutcome-Q
+trainer / artifact / runtime用の新規moduleの追加だけであり、``outcome_source.py``
+とproducerが準拠するwire / exploration semanticsは変わらない。L0.3 C0 / C2の実行は各Issueで
+frozenなArena SHAのcheckoutを使うため、この追随の影響を受けない。
+"""
 
 GAME_MODE = "4p-red-half"
 BACKEND_NAME = "riichienv"
@@ -583,6 +591,12 @@ def verify_focal_outcome_source(path: str | Path):
         raise FocalOutcomeSourceError(
             f"invalid focal outcome source: {error}"
         ) from error
+    # lisjong #196以降のconsumerはlisjong-engine schemaも読めるため、この
+    # RiichiEnv v1 verifierが扱うschemaをconsumerのversionに依存せず固定する。
+    if manifest.get("schema") != OUTCOME_SOURCE_SCHEMA:
+        raise FocalOutcomeSourceError(
+            f"unsupported focal outcome source schema: {manifest.get('schema')!r}"
+        )
     if manifest["behavior"] != BEHAVIOR:
         raise FocalOutcomeSourceError("source behavior identity mismatch")
     validate_source_contract(manifest["source_contract"])
