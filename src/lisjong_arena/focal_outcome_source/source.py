@@ -591,6 +591,12 @@ def verify_focal_outcome_source(path: str | Path):
         raise FocalOutcomeSourceError(
             f"invalid focal outcome source: {error}"
         ) from error
+    # lisjong #196以降のconsumerはlisjong-engine schemaも読めるため、この
+    # RiichiEnv v1 verifierが扱うschemaをconsumerのversionに依存せず固定する。
+    if manifest.get("schema") != OUTCOME_SOURCE_SCHEMA:
+        raise FocalOutcomeSourceError(
+            f"unsupported focal outcome source schema: {manifest.get('schema')!r}"
+        )
     if manifest["behavior"] != BEHAVIOR:
         raise FocalOutcomeSourceError("source behavior identity mismatch")
     validate_source_contract(manifest["source_contract"])
