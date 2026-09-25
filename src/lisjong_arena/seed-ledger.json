@@ -397,6 +397,28 @@
       "state": "RETIRED"
     },
     {
+      "allocation_identity": "57e93cd14ea654448e9f1c3e0cf41f3b578b544d71594a931f88f185966947cd",
+      "allocation_timestamp": "2026-09-25T10:36:23.404422Z",
+      "arena_revision": "f7dac14461b1a66724c8a6595be8f5268f61f382",
+      "owner_issue": "lisbun/lisjong-arena#375",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-aabb-375",
+      "protocol": "arena-heuristic-candidate-aabb-half-v1",
+      "protocol_revision": "arena-heuristic-candidate-aabb-half-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/375",
+      "purpose": "#375 heuristic candidate AABB half formal event",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 70736,
+        "kind": "range",
+        "last": 70835
+      },
+      "seed_membership_identity": "4ad6d8f1bc804e2fe3436d62bd77785f64f09e1c88f603cd4c5309fb9d1077c9",
+      "split": "FORMAL-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
