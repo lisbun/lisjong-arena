@@ -160,6 +160,12 @@ _STUB_AWS = textwrap.dedent(
 )
 
 
+def _message(result: subprocess.CompletedProcess[str]) -> str:
+    """Error text with ANSI colour, error-view gutters and console wrapping removed."""
+    text = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout + result.stderr)
+    return re.sub(r"\W+", " ", text)
+
+
 class PreflightStubAwsTest(unittest.TestCase):
     """Runs -Action Preflight end to end with every AWS call stubbed."""
 
@@ -268,7 +274,7 @@ class PreflightStubAwsTest(unittest.TestCase):
     def test_workers_above_vcpu_fail_before_any_dry_run(self) -> None:
         result = self._run("Preflight", 3)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("exceeds the 2 vCPU", result.stdout + result.stderr)
+        self.assertIn("exceeds the 2 vCPU", _message(result))
         self.assertFalse(any("--dry-run" in call for call in self._calls()))
         self.assertEqual(list(self.output_root.glob("*/plan.json")), [])
 
@@ -287,16 +293,15 @@ class PreflightStubAwsTest(unittest.TestCase):
     ) -> None:
         plan = self._plan_path()
         result = self._run("Launch", 1, f"-Plan '{plan}'")
-        output = result.stdout + result.stderr
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("first billable call reached", output)
-        self.assertNotIn("differ from the reviewed plan", output)
+        self.assertIn("first billable call reached", _message(result))
+        self.assertNotIn("differ from the reviewed plan", _message(result))
         self.assertEqual(len(self._billable_calls()), 1)
 
     def test_launch_with_changed_arguments_stops_before_billable_calls(self) -> None:
         plan = self._plan_path()
         result = self._run("Launch", 2, f"-Plan '{plan}'")
-        self.assertIn("differ from the reviewed plan", result.stdout + result.stderr)
+        self.assertIn("differ from the reviewed plan", _message(result))
         self.assertEqual(self._billable_calls(), [])
 
 
