@@ -408,6 +408,8 @@ if ($Action -in @("Status", "Collect", "Cleanup")) {
 # Preflight (no billable call); Launch recomputes it and requires a match
 # ---------------------------------------------------------------------------
 
+# Script-scope callers must not name the result $plan: PowerShell variables are
+# case-insensitive, so it would be coerced into the [string]$Plan parameter.
 function Get-LaunchPlan([string]$Id) {
     if (-not (Test-Path -LiteralPath $localPython -PathType Leaf)) {
         throw ("Arena .venv Python not found: $localPython`nPrepare it once in $repoRoot`:`n" +
@@ -478,7 +480,7 @@ function Get-LaunchPlan([string]$Id) {
 
     $userData = (& $localPython -m lisjong_arena.aws_operational_calibration boot-fail-safe-user-data --window-seconds $failSafeSeconds --base64 2>&1 | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw "Boot fail-safe rendering failed (is the Arena .venv installed with 'pip install -e .'?): $userData" }
-    $tags = @(@{ Key = "Project"; Value = "lisjong" }, @{ Key = "ManagedBy"; Value = "lisjong-arena" }, @{ Key = "lisjong-run-id"; Value = $Id })
+    $tags = @([ordered]@{ Key = "Project"; Value = "lisjong" }, [ordered]@{ Key = "ManagedBy"; Value = "lisjong-arena" }, [ordered]@{ Key = "lisjong-run-id"; Value = $Id })
     $request = [ordered]@{
         ImageId = $amiId; InstanceType = $InstanceType; MinCount = 1; MaxCount = 1
         IamInstanceProfile = [ordered]@{ Name = [string]$profiles[0].InstanceProfileName }
@@ -490,8 +492,8 @@ function Get-LaunchPlan([string]$Id) {
         NetworkInterfaces = @([ordered]@{ DeviceIndex = 0; SubnetId = [string]$subnet[0].SubnetId; Groups = @("__RUN_SG__")
                 AssociatePublicIpAddress = $true; DeleteOnTermination = $true })
         TagSpecifications = @(
-            [ordered]@{ ResourceType = "instance"; Tags = @($tags + @(@{ Key = "Name"; Value = "lisjong-ec2-$Id" },
-                        @{ Key = "lisjong-worker-count"; Value = [string]$Workers }, @{ Key = "lisjong-hourly-usd"; Value = $perHour.ToString($invariant) })) },
+            [ordered]@{ ResourceType = "instance"; Tags = @($tags + @([ordered]@{ Key = "Name"; Value = "lisjong-ec2-$Id" },
+                        [ordered]@{ Key = "lisjong-worker-count"; Value = [string]$Workers }, [ordered]@{ Key = "lisjong-hourly-usd"; Value = $perHour.ToString($invariant) })) },
             [ordered]@{ ResourceType = "volume"; Tags = $tags }, [ordered]@{ ResourceType = "network-interface"; Tags = $tags })
     }
     $plan = [ordered]@{
@@ -524,11 +526,11 @@ function Get-LaunchPlan([string]$Id) {
 if ($Action -eq "Preflight") {
     if ($Label -notmatch '^[a-z0-9][a-z0-9-]{0,39}$') { throw "-Label must be 1-40 chars of [a-z0-9-] (e.g. lisjong-206)." }
     $id = "$Label-$(Get-Date -AsUTC -Format 'yyyyMMddTHHmmssZ')-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
-    $plan = Get-LaunchPlan $id
+    $launchPlan = Get-LaunchPlan $id
     $planPath = Join-Path (Get-RunDirectory $id) "plan.json"
-    Write-JsonFile -Path $planPath -Value $plan
-    $c = $plan.contract; $e = $plan.estimate
-    Write-Host ($plan | ConvertTo-Json -Depth 20)
+    Write-JsonFile -Path $planPath -Value $launchPlan
+    $c = $launchPlan.contract; $e = $launchPlan.estimate
+    Write-Host ($launchPlan | ConvertTo-Json -Depth 20)
     Write-Host ("`n{0}: {1} vCPU / {2} MiB / workers {3} ({4} MiB per worker)`nRuntime estimate {5}-{6} h, fail-safe {7} h from launch" -f
         $c.instance_type, $c.vcpu, $c.memory_mib, $c.workers, $c.memory_mib_per_worker, $e.runtime_hours[0], $e.runtime_hours[1], $FailSafeHours)
     Write-Host ("Cost estimate USD {0}-{1}; fail-safe worst case USD {2} <= budget USD {3}" -f $e.total_usd[0], $e.total_usd[1], $e.fail_safe_worst_case_usd, $e.budget_usd)
@@ -547,13 +549,13 @@ Test-RunId $runId
 if (([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse([string]$reviewed.created_utc, $invariant)).TotalHours -gt 24) { throw "Plan is older than 24 h; run Preflight again." }
 $runDir = Get-RunDirectory $runId
 if ((Test-Path -LiteralPath (Join-Path $runDir "state.json")) -or $null -ne (Find-RunInstance $runId)) { throw "Run $runId was already launched; a plan launches once." }
-$plan = Get-LaunchPlan $runId
+$launchPlan = Get-LaunchPlan $runId
 # Compare both sides after the same JSON round trip so number / collection types match.
-$fresh = $plan.contract | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
+$fresh = $launchPlan.contract | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String
 if (($fresh | ConvertTo-Json -Depth 20 -Compress) -ne ($reviewed.contract | ConvertTo-Json -Depth 20 -Compress)) {
     throw "Launch arguments or AWS state (AMI, subnet, inputs, ...) differ from the reviewed plan; run Preflight again."
 }
-$bucket = [string]$plan.contract.transfer_bucket
+$bucket = [string]$launchPlan.contract.transfer_bucket
 $instanceId = ""; $bucketCreated = $false; $submitted = $false
 try {
     [void](Invoke-AwsText -Arguments @("s3api", "create-bucket", "--bucket", $bucket, "--create-bucket-configuration", "LocationConstraint=$Region"))
@@ -575,7 +577,7 @@ try {
             "TagSet=[{Key=Project,Value=lisjong},{Key=ManagedBy,Value=lisjong-arena},{Key=lisjong-run-id,Value=$runId}]"))
     if ((Invoke-AwsJson -Arguments @("s3api", "get-bucket-policy-status", "--bucket", $bucket)).PolicyStatus.IsPublic -ne $false) { throw "Transfer bucket policy is public." }
 
-    $manifest = foreach ($entry in $plan.contract.inputs.GetEnumerator()) {
+    $manifest = foreach ($entry in $launchPlan.contract.inputs.GetEnumerator()) {
         [void](Invoke-AwsText -Arguments @("s3", "cp", "--only-show-errors", $entry.Value.path, "s3://$bucket/$runId/input/$($entry.Key)"))
         "$($entry.Value.sha256)  $($entry.Key)"
     }
@@ -584,17 +586,17 @@ try {
     [void](Invoke-AwsText -Arguments @("s3", "cp", "--only-show-errors", $manifestPath, "s3://$bucket/$runId/input/manifest.sha256"))
 
     $sgId = [string](Invoke-AwsJson -Arguments @("ec2", "create-security-group", "--group-name", "lisjong-ec2-$runId", "--description",
-            "lisjong-ec2 run $runId (no inbound)", "--vpc-id", [string]$plan.contract.vpc_id, "--tag-specifications",
+            "lisjong-ec2 run $runId (no inbound)", "--vpc-id", [string]$launchPlan.contract.vpc_id, "--tag-specifications",
             "ResourceType=security-group,Tags=[{Key=Project,Value=lisjong},{Key=ManagedBy,Value=lisjong-arena},{Key=lisjong-run-id,Value=$runId}]")).GroupId
     $sg = @((Invoke-AwsJson -Arguments @("ec2", "describe-security-groups", "--group-ids", $sgId)).SecurityGroups)[0]
     if (@($sg.IpPermissions).Count -ne 0) { throw "Run security group has inbound rules." }
 
     $launchPath = Join-Path $runDir "run-instances.json"
-    [IO.File]::WriteAllText($launchPath, ($plan.contract.launch_request | ConvertTo-Json -Depth 20).Replace('"__RUN_SG__"', "`"$sgId`""), $utf8)
+    [IO.File]::WriteAllText($launchPath, ($launchPlan.contract.launch_request | ConvertTo-Json -Depth 20).Replace('"__RUN_SG__"', "`"$sgId`""), $utf8)
     $instance = @((Invoke-AwsJson -Arguments @("ec2", "run-instances", "--cli-input-json", (Get-FileArgument $launchPath))).Instances)[0]
     $instanceId = [string]$instance.InstanceId
     $launchTime = [DateTimeOffset]::Parse([string]$instance.LaunchTime, $invariant)
-    $deadlineEpoch = $launchTime.ToUnixTimeSeconds() + [long]$plan.contract.fail_safe_seconds
+    $deadlineEpoch = $launchTime.ToUnixTimeSeconds() + [long]$launchPlan.contract.fail_safe_seconds
     [void](Invoke-AwsText -Arguments @("ec2", "wait", "instance-running", "--instance-ids", $instanceId))
     $live = Find-RunInstance $runId
     if ([string]$live.MetadataOptions.HttpTokens -ne "required") { throw "IMDSv2 is not required." }
@@ -618,7 +620,7 @@ try {
         'systemd-run --quiet --unit=lisjong-cost-failsafe --on-active="${REMAINING}s" --timer-property=AccuracySec=30s /usr/bin/systemctl poweroff',
         "systemctl is-active --quiet lisjong-cost-failsafe.timer",
         'for _ in $(seq 1 30); do systemctl is-active --quiet lisjong-boot-failsafe.timer && break; sleep 2; done',
-        "systemctl is-active --quiet lisjong-boot-failsafe.timer", "test `$(nproc) -eq $([int]$plan.contract.vcpu)", "echo LISJONG_EC2_FAILSAFE_ARMED=$deadlineEpoch")
+        "systemctl is-active --quiet lisjong-boot-failsafe.timer", "test `$(nproc) -eq $([int]$launchPlan.contract.vcpu)", "echo LISJONG_EC2_FAILSAFE_ARMED=$deadlineEpoch")
     $armed = Wait-SsmInvocation -CommandId $armId -InstanceId $instanceId
     if ([string]$armed.Status -ne "Success" -or [string]$armed.StandardOutputContent -notmatch "LISJONG_EC2_FAILSAFE_ARMED=") { throw "Fail-safe could not be armed (or vCPU differs); nothing was submitted." }
     $deadlineUtc = [DateTimeOffset]::FromUnixTimeSeconds($deadlineEpoch).ToString("o")
@@ -628,9 +630,9 @@ try {
     $remaining = [int]($deadlineEpoch - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
     $commandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds $remaining -RequestFile (Join-Path $runDir "ssm-run.json") -Commands @(
         "set -eu; aws s3 cp --only-show-errors --region '$Region' 's3://$bucket/$runId/input/$runnerName' /tmp/lisjong-ec2-runner.sh; " +
-        "echo '$($plan.contract.inputs[$runnerName].sha256)  /tmp/lisjong-ec2-runner.sh' | sha256sum -c - >/dev/null; " +
+        "echo '$($launchPlan.contract.inputs[$runnerName].sha256)  /tmp/lisjong-ec2-runner.sh' | sha256sum -c - >/dev/null; " +
         "exec bash /tmp/lisjong-ec2-runner.sh --run-id '$runId' --bucket '$bucket' --region '$Region' --workers '$Workers' " +
-        "--bootstrap '$($plan.contract.bootstrap)' --args-b64 '$argsB64'")
+        "--bootstrap '$($launchPlan.contract.bootstrap)' --args-b64 '$argsB64'")
     $submitted = $true
     [void](Invoke-AwsText -Arguments @("ec2", "create-tags", "--resources", $instanceId, "--tags",
             "Key=lisjong-command-id,Value=$commandId", "Key=lisjong-failsafe-deadline,Value=$deadlineUtc"))
