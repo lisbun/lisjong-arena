@@ -31,6 +31,19 @@ class RunnerTest(unittest.TestCase):
             self.skipTest("bash is unavailable")
         subprocess.run([bash, "-n", str(_RUNNER)], check=True)
 
+    def test_checkout_keeps_lf_on_windows(self) -> None:
+        git = shutil.which("git")
+        if git is None or not (_ROOT / ".git").exists():
+            self.skipTest("git checkout is unavailable")
+        attributes = subprocess.run(
+            [git, "-C", str(_ROOT), "check-attr", "eol", "--", str(_RUNNER)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertTrue(attributes.strip().endswith("eol: lf"), attributes)
+        self.assertNotIn(b"\r", _RUNNER.read_bytes())
+
     def test_logs_and_progress_sync_periodically_not_only_on_exit(self) -> None:
         self.assertIn('while sleep "$SYNC_SECONDS"; do sync_logs; done', self.text)
         self.assertIn('"$OUTPUT_DIR"/progress*', self.text)
@@ -235,6 +248,8 @@ class PreflightStubAwsTest(unittest.TestCase):
         )
 
     def _calls(self) -> list[list[str]]:
+        if not self.log.exists():
+            return []
         lines = self.log.read_text(encoding="utf-8").splitlines()
         return [json.loads(line) for line in lines]
 
@@ -277,6 +292,24 @@ class PreflightStubAwsTest(unittest.TestCase):
         self.assertIn("exceeds the 2 vCPU", _message(result))
         self.assertFalse(any("--dry-run" in call for call in self._calls()))
         self.assertEqual(list(self.output_root.glob("*/plan.json")), [])
+
+    def _assert_crlf_rejected_before_aws(self, script: Path) -> None:
+        # A Windows checkout / editor writes CRLF; bash on EC2 then dies on line 1.
+        script.write_bytes(script.read_bytes().replace(b"\n", b"\r\n"))
+        result = self._run("Preflight", 1)
+        self.assertNotEqual(result.returncode, 0)
+        name = re.sub(r"\W+", " ", script.name)
+        self.assertIn(
+            f"{name} has CRLF CR line endings bash needs LF", _message(result)
+        )
+        self.assertEqual(self._calls(), [])
+        self.assertEqual(list(self.output_root.glob("*/plan.json")), [])
+
+    def test_crlf_bootstrap_is_rejected_before_any_aws_call(self) -> None:
+        self._assert_crlf_rejected_before_aws(self.bootstrap)
+
+    def test_crlf_runner_is_rejected_before_any_aws_call(self) -> None:
+        self._assert_crlf_rejected_before_aws(self.wrapper.parent / _RUNNER.name)
 
     def _plan_path(self) -> Path:
         result = self._run("Preflight", 1)

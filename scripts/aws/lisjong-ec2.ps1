@@ -430,6 +430,13 @@ function Get-LaunchPlan([string]$Id) {
         if ($name -notmatch '^[A-Za-z0-9._-]+$' -or $inputs.Contains($name) -or $name -eq "manifest.sha256") { throw "Input file names must be unique [A-Za-z0-9._-]: $name" }
         $inputs[$name] = [ordered]@{ path = [System.IO.Path]::GetFullPath($path); bytes = (Get-Item -LiteralPath $path).Length; sha256 = Get-Sha256 $path }
     }
+    # Both scripts run under bash on the instance: a Windows CRLF copy passes the
+    # sha256 check but dies on the first line, before any evidence reaches S3.
+    foreach ($script in @($RunnerPath, $Bootstrap)) {
+        if ([Array]::IndexOf([IO.File]::ReadAllBytes([System.IO.Path]::GetFullPath($script)), [byte]13) -ge 0) {
+            throw "$script has CRLF / CR line endings; bash needs LF. Convert it (e.g. git add --renormalize, or save as LF) and run Preflight again."
+        }
+    }
     $failSafeSeconds = [int][math]::Round($FailSafeHours * 3600)
 
     $accountId = [string](Invoke-AwsJson -Arguments @("sts", "get-caller-identity")).Account

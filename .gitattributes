@@ -1,0 +1,2 @@
+# Shell scripts run under bash on EC2; keep LF even in a Windows checkout.
+scripts/aws/*.sh text eol=lf
