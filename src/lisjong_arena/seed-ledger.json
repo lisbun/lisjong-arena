@@ -111,6 +111,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "e15322282e700f92b93870b700872b5e09171a7d1710f06091d04b4a6907ab66",
+      "allocation_timestamp": "2026-09-25T00:08:10.937752Z",
+      "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
+      "owner_issue": "lisbun/lisjong-arena#374",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "l0.3-engine-outcome-scientific",
+      "protocol": "l0.3-engine-outcome-scientific-v1",
+      "protocol_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/374",
+      "purpose": "L0.3 engine scientific outcome source TRAIN",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 920016,
+        "kind": "range",
+        "last": 920435
+      },
+      "seed_membership_identity": "b0109552eaf1ce5dd2d99bb560af8f67839705f901a71c3b0c58aef71e8760f4",
+      "split": "TRAIN",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
