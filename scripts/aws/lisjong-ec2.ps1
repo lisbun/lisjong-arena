@@ -195,7 +195,8 @@ function Test-S3Object([string]$Bucket, [string]$Key) {
 }
 
 function Remove-RunBucket([string]$Bucket) {
-    if (Test-Bucket $Bucket) { [void](Invoke-AwsText -Arguments @("s3", "rb", "s3://$Bucket", "--force", "--only-show-errors")) }
+    # `s3 rb` accepts only --force (no --only-show-errors); its output is discarded anyway.
+    if (Test-Bucket $Bucket) { [void](Invoke-AwsText -Arguments @("s3", "rb", "s3://$Bucket", "--force")) }
 }
 
 function Remove-RunSecurityGroups([string]$Id) {

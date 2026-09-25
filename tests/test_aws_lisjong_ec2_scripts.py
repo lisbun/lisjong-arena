@@ -117,7 +117,7 @@ class WrapperTest(unittest.TestCase):
 _STUB_AWS = textwrap.dedent(
     """\
     #!{python}
-    import json, sys
+    import json, os, sys
     args = sys.argv[1:]
     with open({log!r}, "a", encoding="utf-8") as log:
         log.write(json.dumps(args) + "\\n")
@@ -138,7 +138,16 @@ _STUB_AWS = textwrap.dedent(
         print(json.dumps({{"SecurityGroups": []}}))
         sys.exit(0)
     if key == "s3api head-bucket":
+        if os.path.exists({bucket!r}):
+            sys.exit(0)
         fail("An error occurred (404) when calling the HeadBucket operation: Not Found")
+    if key == "s3 rb":
+        # Like the real CLI, `s3 rb` rejects options it does not define.
+        unknown = [a for a in args[3:] if a.startswith("--") and a != "--force"]
+        if unknown:
+            fail("Unknown options: " + ",".join(unknown))
+        os.remove({bucket!r})
+        sys.exit(0)
     if key == "pricing get-products":
         price = "0.096" if "Field=volumeApiName,Value=gp3" in args else "0.0272"
         product = {{"terms": {{"OnDemand": {{"t": {{"priceDimensions": {{
@@ -165,6 +174,10 @@ _STUB_AWS = textwrap.dedent(
             "AvailabilityZone": "ap-northeast-1a", "MapPublicIpOnLaunch": True}}]}},
         "ec2 describe-images": {{"Images": [{{"RootDeviceName": "/dev/xvda"}}]}},
         "ec2 describe-security-groups": {{"SecurityGroups": [{{"GroupId": "sg-default"}}]}},
+        "ec2 describe-volumes": {{"Volumes": []}},
+        "ec2 describe-snapshots": {{"Snapshots": []}},
+        "ec2 describe-network-interfaces": {{"NetworkInterfaces": []}},
+        "ec2 describe-addresses": {{"Addresses": []}},
     }}
     if key not in answers:
         fail("stub aws: unexpected call " + key)
@@ -218,9 +231,14 @@ class PreflightStubAwsTest(unittest.TestCase):
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
         self.log = self.tmp / "aws-calls.jsonl"
+        # Exists while the stub's transfer bucket exists.
+        self.bucket_marker = self.tmp / "bucket-exists"
         aws = bin_dir / "aws"
         aws.write_text(
-            _STUB_AWS.format(python=sys.executable, log=str(self.log)), encoding="utf-8"
+            _STUB_AWS.format(
+                python=sys.executable, log=str(self.log), bucket=str(self.bucket_marker)
+            ),
+            encoding="utf-8",
         )
         aws.chmod(0o755)
         self.bootstrap = self.tmp / "dummy-bootstrap.sh"
@@ -310,6 +328,25 @@ class PreflightStubAwsTest(unittest.TestCase):
 
     def test_crlf_runner_is_rejected_before_any_aws_call(self) -> None:
         self._assert_crlf_rejected_before_aws(self.wrapper.parent / _RUNNER.name)
+
+    def test_cleanup_deletes_a_retained_bucket_and_reports_no_residual(self) -> None:
+        self.bucket_marker.touch()
+        run_id = "smoke-20260925T162954Z-4e3061d2"
+        result = subprocess.run(
+            [self.pwsh, "-NoProfile", "-NonInteractive", "-File", str(self.wrapper),
+             "-Action", "Cleanup", "-RunId", run_id, "-AwsProfile", "stub",
+             "-OutputRoot", str(self.output_root)],
+            env=self.env, capture_output=True, text=True, timeout=300, check=False,
+        )  # fmt: skip
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"No residual resources for {run_id}", result.stdout)
+        self.assertFalse(self.bucket_marker.exists())
+        removals = [call for call in self._calls() if call[4:6] == ["s3", "rb"]]
+        self.assertEqual(
+            removals[0][4:],
+            ["s3", "rb", "s3://lisjong-ec2-123456789012-4e3061d2", "--force"],
+        )
+        self.assertEqual(len(removals), 1)
 
     def _plan_path(self) -> Path:
         result = self._run("Preflight", 1)
