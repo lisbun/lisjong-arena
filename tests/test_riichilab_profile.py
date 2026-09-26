@@ -5,16 +5,16 @@ profile未指定・未知profile・credential未設定のfail closed、他profil
 credentialへのfallbackがないこと、secret-freeなruntime summary/pathを、
 実WebSocket/RiichiLab接続なしに確認する。
 
-profile identity / credential env var / Policy mappingはmigration元
-(`lisjong.riichilab_client.profile`, Issue #44) のcontractをbehavior-preserving
-に維持する。
+profile identity / credential env var / runtime namespaceはmigration元
+(`lisjong.riichilab_client.profile`, Issue #44) のcontractを維持し、Policy mappingは
+Issue #402のRiichiLab Champion serving bindingを固定する。
 """
 
 import concurrent.futures
 import unittest
 from pathlib import Path
 
-from lisjong.policies import MinimalPolicy, TwoStepUkeirePolicy
+from lisjong.policies import MinimalPolicy, PlacementAwareSpeedCallPolicy
 
 from lisjong_arena.riichilab.profile import (
     PROFILE_NAMES,
@@ -47,14 +47,14 @@ class ProfileMappingTest(unittest.TestCase):
         self.assertEqual(profile.name, "lisjong-dev")
         self.assertEqual(profile.credential_env_var, "LISJONG_DEV_BOT_TOKEN")
         self.assertEqual(profile.runtime_namespace, "lisjong-dev")
-        self.assertIsInstance(profile.policy_factory(), TwoStepUkeirePolicy)
+        self.assertIsInstance(profile.policy_factory(), PlacementAwareSpeedCallPolicy)
 
     def test_lisjong_baseline_mapping(self) -> None:
         profile = resolve_profile("lisjong-baseline")
         self.assertEqual(profile.name, "lisjong-baseline")
         self.assertEqual(profile.credential_env_var, "LISJONG_BASELINE_BOT_TOKEN")
         self.assertEqual(profile.runtime_namespace, "lisjong-baseline")
-        self.assertIsInstance(profile.policy_factory(), MinimalPolicy)
+        self.assertIsInstance(profile.policy_factory(), PlacementAwareSpeedCallPolicy)
 
     def test_lisjong_production_mapping(self) -> None:
         profile = resolve_profile("lisjong")
