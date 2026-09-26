@@ -81,7 +81,7 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1"
+PINNED_LISJONG_REVISION = "2553c1b9f22545bb2fcb914adce1879d15cdc58d"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
 
 #193 / PR #194のmerge revision ``aed9c84`` から、Arena #375でlisjong #199
@@ -90,6 +90,11 @@ PINNED_LISJONG_REVISION = "2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1"
 trainer / artifact / runtime用の新規moduleの追加だけであり、``outcome_source.py``
 とproducerが準拠するwire / exploration semanticsは変わらない。L0.3 C0 / C2の実行は各Issueで
 frozenなArena SHAのcheckoutを使うため、この追随の影響を受けない。
+
+Arena #400でlisjong #217のmerge revision ``2553c1b`` へ追随した。
+``2a9debe..2553c1b`` の``outcome_source.py``変更は、game単位検証を任意の
+process数で行う``read_outcome_source(path, *, workers=1)``（lisjong #209）だけで
+あり、default ``workers=1``の結果・error・wire / exploration semanticsは変わらない。
 """
 
 GAME_MODE = "4p-red-half"
