@@ -813,6 +813,28 @@
       "seed_membership_identity": "60d50d95448d85c589b2b8d2e6a9b6de6684332d9b2ff9dd710e7ec655b6814f",
       "split": "DEVELOPMENT",
       "state": "COMMITTED"
+    },
+    {
+      "allocation_identity": "eb07ae2ba8317e4b4c46e9154a1fd12149b2e87b3f16750e11cdabe4e71769bf",
+      "allocation_timestamp": "2026-09-26T10:19:37.298136Z",
+      "arena_revision": "0d4ae36aeb5b5c855ba8a46224b8a3585efc8587",
+      "owner_issue": "lisbun/lisjong-arena#389",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "pure-offense-heuristic-champion-reference",
+      "protocol": "arena-pure-offense-passive-tsumogiri-v1",
+      "protocol_revision": "arena-pure-offense-passive-tsumogiri-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/393",
+      "purpose": "#393 pure-offense descriptive reference of current Heuristic Champion placement-aware-speed-call (development, not confirmatory/holdout)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 390000,
+        "kind": "range",
+        "last": 390499
+      },
+      "seed_membership_identity": "bed5d0cab8da4535485299bafe39263b2520fbed37075d3d6b5d68f8a56c09f2",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
     }
   ],
   "owner_repository": "lisbun/lisjong-arena",
