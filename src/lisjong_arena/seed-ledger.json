@@ -155,6 +155,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "e36cb61c3a4b982402525a03dfd7fe8ad827dea6560b9db3e81203c69323fb13",
+      "allocation_timestamp": "2026-09-26T05:38:04.540957Z",
+      "arena_revision": "2711ee9a5cc0f4a614b9b2be14950c7efeca9df5",
+      "owner_issue": "lisbun/lisjong-arena#385",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "l0.3-outcome-q-paired-strength",
+      "protocol": "arena-l0.3-outcome-q-paired-strength-v1",
+      "protocol_revision": "arena-l0.3-outcome-q-paired-strength-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/385",
+      "purpose": "#385 L0.3 outcome-Q vs canonical-first paired strength",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 931000,
+        "kind": "range",
+        "last": 931999
+      },
+      "seed_membership_identity": "6f5af85a39a23f737288f9bc74888446dd6b1aa290df5e44db67ac8b6338fd9a",
+      "split": "STRENGTH-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
