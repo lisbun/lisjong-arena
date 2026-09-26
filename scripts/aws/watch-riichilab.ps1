@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$StatePath,
-    [string]$AwsProfile = $env:AWS_PROFILE
+    [string]$AwsProfile = $env:AWS_PROFILE,
+    # Issue #386: the bot to watch when the run has several (one port each).
+    [string]$Bot = ""
 )
 
 # Issue #381: forward the loopback-only live viewer of a spectating RiichiLab
@@ -28,14 +30,41 @@ foreach ($name in @("instance_id", "region")) {
         throw "State file is missing required field: $name"
     }
 }
-$portProperty = $state.PSObject.Properties["spectate_port"]
-if ($null -eq $portProperty -or $null -eq $portProperty.Value) {
-    throw "This run was not started with -SpectatePort; there is no live viewer to watch."
+$botsProperty = $state.PSObject.Properties["bots"]
+if ($null -ne $botsProperty -and $null -ne $botsProperty.Value) {
+    $bots = @($botsProperty.Value)
+    if ([string]::IsNullOrWhiteSpace($Bot)) {
+        if ($bots.Count -ne 1) {
+            throw "This run has several bots; pass -Bot with one of: $(($bots | ForEach-Object { $_.profile }) -join ', ')."
+        }
+        $selected = $bots[0]
+    } else {
+        $selected = @($bots | Where-Object { [string]$_.profile -ceq $Bot })
+        if ($selected.Count -ne 1) {
+            throw "This run has no bot named '$Bot'."
+        }
+        $selected = $selected[0]
+    }
+    if ($null -eq $selected.spectate_port) {
+        throw "This run was not started with -SpectatePort; there is no live viewer to watch."
+    }
+    $portValue = $selected.spectate_port
+    Write-Host "Watching bot $($selected.profile)."
+} else {
+    # State written before Issue #386: a single bot with one spectate port.
+    if (-not [string]::IsNullOrWhiteSpace($Bot)) {
+        throw "This run's state predates -Bot; omit -Bot."
+    }
+    $portProperty = $state.PSObject.Properties["spectate_port"]
+    if ($null -eq $portProperty -or $null -eq $portProperty.Value) {
+        throw "This run was not started with -SpectatePort; there is no live viewer to watch."
+    }
+    $portValue = $portProperty.Value
 }
 
 $instanceId = [string]$state.instance_id
 $region = [string]$state.region
-$port = [int]$portProperty.Value
+$port = [int]$portValue
 if ($instanceId -notmatch "^i-[0-9a-f]+$") {
     throw "State file has an invalid instance id."
 }

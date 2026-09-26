@@ -238,6 +238,7 @@ class AwsRunOperatorStopTest(unittest.TestCase):
         expected_duration_seconds: int | None = None,
         cutoff_utc: str | None = None,
         pass_stop_file: bool = True,
+        additional_tokens: tuple[str, ...] = (),
     ) -> dict:
         record_dir = root / "records"
         record_dir.mkdir()
@@ -266,6 +267,7 @@ class AwsRunOperatorStopTest(unittest.TestCase):
                 stop_utc="2026-09-20T03:00:00Z",
                 elapsed_seconds=10800,
                 stop_file=stop_file if pass_stop_file else None,
+                additional_tokens=additional_tokens,
             )
 
     def test_until_stopped_run_with_operator_stop_passes(self) -> None:
@@ -282,6 +284,29 @@ class AwsRunOperatorStopTest(unittest.TestCase):
         self.assertIsNone(summary["requested_duration_seconds"])
         self.assertIsNone(summary["cutoff_utc"])
         self.assertEqual(2, summary["record_count"])
+
+    def test_other_bots_tokens_are_scanned_too(self) -> None:
+        other = "another-bot-runtime-token-value"
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with self.assertRaisesRegex(AwsRunVerificationError, "token bytes"):
+                self._verify(
+                    root,
+                    log=_runner_log(
+                        stopped_reason="stop_requested", duration="unbounded"
+                    )
+                    + other,
+                    additional_tokens=(other,),
+                )
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(AwsRunVerificationError, "unavailable"):
+                self._verify(
+                    Path(raw),
+                    log=_runner_log(
+                        stopped_reason="stop_requested", duration="unbounded"
+                    ),
+                    additional_tokens=("",),
+                )
 
     def test_stop_after_another_bot_exited_passes_and_names_the_bot(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

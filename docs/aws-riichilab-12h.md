@@ -173,34 +173,103 @@ bootstrap bot supervisor
   -> normal teardown timer: poweroff after 5 minutes -> terminate
 ```
 
-### Several bots on one instance
+### Several bots on one instance (Issue #386)
 
-The lifecycle is designed for several bots per instance, all launched by one
-request and supervised by one bootstrap:
+One run can launch up to four explicitly configured bots on one instance:
+
+```powershell
+.\scripts\aws\start-riichilab-12h.ps1 `
+  -AwsProfile lisbun-admin `
+  -ArenaRevision <exact-full-sha> `
+  -Bot "lisjong-dev=lisjong/riichilab/lisjong-dev-token","lisjong-baseline=<baseline-secret-id>" `
+  -UntilStopped -FailSafeHours 24 `
+  -SpectatePort 8765 -PlayRevision <lisjong-play-full-sha> `
+  -SubmitOnly
+
+# One SSM port-forwarding session per bot you want to watch:
+.\scripts\aws\watch-riichilab.ps1 -AwsProfile lisbun-admin -StatePath <state.json> -Bot lisjong-dev          # :8765
+.\scripts\aws\watch-riichilab.ps1 -AwsProfile lisbun-admin -StatePath <state.json> -Bot lisjong-baseline     # :8766
+```
+
+Configuration:
+
+- `-Bot PROFILE=SECRET_ID` lists the bots in launch order. Nothing is
+  discovered implicitly.
+- Without `-Bot`, the run is the single `lisjong-dev` bot reading `-SecretId`,
+  as before. `-Bot` and `-SecretId` cannot be combined.
+- Supported profiles and their explicitly expected Policies are listed in
+  `lisjong_arena.riichilab.aws_instance_run.EXPECTED_POLICY_BY_PROFILE`:
+  - `lisjong-dev` -> `MechanismRiichiDefenseYakuhaiCallPolicy`
+  - `lisjong-baseline` / `lisjong` -> `MinimalPolicy`
+
+  The bootstrap checks each profile's runtime Policy against this table.
+- The following are rejected before any credential is fetched:
+  - duplicate profiles or secret ids
+  - more than four bots
+  - an unknown profile
+- With `-SpectatePort P`, bot *i* (0-based, launch order) serves its viewer on
+  instance port `P + i`. `state.json` records `bots[].spectate_port`, and
+  `watch-riichilab.ps1 -Bot` forwards that bot's port (same number locally).
+
+Credentials:
+
+- The instance role must be allowed to read **every** configured secret.
+  - The launcher simulates `secretsmanager:GetSecretValue` for each secret and
+    keeps the deny-probe check.
+  - Extending the role policy for additional secrets is a user-managed
+    change.
+- Every secret is fetched and validated before the first bot starts. If one
+  fails, no bot starts.
+- Two bots resolving the same token are rejected.
+- No token is exported by the bootstrap. Each bot process receives only its own
+  profile's credential variable (for example `LISJONG_BASELINE_BOT_TOKEN`).
+  Only the final verifier receives all of them.
+
+Lifecycle:
 
 - There is one stop file per run (instance), shared by every bot.
-- When any bot exits, for any reason (stop, duration, failure budget, crash),
-  the supervisor writes the stop file. The remaining bots then finish their
-  hanchan in progress and stop.
-- The bootstrap verifies and arms the teardown only after every bot has
-  exited. The instance therefore powers off only when no bot of the run is
-  left running.
-- The verified summary records the first reason as `stop_request_source`
-  (`operator` or `bot-exited:<name>`). `operator_stop_requested` is true only
-  for an operator stop.
+  - An operator stop asks every bot to finish its hanchan in progress and
+    start no new one.
+  - When any bot exits, for any reason (stop, duration, failure budget,
+    crash), the supervisor writes `bot-exited:<profile>` unless a reason is
+    already recorded. The remaining bots then finish their hanchan in progress
+    and stop.
+- Each bot's evidence is isolated under
+  `/var/lib/lisjong-riichilab-313/bots/<profile>/`:
+  - `records/`
+  - `continuous.log`
+  - `exit_code`
+  - `stop_utc`
+- After every bot has exited, the following runs:
 
-The launcher currently starts exactly one bot (`lisjong-dev`). Actually
-starting several additionally needs:
+  ```bash
+  python -m lisjong_arena.riichilab.aws_instance_run verify
+  ```
 
-- a bot list in the launcher and bootstrap (profile, secret, expected Policy)
-- IAM secret checks for each bot
-- a record directory and runner log per bot
-- one verification per bot
-- a collector summary per bot
-- a separate spectate port per bot
+  It verifies each bot independently with `aws_run_verify` and scans each
+  bot's evidence for **all** runtime tokens of the run. Teardown is armed only
+  after that.
+- The completion summary is `lisjong-arena-aws-riichilab-instance-run-summary`
+  v1. Its fields:
+  - `bots[]`: profile, secret id, spectate port, exit code, verification or
+    `failure_reason`
+  - `stop_request_source`
+  - `status`
+- Overall PASS requires every bot to pass. A FAIL summary is still returned. The
+  bootstrap then exits non-zero, and the collector saves `completion.json`
+  before it terminates the instance.
+- A run started from a revision before Issue #386 returns the per-bot
+  `bounded-run-summary`. The collector stores it marked `legacy_single_bot`.
 
-These are separate from this stop / teardown lifecycle, which does not need to
-change.
+Notes:
+
+- Spectating requires a lisjong-play revision that pins this exact Arena
+  revision. After an Arena change, spectating waits for the matching
+  lisjong-play pin update.
+- Choose an instance type with enough CPU / memory for the number of bots.
+  The default stays `t3.small`.
+- RiichiLab matchmaking may seat two of your bots at the same table. This
+  cannot be controlled here. Each bot's records stay attributable.
 
 - The stop request works for both modes. A duration-bound run that receives it
   stops early with `stopped_reason=stop_requested`; without it, behavior is
@@ -220,9 +289,10 @@ change.
   `cutoff_utc` are `null` for an until-stopped run, and `stop_request_source` /
   `operator_stop_requested` record who requested the stop first. Unrecognized
   stop file content fails verification.
-- With `-SpectatePort`, the lisjong-play viewer must forward `--stop-file`.
-  Until it does, the bootstrap fails closed for `-UntilStopped` and a
-  duration-bound spectating run keeps the stop request disabled.
+- With `-SpectatePort`, the lisjong-play viewer must forward `--stop-file`
+  (lisjong-play#50). With an older viewer the bootstrap fails closed for
+  `-UntilStopped` or several bots, and a duration-bound single-bot spectating
+  run keeps the stop request disabled.
 - `stop-riichilab.ps1` only writes the stop file. It never terminates,
   interrupts, or signals anything; a run that is no longer active is left to
   the collector.
