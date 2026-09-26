@@ -834,7 +834,7 @@
       },
       "seed_membership_identity": "bed5d0cab8da4535485299bafe39263b2520fbed37075d3d6b5d68f8a56c09f2",
       "split": "DEVELOPMENT",
-      "state": "RESERVED"
+      "state": "COMMITTED"
     }
   ],
   "owner_repository": "lisbun/lisjong-arena",
