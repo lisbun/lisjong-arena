@@ -300,7 +300,8 @@ class InstanceRunCliTest(unittest.TestCase):
             [
                 "lisjong-dev\tLISJONG_DEV_BOT_TOKEN\t"
                 "PlacementAwareSpeedCallPolicy\t9000",
-                "lisjong-baseline\tLISJONG_BASELINE_BOT_TOKEN\tPlacementAwareSpeedCallPolicy\t9001",
+                "lisjong-baseline\tLISJONG_BASELINE_BOT_TOKEN\t"
+                "PlacementAwareSpeedCallPolicy\t9001",
             ],
             stdout.getvalue().splitlines(),
         )
