@@ -10,9 +10,9 @@ profileは表示名やdefault値ではなく、
 
 本moduleは、Issue #44でlisjongへ実装されたcontract(`lisjong.riichilab_client.profile`)
 をbehavior-preservingにArenaへcanonical migrationしたものである。profile identity、
-credential環境変数名、runtime namespaceは移管元contractを維持する。Issue #223では
-`lisjong-dev`だけをcurrent development targetである
-`MechanismRiichiDefenseYakuhaiCallPolicy`へ明示的に更新した。
+credential環境変数名、runtime namespaceは移管元contractを維持する。Issue #402では
+RiichiLabで継続運用する`lisjong-dev`と`lisjong-baseline`をcurrent Heuristic Champion
+`PlacementAwareSpeedCallPolicy`へ明示的に揃える。production `lisjong`は変更しない。
 
 このmoduleはPolicy契約(`DecisionContext`)、`RiichiLabSeatAdapter`、
 `ValidationSession` / `RankedSession`、`Transport`のいずれへも依存を逆流させ
@@ -31,10 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lisjong.policies import (
-    MechanismRiichiDefenseYakuhaiCallPolicy,
-    MinimalPolicy,
-)
+from lisjong.policies import MinimalPolicy, PlacementAwareSpeedCallPolicy
 from lisjong.policy_contract.policy import Policy
 
 from lisjong_arena.riichilab.secret_contract import (
@@ -93,21 +90,21 @@ def _minimal_policy_factory() -> Policy:
     return MinimalPolicy()
 
 
-def _mechanism_riichi_defense_policy_factory() -> Policy:
-    return MechanismRiichiDefenseYakuhaiCallPolicy()
+def _champion_policy_factory() -> Policy:
+    return PlacementAwareSpeedCallPolicy()
 
 
 _PROFILE_DEFINITIONS: tuple[RuntimeProfile, ...] = (
     RuntimeProfile(
         name="lisjong-dev",
         credential_env_var="LISJONG_DEV_BOT_TOKEN",
-        policy_factory=_mechanism_riichi_defense_policy_factory,
+        policy_factory=_champion_policy_factory,
         runtime_namespace="lisjong-dev",
     ),
     RuntimeProfile(
         name="lisjong-baseline",
         credential_env_var="LISJONG_BASELINE_BOT_TOKEN",
-        policy_factory=_minimal_policy_factory,
+        policy_factory=_champion_policy_factory,
         runtime_namespace="lisjong-baseline",
     ),
     RuntimeProfile(

@@ -4,16 +4,21 @@
 
 ## Current Policy mapping
 
-As of Issue #223, the current mapping is:
+As of Issue #402, the RiichiLab serving mappings are:
 
 ```text
 profile             lisjong-dev
 credential source   LISJONG_DEV_BOT_TOKEN
 runtime namespace   lisjong-dev
-Policy              MechanismRiichiDefenseYakuhaiCallPolicy
+Policy              PlacementAwareSpeedCallPolicy
+
+profile             lisjong-baseline
+credential source   LISJONG_BASELINE_BOT_TOKEN
+runtime namespace   lisjong-baseline
+Policy              PlacementAwareSpeedCallPolicy
 ```
 
-`lisjong-baseline` and `lisjong` continue to use `MinimalPolicy`.
+`lisjong-dev` and `lisjong-baseline` therefore run the same current Heuristic Champion while keeping separate credentials and runtime namespaces. Production profile `lisjong` remains on `MinimalPolicy`.
 
 The `lisjong-dev` profile is shared by the first-party validation and ranked entry points, so both use the same current Policy mapping:
 
@@ -26,7 +31,7 @@ The startup summary derives the Policy label from the actual Policy instance. A 
 
 ```text
 profile: lisjong-dev
-policy: MechanismRiichiDefenseYakuhaiCallPolicy
+policy: PlacementAwareSpeedCallPolicy
 mode: ranked
 ```
 
@@ -48,14 +53,14 @@ A completed record should preserve the execution identity in provenance:
 
 ```text
 profile_identity = lisjong-dev
-policy_identity  = MechanismRiichiDefenseYakuhaiCallPolicy
+policy_identity  = PlacementAwareSpeedCallPolicy
 ```
 
 The durable record is the information visible to lisjong during the game. It is not an omniscient server log and does not provide opponents' concealed hands, the wall, or future draws as ground truth.
 
 ## Interpretation boundary
 
-Arena #217 / #219 established positive evidence for this Policy under the locked ABBB / `4p-red-single` single-round protocol. Selecting it for `lisjong-dev` does not by itself establish:
+The selected Policy is the current Heuristic Champion. Binding it to the two RiichiLab profiles is a serving/configuration change; a live RiichiLab run does not by itself establish:
 
 - hanchan superiority,
 - RiichiLab superiority,

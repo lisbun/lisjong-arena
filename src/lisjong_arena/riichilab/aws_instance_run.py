@@ -43,8 +43,8 @@ MAX_BOTS = 4
 #: Explicit expected Policy per supported profile.  It is deliberately not
 #: derived from the profile itself: the runtime check below compares the two.
 EXPECTED_POLICY_BY_PROFILE: Mapping[str, str] = {
-    "lisjong-dev": "MechanismRiichiDefenseYakuhaiCallPolicy",
-    "lisjong-baseline": "MinimalPolicy",
+    "lisjong-dev": "PlacementAwareSpeedCallPolicy",
+    "lisjong-baseline": "PlacementAwareSpeedCallPolicy",
     "lisjong": "MinimalPolicy",
 }
 

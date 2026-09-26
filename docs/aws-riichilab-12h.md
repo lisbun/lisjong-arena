@@ -199,8 +199,9 @@ Configuration:
   as before. `-Bot` and `-SecretId` cannot be combined.
 - Supported profiles and their explicitly expected Policies are listed in
   `lisjong_arena.riichilab.aws_instance_run.EXPECTED_POLICY_BY_PROFILE`:
-  - `lisjong-dev` -> `MechanismRiichiDefenseYakuhaiCallPolicy`
-  - `lisjong-baseline` / `lisjong` -> `MinimalPolicy`
+  - `lisjong-dev` -> `PlacementAwareSpeedCallPolicy`
+  - `lisjong-baseline` -> `PlacementAwareSpeedCallPolicy`
+  - `lisjong` -> `MinimalPolicy`
 
   The bootstrap checks each profile's runtime Policy against this table.
 - The following are rejected before any credential is fetched:
@@ -367,7 +368,7 @@ The automation checks, among other things:
 - `environment_verify`
 - pinned lisjong / lisjong-engine dependency identity
 - RiichiEnv dependency identity
-- `lisjong-dev` -> `MechanismRiichiDefenseYakuhaiCallPolicy`
+- `lisjong-dev` -> `PlacementAwareSpeedCallPolicy`
 - `--duration-seconds` availability
 - fresh writable durable-record root
 - diagnostic trace not enabled
