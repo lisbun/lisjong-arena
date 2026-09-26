@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import io
 import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -18,6 +19,7 @@ from lisjong_arena.riichilab.continuous_ranked import (
     ContinuousRunSummary,
     _run_cli,
     run_continuous_ranked,
+    run_continuous_ranked_cli,
 )
 from lisjong_arena.riichilab.errors import TransportError
 from lisjong_arena.riichilab.profile import RuntimeProfile
@@ -621,3 +623,110 @@ class BoundedCliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StopFileTest(unittest.TestCase):
+    """Issue #383: `--stop-file` is an operator stop request between hanchans."""
+
+    def _run_cli_capturing(
+        self, argv: list[str], **cli_kwargs: object
+    ) -> tuple[int, dict[str, object], str]:
+        captured: dict[str, object] = {}
+
+        async def _fake_continuous(profile, token, **kwargs):
+            captured.update(kwargs)
+            return ContinuousRunSummary(
+                profile=profile.name,
+                completed_games=0,
+                failed_games=0,
+                consecutive_failures=0,
+                last_failure_type=None,
+                stopped_reason="stop_requested",
+                records_enabled=True,
+            )
+
+        stdout = io.StringIO()
+        with patch.dict(os.environ, {_DEV_TOKEN_VAR: "secret-token"}, clear=True):
+            with patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_continuous_ranked",
+                _fake_continuous,
+            ):
+                with contextlib.redirect_stdout(stdout):
+                    exit_code = run_continuous_ranked_cli(
+                        ["--profile", "lisjong-dev", *argv], **cli_kwargs
+                    )
+        return exit_code, captured, stdout.getvalue()
+
+    def test_stop_file_presence_is_the_stop_request(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            stop_file = Path(raw) / "stop-requested"
+            exit_code, captured, stdout = self._run_cli_capturing(
+                ["--stop-file", str(stop_file)]
+            )
+            stop_requested = captured["stop_requested"]
+            self.assertFalse(stop_requested())
+            stop_file.touch()
+            self.assertTrue(stop_requested())
+
+        self.assertEqual(0, exit_code)
+        self.assertIn("stop file: on", stdout)
+
+    def test_stop_file_is_combined_with_injected_stop_request(self) -> None:
+        injected = {"value": False}
+        with tempfile.TemporaryDirectory() as raw:
+            stop_file = Path(raw) / "stop-requested"
+            _, captured, _ = self._run_cli_capturing(
+                ["--stop-file", str(stop_file)],
+                stop_requested=lambda: injected["value"],
+            )
+            stop_requested = captured["stop_requested"]
+            self.assertFalse(stop_requested())
+            injected["value"] = True
+            self.assertTrue(stop_requested())
+
+    def test_without_stop_file_injected_request_is_forwarded_unchanged(self) -> None:
+        def injected() -> bool:
+            return False
+
+        _, captured, stdout = self._run_cli_capturing([], stop_requested=injected)
+        self.assertIs(injected, captured["stop_requested"])
+        self.assertIn("stop file: off", stdout)
+
+        _, captured, _ = self._run_cli_capturing([])
+        self.assertNotIn("stop_requested", captured)
+
+    def test_empty_stop_file_is_rejected(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            exit_code, captured, _ = self._run_cli_capturing(["--stop-file", ""])
+        self.assertEqual(2, exit_code)
+        self.assertEqual({}, captured)
+
+    def test_stop_request_after_in_progress_game_finishes_it_without_requeue(
+        self,
+    ) -> None:
+        created: list[object] = []
+        stop = {"value": False}
+        games: list[object] = []
+
+        async def _fake_game(policy, token, **kwargs):
+            games.append(policy)
+            # The operator asks to stop while this hanchan is in progress.
+            stop["value"] = True
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game", _fake_game
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(created=created),
+                    "token",
+                    stop_requested=lambda: stop["value"],
+                    sleep=_no_sleep,
+                )
+            )
+
+        self.assertEqual(1, summary.completed_games)
+        self.assertEqual("stop_requested", summary.stopped_reason)
+        self.assertEqual(1, len(created))
+        self.assertEqual(1, len(games))

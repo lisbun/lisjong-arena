@@ -23,7 +23,9 @@
 - opt-in live presentation(Issue #381)。game attemptごとに
   `ContinuousRankedPresentationFeed`から新しいbufferを開いてone-game
   primitiveへ渡すだけで、presentationの有無でexecution semanticsは変わらない
-- 停止要求後は新しいgameへrequeueしない graceful shutdown。
+- 停止要求後は新しいgameへrequeueしない graceful shutdown。CLIの
+  `--stop-file PATH`は、そのpathが存在することを停止要求として扱う
+  (Issue #383。AWS運用で外部から「今の半荘を終えたら止める」を指示する)。
   `asyncio.CancelledError`はretryせずcatchもせずそのまま伝播させ、
   標準のasyncio cancellation semanticsを維持する。Ctrl-Cを正常終了として
   扱うUXは`_run_cli()`の`asyncio.run()` boundaryだけが担う
@@ -361,6 +363,22 @@ def format_continuous_summary(summary: ContinuousRunSummary) -> str:
     )
 
 
+def _combine_stop_requested(
+    stop_requested: Callable[[], bool] | None,
+    stop_file: str | None,
+) -> Callable[[], bool] | None:
+    """injectされた停止要求と`--stop-file`の存在をORで合成する。"""
+    if stop_file is None:
+        return stop_requested
+
+    def requested() -> bool:
+        if stop_requested is not None and stop_requested():
+            return True
+        return os.path.lexists(stop_file)
+
+    return requested
+
+
 def run_continuous_ranked_cli(
     argv: Sequence[str] | None = None,
     *,
@@ -383,6 +401,8 @@ def run_continuous_ranked_cli(
     unbounded-until-stop behaviorを維持する。
     `--record-dir`有効時は各completed hanchanをIssue #168の独立durable
     recordとして保存し、diagnostic traceとの同時利用はfail closedにする。
+    `--stop-file PATH`指定時はPATHの存在を停止要求として扱い、injectされた
+    `stop_requested`とORで合成する。
     """
     parser = build_arg_parser(
         prog="python -m lisjong_arena.riichilab.continuous_ranked",
@@ -408,7 +428,19 @@ def run_continuous_ranked_cli(
             "cutoff時に進行中のhanchanは完了してから停止する"
         ),
     )
+    parser.add_argument(
+        "--stop-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "PATHが存在したら停止要求として扱う。次のhanchan開始前にだけ確認し、"
+            "進行中のhanchanは完了してから停止する"
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.stop_file is not None and not args.stop_file:
+        print("--stop-file must be a non-empty path", file=sys.stderr)
+        return 2
 
     try:
         profile = resolve_profile(args.profile)
@@ -436,12 +468,14 @@ def run_continuous_ranked_cli(
     print(f"records: {'on' if args.record_dir is not None else 'off'}")
     print(f"requested completed games: {args.games or 'unbounded'}")
     print(f"requested duration seconds: {args.duration_seconds or 'unbounded'}")
+    print(f"stop file: {'on' if args.stop_file is not None else 'off'}")
 
     optional_kwargs: dict[str, object] = {}
     if presentation is not None:
         optional_kwargs["presentation"] = presentation
-    if stop_requested is not None:
-        optional_kwargs["stop_requested"] = stop_requested
+    effective_stop_requested = _combine_stop_requested(stop_requested, args.stop_file)
+    if effective_stop_requested is not None:
+        optional_kwargs["stop_requested"] = effective_stop_requested
 
     try:
         summary = asyncio.run(

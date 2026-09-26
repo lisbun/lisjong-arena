@@ -17,6 +17,7 @@ param(
     [double]$PublicIpv4HourlyPriceUsd = 0.005,
     [int]$SpectatePort = 0,
     [string]$PlayRevision = "",
+    [switch]$UntilStopped,
     [switch]$PreflightOnly,
     [switch]$SubmitOnly
 )
@@ -30,11 +31,30 @@ if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
 if ($PreflightOnly -and $SubmitOnly) {
     throw "PreflightOnly and SubmitOnly are mutually exclusive."
 }
-if ($DurationSeconds -le 0) {
-    throw "DurationSeconds must be positive."
+# SSM AWS-RunShellScript accepts executionTimeout up to 172800 seconds (48h);
+# the long command uses the fail-safe horizon plus one hour.
+if ($FailSafeHours -gt 47) {
+    throw "FailSafeHours must be at most 47 (SSM executionTimeout limit)."
 }
-if ($FailSafeHours -le 12) {
-    throw "FailSafeHours must be greater than the normal 12-hour bound."
+if ($UntilStopped) {
+    # Issue #383: participate continuously until stop-riichilab.ps1 is used.
+    # The fail-safe is then the only other stop, so it must be chosen explicitly.
+    if ($PSBoundParameters.ContainsKey("DurationSeconds")) {
+        throw "UntilStopped cannot be combined with DurationSeconds."
+    }
+    if (-not $PSBoundParameters.ContainsKey("FailSafeHours")) {
+        throw "UntilStopped requires an explicit -FailSafeHours cost ceiling (1-47)."
+    }
+    if ($FailSafeHours -lt 1) {
+        throw "FailSafeHours must be at least 1."
+    }
+} else {
+    if ($DurationSeconds -le 0) {
+        throw "DurationSeconds must be positive."
+    }
+    if ($FailSafeHours -le 12) {
+        throw "FailSafeHours must be greater than the normal 12-hour bound."
+    }
 }
 $spectate = ($SpectatePort -ne 0)
 if ($spectate -and ($SpectatePort -lt 1024 -or $SpectatePort -gt 65535)) {
@@ -422,6 +442,8 @@ $preflightSummary = [ordered]@{
     projected_known_cost_usd = $preflightProjectedKnownCost
     spectate_port = $(if ($spectate) { $SpectatePort } else { $null })
     play_revision = $(if ($spectate) { $PlayRevision } else { $null })
+    until_stopped = [bool]$UntilStopped
+    duration_seconds = $(if ($UntilStopped) { $null } else { $DurationSeconds })
     cost_note = "Projected known cost uses the independent fail-safe horizon as a conservative bound and includes EC2 compute when pricing lookup succeeds plus one in-use public IPv4 address. EBS/data transfer and T3 surplus CPU credits are excluded."
     billable_resource_created = $false
 }
@@ -584,7 +606,12 @@ try {
 
     $executionTimeout = ($FailSafeHours * 3600) + 3600
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-riichilab-12h.sh"
-    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-313.sh; chmod 700 /tmp/lisjong-bootstrap-313.sh; exec /tmp/lisjong-bootstrap-313.sh --arena-revision '$ArenaRevision' --region '$Region' --secret-id '$SecretId' --duration-seconds '$DurationSeconds'"
+    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-313.sh; chmod 700 /tmp/lisjong-bootstrap-313.sh; exec /tmp/lisjong-bootstrap-313.sh --arena-revision '$ArenaRevision' --region '$Region' --secret-id '$SecretId'"
+    if ($UntilStopped) {
+        $remoteCommand += " --until-stopped"
+    } else {
+        $remoteCommand += " --duration-seconds '$DurationSeconds'"
+    }
     if ($spectate) {
         $remoteCommand += " --spectate-port '$SpectatePort' --play-revision '$PlayRevision'"
     }
@@ -610,6 +637,8 @@ try {
         fail_safe_hours = $FailSafeHours
         spectate_port = $(if ($spectate) { $SpectatePort } else { $null })
         play_revision = $(if ($spectate) { $PlayRevision } else { $null })
+        until_stopped = [bool]$UntilStopped
+        duration_seconds = $(if ($UntilStopped) { $null } else { $DurationSeconds })
     }) -Path $statePath
     [void](Invoke-AwsText -Arguments @(
         "ec2", "create-tags",
@@ -617,7 +646,12 @@ try {
         "--tags", "Key=lisjong-scientific-command-id,Value=$commandId"
     ))
 
-    Write-Host "12-hour graceful run submitted through SSM. Command id: $commandId"
+    if ($UntilStopped) {
+        Write-Host "Until-stopped run submitted through SSM. Command id: $commandId"
+    } else {
+        Write-Host "Graceful $DurationSeconds-second run submitted through SSM. Command id: $commandId"
+    }
+    Write-Host "Request a stop (finish the current hanchan, verify, then terminate) with: .\scripts\aws\stop-riichilab.ps1 -AwsProfile $AwsProfile -StatePath '$statePath'"
     if ($spectate) {
         Write-Host "Watch live with: .\scripts\aws\watch-riichilab.ps1 -AwsProfile $AwsProfile -StatePath '$statePath'"
     }
