@@ -50,6 +50,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [Overall Champion AABB half-game formal protocol v1](overall-champion-aabb-half.md) — Issue #250のcross-family Overall determination protocol / lock / bundle verification（actual 400-hanchan formal runはmerge後のoperator作業）
 - [Heuristic candidate AABB half-game protocol v1](heuristic-candidate-aabb-half.md) — Issue #375のfamily-internal candidate評価（uma/oka final score primary）/ AWS executor（actual 400-hanchan runはmerge後のoperator作業）
 - [L0.3 outcome-Q paired-strength protocol v1](l03-paired-strength-385.md) — Issue #385（parent lisjong-project#79 Step F）のoutcome-Q vs canonical-first paired focal-seat評価のpre-execution lock（Step G実行はlock後のoperator作業）
+- [Pure-offense benchmark v1](pure-offense-benchmark.md) — Issue #389のfocal vs passive tsumogiri x3 offense benchmark（局収支・形式聴牌速度・和了速度のdescriptive profile + paired comparison。calibration実行はmerge後のoperator作業）
 - [Stage A0 non-riichi Tenpai label path feasibility](stage-a0-tenpai-label-feasibility.md) — Issue #258のlabel path / corpus qualification（retained corpusに対する実測はmerge後のoperator作業）
 
 これらはconcreteなexecution / acquisition surfaceのcontractを記録する。**現在どの研究を優先するか**はactive GitHub Issueを正本とし、reusable contract自体が変わらない限りoperator文書へcurrent priorityを転記しない。
