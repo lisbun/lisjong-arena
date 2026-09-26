@@ -97,17 +97,15 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         text = _LAUNCHER.read_text(encoding="utf-8")
         self.assertIn("ResourceSpecificResults", text)
         self.assertIn("EvalResourceDecision", text)
-        self.assertIn("ContainsKey($secretArn)", text)
+        # Issue #386: every bot's secret is simulated and must be allowed.
+        self.assertIn('"--resource-arns") + $secretArns + @($denyProbeArn)', text)
+        self.assertIn("ContainsKey($botEntry.secret_arn)", text)
         self.assertIn("ContainsKey($denyProbeArn)", text)
         self.assertLess(
             text.index("ResourceSpecificResults"),
-            text.index('if ($decisions[$secretArn] -ne "allowed")'),
+            text.index('if ($decisions[$botEntry.secret_arn] -ne "allowed")'),
         )
-        self.assertNotIn(
-            "$decisions[[string]$entry.EvalResourceName] = [string]$entry.EvalDecision\n"
-            'if ($decisions[$secretArn] -ne "allowed")',
-            text,
-        )
+        self.assertIn('if ($decisions[$denyProbeArn] -eq "allowed")', text)
 
     def test_collector_preserves_remote_run_and_teardown_invariants(self) -> None:
         text = _COLLECTOR.read_text(encoding="utf-8")
@@ -126,8 +124,12 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
     def test_bootstrap_keeps_runtime_secret_ephemeral(self) -> None:
         text = _BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn("secretsmanager get-secret-value", text)
-        self.assertIn('export LISJONG_DEV_BOT_TOKEN="$TOKEN"', text)
-        self.assertIn("unset LISJONG_DEV_BOT_TOKEN", text)
+        # Issue #386: tokens are never exported by the bootstrap itself; each
+        # bot's subshell exports only its own profile's credential variable.
+        self.assertIn('BOT_TOKENS[$profile]="$TOKEN"', text)
+        self.assertIn("unset TOKEN", text)
+        self.assertNotRegex(text, r"(?m)^export ")
+        self.assertNotIn("LISJONG_DEV_BOT_TOKEN", text)
         self.assertNotIn('echo "$TOKEN"', text)
         self.assertNotIn('printf "$TOKEN"', text)
 
@@ -147,7 +149,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         )
         self.assertLess(
             text.index("lisjong_arena.riichilab.secret_contract"),
-            text.index('export LISJONG_DEV_BOT_TOKEN="$TOKEN"'),
+            text.index('BOT_TOKENS[$profile]="$TOKEN"'),
         )
         self.assertNotIn('echo "$SECRET_RESPONSE_JSON"', text)
         self.assertNotIn('printf "$SECRET_RESPONSE_JSON"', text)
@@ -274,22 +276,26 @@ class AwsRiichiLabSpectateScriptTest(unittest.TestCase):
 
     def test_bootstrap_runs_the_viewer_with_the_same_runner_contract(self) -> None:
         text = _BOOTSTRAP.read_text(encoding="utf-8")
-        spectate_run = text[
-            text.index("-m lisjong_play.riichilab_html         --continuous") :
-        ]
-        spectate_run = spectate_run[: spectate_run.index("else")]
+        start_bot = text[text.index("start_bot() {") :]
+        start_bot = start_bot[: start_bot.index("\n}\n")]
+        self.assertIn(
+            'local args=(--profile "$profile" "${RUNNER_BOUND_ARGS[@]}" '
+            '--record-dir "$directory/records")',
+            start_bot,
+        )
+        spectate_run = start_bot[: start_bot.index("    else")]
         for argument in (
-            '--profile "$PROFILE"',
-            '"${RUNNER_BOUND_ARGS[@]}"',
-            '--record-dir "$RECORD_DIR"',
-            '--port "$SPECTATE_PORT"',
-            '>"$RUNNER_LOG" 2>&1',
+            'args+=(--port "${BOT_PORTS[$profile]}")',
+            'exec "$PYTHON" -m lisjong_play.riichilab_html --continuous "${args[@]}"',
+            ') >"$directory/continuous.log" 2>&1 &',
         ):
             self.assertIn(argument, spectate_run)
         self.assertNotIn("--host", text)
         self.assertNotIn("0.0.0.0", text)
         # Verification of the durable records is shared by both modes.
-        self.assertEqual(1, text.count("-m lisjong_arena.riichilab.aws_run_verify"))
+        self.assertEqual(
+            1, text.count("-m lisjong_arena.riichilab.aws_instance_run verify")
+        )
 
     def test_launcher_checks_play_pin_and_forwards_spectate_arguments(self) -> None:
         text = _LAUNCHER.read_text(encoding="utf-8")
@@ -357,12 +363,14 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
         text = _BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn('STOP_FILE="$WORK_ROOT/stop-requested"', text)
         self.assertIn('RUNNER_BOUND_ARGS+=(--stop-file "$STOP_FILE")', text)
-        self.assertIn('VERIFY_BOUND_ARGS+=(--stop-file "$STOP_FILE")', text)
+        self.assertIn(
+            'VERIFY_BOUND_ARGS=("${BOT_CONFIG_ARGS[@]}" --stop-file "$STOP_FILE")',
+            text,
+        )
         self.assertIn("VERIFY_BOUND_ARGS+=(--until-stopped)", text)
         self.assertIn('grep -q -- "--stop-file" <<<"$CONTINUOUS_HELP"', text)
-        # Both runner invocations and the verifier use the bound arguments.
-        # (Runner invocations are backgrounded and supervised.)
-        self.assertEqual(2, text.count('"${RUNNER_BOUND_ARGS[@]}"'))
+        # Every bot (both runner kinds) and the verifier use the bound arguments.
+        self.assertEqual(1, text.count('"${RUNNER_BOUND_ARGS[@]}"'))
         self.assertEqual(1, text.count('"${VERIFY_BOUND_ARGS[@]}"'))
         self.assertNotIn('--duration-seconds "$DURATION_SECONDS"         ', text)
 
@@ -391,17 +399,21 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
         self.assertIn("trap on_exit EXIT", text)
         on_exit = text[text.index("on_exit() {") :]
         on_exit = on_exit[: on_exit.index("\n}\n")]
-        self.assertIn("unset LISJONG_DEV_BOT_TOKEN", on_exit)
+        self.assertIn("unset BOT_TOKENS", on_exit)
         self.assertIn('"$UNTIL_STOPPED" == "1" && "$RUNNER_STARTED" == "1"', on_exit)
         self.assertIn("arm_normal_teardown", on_exit)
-        verify = text.index("-m lisjong_arena.riichilab.aws_run_verify")
-        success_arm = text.rindex("\narm_normal_teardown\n")
+        # The supervisor drains every bot, then verification, then teardown.
+        drained = text.index("while ((${#RUNNING_BOT_PIDS[@]})); do")
+        verify = text.index("-m lisjong_arena.riichilab.aws_instance_run verify")
+        success_arm = text.index("    arm_normal_teardown\n    echo")
+        self.assertLess(drained, verify)
         self.assertLess(verify, success_arm)
+        self.assertIn(
+            'if [[ "$VERIFY_EXIT_CODE" -eq 0 ]]; then\n    arm_normal_teardown', text
+        )
         self.assertLess(
-            text.index('RUNNER_STARTED=1\nif [[ "$SPECTATE" == "1" ]]; then'),
-            text.index(
-                "-m lisjong_arena.riichilab.continuous_ranked         --profile"
-            ),
+            text.index("RUNNER_STARTED=1\nfor profile in"),
+            text.index('    start_bot "$profile"'),
         )
 
     def test_launcher_until_stopped_requires_explicit_fail_safe(self) -> None:
@@ -453,21 +465,21 @@ class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
         request_stop = text[text.index("request_stop() {") :]
         request_stop = request_stop[: request_stop.index("\n}\n") + 3]
         loop = text[text.index('RUNNING_BOT_PIDS=("${!BOT_NAMES[@]}")') :]
-        end = loop.index("RUNNER_EXIT_CODE=0")
-        end = loop.index("\ndone\n", end) + len("\ndone\n")
+        end = loop.index("\ndone\n") + len("\ndone\n")
         return request_stop + loop[:end]
 
     def test_bootstrap_backgrounds_every_bot_under_the_supervisor(self) -> None:
         text = _BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertEqual(2, text.count('>"$RUNNER_LOG" 2>&1 &'))
-        self.assertIn('BOT_NAMES[$!]="$PROFILE"', text)
+        self.assertEqual(2, text.count(') >"$directory/continuous.log" 2>&1 &'))
+        self.assertIn('BOT_NAMES[$!]="$profile"', text)
+        self.assertIn('for profile in "${BOT_PROFILES[@]}"; do\n    start_bot', text)
         self.assertIn('wait -n -p EXITED_BOT_PID "${RUNNING_BOT_PIDS[@]}"', text)
-        self.assertIn('request_stop "bot-exited:${BOT_NAMES[$EXITED_BOT_PID]}"', text)
+        self.assertIn('request_stop "bot-exited:$EXITED_BOT"', text)
         self.assertIn("bash 5.1 or newer is required", text)
         # Verification runs only after the supervisor loop has drained.
         self.assertLess(
-            text.index("RUNNER_EXIT_CODE=0"),
-            text.index("-m lisjong_arena.riichilab.aws_run_verify"),
+            text.index("while ((${#RUNNING_BOT_PIDS[@]})); do"),
+            text.index("-m lisjong_arena.riichilab.aws_instance_run verify"),
         )
 
     def test_one_bot_exit_stops_the_others_after_their_hanchan(self) -> None:
@@ -493,12 +505,14 @@ class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
             "    exit 99\n"
             "}\n"
             "declare -A BOT_NAMES=()\n"
-            "declare -A BOT_EXIT_CODES=()\n"
+            'BOTS_DIR="$(dirname "$STOP_FILE")/bots"\n'
+            'mkdir -p "$BOTS_DIR/failing" "$BOTS_DIR/steady" "$BOTS_DIR/other" '
+            '"$BOTS_DIR/only"\n'
             'bot failing 3 4 & BOT_NAMES[$!]="failing"\n'
             'bot steady 0 1000 & BOT_NAMES[$!]="steady"\n'
             'bot other 0 1000 & BOT_NAMES[$!]="other"\n'
             + self._supervisor_script()
-            + 'echo "exit=$RUNNER_EXIT_CODE"\n'
+            + 'echo "supervisor=drained"\n'
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -523,8 +537,19 @@ class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
             stopped = sorted(
                 (root / "stop-requested.log").read_text(encoding="utf-8").split()
             )
+            # Per-bot exit evidence for the instance verifier.
+            exit_codes = {
+                name: (root / "bots" / name / "exit_code").read_text().strip()
+                for name in ("failing", "steady", "other")
+            }
+            for name in ("failing", "steady", "other"):
+                self.assertRegex(
+                    (root / "bots" / name / "stop_utc").read_text(),
+                    r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\n$",
+                )
         self.assertEqual(["stopped:other", "stopped:steady"], stopped)
-        self.assertIn("exit=3", result.stdout)
+        self.assertEqual({"failing": "3", "steady": "0", "other": "0"}, exit_codes)
+        self.assertIn("supervisor=drained", result.stdout)
         self.assertEqual(3, result.stdout.count("run: bot_exited"))
 
     def test_an_existing_operator_stop_reason_is_kept(self) -> None:
@@ -536,10 +561,12 @@ class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
             'STOP_FILE="$1"\n'
             "printf 'operator\\n' >\"$STOP_FILE\"\n"
             "declare -A BOT_NAMES=()\n"
-            "declare -A BOT_EXIT_CODES=()\n"
+            'BOTS_DIR="$(dirname "$STOP_FILE")/bots"\n'
+            'mkdir -p "$BOTS_DIR/failing" "$BOTS_DIR/steady" "$BOTS_DIR/other" '
+            '"$BOTS_DIR/only"\n'
             'true & BOT_NAMES[$!]="only"\n'
             + self._supervisor_script()
-            + 'echo "exit=$RUNNER_EXIT_CODE"\n'
+            + 'echo "supervisor=drained"\n'
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -558,7 +585,178 @@ class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
                 self.skipTest(f"bash cannot be executed: {error}")
             self.assertEqual(0, result.returncode, result.stderr)
             self.assertEqual("operator\n", stop_file.read_text(encoding="utf-8"))
-        self.assertIn("exit=0", result.stdout)
+            self.assertEqual(
+                "0", (root / "bots" / "only" / "exit_code").read_text().strip()
+            )
+        self.assertIn("supervisor=drained", result.stdout)
+
+
+class AwsRiichiLabMultiBotScriptTest(unittest.TestCase):
+    """Issue #386: several explicitly configured bots on one instance."""
+
+    def _run_bootstrap(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        bash = _bash()
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        try:
+            return subprocess.run(
+                [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *extra],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            self.skipTest(f"bash cannot be executed: {error}")
+
+    def test_bootstrap_rejects_unsafe_bot_lists_before_any_work(self) -> None:
+        dev = "lisjong-dev=lisjong/riichilab/dev"
+        baseline = "lisjong-baseline=lisjong/riichilab/baseline"
+        cases = {
+            "duplicate profile": ("--bot", dev, "--bot", "lisjong-dev=other"),
+            "duplicate secret": (
+                "--bot",
+                dev,
+                "--bot",
+                "lisjong-baseline=lisjong/riichilab/dev",
+            ),
+            "missing secret": ("--bot", "lisjong-dev"),
+            "quote in secret": ("--bot", "lisjong-dev=a'b"),
+            "too many bots": (
+                "--bot",
+                dev,
+                "--bot",
+                baseline,
+                "--bot",
+                "lisjong=c",
+                "--bot",
+                "x=d",
+                "--bot",
+                "y=e",
+            ),
+            "bot with secret id": ("--bot", dev, "--secret-id", "other"),
+            "port overflow": (
+                "--bot",
+                dev,
+                "--bot",
+                baseline,
+                "--spectate-port",
+                "65535",
+                "--play-revision",
+                _SHA,
+            ),
+        }
+        for name, extra in cases.items():
+            with self.subTest(case=name):
+                result = self._run_bootstrap(*extra)
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertIn("--", result.stderr)
+
+    def test_single_bot_operation_stays_the_default(self) -> None:
+        bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
+        launcher = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('BOT_SPECS=("lisjong-dev=$SECRET_ID")', bootstrap)
+        self.assertIn('SECRET_ID="lisjong/riichilab/lisjong-dev-token"', bootstrap)
+        self.assertIn('$Bot = @("lisjong-dev=$SecretId")', launcher)
+        self.assertIn(
+            '[string]$SecretId = "lisjong/riichilab/lisjong-dev-token"', launcher
+        )
+
+    def test_bootstrap_resolves_every_credential_before_the_first_bot(self) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        check_config = text.index("aws_instance_run check-config")
+        token_fetch = text.index("secretsmanager get-secret-value")
+        resolved = text.index('echo "preflight: credentials_resolved=')
+        first_start = text.index('    start_bot "$profile"')
+        self.assertLess(check_config, token_fetch)
+        self.assertLess(token_fetch, resolved)
+        self.assertLess(resolved, first_start)
+        self.assertIn('--secret-id "${BOT_SECRET_IDS[$index]}"', text)
+        self.assertIn("resolve the same runtime token", text)
+        self.assertIn(
+            'echo "runtime secret could not be resolved for bot $profile"', text
+        )
+
+    def test_each_bot_process_receives_only_its_own_credential(self) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        start_bot = text[text.index("start_bot() {") :]
+        start_bot = start_bot[: start_bot.index("\n}\n")]
+        own = 'export "${BOT_ENV_VARS[$profile]}=${BOT_TOKENS[$profile]}"'
+        self.assertEqual(2, start_bot.count(own))
+        self.assertEqual(2, start_bot.count("unset BOT_TOKENS"))
+        self.assertNotIn('"${BOT_TOKENS[@]}"', text)
+        # Only the verifier's subshell receives every bot's variable.
+        verifier = text[text.index('SUMMARY_JSON="$(') :]
+        verifier = verifier[: verifier.index(')"\n')]
+        self.assertIn('for profile in "${BOT_PROFILES[@]}"; do', verifier)
+        self.assertIn(own, verifier)
+
+    def test_bootstrap_uses_per_bot_evidence_and_returns_failed_summaries(
+        self,
+    ) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn('BOTS_DIR="$WORK_ROOT/bots"', text)
+        self.assertIn('mkdir -p "$BOTS_DIR/$profile/records"', text)
+        self.assertIn('>"$BOTS_DIR/$EXITED_BOT/exit_code"', text)
+        self.assertIn('>"$BOTS_DIR/$EXITED_BOT/stop_utc"', text)
+        self.assertIn("several bots cannot stop together", text)
+        # The summary is returned for PASS and FAIL; exit code follows it.
+        tail = text[text.index('SUMMARY_B64="$(') :]
+        self.assertIn("printf 'LISJONG_COMPLETION_JSON_B64=%s\\n'", tail)
+        self.assertIn('exit "$VERIFY_EXIT_CODE"', tail)
+        self.assertLess(
+            tail.index("LISJONG_COMPLETION_JSON_B64"),
+            tail.index('exit "$VERIFY_EXIT_CODE"'),
+        )
+
+    def test_launcher_bot_list_mirrors_the_instance_contract(self) -> None:
+        from lisjong_arena.riichilab.aws_instance_run import (
+            _SECRET_ID_RE,
+            EXPECTED_POLICY_BY_PROFILE,
+            MAX_BOTS,
+        )
+
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn("[string[]]$Bot = @()", text)
+        supported = ", ".join(f'"{name}"' for name in EXPECTED_POLICY_BY_PROFILE)
+        self.assertIn(f"$supportedBotProfiles = @({supported})", text)
+        self.assertIn(f"$maxBots = {MAX_BOTS}", text)
+        self.assertIn(f"MAX_BOTS={MAX_BOTS}", bootstrap)
+        secret = _SECRET_ID_RE.pattern
+        self.assertIn(f"'^([a-z0-9-]+)=({secret})$'", text)
+        self.assertIn(f"^([a-z0-9-]+)=({secret})$", bootstrap)
+        self.assertIn('$PSBoundParameters.ContainsKey("SecretId")', text)
+        self.assertIn(
+            "$remoteCommand += \" --bot '$($botEntry.profile)=$($botEntry.secret_id)'\"",
+            text,
+        )
+        self.assertNotIn("--secret-id '$SecretId'", text)
+        self.assertIn(
+            "spectate_port = $(if ($spectate) { $SpectatePort + $index }", text
+        )
+        self.assertEqual(
+            2, text.count("bots = @($bots | ForEach-Object {\n            [ordered]@{")
+        )
+
+    def test_collector_keeps_per_bot_attribution_for_pass_and_fail(self) -> None:
+        text = _COLLECTOR.read_text(encoding="utf-8")
+        self.assertIn('"lisjong-arena-aws-riichilab-instance-run-summary"', text)
+        self.assertIn("legacy_single_bot", text)
+        failure = text[text.index('if ($status -ne "Success") {') :]
+        failure = failure[: failure.index("throw ")]
+        self.assertLess(
+            failure.index("Write-JsonFile -Value $failedSummary"),
+            failure.index("Ensure-InstanceTerminated"),
+        )
+        self.assertIn('if ([string]$summary.status -ne "PASS")', text)
+        self.assertIn("$SecretIds | ForEach-Object", text)
+
+    def test_watcher_selects_the_bot_port(self) -> None:
+        text = _WATCHER.read_text(encoding="utf-8")
+        self.assertIn('[string]$Bot = ""', text)
+        self.assertIn('$state.PSObject.Properties["bots"]', text)
+        self.assertIn("This run has several bots; pass -Bot", text)
+        self.assertIn('$state.PSObject.Properties["spectate_port"]', text)
 
 
 if __name__ == "__main__":

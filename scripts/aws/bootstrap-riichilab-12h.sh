@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The bot supervisor uses `wait -n -p` (bash 5.1+).
+if ((BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1))); then
+    echo "bash 5.1 or newer is required" >&2
+    exit 2
+fi
+
 ARENA_REVISION=""
 REGION="ap-northeast-1"
 SECRET_ID="lisjong/riichilab/lisjong-dev-token"
+SECRET_ID_GIVEN=0
 DURATION_SECONDS="43200"
 WORK_ROOT="/var/lib/lisjong-riichilab-313"
 REPOSITORY_URL="https://github.com/lisbun/lisjong-arena.git"
-PROFILE="lisjong-dev"
-POLICY="MechanismRiichiDefenseYakuhaiCallPolicy"
+# Issue #386: explicit bots of this run, `--bot PROFILE=SECRET_ID` in launch
+# order. Without --bot the run is the single lisjong-dev bot reading
+# --secret-id, as before. Profiles, Policies and secrets are checked by
+# lisjong_arena.riichilab.aws_instance_run before any credential is fetched.
+BOT_SPECS=()
+MAX_BOTS=4
 # Optional live spectating (Issue #381). Both values are required together.
 SPECTATE_PORT=""
 PLAY_REVISION=""
@@ -29,6 +40,11 @@ while (($#)); do
             ;;
         --secret-id)
             SECRET_ID="$2"
+            SECRET_ID_GIVEN=1
+            shift 2
+            ;;
+        --bot)
+            BOT_SPECS+=("$2")
             shift 2
             ;;
         --duration-seconds)
@@ -86,9 +102,41 @@ if [[ -n "$SPECTATE_PORT" || -n "$PLAY_REVISION" ]]; then
     fi
     SPECTATE=1
 fi
-# The bot supervisor uses `wait -n -p` (bash 5.1+).
-if ((BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1))); then
-    echo "bash 5.1 or newer is required" >&2
+if ((${#BOT_SPECS[@]} == 0)); then
+    BOT_SPECS=("lisjong-dev=$SECRET_ID")
+elif [[ "$SECRET_ID_GIVEN" == "1" ]]; then
+    echo "--bot cannot be combined with --secret-id" >&2
+    exit 2
+fi
+if ((${#BOT_SPECS[@]} > MAX_BOTS)); then
+    echo "--bot accepts at most $MAX_BOTS bots" >&2
+    exit 2
+fi
+BOT_PROFILES=()
+BOT_SECRET_IDS=()
+declare -A SEEN_PROFILES=()
+declare -A SEEN_SECRET_IDS=()
+for spec in "${BOT_SPECS[@]}"; do
+    if [[ ! "$spec" =~ ^([a-z0-9-]+)=([A-Za-z0-9/_+=.@-]+)$ ]]; then
+        echo "--bot must be PROFILE=SECRET_ID" >&2
+        exit 2
+    fi
+    if [[ -n "${SEEN_PROFILES[${BASH_REMATCH[1]}]:-}" ]]; then
+        echo "--bot profiles must be unique" >&2
+        exit 2
+    fi
+    if [[ -n "${SEEN_SECRET_IDS[${BASH_REMATCH[2]}]:-}" ]]; then
+        echo "--bot secret ids must be unique" >&2
+        exit 2
+    fi
+    SEEN_PROFILES[${BASH_REMATCH[1]}]=1
+    SEEN_SECRET_IDS[${BASH_REMATCH[2]}]=1
+    BOT_PROFILES+=("${BASH_REMATCH[1]}")
+    BOT_SECRET_IDS+=("${BASH_REMATCH[2]}")
+done
+# One loopback viewer port per bot: --spectate-port + index, in launch order.
+if [[ "$SPECTATE" == "1" ]] && ((SPECTATE_PORT + ${#BOT_PROFILES[@]} - 1 > 65535)); then
+    echo "--spectate-port leaves no room for one port per bot" >&2
     exit 2
 fi
 if [[ "$(id -u)" != "0" ]]; then
@@ -117,8 +165,9 @@ fi
 mkdir -p "$WORK_ROOT"
 chmod 700 "$WORK_ROOT"
 BOOTSTRAP_LOG="$WORK_ROOT/bootstrap.log"
-RUNNER_LOG="$WORK_ROOT/continuous.log"
-RECORD_DIR="$WORK_ROOT/records"
+# Per-bot evidence: $BOTS_DIR/<profile>/{records,continuous.log,exit_code,stop_utc}.
+# Profiles are unique, so no two bots share a record path or log.
+BOTS_DIR="$WORK_ROOT/bots"
 REPO_DIR="$WORK_ROOT/repo"
 PLAY_DIR="$WORK_ROOT/play"
 # Issue #383: one instance-wide stop request shared by every bot of this run.
@@ -128,7 +177,7 @@ PLAY_DIR="$WORK_ROOT/play"
 #   bot-exited:<name>   a bot of this run exited, so the others stop as well
 STOP_FILE="$WORK_ROOT/stop-requested"
 
-if [[ -e "$REPO_DIR" || -e "$PLAY_DIR" || -e "$RECORD_DIR" || -e "$RUNNER_LOG" ]]; then
+if [[ -e "$REPO_DIR" || -e "$PLAY_DIR" || -e "$BOTS_DIR" ]]; then
     echo "work root is not fresh" >&2
     exit 1
 fi
@@ -228,13 +277,14 @@ if [[ "$SPECTATE" == "1" ]]; then
         echo "lisjong-play viewer does not expose --continuous" >&2
         exit 1
     fi
-    echo "preflight: spectate=on play_revision=$PLAY_REVISION port=$SPECTATE_PORT bind=127.0.0.1"
+    echo "preflight: spectate=on play_revision=$PLAY_REVISION base_port=$SPECTATE_PORT bind=127.0.0.1"
 fi
 
-# The operator stop request is always enabled for the Arena runner. A
-# lisjong-play viewer that does not forward --stop-file keeps the previous
-# duration-only behavior; an until-stopped run could then never stop normally,
-# so that combination fails closed.
+# The stop request is always enabled for the Arena runner. A lisjong-play
+# viewer that does not forward --stop-file keeps the previous duration-only
+# behavior. An until-stopped run could then never stop normally, and with
+# several bots one bot's exit could not stop the others, so those combinations
+# fail closed.
 STOP_FILE_ENABLED=1
 if [[ "$SPECTATE" == "1" ]] &&
     ! "$PYTHON" -m lisjong_play.riichilab_html --help | grep -q -- "--stop-file"; then
@@ -242,22 +292,41 @@ if [[ "$SPECTATE" == "1" ]] &&
         echo "lisjong-play viewer does not expose --stop-file; --until-stopped cannot stop normally" >&2
         exit 1
     fi
+    if ((${#BOT_PROFILES[@]} > 1)); then
+        echo "lisjong-play viewer does not expose --stop-file; several bots cannot stop together" >&2
+        exit 1
+    fi
     STOP_FILE_ENABLED=0
 fi
 echo "preflight: stop_file=$([[ "$STOP_FILE_ENABLED" == "1" ]] && echo on || echo off) until_stopped=$UNTIL_STOPPED"
 
-PROFILE_POLICY="$(
-    "$PYTHON" - <<'PY'
-from lisjong_arena.riichilab.profile import resolve_profile
-profile = resolve_profile("lisjong-dev")
-print(f"{profile.name}:{type(profile.policy_factory()).__name__}")
-PY
-)"
-if [[ "$PROFILE_POLICY" != "$PROFILE:$POLICY" ]]; then
-    echo "profile or Policy preflight mismatch" >&2
+# Known profile, explicit expected Policy (checked against the runtime
+# profile), distinct credential variables, collision-free viewer ports.
+BOT_CONFIG_ARGS=()
+for spec in "${BOT_SPECS[@]}"; do
+    BOT_CONFIG_ARGS+=(--bot "$spec")
+done
+if [[ "$SPECTATE" == "1" ]]; then
+    BOT_CONFIG_ARGS+=(--spectate-base-port "$SPECTATE_PORT")
+fi
+BOT_CONFIG="$("$PYTHON" -m lisjong_arena.riichilab.aws_instance_run check-config "${BOT_CONFIG_ARGS[@]}")"
+declare -A BOT_ENV_VARS=()
+declare -A BOT_PORTS=()
+bot_index=0
+while IFS=$'\t' read -r profile env_var policy port; do
+    if [[ "$profile" != "${BOT_PROFILES[$bot_index]:-}" ]]; then
+        echo "bot configuration preflight mismatch" >&2
+        exit 1
+    fi
+    BOT_ENV_VARS[$profile]="$env_var"
+    BOT_PORTS[$profile]="$port"
+    echo "preflight: bot=$profile policy=$policy spectate_port=$port"
+    bot_index=$((bot_index + 1))
+done <<<"$BOT_CONFIG"
+if ((bot_index != ${#BOT_PROFILES[@]})); then
+    echo "bot configuration preflight mismatch" >&2
     exit 1
 fi
-echo "preflight: profile=$PROFILE policy=$POLICY"
 
 CONTINUOUS_HELP="$("$PYTHON" -m lisjong_arena.riichilab.continuous_ranked --help)"
 if ! grep -q -- "--duration-seconds" <<<"$CONTINUOUS_HELP"; then
@@ -270,7 +339,7 @@ if ! grep -q -- "--stop-file" <<<"$CONTINUOUS_HELP"; then
 fi
 
 RUNNER_BOUND_ARGS=()
-VERIFY_BOUND_ARGS=()
+VERIFY_BOUND_ARGS=("${BOT_CONFIG_ARGS[@]}" --stop-file "$STOP_FILE")
 if [[ "$UNTIL_STOPPED" == "1" ]]; then
     VERIFY_BOUND_ARGS+=(--until-stopped)
 else
@@ -279,38 +348,58 @@ else
 fi
 if [[ "$STOP_FILE_ENABLED" == "1" ]]; then
     RUNNER_BOUND_ARGS+=(--stop-file "$STOP_FILE")
-    VERIFY_BOUND_ARGS+=(--stop-file "$STOP_FILE")
 fi
 
-mkdir "$RECORD_DIR"
-chmod 700 "$RECORD_DIR"
-probe="$RECORD_DIR/.write-probe"
-: >"$probe"
-rm "$probe"
+mkdir "$BOTS_DIR"
+chmod 700 "$BOTS_DIR"
+for profile in "${BOT_PROFILES[@]}"; do
+    mkdir -p "$BOTS_DIR/$profile/records"
+    chmod -R 700 "$BOTS_DIR/$profile"
+    probe="$BOTS_DIR/$profile/records/.write-probe"
+    : >"$probe"
+    rm "$probe"
+done
 
-# Retrieve the full response as JSON (rather than --output text) so any
-# CR/LF stored inside SecretString survives as a JSON escape sequence
-# instead of a raw trailing newline byte that command substitution would
-# strip before the secret-shape validator ever sees it (Issue #336).
-SECRET_RESPONSE_JSON="$(
-    aws secretsmanager get-secret-value         --region "$REGION"         --secret-id "$SECRET_ID"         --output json
-)"
-TOKEN="$(
-    printf '%s' "$SECRET_RESPONSE_JSON" |
-        "$PYTHON" -m lisjong_arena.riichilab.secret_contract
-)"
-unset SECRET_RESPONSE_JSON
-if [[ -z "$TOKEN" ]]; then
-    echo "runtime secret could not be resolved" >&2
-    exit 1
-fi
-export LISJONG_DEV_BOT_TOKEN="$TOKEN"
-unset TOKEN
+# Every configured bot's credential is resolved before any bot starts; one
+# failure starts no bot. Retrieve the full response as JSON (rather than
+# --output text) so any CR/LF stored inside SecretString survives as a JSON
+# escape sequence instead of a raw trailing newline byte that command
+# substitution would strip before the secret-shape validator ever sees it
+# (Issue #336). Tokens stay in this shell's memory: none is exported, and each
+# bot process receives only its own profile's credential variable.
+declare -A BOT_TOKENS=()
+for index in "${!BOT_PROFILES[@]}"; do
+    profile="${BOT_PROFILES[$index]}"
+    SECRET_RESPONSE_JSON="$(
+        aws secretsmanager get-secret-value \
+            --region "$REGION" \
+            --secret-id "${BOT_SECRET_IDS[$index]}" \
+            --output json
+    )"
+    TOKEN="$(
+        printf '%s' "$SECRET_RESPONSE_JSON" |
+            "$PYTHON" -m lisjong_arena.riichilab.secret_contract
+    )"
+    unset SECRET_RESPONSE_JSON
+    if [[ -z "$TOKEN" ]]; then
+        echo "runtime secret could not be resolved for bot $profile" >&2
+        exit 1
+    fi
+    for other in "${!BOT_TOKENS[@]}"; do
+        if [[ "${BOT_TOKENS[$other]}" == "$TOKEN" ]]; then
+            echo "bots $other and $profile resolve the same runtime token" >&2
+            exit 1
+        fi
+    done
+    BOT_TOKENS[$profile]="$TOKEN"
+    unset TOKEN
+done
+echo "preflight: credentials_resolved=${#BOT_TOKENS[@]}"
 
 # Normal teardown: poweroff (-> terminate) five minutes later. The Windows
 # launcher / collector normally terminates the instance sooner, but this timer
 # prevents an expired/disconnected local SSO session from leaving the instance
-# billable after the bot has stopped.
+# billable after the bots have stopped.
 NORMAL_TEARDOWN_ARMED=0
 arm_normal_teardown() {
     if [[ "$NORMAL_TEARDOWN_ARMED" == "1" ]]; then
@@ -331,7 +420,7 @@ arm_normal_teardown() {
 # this run has exited, so no bot is left running on the instance.
 RUNNER_STARTED=0
 on_exit() {
-    unset LISJONG_DEV_BOT_TOKEN
+    unset BOT_TOKENS
     if [[ "$UNTIL_STOPPED" == "1" && "$RUNNER_STARTED" == "1" ]]; then
         arm_normal_teardown || true
     fi
@@ -358,21 +447,38 @@ request_stop() {
 }
 
 # Bot supervisor. All bots of a run are started by this one bootstrap and are
-# tracked by PID -> bot name. When any bot exits (normally or not), the others
-# are asked to finish their hanchan in progress and stop. The run currently
-# starts exactly one bot.
+# tracked by PID -> profile. When any bot exits (normally or not), the others
+# are asked to finish their hanchan in progress and stop.
 declare -A BOT_NAMES=()
-declare -A BOT_EXIT_CODES=()
+start_bot() {
+    local profile="$1"
+    local directory="$BOTS_DIR/$profile"
+    local args=(--profile "$profile" "${RUNNER_BOUND_ARGS[@]}" --record-dir "$directory/records")
+    if [[ "$SPECTATE" == "1" ]]; then
+        # Same Arena continuous runner and summary output, plus the
+        # loopback-only live viewer in the same process, on this bot's own
+        # port. Reach it with SSM port forwarding.
+        args+=(--port "${BOT_PORTS[$profile]}")
+        (
+            export "${BOT_ENV_VARS[$profile]}=${BOT_TOKENS[$profile]}"
+            unset BOT_TOKENS
+            exec "$PYTHON" -m lisjong_play.riichilab_html --continuous "${args[@]}"
+        ) >"$directory/continuous.log" 2>&1 &
+    else
+        (
+            export "${BOT_ENV_VARS[$profile]}=${BOT_TOKENS[$profile]}"
+            unset BOT_TOKENS
+            exec "$PYTHON" -m lisjong_arena.riichilab.continuous_ranked "${args[@]}"
+        ) >"$directory/continuous.log" 2>&1 &
+    fi
+    BOT_NAMES[$!]="$profile"
+    echo "run: bot_started name=$profile"
+}
+
 RUNNER_STARTED=1
-if [[ "$SPECTATE" == "1" ]]; then
-    # Same Arena continuous runner and summary output, plus the loopback-only
-    # live viewer in the same process. Reach it with SSM port forwarding.
-    "$PYTHON" -m lisjong_play.riichilab_html         --continuous         --profile "$PROFILE"         "${RUNNER_BOUND_ARGS[@]}"         --record-dir "$RECORD_DIR"         --port "$SPECTATE_PORT"         >"$RUNNER_LOG" 2>&1 &
-else
-    "$PYTHON" -m lisjong_arena.riichilab.continuous_ranked         --profile "$PROFILE"         "${RUNNER_BOUND_ARGS[@]}"         --record-dir "$RECORD_DIR"         >"$RUNNER_LOG" 2>&1 &
-fi
-BOT_NAMES[$!]="$PROFILE"
-echo "run: bot_started name=$PROFILE"
+for profile in "${BOT_PROFILES[@]}"; do
+    start_bot "$profile"
+done
 
 RUNNING_BOT_PIDS=("${!BOT_NAMES[@]}")
 while ((${#RUNNING_BOT_PIDS[@]})); do
@@ -380,9 +486,11 @@ while ((${#RUNNING_BOT_PIDS[@]})); do
     wait -n -p EXITED_BOT_PID "${RUNNING_BOT_PIDS[@]}"
     EXITED_BOT_CODE=$?
     set -e
-    BOT_EXIT_CODES[$EXITED_BOT_PID]=$EXITED_BOT_CODE
-    request_stop "bot-exited:${BOT_NAMES[$EXITED_BOT_PID]}"
-    echo "run: bot_exited name=${BOT_NAMES[$EXITED_BOT_PID]} exit_code=$EXITED_BOT_CODE stop_requested_for_others=1"
+    EXITED_BOT="${BOT_NAMES[$EXITED_BOT_PID]}"
+    printf '%s\n' "$EXITED_BOT_CODE" >"$BOTS_DIR/$EXITED_BOT/exit_code"
+    date -u '+%Y-%m-%dT%H:%M:%SZ' >"$BOTS_DIR/$EXITED_BOT/stop_utc"
+    request_stop "bot-exited:$EXITED_BOT"
+    echo "run: bot_exited name=$EXITED_BOT exit_code=$EXITED_BOT_CODE stop_requested_for_others=1"
     REMAINING_BOT_PIDS=()
     for pid in "${RUNNING_BOT_PIDS[@]}"; do
         if [[ "$pid" != "$EXITED_BOT_PID" ]]; then
@@ -392,32 +500,39 @@ while ((${#RUNNING_BOT_PIDS[@]})); do
     RUNNING_BOT_PIDS=("${REMAINING_BOT_PIDS[@]}")
 done
 
-RUNNER_EXIT_CODE=0
-for pid in "${!BOT_EXIT_CODES[@]}"; do
-    if [[ "${BOT_EXIT_CODES[$pid]}" -ne 0 ]]; then
-        RUNNER_EXIT_CODE="${BOT_EXIT_CODES[$pid]}"
-    fi
-done
+# Every bot has exited. Verify each bot independently; every bot's evidence
+# is scanned for all runtime tokens of this run. The verifier alone receives
+# all credential variables.
+set +e
+SUMMARY_JSON="$(
+    for profile in "${BOT_PROFILES[@]}"; do
+        export "${BOT_ENV_VARS[$profile]}=${BOT_TOKENS[$profile]}"
+    done
+    unset BOT_TOKENS
+    exec "$PYTHON" -m lisjong_arena.riichilab.aws_instance_run verify \
+        --work-root "$WORK_ROOT" \
+        --expected-arena-revision "$ARENA_REVISION" \
+        --start-utc "$START_UTC" \
+        "${VERIFY_BOUND_ARGS[@]}"
+)"
+VERIFY_EXIT_CODE=$?
+set -e
+unset BOT_TOKENS
 
-STOP_EPOCH="$(date +%s)"
-STOP_UTC="$(date -u -d "@$STOP_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
-ELAPSED_SECONDS="$((STOP_EPOCH - START_EPOCH))"
-
-if [[ "$RUNNER_EXIT_CODE" -ne 0 ]]; then
-    echo "run: continuous_ranked failed with exit code $RUNNER_EXIT_CODE" >&2
-    exit "$RUNNER_EXIT_CODE"
+if [[ "$VERIFY_EXIT_CODE" -gt 1 || -z "$SUMMARY_JSON" ]]; then
+    echo "run: instance verification could not run (exit code $VERIFY_EXIT_CODE)" >&2
+    exit 1
 fi
 
-SUMMARY_JSON="$(
-    "$PYTHON" -m lisjong_arena.riichilab.aws_run_verify         --record-dir "$RECORD_DIR"         --runner-log "$RUNNER_LOG"         --expected-arena-revision "$ARENA_REVISION"         --expected-profile "$PROFILE"         --expected-policy "$POLICY"         "${VERIFY_BOUND_ARGS[@]}"         --start-utc "$START_UTC"         --stop-utc "$STOP_UTC"         --elapsed-seconds "$ELAPSED_SECONDS"
-)"
-
-unset LISJONG_DEV_BOT_TOKEN
-
-# After durable verification and secret unset have succeeded, arm the normal
-# teardown for every mode.
-arm_normal_teardown
-
+# The secret-safe instance summary is returned for PASS and FAIL alike, so a
+# failing bot stays attributable. Teardown is armed only after every bot has
+# exited and verification succeeded (until-stopped also arms it on exit).
 SUMMARY_B64="$(printf '%s' "$SUMMARY_JSON" | base64 -w0)"
-echo "run: verification=PASS normal_teardown_armed=5min"
+if [[ "$VERIFY_EXIT_CODE" -eq 0 ]]; then
+    arm_normal_teardown
+    echo "run: verification=PASS normal_teardown_armed=5min"
+else
+    echo "run: verification=FAIL" >&2
+fi
 printf 'LISJONG_COMPLETION_JSON_B64=%s\n' "$SUMMARY_B64"
+exit "$VERIFY_EXIT_CODE"

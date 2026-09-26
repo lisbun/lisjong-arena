@@ -8,6 +8,9 @@ param(
     [string]$InstanceProfileName = "",
     [string]$SubnetId = "",
     [string]$SecretId = "lisjong/riichilab/lisjong-dev-token",
+    # Issue #386: explicit bots of this run, "PROFILE=SECRET_ID" in launch order.
+    # Without -Bot the run is the single lisjong-dev bot reading -SecretId.
+    [string[]]$Bot = @(),
     [string]$InstanceType = "t3.small",
     [int]$DurationSeconds = 43200,
     [int]$FailSafeHours = 14,
@@ -63,8 +66,43 @@ if ($spectate -and ($SpectatePort -lt 1024 -or $SpectatePort -gt 65535)) {
 if (-not $spectate -and -not [string]::IsNullOrWhiteSpace($PlayRevision)) {
     throw "PlayRevision requires SpectatePort."
 }
-if ($SecretId.Contains("'")) {
-    throw "SecretId containing a single quote is not supported by this launcher."
+# Mirrors EXPECTED_POLICY_BY_PROFILE / MAX_BOTS in
+# lisjong_arena.riichilab.aws_instance_run, which the bootstrap enforces again
+# (with the runtime Policy check) before any credential is fetched.
+$supportedBotProfiles = @("lisjong-dev", "lisjong-baseline", "lisjong")
+$maxBots = 4
+if ($Bot.Count -eq 0) {
+    $Bot = @("lisjong-dev=$SecretId")
+} elseif ($PSBoundParameters.ContainsKey("SecretId")) {
+    throw "Bot cannot be combined with SecretId; name each bot's secret in -Bot PROFILE=SECRET_ID."
+}
+if ($Bot.Count -gt $maxBots) {
+    throw "At most $maxBots bots are supported on one instance."
+}
+$bots = @()
+for ($index = 0; $index -lt $Bot.Count; $index++) {
+    $match = [regex]::Match($Bot[$index], '^([a-z0-9-]+)=([A-Za-z0-9/_+=.@-]+)$')
+    if (-not $match.Success) {
+        throw "Bot '$($Bot[$index])' must be PROFILE=SECRET_ID."
+    }
+    $botProfile = $match.Groups[1].Value
+    if ($botProfile -cnotin $supportedBotProfiles) {
+        throw "Bot profile '$botProfile' is not supported; choose from $($supportedBotProfiles -join ', ')."
+    }
+    $bots += [pscustomobject]@{
+        profile = $botProfile
+        secret_id = $match.Groups[2].Value
+        spectate_port = $(if ($spectate) { $SpectatePort + $index } else { $null })
+    }
+}
+if (@($bots.profile | Sort-Object -Unique -CaseSensitive).Count -ne $bots.Count) {
+    throw "Bot profiles must be unique."
+}
+if (@($bots.secret_id | Sort-Object -Unique -CaseSensitive).Count -ne $bots.Count) {
+    throw "Bot secret ids must be unique; bots must not share a credential."
+}
+if ($spectate -and ($SpectatePort + $bots.Count - 1) -gt 65535) {
+    throw "SpectatePort leaves no room for one viewer port per bot (ports $SpectatePort + 0..$($bots.Count - 1))."
 }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
@@ -272,8 +310,14 @@ if ($spectate) {
     }
 }
 
-$secret = Invoke-AwsJson -Arguments @("secretsmanager", "describe-secret", "--secret-id", $SecretId)
-$secretArn = [string]$secret.ARN
+foreach ($botEntry in $bots) {
+    $secret = Invoke-AwsJson -Arguments @("secretsmanager", "describe-secret", "--secret-id", $botEntry.secret_id)
+    $botEntry | Add-Member -NotePropertyName secret_arn -NotePropertyValue ([string]$secret.ARN)
+}
+$secretArns = @($bots | ForEach-Object { $_.secret_arn })
+if (@($secretArns | Sort-Object -Unique -CaseSensitive).Count -ne $bots.Count) {
+    throw "Bot secret ids resolve to the same secret; bots must not share a credential."
+}
 $role = Invoke-AwsJson -Arguments @("iam", "get-role", "--role-name", $RoleName)
 $roleArn = [string]$role.Role.Arn
 
@@ -292,12 +336,12 @@ if ([string]::IsNullOrWhiteSpace($InstanceProfileName)) {
     }
 }
 
-$denyProbeArn = "$secretArn-issue313-deny-probe"
-$simulation = Invoke-AwsJson -Arguments @(
+$denyProbeArn = "$($secretArns[0])-issue313-deny-probe"
+$simulation = Invoke-AwsJson -Arguments (@(
     "iam", "simulate-principal-policy",
     "--policy-source-arn", $roleArn,
     "--action-names", "secretsmanager:GetSecretValue",
-    "--resource-arns", $secretArn, $denyProbeArn
+    "--resource-arns") + $secretArns + @($denyProbeArn)
 )
 $decisions = @{}
 foreach ($entry in @($simulation.EvaluationResults)) {
@@ -321,14 +365,16 @@ foreach ($entry in @($simulation.EvaluationResults)) {
         $decisions[[string]$evalResourceNameProperty.Value] = [string]$entry.EvalDecision
     }
 }
-if (-not $decisions.ContainsKey($secretArn)) {
-    throw "IAM simulation did not return a resource-specific result for the intended RiichiLab secret."
+foreach ($botEntry in $bots) {
+    if (-not $decisions.ContainsKey($botEntry.secret_arn)) {
+        throw "IAM simulation did not return a resource-specific result for bot $($botEntry.profile)'s RiichiLab secret."
+    }
+    if ($decisions[$botEntry.secret_arn] -ne "allowed") {
+        throw "Instance role is not allowed to read bot $($botEntry.profile)'s RiichiLab secret."
+    }
 }
 if (-not $decisions.ContainsKey($denyProbeArn)) {
     throw "IAM simulation did not return a resource-specific result for the deny-probe secret ARN."
-}
-if ($decisions[$secretArn] -ne "allowed") {
-    throw "Instance role is not allowed to read the intended RiichiLab secret."
 }
 if ($decisions[$denyProbeArn] -eq "allowed") {
     throw "Instance role can read a deny-probe secret ARN; least-privilege secret access is not demonstrated."
@@ -431,8 +477,14 @@ $preflightSummary = [ordered]@{
     subnet_id = $SubnetId
     ami_id = $amiId
     instance_type = $InstanceType
-    secret_id = $SecretId
-    intended_secret_read_allowed = ($decisions[$secretArn] -eq "allowed")
+    bots = @($bots | ForEach-Object {
+        [ordered]@{
+            profile = $_.profile
+            secret_id = $_.secret_id
+            spectate_port = $_.spectate_port
+            intended_secret_read_allowed = ($decisions[$_.secret_arn] -eq "allowed")
+        }
+    })
     deny_probe_secret_read_allowed = ($decisions[$denyProbeArn] -eq "allowed")
     projected_cost_bound_hours = $FailSafeHours
     hourly_compute_price_usd = $preflightHourlyPrice
@@ -440,7 +492,6 @@ $preflightSummary = [ordered]@{
     public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
     projected_public_ipv4_cost_usd = $preflightProjectedPublicIpv4Cost
     projected_known_cost_usd = $preflightProjectedKnownCost
-    spectate_port = $(if ($spectate) { $SpectatePort } else { $null })
     play_revision = $(if ($spectate) { $PlayRevision } else { $null })
     until_stopped = [bool]$UntilStopped
     duration_seconds = $(if ($UntilStopped) { $null } else { $DurationSeconds })
@@ -452,7 +503,11 @@ Write-JsonFile -Value $preflightSummary -Path $preflightPath
 Write-Host "Issue #313 run id: $runId"
 Write-Host "Arena revision: $ArenaRevision"
 if ($spectate) {
-    Write-Host "Live spectating: lisjong-play $PlayRevision on instance 127.0.0.1:$SpectatePort (SSM port forwarding only)"
+    Write-Host "Live spectating: lisjong-play $PlayRevision on instance 127.0.0.1 (SSM port forwarding only)"
+}
+foreach ($botEntry in $bots) {
+    $portNote = $(if ($spectate) { " / viewer port $($botEntry.spectate_port)" } else { "" })
+    Write-Host "Bot: $($botEntry.profile) / secret $($botEntry.secret_id)$portNote"
 }
 Write-Host "AMI: $amiId / subnet: $SubnetId / SG: $SecurityGroupId"
 
@@ -535,7 +590,9 @@ try {
         launch_time_utc = $launchTimeUtc.ToUniversalTime().ToString("o")
         ami_id = $amiId
         instance_type = $InstanceType
-        secret_id = $SecretId
+        bots = @($bots | ForEach-Object {
+            [ordered]@{ profile = $_.profile; secret_id = $_.secret_id; spectate_port = $_.spectate_port }
+        })
         public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
         hourly_price_usd = $HourlyPriceUsd
         fail_safe_hours = $FailSafeHours
@@ -606,7 +663,10 @@ try {
 
     $executionTimeout = ($FailSafeHours * 3600) + 3600
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-riichilab-12h.sh"
-    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-313.sh; chmod 700 /tmp/lisjong-bootstrap-313.sh; exec /tmp/lisjong-bootstrap-313.sh --arena-revision '$ArenaRevision' --region '$Region' --secret-id '$SecretId'"
+    $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-313.sh; chmod 700 /tmp/lisjong-bootstrap-313.sh; exec /tmp/lisjong-bootstrap-313.sh --arena-revision '$ArenaRevision' --region '$Region'"
+    foreach ($botEntry in $bots) {
+        $remoteCommand += " --bot '$($botEntry.profile)=$($botEntry.secret_id)'"
+    }
     if ($UntilStopped) {
         $remoteCommand += " --until-stopped"
     } else {
@@ -629,13 +689,14 @@ try {
         launch_time_utc = $launchTimeUtc.ToUniversalTime().ToString("o")
         ami_id = $amiId
         instance_type = $InstanceType
-        secret_id = $SecretId
+        bots = @($bots | ForEach-Object {
+            [ordered]@{ profile = $_.profile; secret_id = $_.secret_id; spectate_port = $_.spectate_port }
+        })
         volume_ids = @($volumeIds)
         public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
         hourly_price_usd = $HourlyPriceUsd
         fail_safe_armed = $failsafeArmed
         fail_safe_hours = $FailSafeHours
-        spectate_port = $(if ($spectate) { $SpectatePort } else { $null })
         play_revision = $(if ($spectate) { $PlayRevision } else { $null })
         until_stopped = [bool]$UntilStopped
         duration_seconds = $(if ($UntilStopped) { $null } else { $DurationSeconds })
@@ -653,7 +714,9 @@ try {
     }
     Write-Host "Request a stop (finish the current hanchan, verify, then terminate) with: .\scripts\aws\stop-riichilab.ps1 -AwsProfile $AwsProfile -StatePath '$statePath'"
     if ($spectate) {
-        Write-Host "Watch live with: .\scripts\aws\watch-riichilab.ps1 -AwsProfile $AwsProfile -StatePath '$statePath'"
+        foreach ($botEntry in $bots) {
+            Write-Host "Watch $($botEntry.profile) live with: .\scripts\aws\watch-riichilab.ps1 -AwsProfile $AwsProfile -StatePath '$statePath' -Bot $($botEntry.profile)"
+        }
     }
     if ($SubmitOnly) {
         Write-Host "SUBMITTED: remote run is detached from this PowerShell session."
@@ -677,11 +740,9 @@ try {
             -FailSafeHours $FailSafeHours
         throw "Local monitor detached; remote execution status is unknown."
     }
-    $invocation = $monitorResult.Invocation
     $commandTerminal = $true
-    if ([string]$monitorResult.Outcome -eq "RemoteFailure") {
-        throw "Remote scientific execution failure confirmed: SSM status $($invocation.Status)."
-    }
+    # The collector also handles a remote failure: it preserves the secret-safe
+    # per-bot summary when one was returned, terminates, and then throws.
 
     $collectorPath = Join-Path $PSScriptRoot "collect-riichilab-12h.ps1"
     $collectorArgs = @{

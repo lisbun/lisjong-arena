@@ -36,7 +36,14 @@ $Region = [string]$state.region
 $ArenaRevision = [string]$state.arena_revision
 $InstanceType = $(if ($null -ne $state.PSObject.Properties["instance_type"]) { [string]$state.instance_type } else { "t3.small" })
 $AmiId = $(if ($null -ne $state.PSObject.Properties["ami_id"]) { [string]$state.ami_id } else { "" })
-$SecretId = $(if ($null -ne $state.PSObject.Properties["secret_id"]) { [string]$state.secret_id } else { "lisjong/riichilab/lisjong-dev-token" })
+# Issue #386 state lists every bot; older state carries the single secret_id.
+if ($null -ne $state.PSObject.Properties["bots"] -and $null -ne $state.bots) {
+    $SecretIds = @($state.bots | ForEach-Object { [string]$_.secret_id })
+} elseif ($null -ne $state.PSObject.Properties["secret_id"]) {
+    $SecretIds = @([string]$state.secret_id)
+} else {
+    $SecretIds = @("lisjong/riichilab/lisjong-dev-token")
+}
 $FailSafeHours = $(if ($null -ne $state.PSObject.Properties["fail_safe_hours"]) { [int]$state.fail_safe_hours } else { 14 })
 
 if ($null -eq $PublicIpv4HourlyPriceUsd) {
@@ -215,9 +222,45 @@ if ($status -in @("Pending", "InProgress", "Delayed")) {
     return
 }
 
+function Get-CompletionSummary {
+    param([string]$Stdout)
+    $sentinel = [regex]::Match($Stdout, "LISJONG_COMPLETION_JSON_B64=([A-Za-z0-9+/=]+)")
+    if (-not $sentinel.Success) {
+        return $null
+    }
+    $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sentinel.Groups[1].Value))
+    $parsed = $decoded | ConvertFrom-Json
+    $schemaId = $(if ($null -ne $parsed.PSObject.Properties["schema_id"]) { [string]$parsed.schema_id } else { "" })
+    if ($schemaId -eq "lisjong-arena-aws-riichilab-instance-run-summary") {
+        return $parsed
+    }
+    if ($schemaId -eq "lisjong-arena-aws-riichilab-bounded-run-summary") {
+        # A single-bot run started from a revision before Issue #386 returns the
+        # per-bot summary itself. Keep it as is and mark it explicitly.
+        $parsed | Add-Member -NotePropertyName legacy_single_bot -NotePropertyValue $true -Force
+        return $parsed
+    }
+    throw "Completion summary has an unknown schema: $schemaId"
+}
+
 if ($status -ne "Success") {
     Set-StateField -Name "state" -Value "remote_failed"
     Write-JsonFile -Value $state -Path $StatePath
+
+    # Issue #386: a failed multi-bot run still returns its secret-safe
+    # per-bot summary. Preserve it before any teardown API call so that the
+    # failing bot stays attributable.
+    $failedSummary = Get-CompletionSummary -Stdout ([string]$invocation.StandardOutputContent)
+    if ($null -ne $failedSummary) {
+        Write-JsonFile -Value $failedSummary -Path $completionPath
+        Set-StateField -Name "completion_path" -Value $completionPath
+        Write-JsonFile -Value $state -Path $StatePath
+        if ($null -ne $failedSummary.PSObject.Properties["bots"]) {
+            foreach ($botResult in @($failedSummary.bots)) {
+                Write-Host "BOT $($botResult.profile): $($botResult.status) $($botResult.failure_reason)"
+            }
+        }
+    }
 
     $termination = Ensure-InstanceTerminated
     Set-StateField -Name "termination_confirmed_after_remote_failure" -Value $termination.Confirmed
@@ -227,13 +270,13 @@ if ($status -ne "Success") {
     throw "Remote bounded run ended with SSM status $status. The run is not PASS; termination was attempted for cost safety."
 }
 
-$stdout = [string]$invocation.StandardOutputContent
-$match = [regex]::Match($stdout, "LISJONG_COMPLETION_JSON_B64=([A-Za-z0-9+/=]+)")
-if (-not $match.Success) {
+$summary = Get-CompletionSummary -Stdout ([string]$invocation.StandardOutputContent)
+if ($null -eq $summary) {
     throw "Secret-safe completion summary sentinel was not returned by SSM."
 }
-$remoteJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($match.Groups[1].Value))
-$summary = $remoteJson | ConvertFrom-Json
+if ([string]$summary.status -ne "PASS") {
+    throw "SSM reported success but the completion summary is not PASS."
+}
 
 # Preserve verified remote evidence before any teardown API call.
 Write-JsonFile -Value $summary -Path $completionPath
@@ -332,7 +375,7 @@ $summary | Add-Member -NotePropertyName aws_execution -NotePropertyValue ([order
     approximate_known_cost_usd = $approximateKnownCost
     cost_note = "Known-cost estimate includes EC2 compute when pricing lookup succeeds plus one in-use public IPv4 address; EBS/data transfer and any T3 surplus CPU credits are excluded. In detached collection, instance runtime may be estimated from verified stop plus the five-minute teardown timer."
     retained_recurring_cost_resources = @(
-        "Secrets Manager secret $SecretId (approximately USD 0.40/month unless removed)"
+        $SecretIds | ForEach-Object { "Secrets Manager secret $_ (approximately USD 0.40/month unless removed)" }
     )
 }) -Force
 
@@ -360,5 +403,10 @@ if (-not $teardownPass) {
     throw "Run completed, but teardown verification failed. See $completionPath"
 }
 
+if ($null -ne $summary.PSObject.Properties["bots"]) {
+    foreach ($botResult in @($summary.bots)) {
+        Write-Host "BOT $($botResult.profile): $($botResult.status)"
+    }
+}
 Write-Host "PASS: AWS 12H GRACEFUL CONTINUOUS RUN COMPLETE"
 Write-Host "Completion summary: $completionPath"
