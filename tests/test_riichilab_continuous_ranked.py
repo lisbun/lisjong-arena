@@ -14,17 +14,25 @@ import os
 import unittest
 from unittest.mock import patch
 
+from lisjong.policy_contract import Seat
+
 from lisjong_arena.riichilab.continuous_ranked import (
     ContinuousRunSummary,
     _backoff_seconds,
     _run_cli,
     format_continuous_summary,
     run_continuous_ranked,
+    run_continuous_ranked_cli,
 )
 from lisjong_arena.riichilab.errors import (
     ProtocolError,
     TransportError,
     UnexpectedDisconnectError,
+)
+from lisjong_arena.riichilab.live_presentation import (
+    BoundedRankedPresentationBuffer,
+    ContinuousRankedPresentationFeed,
+    RankedCompletionPresentation,
 )
 from lisjong_arena.riichilab.profile import RuntimeProfile
 from lisjong_arena.riichilab.trace import ProtocolTraceError
@@ -623,6 +631,240 @@ class SummaryFormattingTest(unittest.TestCase):
             stopped_reason="stop_requested",
         )
         self.assertIn("last failure type: none", format_continuous_summary(summary))
+
+
+class ContinuousPresentationTest(unittest.TestCase):
+    """Issue #381: opt-in per-game live presentation thread-through。"""
+
+    def test_without_presentation_no_presentation_kwarg_is_passed(self) -> None:
+        seen: list[dict[str, object]] = []
+        stop_requested, on_call = _stop_after(1)
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            on_call()
+            seen.append(kwargs)
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(),
+                    "token",
+                    stop_requested=stop_requested,
+                    sleep=_no_sleep,
+                )
+            )
+        self.assertEqual(len(seen), 1)
+        self.assertNotIn("presentation", seen[0])
+
+    def test_each_attempt_gets_its_own_buffer_including_retries(self) -> None:
+        feed = ContinuousRankedPresentationFeed()
+        buffers: list[BoundedRankedPresentationBuffer] = []
+        ordinals: list[int] = []
+        outcomes = [None, TransportError("drop"), None]
+        stop_requested, on_call = _stop_after(len(outcomes))
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            on_call()
+            buffer = kwargs["presentation"]
+            buffers.append(buffer)
+            ordinals.append(feed.current().game_ordinal)
+            self.assertIs(feed.current().buffer, buffer)
+            outcome = outcomes[len(buffers) - 1]
+            if outcome is not None:
+                raise outcome
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(),
+                    "token",
+                    stop_requested=stop_requested,
+                    presentation=feed,
+                    sleep=_no_sleep,
+                )
+            )
+
+        self.assertEqual(summary.completed_games, 2)
+        self.assertEqual(summary.failed_games, 1)
+        self.assertEqual(ordinals, [1, 2, 3])
+        self.assertEqual(len({id(buffer) for buffer in buffers}), 3)
+
+    def test_previous_game_terminal_is_published_before_next_game_opens(
+        self,
+    ) -> None:
+        feed = ContinuousRankedPresentationFeed()
+        handles = []
+        stop_requested, on_call = _stop_after(2)
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            on_call()
+            handles.append(feed.current())
+            kwargs["presentation"].publish_completion(
+                RankedCompletionPresentation(self_seat=Seat.SEAT_1, scores=None)
+            )
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(),
+                    "token",
+                    stop_requested=stop_requested,
+                    presentation=feed,
+                    sleep=_no_sleep,
+                )
+            )
+
+        self.assertEqual(feed.current().game_ordinal, 2)
+        first_batch = handles[0].buffer.drain()
+        self.assertEqual(first_batch.completion.self_seat, Seat.SEAT_1)
+
+    def test_record_acquisition_receives_the_game_buffer(self) -> None:
+        feed = ContinuousRankedPresentationFeed()
+        seen: list[object] = []
+
+        async def _fake_acquire(policy, token, **kwargs):
+            seen.append(kwargs["presentation"])
+            return object()
+
+        with (
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked._acquire_ranked_record",
+                _fake_acquire,
+            ),
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked.resolve_ranked_record_path",
+                lambda record_dir: f"{record_dir}/game",
+            ),
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(),
+                    "token",
+                    record_dir="record-root",
+                    max_completed_games=2,
+                    presentation=feed,
+                    sleep=_no_sleep,
+                )
+            )
+
+        self.assertEqual(summary.completed_games, 2)
+        self.assertEqual(len(seen), 2)
+        self.assertIsNot(seen[0], seen[1])
+        self.assertIs(seen[1], feed.current().buffer)
+
+    def test_detached_feed_does_not_stop_the_run(self) -> None:
+        feed = ContinuousRankedPresentationFeed()
+        feed.detach()
+        stop_requested, on_call = _stop_after(2)
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            on_call()
+            self.assertFalse(kwargs["presentation"].is_attached)
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(),
+                    "token",
+                    stop_requested=stop_requested,
+                    presentation=feed,
+                    sleep=_no_sleep,
+                )
+            )
+        self.assertEqual(summary.completed_games, 2)
+
+    def test_invalid_presentation_fails_closed_before_any_game(self) -> None:
+        created: list[object] = []
+        with self.assertRaises(TypeError):
+            asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(created_policies=created),
+                    "token",
+                    presentation=BoundedRankedPresentationBuffer(),  # type: ignore[arg-type]
+                    sleep=_no_sleep,
+                )
+            )
+        self.assertEqual(created, [])
+
+
+class PublicCliTest(unittest.TestCase):
+    def test_presentation_and_stop_requested_are_forwarded(self) -> None:
+        feed = ContinuousRankedPresentationFeed()
+        captured: dict[str, object] = {}
+
+        def _stop() -> bool:
+            return True
+
+        async def _fake_run_continuous_ranked(profile, token, **kwargs):
+            captured.update(kwargs)
+            return ContinuousRunSummary(
+                profile=profile.name,
+                completed_games=0,
+                failed_games=0,
+                consecutive_failures=0,
+                last_failure_type=None,
+                stopped_reason="stop_requested",
+            )
+
+        stdout = io.StringIO()
+        with (
+            patch.dict(os.environ, {_DEV_TOKEN_VAR: "unit-test-dummy-token"}),
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_continuous_ranked",
+                _fake_run_continuous_ranked,
+            ),
+            contextlib.redirect_stdout(stdout),
+        ):
+            return_code = run_continuous_ranked_cli(
+                ["--profile", "lisjong-dev"],
+                presentation=feed,
+                stop_requested=_stop,
+            )
+
+        self.assertEqual(return_code, 0)
+        self.assertIs(captured["presentation"], feed)
+        self.assertIs(captured["stop_requested"], _stop)
+        self.assertIn("stopped reason: stop_requested", stdout.getvalue())
+        self.assertNotIn("unit-test-dummy-token", stdout.getvalue())
+
+    def test_module_entry_point_passes_no_optional_kwargs(self) -> None:
+        captured: dict[str, object] = {}
+
+        async def _fake_run_continuous_ranked(profile, token, **kwargs):
+            captured.update(kwargs)
+            return ContinuousRunSummary(
+                profile=profile.name,
+                completed_games=0,
+                failed_games=0,
+                consecutive_failures=0,
+                last_failure_type=None,
+                stopped_reason="stop_requested",
+            )
+
+        with (
+            patch.dict(os.environ, {_DEV_TOKEN_VAR: "unit-test-dummy-token"}),
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_continuous_ranked",
+                _fake_run_continuous_ranked,
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            _run_cli(["--profile", "lisjong-dev"])
+
+        self.assertNotIn("presentation", captured)
+        self.assertNotIn("stop_requested", captured)
 
 
 class CliRegressionTest(unittest.TestCase):

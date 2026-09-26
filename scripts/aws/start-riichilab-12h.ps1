@@ -15,6 +15,8 @@ param(
     [string]$OutputRoot = "",
     [Nullable[double]]$HourlyPriceUsd = $null,
     [double]$PublicIpv4HourlyPriceUsd = 0.005,
+    [int]$SpectatePort = 0,
+    [string]$PlayRevision = "",
     [switch]$PreflightOnly,
     [switch]$SubmitOnly
 )
@@ -33,6 +35,13 @@ if ($DurationSeconds -le 0) {
 }
 if ($FailSafeHours -le 12) {
     throw "FailSafeHours must be greater than the normal 12-hour bound."
+}
+$spectate = ($SpectatePort -ne 0)
+if ($spectate -and ($SpectatePort -lt 1024 -or $SpectatePort -gt 65535)) {
+    throw "SpectatePort must be between 1024 and 65535."
+}
+if (-not $spectate -and -not [string]::IsNullOrWhiteSpace($PlayRevision)) {
+    throw "PlayRevision requires SpectatePort."
 }
 if ($SecretId.Contains("'")) {
     throw "SecretId containing a single quote is not supported by this launcher."
@@ -217,6 +226,32 @@ if ($ArenaRevision -notmatch "^[0-9a-f]{40}$") {
     throw "ArenaRevision must resolve to a full lowercase commit SHA."
 }
 
+if ($spectate) {
+    # Issue #381: the viewer runs inside the token-holding process, so the
+    # lisjong-play revision must pin exactly this Arena revision.
+    if ([string]::IsNullOrWhiteSpace($PlayRevision)) {
+        $playRemote = & git ls-remote "https://github.com/lisbun/lisjong-play.git" "refs/heads/main" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not resolve lisjong-play main revision."
+        }
+        $PlayRevision = (($playRemote | Out-String).Trim() -split "\s+")[0]
+    }
+    if ($PlayRevision -notmatch "^[0-9a-f]{40}$") {
+        throw "PlayRevision must resolve to a full lowercase commit SHA."
+    }
+    $playPyprojectUrl = "https://raw.githubusercontent.com/lisbun/lisjong-play/$PlayRevision/pyproject.toml"
+    $playPyproject = [string](Invoke-WebRequest -UseBasicParsing -Uri $playPyprojectUrl).Content
+    $playArenaPins = @(
+        [regex]::Matches(
+            $playPyproject,
+            '"lisjong-arena @ git\+https://github\.com/lisbun/lisjong-arena\.git@([0-9a-f]{40})"'
+        ) | ForEach-Object { $_.Groups[1].Value }
+    )
+    if ($playArenaPins.Count -ne 1 -or $playArenaPins[0] -ne $ArenaRevision) {
+        throw "lisjong-play $PlayRevision does not pin Arena revision $ArenaRevision."
+    }
+}
+
 $secret = Invoke-AwsJson -Arguments @("secretsmanager", "describe-secret", "--secret-id", $SecretId)
 $secretArn = [string]$secret.ARN
 $role = Invoke-AwsJson -Arguments @("iam", "get-role", "--role-name", $RoleName)
@@ -385,6 +420,8 @@ $preflightSummary = [ordered]@{
     public_ipv4_hourly_price_usd = $PublicIpv4HourlyPriceUsd
     projected_public_ipv4_cost_usd = $preflightProjectedPublicIpv4Cost
     projected_known_cost_usd = $preflightProjectedKnownCost
+    spectate_port = $(if ($spectate) { $SpectatePort } else { $null })
+    play_revision = $(if ($spectate) { $PlayRevision } else { $null })
     cost_note = "Projected known cost uses the independent fail-safe horizon as a conservative bound and includes EC2 compute when pricing lookup succeeds plus one in-use public IPv4 address. EBS/data transfer and T3 surplus CPU credits are excluded."
     billable_resource_created = $false
 }
@@ -392,6 +429,9 @@ Write-JsonFile -Value $preflightSummary -Path $preflightPath
 
 Write-Host "Issue #313 run id: $runId"
 Write-Host "Arena revision: $ArenaRevision"
+if ($spectate) {
+    Write-Host "Live spectating: lisjong-play $PlayRevision on instance 127.0.0.1:$SpectatePort (SSM port forwarding only)"
+}
 Write-Host "AMI: $amiId / subnet: $SubnetId / SG: $SecurityGroupId"
 
 if ($PreflightOnly) {
@@ -545,6 +585,9 @@ try {
     $executionTimeout = ($FailSafeHours * 3600) + 3600
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-riichilab-12h.sh"
     $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-313.sh; chmod 700 /tmp/lisjong-bootstrap-313.sh; exec /tmp/lisjong-bootstrap-313.sh --arena-revision '$ArenaRevision' --region '$Region' --secret-id '$SecretId' --duration-seconds '$DurationSeconds'"
+    if ($spectate) {
+        $remoteCommand += " --spectate-port '$SpectatePort' --play-revision '$PlayRevision'"
+    }
     $longRequestPath = Join-Path $runDir "ssm-run.json"
     $commandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds $executionTimeout -RequestPath $longRequestPath -Commands @($remoteCommand)
     $longCommandSubmitted = $true
@@ -565,6 +608,8 @@ try {
         hourly_price_usd = $HourlyPriceUsd
         fail_safe_armed = $failsafeArmed
         fail_safe_hours = $FailSafeHours
+        spectate_port = $(if ($spectate) { $SpectatePort } else { $null })
+        play_revision = $(if ($spectate) { $PlayRevision } else { $null })
     }) -Path $statePath
     [void](Invoke-AwsText -Arguments @(
         "ec2", "create-tags",
@@ -573,6 +618,9 @@ try {
     ))
 
     Write-Host "12-hour graceful run submitted through SSM. Command id: $commandId"
+    if ($spectate) {
+        Write-Host "Watch live with: .\scripts\aws\watch-riichilab.ps1 -AwsProfile $AwsProfile -StatePath '$statePath'"
+    }
     if ($SubmitOnly) {
         Write-Host "SUBMITTED: remote run is detached from this PowerShell session."
         Write-Host "Recovery state: $statePath"

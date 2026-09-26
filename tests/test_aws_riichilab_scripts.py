@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,12 +12,18 @@ _BOOTSTRAP = _REPOSITORY_ROOT / "scripts" / "aws" / "bootstrap-riichilab-12h.sh"
 _LAUNCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "start-riichilab-12h.ps1"
 _COLLECTOR = _REPOSITORY_ROOT / "scripts" / "aws" / "collect-riichilab-12h.ps1"
 _MONITOR = _REPOSITORY_ROOT / "scripts" / "aws" / "ssm-monitor.ps1"
+_WATCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "watch-riichilab.ps1"
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _bash() -> str | None:
+    git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+    return str(git_bash) if git_bash.is_file() else shutil.which("bash")
 
 
 class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
     def test_bootstrap_has_valid_bash_syntax(self) -> None:
-        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
-        bash = str(git_bash) if git_bash.is_file() else shutil.which("bash")
+        bash = _bash()
         if bash is None:
             self.skipTest("bash is unavailable")
         try:
@@ -33,7 +41,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
             self.skipTest("pwsh is unavailable")
-        for script in (_LAUNCHER, _COLLECTOR, _MONITOR):
+        for script in (_LAUNCHER, _COLLECTOR, _MONITOR, _WATCHER):
             with self.subTest(script=script.name):
                 path = str(script).replace("'", "''")
                 command = (
@@ -142,6 +150,179 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         )
         self.assertNotIn('echo "$SECRET_RESPONSE_JSON"', text)
         self.assertNotIn('printf "$SECRET_RESPONSE_JSON"', text)
+
+
+class AwsRiichiLabSpectateScriptTest(unittest.TestCase):
+    """Issue #381: opt-in live spectating through SSM port forwarding only."""
+
+    def test_bootstrap_rejects_invalid_spectate_arguments_before_any_work(
+        self,
+    ) -> None:
+        bash = _bash()
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        cases = (
+            ["--spectate-port", "8765"],
+            ["--play-revision", _SHA],
+            ["--spectate-port", "80", "--play-revision", _SHA],
+            ["--spectate-port", "70000", "--play-revision", _SHA],
+            ["--spectate-port", "08765", "--play-revision", _SHA],
+            ["--spectate-port", "x", "--play-revision", _SHA],
+            ["--spectate-port", "8765", "--play-revision", "main"],
+        )
+        for extra in cases:
+            with self.subTest(extra=extra):
+                try:
+                    result = subprocess.run(
+                        [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *extra],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                except OSError as error:
+                    self.skipTest(f"bash cannot be executed: {error}")
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertIn("--", result.stderr)
+
+    def test_bootstrap_pins_play_to_the_arena_revision_before_the_live_run(
+        self,
+    ) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn(
+            'PLAY_REPOSITORY_URL="https://github.com/lisbun/lisjong-play.git"', text
+        )
+        self.assertIn('checkout -q --detach "$PLAY_REVISION"', text)
+        self.assertIn('if [[ "$PLAY_PIN_CHECK" != "match" ]]; then', text)
+        # Arena must stay the editable clean checkout so that durable record
+        # provenance resolves lisjong_arena_revision from Git.
+        self.assertIn('--no-deps -e "$PLAY_DIR"', text)
+        self.assertLess(
+            text.index('if [[ "$PLAY_PIN_CHECK" != "match" ]]; then'),
+            text.index('--no-deps -e "$PLAY_DIR"'),
+        )
+        # Everything is verified before the token is fetched.
+        token_fetch = text.index("secretsmanager get-secret-value")
+        for marker in (
+            'if [[ "$PLAY_PIN_CHECK" != "match" ]]; then',
+            "-m lisjong_arena.environment_verify --project pyproject.toml",
+            "preflight: spectate=on",
+        ):
+            self.assertLess(text.index(marker), token_fetch, marker)
+
+    def test_bootstrap_play_pin_check_accepts_only_matching_internal_pins(
+        self,
+    ) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        start = text.index('PLAY_PIN_CHECK="$(')
+        script = text[text.index("<<'PY'\n", start) + len("<<'PY'\n") :]
+        script = script[: script.index("\nPY\n")]
+        arena = _SHA
+        other = "f" * 40
+        arena_pyproject = (
+            "[project]\nname = 'lisjong-arena'\ndependencies = [\n"
+            f"  'lisjong @ git+https://github.com/lisbun/lisjong.git@{'1' * 40}',\n"
+            "  'lisjong-engine @ git+https://github.com/lisbun/lisjong-engine.git"
+            f"@{'2' * 40}',\n"
+            "  'riichienv==0.4.10',\n]\n"
+        )
+
+        def play(*dependencies: str) -> str:
+            listed = "".join(f"  '{item}',\n" for item in dependencies)
+            return f"[project]\nname = 'lisjong-play'\ndependencies = [\n{listed}]\n"
+
+        lisjong = f"lisjong @ git+https://github.com/lisbun/lisjong.git@{'1' * 40}"
+        engine = (
+            "lisjong-engine @ git+https://github.com/lisbun/lisjong-engine.git"
+            f"@{'2' * 40}"
+        )
+        arena_pin = (
+            f"lisjong-arena @ git+https://github.com/lisbun/lisjong-arena.git@{arena}"
+        )
+        cases = {
+            "match": play(lisjong, engine, arena_pin),
+            "mismatch": play(lisjong, engine, arena_pin.replace(arena, other)),
+        }
+        cases_mismatch = (
+            play(lisjong.replace("1" * 40, other), engine, arena_pin),
+            play(lisjong, engine, arena_pin, "requests==2.32.0"),
+            play(lisjong, arena_pin),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "arena.toml").write_text(arena_pyproject, encoding="utf-8")
+            (root / "check.py").write_text(script, encoding="utf-8")
+            inputs = [(expected, body) for expected, body in cases.items()]
+            inputs += [("mismatch", body) for body in cases_mismatch]
+            for index, (expected, body) in enumerate(inputs):
+                with self.subTest(index=index):
+                    play_path = root / f"play{index}.toml"
+                    play_path.write_text(body, encoding="utf-8")
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(root / "check.py"),
+                            str(play_path),
+                            str(root / "arena.toml"),
+                            arena,
+                        ],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(expected, result.stdout.strip())
+
+    def test_bootstrap_runs_the_viewer_with_the_same_runner_contract(self) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        spectate_run = text[
+            text.index("-m lisjong_play.riichilab_html         --continuous") :
+        ]
+        spectate_run = spectate_run[: spectate_run.index("else")]
+        for argument in (
+            '--profile "$PROFILE"',
+            '--duration-seconds "$DURATION_SECONDS"',
+            '--record-dir "$RECORD_DIR"',
+            '--port "$SPECTATE_PORT"',
+            '>"$RUNNER_LOG" 2>&1',
+        ):
+            self.assertIn(argument, spectate_run)
+        self.assertNotIn("--host", text)
+        self.assertNotIn("0.0.0.0", text)
+        # Verification of the durable records is shared by both modes.
+        self.assertEqual(1, text.count("-m lisjong_arena.riichilab.aws_run_verify"))
+
+    def test_launcher_checks_play_pin_and_forwards_spectate_arguments(self) -> None:
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("[int]$SpectatePort = 0", text)
+        self.assertIn('throw "PlayRevision requires SpectatePort."', text)
+        self.assertIn(
+            "raw.githubusercontent.com/lisbun/lisjong-play/$PlayRevision/pyproject.toml",
+            text,
+        )
+        self.assertIn("$playArenaPins[0] -ne $ArenaRevision", text)
+        self.assertLess(
+            text.index("$playArenaPins[0] -ne $ArenaRevision"),
+            text.index("if ($PreflightOnly)"),
+        )
+        self.assertIn(
+            "--spectate-port '$SpectatePort' --play-revision '$PlayRevision'", text
+        )
+        self.assertIn("watch-riichilab.ps1", text)
+        self.assertNotIn("authorize-security-group-ingress", text.lower())
+
+    def test_watcher_uses_ssm_port_forwarding_with_matching_ports(self) -> None:
+        text = _WATCHER.read_text(encoding="utf-8")
+        self.assertIn('"AWS-StartPortForwardingSession"', text)
+        self.assertIn('"portNumber=$port,localPortNumber=$port"', text)
+        self.assertIn("session-manager-plugin", text)
+        self.assertIn('$state.PSObject.Properties["spectate_port"]', text)
+        lowered = text.lower()
+        for forbidden in (
+            "authorize-security-group-ingress",
+            "terminate-instances",
+            "send-command",
+            "secretsmanager",
+        ):
+            self.assertNotIn(forbidden, lowered)
 
 
 if __name__ == "__main__":

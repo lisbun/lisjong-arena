@@ -78,6 +78,61 @@ simulation. The launcher reads IAM simulator per-resource decisions from
 multi-resource simulation. The resulting EC2 instance requires IMDSv2 and uses
 SSM instead of inbound SSH.
 
+## Live spectating (opt-in, Issue #381)
+
+A run can be watched live in a browser without opening any inbound path:
+
+```powershell
+.\scripts\aws\start-riichilab-12h.ps1 `
+  -AwsProfile lisbun-admin `
+  -ArenaRevision <exact-full-sha> `
+  -SpectatePort 8765 `
+  -PlayRevision <lisjong-play-full-sha> `
+  -SubmitOnly
+
+# In another terminal, after submit (requires the AWS Session Manager plugin):
+.\scripts\aws\watch-riichilab.ps1 -AwsProfile lisbun-admin -StatePath <state.json>
+# then open http://localhost:8765/
+```
+
+```text
+EC2 (security group inbound 0, no SSH)
+  python -m lisjong_play.riichilab_html --continuous ... --port 8765
+    ├─ Arena run_continuous_ranked_cli (token holder, same summary output)
+    └─ live viewer bound to 127.0.0.1:8765 only
+PC: aws ssm start-session AWS-StartPortForwardingSession
+      portNumber=8765, localPortNumber=8765 -> http://localhost:8765/
+```
+
+- `-PlayRevision` defaults to the current lisjong-play `main`. The launcher
+  reads that revision's `pyproject.toml` and refuses to continue unless it pins
+  exactly `-ArenaRevision`. This check also runs with `-PreflightOnly`.
+- The bootstrap checks out lisjong-play at the exact revision. It requires
+  every lisjong-play dependency to be an internal pin equal to this Arena
+  revision or to Arena's own `lisjong` / `lisjong-engine` pins. Only then does it
+  install lisjong-play with `--no-deps`.
+- Arena stays the verified, clean, editable checkout, so durable record
+  provenance still resolves `lisjong_arena_revision`. `environment_verify` and
+  `pip check` run afterwards, all before the token is fetched. The viewer code
+  runs inside the token-holding process, so any mismatch fails closed.
+- The runner log contains the same Arena summary lines, so
+  `aws_run_verify` verifies records, token absence, and `duration_reached`
+  exactly as without spectating.
+- The viewer binds to `127.0.0.1` only and accepts only its own `Host`. The
+  local and remote port numbers must therefore be equal;
+  `watch-riichilab.ps1` always forwards the same number.
+- The page shows only the bot seat's player-visible decision state, its
+  selected action, and final scores. The page controls move the display only,
+  and there is no endpoint that starts or influences a game.
+- Stopping the watcher, closing the tab, or losing the SSM session does not
+  affect the run. The viewer serves only while the run is active and closes
+  with it.
+- The operator identity needs `ssm:StartSession` for
+  `AWS-StartPortForwardingSession` on the instance. The instance role and the
+  security group need no change.
+
+Without `-SpectatePort` the launcher and bootstrap behave exactly as before.
+
 ## Normal stop versus cost fail-safe
 
 The two stop mechanisms are deliberately separate.
