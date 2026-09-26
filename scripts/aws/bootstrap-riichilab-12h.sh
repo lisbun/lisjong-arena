@@ -147,11 +147,6 @@ fi
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
 unset RIICHILAB_TRACE_PATH
 
-if [[ -e /root/.aws/credentials || -e /home/ec2-user/.aws/credentials ]]; then
-    echo "static AWS credential file is present; refusing live run" >&2
-    exit 1
-fi
-
 source /etc/os-release
 if [[ "${ID:-}" != "amzn" || "${VERSION_ID:-}" != "2023" ]]; then
     echo "expected Amazon Linux 2023" >&2
@@ -179,6 +174,52 @@ STOP_FILE="$WORK_ROOT/stop-requested"
 
 if [[ -e "$REPO_DIR" || -e "$PLAY_DIR" || -e "$BOTS_DIR" ]]; then
     echo "work root is not fresh" >&2
+    exit 1
+fi
+
+# Normal teardown: poweroff (-> terminate) five minutes later. The Windows
+# launcher / collector normally terminates the instance sooner, but this timer
+# prevents an expired/disconnected local SSO session from leaving the instance
+# billable after the run has ended. The five minutes let SSM finalize the
+# command status and output first.
+NORMAL_TEARDOWN_ARMED=0
+arm_normal_teardown() {
+    if [[ "$NORMAL_TEARDOWN_ARMED" == "1" ]]; then
+        return 0
+    fi
+    systemd-run \
+        --quiet \
+        --unit=lisjong-normal-teardown \
+        --on-active=5min \
+        --timer-property=AccuracySec=30s \
+        /usr/bin/systemctl poweroff || return 1
+    NORMAL_TEARDOWN_ARMED=1
+}
+
+# Issue #337: from here on this instance belongs to this run, so any non-zero
+# exit is a confirmed instance-side failure (bootstrap, secret/configuration,
+# bot or verification failure, duration-bound or until-stopped alike). Runtime
+# secrets are dropped first, then the same five-minute teardown is armed. The
+# exit code and output stay in the SSM command for the collector. Checks above
+# (arguments, root, OS, fresh work root) leave the instance to the collector
+# and the independent long cost fail-safe, which this never replaces. The bash
+# process exits only after every bot of this run has exited, except on an
+# unexpected supervisor error, where the poweroff stops the remaining bots.
+on_exit() {
+    local exit_code=$?
+    unset BOT_TOKENS TOKEN SECRET_RESPONSE_JSON
+    if [[ "$exit_code" != "0" ]]; then
+        if arm_normal_teardown; then
+            echo "run: failed exit_code=$exit_code failure_teardown_armed=5min" >&2
+        else
+            echo "run: failed exit_code=$exit_code failure_teardown_not_armed; the long cost fail-safe remains armed" >&2
+        fi
+    fi
+}
+trap on_exit EXIT
+
+if [[ -e /root/.aws/credentials || -e /home/ec2-user/.aws/credentials ]]; then
+    echo "static AWS credential file is present; refusing live run" >&2
     exit 1
 fi
 
@@ -396,37 +437,6 @@ for index in "${!BOT_PROFILES[@]}"; do
 done
 echo "preflight: credentials_resolved=${#BOT_TOKENS[@]}"
 
-# Normal teardown: poweroff (-> terminate) five minutes later. The Windows
-# launcher / collector normally terminates the instance sooner, but this timer
-# prevents an expired/disconnected local SSO session from leaving the instance
-# billable after the bots have stopped.
-NORMAL_TEARDOWN_ARMED=0
-arm_normal_teardown() {
-    if [[ "$NORMAL_TEARDOWN_ARMED" == "1" ]]; then
-        return 0
-    fi
-    systemd-run \
-        --quiet \
-        --unit=lisjong-normal-teardown \
-        --on-active=5min \
-        --timer-property=AccuracySec=30s \
-        /usr/bin/systemctl poweroff
-    NORMAL_TEARDOWN_ARMED=1
-}
-
-# In an until-stopped run the only other stop is the long cost fail-safe, so
-# once the bots have started, any exit (including bot or verification failure)
-# also arms the normal teardown. The bootstrap exits only after every bot of
-# this run has exited, so no bot is left running on the instance.
-RUNNER_STARTED=0
-on_exit() {
-    unset BOT_TOKENS
-    if [[ "$UNTIL_STOPPED" == "1" && "$RUNNER_STARTED" == "1" ]]; then
-        arm_normal_teardown || true
-    fi
-}
-trap on_exit EXIT
-
 START_EPOCH="$(date +%s)"
 START_UTC="$(date -u -d "@$START_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 if [[ "$UNTIL_STOPPED" == "1" ]]; then
@@ -475,7 +485,6 @@ start_bot() {
     echo "run: bot_started name=$profile"
 }
 
-RUNNER_STARTED=1
 for profile in "${BOT_PROFILES[@]}"; do
     start_bot "$profile"
 done
@@ -525,8 +534,8 @@ if [[ "$VERIFY_EXIT_CODE" -gt 1 || -z "$SUMMARY_JSON" ]]; then
 fi
 
 # The secret-safe instance summary is returned for PASS and FAIL alike, so a
-# failing bot stays attributable. Teardown is armed only after every bot has
-# exited and verification succeeded (until-stopped also arms it on exit).
+# failing bot stays attributable. Every bot has exited: PASS arms the teardown
+# here, FAIL arms it through on_exit.
 SUMMARY_B64="$(printf '%s' "$SUMMARY_JSON" | base64 -w0)"
 if [[ "$VERIFY_EXIT_CODE" -eq 0 ]]; then
     arm_normal_teardown

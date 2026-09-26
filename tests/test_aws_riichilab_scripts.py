@@ -400,7 +400,8 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
         on_exit = text[text.index("on_exit() {") :]
         on_exit = on_exit[: on_exit.index("\n}\n")]
         self.assertIn("unset BOT_TOKENS", on_exit)
-        self.assertIn('"$UNTIL_STOPPED" == "1" && "$RUNNER_STARTED" == "1"', on_exit)
+        # Issue #337: any failed exit arms it, not only until-stopped runs.
+        self.assertNotIn("UNTIL_STOPPED", on_exit)
         self.assertIn("arm_normal_teardown", on_exit)
         # The supervisor drains every bot, then verification, then teardown.
         drained = text.index("while ((${#RUNNING_BOT_PIDS[@]})); do")
@@ -412,7 +413,7 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
             'if [[ "$VERIFY_EXIT_CODE" -eq 0 ]]; then\n    arm_normal_teardown', text
         )
         self.assertLess(
-            text.index("RUNNER_STARTED=1\nfor profile in"),
+            text.index("trap on_exit EXIT"),
             text.index('    start_bot "$profile"'),
         )
 
@@ -450,6 +451,160 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
             "secretsmanager",
         ):
             self.assertNotIn(forbidden, lowered)
+
+
+class AwsRiichiLabFailureTeardownTest(unittest.TestCase):
+    """Issue #337: a confirmed instance-side failure arms the short teardown.
+
+    Bootstrap, secret/configuration, bot and verification failures arm the
+    same five-minute teardown in duration-bound and until-stopped runs alike,
+    after dropping runtime secrets. Nothing local (monitor detachment, AWS
+    login expiry, unknown remote state) can reach this instance-side path.
+    """
+
+    def _teardown_functions(self) -> str:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        start = text.index("NORMAL_TEARDOWN_ARMED=0\n")
+        end = text.index("trap on_exit EXIT\n") + len("trap on_exit EXIT\n")
+        return text[start:end]
+
+    def _run(self, body: str, *, systemd_run_code: int = 0):
+        bash = _bash()
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        # systemd-run is a shell function here, so no real timer is created.
+        # It records whether any runtime secret was still set when called.
+        harness = (
+            "set -euo pipefail\n"
+            'LOG="$1"\n'
+            "systemd-run() {\n"
+            "    local tokens=unset\n"
+            "    if declare -p BOT_TOKENS >/dev/null 2>&1; then tokens=set; fi\n"
+            '    echo "systemd-run $* tokens=$tokens'
+            ' token=${TOKEN-unset} response=${SECRET_RESPONSE_JSON-unset}"'
+            ' >>"$LOG"\n'
+            f"    return {systemd_run_code}\n"
+            "}\n"
+            "declare -A BOT_TOKENS=([bot]=secret-value)\n"
+            + self._teardown_functions()
+            + body
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "harness.sh"
+            script.write_text(harness, encoding="utf-8")
+            log = root / "systemd-run.log"
+            try:
+                result = subprocess.run(
+                    [bash, str(script), str(log)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except OSError as error:
+                self.skipTest(f"bash cannot be executed: {error}")
+            calls = log.read_text().splitlines() if log.exists() else []
+        return result, calls
+
+    def test_confirmed_failures_arm_short_teardown_after_secret_cleanup(
+        self,
+    ) -> None:
+        cases = {
+            # secret retrieval/validation failure with a token in flight
+            "bootstrap_secret": (
+                'TOKEN=secret-value\nSECRET_RESPONSE_JSON="{}"\nfalse\n',
+                1,
+            ),
+            # duration-bound bot / verification FAIL: exit "$VERIFY_EXIT_CODE"
+            "verification_fail": ("UNTIL_STOPPED=0\nexit 1\n", 1),
+            # verification could not run
+            "verification_error": ("UNTIL_STOPPED=0\nexit 3\n", 3),
+            "until_stopped_fail": ("UNTIL_STOPPED=1\nexit 1\n", 1),
+        }
+        for name, (body, expected_code) in cases.items():
+            with self.subTest(case=name):
+                result, calls = self._run(body)
+                self.assertEqual(expected_code, result.returncode, result.stderr)
+                self.assertEqual(1, len(calls), calls)
+                self.assertIn("--unit=lisjong-normal-teardown", calls[0])
+                self.assertIn("--on-active=5min", calls[0])
+                self.assertIn("/usr/bin/systemctl poweroff", calls[0])
+                self.assertIn("tokens=unset token=unset response=unset", calls[0])
+                self.assertIn(
+                    f"run: failed exit_code={expected_code} "
+                    "failure_teardown_armed=5min",
+                    result.stderr,
+                )
+                self.assertNotIn("secret-value", result.stdout + result.stderr)
+                self.assertNotIn("PASS", result.stdout + result.stderr)
+
+    def test_success_keeps_the_single_post_pass_teardown(self) -> None:
+        result, calls = self._run("arm_normal_teardown\nexit 0\n")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(1, len(calls), calls)
+        self.assertNotIn("run: failed", result.stderr)
+        result, calls = self._run("exit 0\n")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual([], calls)
+
+    def test_teardown_arm_failure_keeps_exit_code_and_long_fail_safe(self) -> None:
+        result, calls = self._run("exit 1\n", systemd_run_code=1)
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertEqual(1, len(calls), calls)
+        self.assertIn("failure_teardown_not_armed", result.stderr)
+        self.assertIn("long cost fail-safe remains armed", result.stderr)
+
+    def test_trap_covers_bootstrap_but_not_foreign_instances(self) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        trap = text.index("trap on_exit EXIT")
+        # Armed only on this run's own AL2023 instance with a fresh work root...
+        for guard in (
+            'echo "bootstrap must run as root under SSM"',
+            'echo "expected Amazon Linux 2023"',
+            'echo "expected x86_64 architecture"',
+            'echo "work root is not fresh"',
+        ):
+            self.assertLess(text.index(guard), trap, guard)
+        # ...and before every bootstrap, secret, bot and verification step.
+        for step in (
+            "static AWS credential file is present",
+            "dnf -q install",
+            "git clone",
+            "lisjong_arena.environment_verify",
+            "aws_instance_run check-config",
+            "secretsmanager get-secret-value",
+            'start_bot "$profile"',
+            "aws_instance_run verify",
+        ):
+            self.assertLess(trap, text.index(step), step)
+        self.assertEqual(1, text.count("\ntrap "))
+
+    def test_long_fail_safe_and_local_detachment_paths_are_unchanged(self) -> None:
+        bootstrap = _BOOTSTRAP.read_text(encoding="utf-8")
+        launcher = _LAUNCHER.read_text(encoding="utf-8")
+        collector = _COLLECTOR.read_text(encoding="utf-8")
+        monitor = _MONITOR.read_text(encoding="utf-8")
+        # The long fail-safe is a separate launcher-armed unit the bootstrap
+        # never touches.
+        self.assertIn(
+            "--unit=lisjong-cost-failsafe --on-active=$($FailSafeHours)h", launcher
+        )
+        self.assertNotIn("lisjong-cost-failsafe", bootstrap)
+        # Local monitor detachment / unknown status never terminates (#333).
+        self.assertNotIn("terminate-instances", monitor)
+        self.assertIn(
+            "It is not being force-terminated from this catch path.", launcher
+        )
+        self.assertIn("No termination or teardown action was taken.", collector)
+        # A self-terminated failed instance is accepted as already terminated,
+        # and collection never resubmits the workload.
+        ensure = collector[collector.index("function Ensure-InstanceTerminated") :]
+        self.assertLess(
+            ensure.index('if ($instanceState -eq "terminated")'),
+            ensure.index('"ec2", "terminate-instances"'),
+        )
+        self.assertNotIn("send-command", collector)
 
 
 class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
