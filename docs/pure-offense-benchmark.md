@@ -305,3 +305,44 @@ The allocation moves to `COMMITTED` through the Seed Registry workflow only
 after that readback passes and the result is recorded on #389. If the run
 fails, decide the seed handling from the cause and whether any result was
 exposed.
+
+## Heuristic Champion descriptive reference (#393)
+
+This run measures one arm of the unchanged v1 benchmark:
+`--focal placement-aware-speed-call`, the current Heuristic Champion. It uses a
+separate DEVELOPMENT allocation, so it is a descriptive reference. It is not
+paired with the #389 arms. `summarize` refuses to mix arms whose seed
+allocations differ.
+
+```text
+allocation   eb07ae2ba8317e4b4c46e9154a1fd12149b2e87b3f16750e11cdabe4e71769bf
+             riichienv-4p-red-single-v1, 390000..390499, DEVELOPMENT
+             population pure-offense-heuristic-champion-reference
+owner        lisbun/lisjong-arena#389
+provenance   lisbun/lisjong-arena#393
+workload     scripts/aws/bootstrap-pure-offense-champion-393.sh (no input files)
+```
+
+The owner is #389 because the v1 manifest contains that owner. #393 manages
+the execution and result lifecycle.
+
+The bootstrap reuses the #389 checks. In addition, it fails closed when:
+
+- the whole `pure_offense_benchmark` package differs from the allocation's
+  `arena_revision` (`0d4ae36`);
+- the installed RiichiEnv is not the pinned `0.4.10`;
+- the allocation's range, owner, provenance, population, split or `RESERVED`
+  state is not the frozen value;
+- the saved arm fails its strict readback. The readback checks the focal
+  identity, the 500 seeds, the 2,000 games, the allocation, and the Arena,
+  lisjong and RiichiEnv provenance.
+
+```powershell
+$run = @{ AwsProfile = 'lisjong'; Label = 'lisjong-393-champ'; InstanceType = 'c7i.4xlarge'; Workers = 16
+          Bootstrap = 'scripts\aws\bootstrap-pure-offense-champion-393.sh'
+          BootstrapArgs = @('--arena-revision', '<merged main sha>',
+                            '--allocation-identity', 'eb07ae2ba8317e4b4c46e9154a1fd12149b2e87b3f16750e11cdabe4e71769bf')
+          EstimatedRuntimeHours = @(0.75, 1.5); FailSafeHours = 3; CostBudgetUsd = 4 }
+```
+
+`Preflight`, `Launch`, `Status` and `Collect` work as in the #389 run.
