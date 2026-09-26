@@ -33,9 +33,7 @@ class DevProfileMappingTest(unittest.TestCase):
 
         self.assertEqual(profile.credential_env_var, _DEV_TOKEN_VAR)
         self.assertEqual(profile.runtime_namespace, "lisjong-dev")
-        self.assertIs(
-            type(profile.policy_factory()), PlacementAwareSpeedCallPolicy
-        )
+        self.assertIs(type(profile.policy_factory()), PlacementAwareSpeedCallPolicy)
         self.assertIsNot(profile.policy_factory(), profile.policy_factory())
 
     def test_baseline_uses_champion_and_production_mapping_is_unchanged(self) -> None:
@@ -52,9 +50,7 @@ class DevProfileMappingTest(unittest.TestCase):
             profile, mode="ranked", trace_path=None, policy=policy
         )
 
-        self.assertEqual(
-            summary.policy_label, "PlacementAwareSpeedCallPolicy"
-        )
+        self.assertEqual(summary.policy_label, "PlacementAwareSpeedCallPolicy")
         self.assertIn(
             "policy: PlacementAwareSpeedCallPolicy",
             format_runtime_summary(summary),
