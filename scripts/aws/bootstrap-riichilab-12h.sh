@@ -9,6 +9,10 @@ WORK_ROOT="/var/lib/lisjong-riichilab-313"
 REPOSITORY_URL="https://github.com/lisbun/lisjong-arena.git"
 PROFILE="lisjong-dev"
 POLICY="MechanismRiichiDefenseYakuhaiCallPolicy"
+# Optional live spectating (Issue #381). Both values are required together.
+SPECTATE_PORT=""
+PLAY_REVISION=""
+PLAY_REPOSITORY_URL="https://github.com/lisbun/lisjong-play.git"
 
 while (($#)); do
     case "$1" in
@@ -32,6 +36,14 @@ while (($#)); do
             WORK_ROOT="$2"
             shift 2
             ;;
+        --spectate-port)
+            SPECTATE_PORT="$2"
+            shift 2
+            ;;
+        --play-revision)
+            PLAY_REVISION="$2"
+            shift 2
+            ;;
         *)
             echo "unknown argument: $1" >&2
             exit 2
@@ -46,6 +58,19 @@ fi
 if [[ ! "$DURATION_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
     echo "--duration-seconds must be a positive integer" >&2
     exit 2
+fi
+SPECTATE=0
+if [[ -n "$SPECTATE_PORT" || -n "$PLAY_REVISION" ]]; then
+    if [[ ! "$SPECTATE_PORT" =~ ^[1-9][0-9]{3,4}$ ]] ||
+        ((SPECTATE_PORT < 1024 || SPECTATE_PORT > 65535)); then
+        echo "--spectate-port must be an integer between 1024 and 65535" >&2
+        exit 2
+    fi
+    if [[ ! "$PLAY_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "--play-revision must be a full lowercase commit SHA" >&2
+        exit 2
+    fi
+    SPECTATE=1
 fi
 if [[ "$(id -u)" != "0" ]]; then
     echo "bootstrap must run as root under SSM" >&2
@@ -76,8 +101,9 @@ BOOTSTRAP_LOG="$WORK_ROOT/bootstrap.log"
 RUNNER_LOG="$WORK_ROOT/continuous.log"
 RECORD_DIR="$WORK_ROOT/records"
 REPO_DIR="$WORK_ROOT/repo"
+PLAY_DIR="$WORK_ROOT/play"
 
-if [[ -e "$REPO_DIR" || -e "$RECORD_DIR" || -e "$RUNNER_LOG" ]]; then
+if [[ -e "$REPO_DIR" || -e "$PLAY_DIR" || -e "$RECORD_DIR" || -e "$RUNNER_LOG" ]]; then
     echo "work root is not fresh" >&2
     exit 1
 fi
@@ -107,9 +133,78 @@ python3.14 -m venv "$REPO_DIR/.venv" >>"$BOOTSTRAP_LOG" 2>&1
 PYTHON="$REPO_DIR/.venv/bin/python"
 "$PYTHON" -m pip install --disable-pip-version-check -e "$REPO_DIR" >>"$BOOTSTRAP_LOG" 2>&1
 
+if [[ "$SPECTATE" == "1" ]]; then
+    # The viewer runs inside the process that holds the RiichiLab token, so
+    # lisjong-play must be an exact revision whose Arena pin is this run's
+    # Arena revision. Any mismatch fails closed before the live run.
+    git clone -q "$PLAY_REPOSITORY_URL" "$PLAY_DIR" >>"$BOOTSTRAP_LOG" 2>&1
+    git -C "$PLAY_DIR" checkout -q --detach "$PLAY_REVISION" >>"$BOOTSTRAP_LOG" 2>&1
+    if [[ "$(git -C "$PLAY_DIR" rev-parse HEAD)" != "$PLAY_REVISION" ]]; then
+        echo "lisjong-play checkout revision mismatch" >&2
+        exit 1
+    fi
+    if [[ -n "$(git -C "$PLAY_DIR" status --porcelain)" ]]; then
+        echo "lisjong-play checkout is not clean" >&2
+        exit 1
+    fi
+    # Arena stays the verified editable checkout: durable record provenance
+    # resolves lisjong_arena_revision from that clean Git work tree. lisjong-play
+    # is therefore installed without dependencies after proving that every one
+    # of its dependencies is an internal pin identical to this run's Arena
+    # revision or to Arena's own pins (which environment_verify checks below).
+    PLAY_PIN_CHECK="$(
+        "$PYTHON" - "$PLAY_DIR/pyproject.toml" "$REPO_DIR/pyproject.toml" "$ARENA_REVISION" <<'PY'
+import re
+import sys
+import tomllib
+
+PIN = re.compile(
+    r"^(lisjong|lisjong-engine|lisjong-arena) @ "
+    r"git\+https://github\.com/lisbun/(lisjong|lisjong-engine|lisjong-arena)\.git"
+    r"@([0-9a-f]{40})$"
+)
+
+
+def pins(path, *, internal_only):
+    with open(path, "rb") as handle:
+        dependencies = tomllib.load(handle)["project"]["dependencies"]
+    result = {}
+    for dependency in dependencies:
+        match = PIN.match(dependency)
+        if match is None:
+            if internal_only or dependency.split()[0].startswith("lisjong"):
+                return None
+            continue
+        if match.group(1) != match.group(2) or match.group(1) in result:
+            return None
+        result[match.group(1)] = match.group(3)
+    return result
+
+
+# lisjong-play must depend on internal pins only (it is installed --no-deps).
+play = pins(sys.argv[1], internal_only=True)
+arena = pins(sys.argv[2], internal_only=False)
+expected = None if arena is None else {**arena, "lisjong-arena": sys.argv[3]}
+print("match" if play is not None and play == expected else "mismatch")
+PY
+    )"
+    if [[ "$PLAY_PIN_CHECK" != "match" ]]; then
+        echo "lisjong-play pins do not match this exact Arena revision and its pins" >&2
+        exit 1
+    fi
+    "$PYTHON" -m pip install --disable-pip-version-check --no-deps -e "$PLAY_DIR" >>"$BOOTSTRAP_LOG" 2>&1
+fi
+
 cd "$REPO_DIR"
 "$PYTHON" -m lisjong_arena.environment_verify --project pyproject.toml     >>"$BOOTSTRAP_LOG" 2>&1
 echo "preflight: environment_verify=PASS arena_revision=$ARENA_REVISION"
+if [[ "$SPECTATE" == "1" ]]; then
+    if ! "$PYTHON" -m lisjong_play.riichilab_html --help | grep -q -- "--continuous"; then
+        echo "lisjong-play viewer does not expose --continuous" >&2
+        exit 1
+    fi
+    echo "preflight: spectate=on play_revision=$PLAY_REVISION port=$SPECTATE_PORT bind=127.0.0.1"
+fi
 
 PROFILE_POLICY="$(
     "$PYTHON" - <<'PY'
@@ -162,7 +257,13 @@ CUTOFF_UTC="$(date -u -d "@$CUTOFF_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"
 echo "run: start_utc=$START_UTC cutoff_utc=$CUTOFF_UTC duration_seconds=$DURATION_SECONDS"
 
 set +e
-"$PYTHON" -m lisjong_arena.riichilab.continuous_ranked     --profile "$PROFILE"     --duration-seconds "$DURATION_SECONDS"     --record-dir "$RECORD_DIR"     >"$RUNNER_LOG" 2>&1
+if [[ "$SPECTATE" == "1" ]]; then
+    # Same Arena continuous runner and summary output, plus the loopback-only
+    # live viewer in the same process. Reach it with SSM port forwarding.
+    "$PYTHON" -m lisjong_play.riichilab_html         --continuous         --profile "$PROFILE"         --duration-seconds "$DURATION_SECONDS"         --record-dir "$RECORD_DIR"         --port "$SPECTATE_PORT"         >"$RUNNER_LOG" 2>&1
+else
+    "$PYTHON" -m lisjong_arena.riichilab.continuous_ranked         --profile "$PROFILE"         --duration-seconds "$DURATION_SECONDS"         --record-dir "$RECORD_DIR"         >"$RUNNER_LOG" 2>&1
+fi
 RUNNER_EXIT_CODE=$?
 set -e
 
