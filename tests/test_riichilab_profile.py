@@ -302,7 +302,7 @@ class RuntimeSummaryTest(unittest.TestCase):
         )
         text = format_runtime_summary(summary)
         self.assertIn("profile: lisjong-baseline", text)
-        self.assertIn("policy: MinimalPolicy", text)
+        self.assertIn("policy: PlacementAwareSpeedCallPolicy", text)
         self.assertIn("mode: ranked", text)
         self.assertIn("trace: off", text)
         self.assertNotIn("trace path:", text)
