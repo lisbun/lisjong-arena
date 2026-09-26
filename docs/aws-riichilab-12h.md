@@ -279,10 +279,8 @@ Notes:
   the SSM `executionTimeout` maximum of 48 hours). The fail-safe still powers the
   instance off at that ceiling even if no stop was requested, and may interrupt
   a hanchan in progress. The preflight cost estimate uses this ceiling.
-- In `-UntilStopped` mode the teardown timer is also armed when a bot or the
-  verification fails after the bots started, so a failed until-stopped run does
-  not wait for the long fail-safe. Duration-bound
-  runs keep the previous failure behavior (the collector terminates).
+- A confirmed instance-side failure also arms the five-minute teardown timer
+  (Issue #337); see "Failure teardown" below.
 - A stop requested before the first hanchan completes verifies with zero
   records (`provenance` is then `null`).
 - The verified summary is `schema_version: 2`: `requested_duration_seconds` and
@@ -329,6 +327,32 @@ After a successful strict verification the EC2 bootstrap also arms a separate
 five-minute normal-teardown timer. The Windows launcher normally terminates the
 instance sooner, but this timer covers a local AWS CLI/SSO disconnect after the
 remote run has already passed.
+
+### Failure teardown (Issue #337)
+
+The same five-minute timer is armed when the bootstrap exits non-zero on its
+own instance: bootstrap/environment verification, static credential or
+secret/configuration blockers, bot failure, and verification FAIL, in
+duration-bound and `-UntilStopped` runs alike. A detached (`-SubmitOnly`) run
+therefore does not stay billable until collection or the long fail-safe.
+
+```text
+bootstrap exits non-zero (after root / AL2023 / fresh work root checks)
+  -> runtime secret variables unset
+  -> stderr: run: failed exit_code=<n> failure_teardown_armed=5min
+  -> poweroff after 5 minutes -> terminate
+```
+
+- No PASS summary is produced; the exit code and the secret-safe output stay in
+  the SSM command and are recovered with `collect-riichilab-12h.ps1 -StatePath`,
+  which accepts an already terminated instance and never resubmits.
+- Only the instance itself decides this. Local monitor detachment, an expired
+  AWS login, API failures or an unknown remote status never terminate the
+  instance (Issue #333).
+- Argument, root, OS or non-fresh work root failures happen before the timer
+  can be armed (the launcher validates the arguments first). They, and a timer
+  that cannot be armed, remain covered by the collector and the independent
+  long cost fail-safe, which is unchanged.
 
 The SSM command explicitly overrides `AWS-RunShellScript.executionTimeout`;
 the default is only one hour and is not suitable for this run.
