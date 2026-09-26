@@ -13,6 +13,7 @@ _LAUNCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "start-riichilab-12h.ps1"
 _COLLECTOR = _REPOSITORY_ROOT / "scripts" / "aws" / "collect-riichilab-12h.ps1"
 _MONITOR = _REPOSITORY_ROOT / "scripts" / "aws" / "ssm-monitor.ps1"
 _WATCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "watch-riichilab.ps1"
+_STOPPER = _REPOSITORY_ROOT / "scripts" / "aws" / "stop-riichilab.ps1"
 _SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -41,7 +42,7 @@ class AwsRiichiLabAutomationScriptTest(unittest.TestCase):
         pwsh = shutil.which("pwsh")
         if pwsh is None:
             self.skipTest("pwsh is unavailable")
-        for script in (_LAUNCHER, _COLLECTOR, _MONITOR, _WATCHER):
+        for script in (_LAUNCHER, _COLLECTOR, _MONITOR, _WATCHER, _STOPPER):
             with self.subTest(script=script.name):
                 path = str(script).replace("'", "''")
                 command = (
@@ -279,7 +280,7 @@ class AwsRiichiLabSpectateScriptTest(unittest.TestCase):
         spectate_run = spectate_run[: spectate_run.index("else")]
         for argument in (
             '--profile "$PROFILE"',
-            '--duration-seconds "$DURATION_SECONDS"',
+            '"${RUNNER_BOUND_ARGS[@]}"',
             '--record-dir "$RECORD_DIR"',
             '--port "$SPECTATE_PORT"',
             '>"$RUNNER_LOG" 2>&1',
@@ -320,6 +321,119 @@ class AwsRiichiLabSpectateScriptTest(unittest.TestCase):
             "authorize-security-group-ingress",
             "terminate-instances",
             "send-command",
+            "secretsmanager",
+        ):
+            self.assertNotIn(forbidden, lowered)
+
+
+class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
+    """Issue #383: operator stop request and until-stopped participation."""
+
+    def _run_bootstrap(self, *extra: str) -> subprocess.CompletedProcess[str]:
+        bash = _bash()
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        try:
+            return subprocess.run(
+                [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *extra],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            self.skipTest(f"bash cannot be executed: {error}")
+
+    def test_bootstrap_rejects_until_stopped_with_duration(self) -> None:
+        for extra in (
+            ("--until-stopped", "--duration-seconds", "60"),
+            ("--duration-seconds", "60", "--until-stopped"),
+        ):
+            with self.subTest(extra=extra):
+                result = self._run_bootstrap(*extra)
+                self.assertEqual(2, result.returncode, result.stderr)
+                self.assertIn("--until-stopped", result.stderr)
+
+    def test_bootstrap_always_passes_stop_file_to_runner_and_verifier(self) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn('STOP_FILE="$WORK_ROOT/stop-requested"', text)
+        self.assertIn('RUNNER_BOUND_ARGS+=(--stop-file "$STOP_FILE")', text)
+        self.assertIn('VERIFY_BOUND_ARGS+=(--stop-file "$STOP_FILE")', text)
+        self.assertIn("VERIFY_BOUND_ARGS+=(--until-stopped)", text)
+        self.assertIn('grep -q -- "--stop-file" <<<"$CONTINUOUS_HELP"', text)
+        # Both runner invocations and the verifier use the bound arguments.
+        self.assertEqual(2, text.count('"${RUNNER_BOUND_ARGS[@]}"'))
+        self.assertEqual(1, text.count('"${VERIFY_BOUND_ARGS[@]}"'))
+        self.assertNotIn('--duration-seconds "$DURATION_SECONDS"         ', text)
+
+    def test_bootstrap_fails_closed_for_until_stopped_viewer_without_stop_file(
+        self,
+    ) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn(
+            'lisjong_play.riichilab_html --help | grep -q -- "--stop-file"', text
+        )
+        self.assertIn(
+            "--until-stopped cannot stop normally",
+            text,
+        )
+        # Decided before the token is fetched.
+        self.assertLess(
+            text.index("--until-stopped cannot stop normally"),
+            text.index("secretsmanager get-secret-value"),
+        )
+
+    def test_bootstrap_arms_teardown_after_verification_and_on_until_stopped_exit(
+        self,
+    ) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertEqual(1, text.count("--unit=lisjong-normal-teardown"))
+        self.assertIn("trap on_exit EXIT", text)
+        on_exit = text[text.index("on_exit() {") :]
+        on_exit = on_exit[: on_exit.index("\n}\n")]
+        self.assertIn("unset LISJONG_DEV_BOT_TOKEN", on_exit)
+        self.assertIn('"$UNTIL_STOPPED" == "1" && "$RUNNER_STARTED" == "1"', on_exit)
+        self.assertIn("arm_normal_teardown", on_exit)
+        verify = text.index("-m lisjong_arena.riichilab.aws_run_verify")
+        success_arm = text.rindex("\narm_normal_teardown\n")
+        self.assertLess(verify, success_arm)
+        self.assertLess(
+            text.index("RUNNER_STARTED=1\nset +e"),
+            text.index(
+                "-m lisjong_arena.riichilab.continuous_ranked         --profile"
+            ),
+        )
+
+    def test_launcher_until_stopped_requires_explicit_fail_safe(self) -> None:
+        text = _LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("[switch]$UntilStopped", text)
+        self.assertIn('$PSBoundParameters.ContainsKey("FailSafeHours")', text)
+        self.assertIn('$PSBoundParameters.ContainsKey("DurationSeconds")', text)
+        self.assertIn("if ($FailSafeHours -gt 47)", text)
+        self.assertIn('$remoteCommand += " --until-stopped"', text)
+        self.assertIn("until_stopped = [bool]$UntilStopped", text)
+        self.assertIn("stop-riichilab.ps1", text)
+
+    def test_stopper_only_creates_the_stop_file_of_an_active_run(self) -> None:
+        text = _STOPPER.read_text(encoding="utf-8")
+        self.assertIn('"ssm", "get-command-invocation"', text)
+        self.assertIn('$runStatus -notin @("Pending", "InProgress", "Delayed")', text)
+        self.assertLess(
+            text.index('$runStatus -notin @("Pending", "InProgress", "Delayed")'),
+            text.index('"ssm", "send-command"'),
+        )
+        self.assertIn('"touch $workRoot/stop-requested"', text)
+        self.assertIn('$workRoot = "/var/lib/lisjong-riichilab-313"', text)
+        self.assertIn(
+            'WORK_ROOT="/var/lib/lisjong-riichilab-313"',
+            _BOOTSTRAP.read_text(encoding="utf-8"),
+        )
+        self.assertIn("stop_requested_at_utc", text)
+        lowered = text.lower()
+        for forbidden in (
+            "terminate-instances",
+            "stop-instances",
+            "poweroff",
+            "kill",
             "secretsmanager",
         ):
             self.assertNotIn(forbidden, lowered)

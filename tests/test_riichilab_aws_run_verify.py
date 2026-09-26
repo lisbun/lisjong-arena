@@ -37,7 +37,12 @@ def _provenance() -> RankedRecordProvenance:
     )
 
 
-def _runner_log(*, stopped_reason: str = "duration_reached") -> str:
+def _runner_log(
+    *,
+    stopped_reason: str = "duration_reached",
+    duration: str = "43200",
+    completed_games: int = 2,
+) -> str:
     return "\n".join(
         [
             "profile: lisjong-dev",
@@ -45,11 +50,12 @@ def _runner_log(*, stopped_reason: str = "duration_reached") -> str:
             "trace: off",
             "records: on",
             "requested completed games: unbounded",
-            "requested duration seconds: 43200",
+            f"requested duration seconds: {duration}",
+            "stop file: on",
             "profile: lisjong-dev",
             "requested completed games: unbounded",
-            "requested duration seconds: 43200",
-            "completed games: 2",
+            f"requested duration seconds: {duration}",
+            f"completed games: {completed_games}",
             "failed games: 1",
             "consecutive failures: 0",
             "last failure type: UnexpectedDisconnectError",
@@ -206,3 +212,150 @@ class AwsRunVerifierTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AwsRunOperatorStopTest(unittest.TestCase):
+    """Issue #383: operator stop requests and until-stopped runs."""
+
+    def _records(self) -> dict[str, SimpleNamespace]:
+        return {
+            "record-a": SimpleNamespace(
+                record_identity="a" * 64, provenance=_provenance()
+            ),
+            "record-b": SimpleNamespace(
+                record_identity="b" * 64, provenance=_provenance()
+            ),
+        }
+
+    def _verify(
+        self,
+        root: Path,
+        *,
+        log: str,
+        record_names: tuple[str, ...] = ("record-a", "record-b"),
+        create_stop_file: bool = True,
+        expected_duration_seconds: int | None = None,
+        cutoff_utc: str | None = None,
+        pass_stop_file: bool = True,
+    ) -> dict:
+        record_dir = root / "records"
+        record_dir.mkdir()
+        for name in record_names:
+            (record_dir / name).mkdir()
+        runner_log = root / "continuous.log"
+        runner_log.write_text(log, encoding="utf-8")
+        stop_file = root / "stop-requested"
+        if create_stop_file:
+            stop_file.touch()
+        records = self._records()
+        with patch(
+            "lisjong_arena.riichilab.aws_run_verify.load_ranked_game_record",
+            side_effect=lambda path: records[path.name],
+        ):
+            return verify_run(
+                record_dir=record_dir,
+                runner_log=runner_log,
+                expected_arena_revision=_ARENA_REVISION,
+                expected_profile="lisjong-dev",
+                expected_policy="MechanismRiichiDefenseYakuhaiCallPolicy",
+                expected_duration_seconds=expected_duration_seconds,
+                token=_TOKEN,
+                start_utc="2026-09-20T00:00:00Z",
+                cutoff_utc=cutoff_utc,
+                stop_utc="2026-09-20T03:00:00Z",
+                elapsed_seconds=10800,
+                stop_file=stop_file if pass_stop_file else None,
+            )
+
+    def test_until_stopped_run_with_operator_stop_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            summary = self._verify(
+                Path(raw),
+                log=_runner_log(stopped_reason="stop_requested", duration="unbounded"),
+            )
+        self.assertEqual("PASS", summary["status"])
+        self.assertEqual(2, summary["schema_version"])
+        self.assertEqual("stop_requested", summary["stopped_reason"])
+        self.assertTrue(summary["operator_stop_requested"])
+        self.assertIsNone(summary["requested_duration_seconds"])
+        self.assertIsNone(summary["cutoff_utc"])
+        self.assertEqual(2, summary["record_count"])
+
+    def test_stop_requested_without_stop_file_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(AwsRunVerificationError, "stop file"):
+                self._verify(
+                    Path(raw),
+                    log=_runner_log(
+                        stopped_reason="stop_requested", duration="unbounded"
+                    ),
+                    create_stop_file=False,
+                )
+
+    def test_until_stopped_run_requires_a_stop_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(AwsRunVerificationError, "stop file"):
+                self._verify(
+                    Path(raw),
+                    log=_runner_log(
+                        stopped_reason="stop_requested", duration="unbounded"
+                    ),
+                    pass_stop_file=False,
+                )
+
+    def test_until_stopped_run_rejects_duration_or_failure_stop(self) -> None:
+        for reason in ("duration_reached", "failure_budget_exhausted"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as raw:
+                with self.assertRaises(AwsRunVerificationError):
+                    self._verify(
+                        Path(raw),
+                        log=_runner_log(stopped_reason=reason, duration="unbounded"),
+                    )
+
+    def test_until_stopped_run_rejects_bounded_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(AwsRunVerificationError, "duration"):
+                self._verify(
+                    Path(raw),
+                    log=_runner_log(stopped_reason="stop_requested"),
+                )
+
+    def test_operator_stop_before_duration_passes_without_elapsed_bound(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            summary = self._verify(
+                Path(raw),
+                log=_runner_log(stopped_reason="stop_requested"),
+                expected_duration_seconds=43200,
+                cutoff_utc="2026-09-20T12:00:00Z",
+            )
+        self.assertEqual("stop_requested", summary["stopped_reason"])
+        self.assertEqual(43200, summary["requested_duration_seconds"])
+
+    def test_operator_stop_before_first_hanchan_passes_with_zero_records(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            summary = self._verify(
+                Path(raw),
+                log=_runner_log(
+                    stopped_reason="stop_requested",
+                    duration="unbounded",
+                    completed_games=0,
+                ),
+                record_names=(),
+            )
+        self.assertEqual(0, summary["record_count"])
+        self.assertIsNone(summary["provenance"])
+
+    def test_cutoff_must_match_duration_presence(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            with self.assertRaisesRegex(AwsRunVerificationError, "cutoff"):
+                self._verify(
+                    Path(raw),
+                    log=_runner_log(
+                        stopped_reason="stop_requested", duration="unbounded"
+                    ),
+                    cutoff_utc="2026-09-20T12:00:00Z",
+                )

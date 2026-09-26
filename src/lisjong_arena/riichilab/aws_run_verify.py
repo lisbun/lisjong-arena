@@ -1,5 +1,9 @@
 """Secret-safe verification for the bounded AWS RiichiLab run (Issue #313).
 
+Issue #383 adds operator stop requests: a run may also stop with
+``stop_requested`` when the operator created the stop file, and a run may be
+started without a duration bound (until stopped).
+
 This module intentionally does not provision AWS resources.  The AWS launcher owns
 EC2/SSM lifecycle, while this module owns the testable post-run checks that depend
 on Arena's durable ranked-record contract.
@@ -146,17 +150,30 @@ def verify_run(
     expected_arena_revision: str,
     expected_profile: str,
     expected_policy: str,
-    expected_duration_seconds: int,
+    expected_duration_seconds: int | None,
     token: str,
     start_utc: str,
-    cutoff_utc: str,
+    cutoff_utc: str | None,
     stop_utc: str,
     elapsed_seconds: float,
+    stop_file: Path | None = None,
 ) -> dict[str, Any]:
-    """Strict-read all records and return a secret-safe completion document."""
+    """Strict-read all records and return a secret-safe completion document.
 
-    if expected_duration_seconds <= 0:
+    ``expected_duration_seconds=None`` verifies an until-stopped run; it then
+    requires ``stop_file`` and a ``stop_requested`` stop.  ``stop_requested`` is
+    accepted only when ``stop_file`` is given and exists, so a run that stopped
+    for any other reason fails closed.
+    """
+
+    if expected_duration_seconds is not None and expected_duration_seconds <= 0:
         raise AwsRunVerificationError("expected duration must be positive")
+    if expected_duration_seconds is None and stop_file is None:
+        raise AwsRunVerificationError("an until-stopped run requires a stop file")
+    if (expected_duration_seconds is None) != (cutoff_utc is None):
+        raise AwsRunVerificationError(
+            "cutoff UTC must be given exactly when a duration is expected"
+        )
     if elapsed_seconds < 0:
         raise AwsRunVerificationError("elapsed seconds must be non-negative")
     if not record_dir.is_dir():
@@ -167,11 +184,24 @@ def verify_run(
         raise AwsRunVerificationError("runner profile does not match expected profile")
     if runner["records"] != "on":
         raise AwsRunVerificationError("durable records were not enabled")
-    if runner["stopped reason"] != "duration_reached":
+    stopped_reason = runner["stopped reason"]
+    operator_stop_requested = stop_file is not None and os.path.lexists(stop_file)
+    if stopped_reason == "stop_requested":
+        if not operator_stop_requested:
+            raise AwsRunVerificationError(
+                "runner stopped on request but no operator stop file exists"
+            )
+    elif stopped_reason != "duration_reached" or expected_duration_seconds is None:
         raise AwsRunVerificationError(
-            "runner did not stop because duration was reached"
+            "runner did not stop because duration was reached or the operator "
+            "requested a stop"
         )
-    if runner["requested duration seconds"] != str(expected_duration_seconds):
+    requested_duration = (
+        "unbounded"
+        if expected_duration_seconds is None
+        else str(expected_duration_seconds)
+    )
+    if runner["requested duration seconds"] != requested_duration:
         raise AwsRunVerificationError(
             "runner duration does not match expected duration"
         )
@@ -189,7 +219,9 @@ def verify_run(
         for path in record_dir.iterdir()
         if path.is_dir() and not path.name.startswith(".")
     )
-    if not record_paths:
+    # An operator may stop before the first hanchan completes; any other stop
+    # must have published at least one durable record.
+    if not record_paths and stopped_reason != "stop_requested":
         raise AwsRunVerificationError("no published durable records were found")
 
     records = []
@@ -210,39 +242,50 @@ def verify_run(
     if len(set(identities)) != len(identities):
         raise AwsRunVerificationError("durable record identities are not unique")
 
-    first_provenance = asdict(records[0].provenance)
-    for record in records[1:]:
-        if asdict(record.provenance) != first_provenance:
-            raise AwsRunVerificationError("durable record provenance is inconsistent")
+    first_provenance: dict[str, Any] | None = None
+    if records:
+        first_provenance = asdict(records[0].provenance)
+        for record in records[1:]:
+            if asdict(record.provenance) != first_provenance:
+                raise AwsRunVerificationError(
+                    "durable record provenance is inconsistent"
+                )
 
-    if first_provenance["profile_identity"] != expected_profile:
-        raise AwsRunVerificationError("record profile provenance is unexpected")
-    if first_provenance["policy_identity"] != expected_policy:
-        raise AwsRunVerificationError("record Policy provenance is unexpected")
-    if first_provenance["lisjong_arena_revision"] != expected_arena_revision:
-        raise AwsRunVerificationError("record Arena revision is unexpected")
-    unresolved = sorted(
-        key
-        for key, value in first_provenance.items()
-        if value == UNRESOLVED_PROVENANCE_VALUE
-    )
-    if unresolved:
-        raise AwsRunVerificationError(
-            "record provenance contains unresolved fields: " + ", ".join(unresolved)
+        if first_provenance["profile_identity"] != expected_profile:
+            raise AwsRunVerificationError("record profile provenance is unexpected")
+        if first_provenance["policy_identity"] != expected_policy:
+            raise AwsRunVerificationError("record Policy provenance is unexpected")
+        if first_provenance["lisjong_arena_revision"] != expected_arena_revision:
+            raise AwsRunVerificationError("record Arena revision is unexpected")
+        unresolved = sorted(
+            key
+            for key, value in first_provenance.items()
+            if value == UNRESOLVED_PROVENANCE_VALUE
         )
+        if unresolved:
+            raise AwsRunVerificationError(
+                "record provenance contains unresolved fields: " + ", ".join(unresolved)
+            )
 
     start = _parse_utc(start_utc, "start UTC")
-    cutoff = _parse_utc(cutoff_utc, "cutoff UTC")
     stop = _parse_utc(stop_utc, "stop UTC")
-    duration_delta = (cutoff - start).total_seconds()
-    if abs(duration_delta - expected_duration_seconds) > 1:
-        raise AwsRunVerificationError("cutoff UTC does not match requested duration")
-    if stop < cutoff:
-        raise AwsRunVerificationError("stop UTC precedes the graceful cutoff")
-    if elapsed_seconds + 1 < expected_duration_seconds:
-        raise AwsRunVerificationError(
-            "elapsed runtime is shorter than requested duration"
-        )
+    if stop < start:
+        raise AwsRunVerificationError("stop UTC precedes start UTC")
+    if expected_duration_seconds is not None:
+        assert cutoff_utc is not None
+        cutoff = _parse_utc(cutoff_utc, "cutoff UTC")
+        duration_delta = (cutoff - start).total_seconds()
+        if abs(duration_delta - expected_duration_seconds) > 1:
+            raise AwsRunVerificationError(
+                "cutoff UTC does not match requested duration"
+            )
+        if stopped_reason == "duration_reached":
+            if stop < cutoff:
+                raise AwsRunVerificationError("stop UTC precedes the graceful cutoff")
+            if elapsed_seconds + 1 < expected_duration_seconds:
+                raise AwsRunVerificationError(
+                    "elapsed runtime is shorter than requested duration"
+                )
 
     credential_scan = _scan_paths(
         record_dir=record_dir,
@@ -252,7 +295,7 @@ def verify_run(
 
     return {
         "schema_id": "lisjong-arena-aws-riichilab-bounded-run-summary",
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS",
         "start_utc": start_utc,
         "cutoff_utc": cutoff_utc,
@@ -264,7 +307,8 @@ def verify_run(
         "retry_or_disconnect_occurred": failed_games > 0,
         "final_consecutive_failures": consecutive_failures,
         "last_failure_type": runner["last failure type"],
-        "stopped_reason": runner["stopped reason"],
+        "stopped_reason": stopped_reason,
+        "operator_stop_requested": operator_stop_requested,
         "record_count": len(records),
         "strict_readback_pass_count": len(records),
         "strict_readback_failure_count": 0,
@@ -286,10 +330,17 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--expected-policy", default="MechanismRiichiDefenseYakuhaiCallPolicy"
     )
-    parser.add_argument("--expected-duration-seconds", required=True, type=int)
+    duration = parser.add_mutually_exclusive_group(required=True)
+    duration.add_argument("--expected-duration-seconds", type=int)
+    duration.add_argument(
+        "--until-stopped",
+        action="store_true",
+        help="the run had no duration bound and must stop on operator request",
+    )
+    parser.add_argument("--stop-file", type=Path, default=None)
     parser.add_argument("--token-env", default="LISJONG_DEV_BOT_TOKEN")
     parser.add_argument("--start-utc", required=True)
-    parser.add_argument("--cutoff-utc", required=True)
+    parser.add_argument("--cutoff-utc", default=None)
     parser.add_argument("--stop-utc", required=True)
     parser.add_argument("--elapsed-seconds", required=True, type=float)
     return parser
@@ -317,6 +368,7 @@ def _run_cli(argv: list[str] | None = None) -> int:
             cutoff_utc=args.cutoff_utc,
             stop_utc=args.stop_utc,
             elapsed_seconds=args.elapsed_seconds,
+            stop_file=args.stop_file,
         )
     except AwsRunVerificationError as exc:
         print(f"AWS run verification failed: {exc}", file=sys.stderr)

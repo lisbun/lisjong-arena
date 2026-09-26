@@ -133,6 +133,66 @@ PC: aws ssm start-session AWS-StartPortForwardingSession
 
 Without `-SpectatePort` the launcher and bootstrap behave exactly as before.
 
+## Stop request and until-stopped participation (Issue #383)
+
+A running bot can be told to stop from the PC. It finishes the hanchan in
+progress, starts no new one, verifies its records, and the EC2 instance then
+powers off and terminates:
+
+```powershell
+# Participate continuously until a stop request (the fail-safe is the ceiling).
+.\scripts\aws\start-riichilab-12h.ps1 `
+  -AwsProfile lisbun-admin `
+  -ArenaRevision <exact-full-sha> `
+  -UntilStopped `
+  -FailSafeHours 24 `
+  -SubmitOnly
+
+# Later: request the stop.
+.\scripts\aws\stop-riichilab.ps1 -AwsProfile lisbun-admin -StatePath <state.json>
+
+# After the hanchan in progress has finished: recover the summary and confirm teardown.
+.\scripts\aws\collect-riichilab-12h.ps1 -AwsProfile lisbun-admin -StatePath <state.json>
+```
+
+```text
+stop-riichilab.ps1
+  -> confirms the long SSM command is still active
+  -> SSM: touch /var/lib/lisjong-riichilab-313/stop-requested
+continuous_ranked --stop-file .../stop-requested
+  -> checked only before starting a new hanchan (or retry)
+  -> the hanchan in progress finishes, its durable record is finalized
+  -> stopped_reason=stop_requested
+bootstrap
+  -> aws_run_verify (stop_requested accepted only if the stop file exists)
+  -> normal teardown timer: poweroff after 5 minutes -> terminate
+```
+
+- The stop request works for both modes. A duration-bound run that receives it
+  stops early with `stopped_reason=stop_requested`; without it, behavior is
+  unchanged (`duration_reached`).
+- `-UntilStopped` passes no duration to the runner. It cannot be combined with
+  `-DurationSeconds` and requires an explicit `-FailSafeHours` (1-47, limited by
+  the SSM `executionTimeout` maximum of 48 hours). The fail-safe still powers the
+  instance off at that ceiling even if no stop was requested, and may interrupt
+  a hanchan in progress. The preflight cost estimate uses this ceiling.
+- One instance runs exactly one bot, so once that bot has stopped nothing else
+  keeps the instance alive. In `-UntilStopped` mode the teardown timer is also
+  armed when the runner or verification fails after the runner started, so a
+  failed until-stopped run does not wait for the long fail-safe. Duration-bound
+  runs keep the previous failure behavior (the collector terminates).
+- A stop requested before the first hanchan completes verifies with zero
+  records (`provenance` is then `null`).
+- The verified summary is `schema_version: 2`: `requested_duration_seconds` and
+  `cutoff_utc` are `null` for an until-stopped run, and
+  `operator_stop_requested` records whether the stop file existed.
+- With `-SpectatePort`, the lisjong-play viewer must forward `--stop-file`.
+  Until it does, the bootstrap fails closed for `-UntilStopped` and a
+  duration-bound spectating run keeps the stop request disabled.
+- `stop-riichilab.ps1` only creates the stop file. It never terminates,
+  interrupts, or signals anything; a run that is no longer active is left to
+  the collector.
+
 ## Normal stop versus cost fail-safe
 
 The two stop mechanisms are deliberately separate.
