@@ -20,6 +20,9 @@
 - monotonic elapsed timeによるgraceful duration bound。cutoff時に進行中の
   hanchanは中断せず、完了後は新しいgameへrequeueしない
 - opt-in durable ranked record acquisition(Issue #168)のper-game composition
+- opt-in live presentation(Issue #381)。game attemptごとに
+  `ContinuousRankedPresentationFeed`から新しいbufferを開いてone-game
+  primitiveへ渡すだけで、presentationの有無でexecution semanticsは変わらない
 - 停止要求後は新しいgameへrequeueしない graceful shutdown。
   `asyncio.CancelledError`はretryせずcatchもせずそのまま伝播させ、
   標準のasyncio cancellation semanticsを維持する。Ctrl-Cを正常終了として
@@ -49,6 +52,10 @@ from lisjong_arena.riichilab.durable_ranked_game_record import (
     DurableRankedGameRecordError,
 )
 from lisjong_arena.riichilab.errors import RiichiLabClientError, TransportError
+from lisjong_arena.riichilab.live_presentation import (
+    BoundedRankedPresentationBuffer,
+    ContinuousRankedPresentationFeed,
+)
 from lisjong_arena.riichilab.profile import (
     ProfileError,
     RuntimeProfile,
@@ -137,6 +144,7 @@ async def _acquire_ranked_record(
     url: str,
     profile_identity: str,
     policy_identity: str,
+    presentation: BoundedRankedPresentationBuffer | None = None,
 ) -> object:
     """Issue #168 public acquisition contractをimport-cycleなしでcompositionする。"""
     # durable record moduleはranked moduleをimportするため、ranked.py自身のCLIと
@@ -145,6 +153,7 @@ async def _acquire_ranked_record(
         acquire_ranked_game_record,
     )
 
+    presentation_kwargs = {} if presentation is None else {"presentation": presentation}
     return await acquire_ranked_game_record(
         policy,
         token,
@@ -152,6 +161,7 @@ async def _acquire_ranked_record(
         url=url,
         profile_identity=profile_identity,
         policy_identity=policy_identity,
+        **presentation_kwargs,
     )
 
 
@@ -183,6 +193,7 @@ async def run_continuous_ranked(
     max_completed_games: int | None = None,
     max_duration_seconds: int | None = None,
     stop_requested: Callable[[], bool] | None = None,
+    presentation: ContinuousRankedPresentationFeed | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     failure_budget: int = _FAILURE_BUDGET,
@@ -212,6 +223,11 @@ async def run_continuous_ranked(
     確認し、進行中のgameを中断しない。停止要求後は新しい`policy_factory()`
     を呼ばない。
 
+    `presentation`(default `None`・opt-in、Issue #381)を渡した場合は、
+    game attemptごとに`presentation.open_game()`で新しいbufferを開き、その
+    one-game primitiveへだけ渡す。bufferをgame間で使い回さない。未指定時は
+    one-game primitiveの呼び出し引数も含めて従来どおりである。
+
     retryするのは`TransportError`(`UnexpectedDisconnectError`を含む)
     hierarchyだけである。それ以外の例外(`ProtocolError`、
     `ProtocolTraceError`、durable record finalization/readback failure、
@@ -226,6 +242,10 @@ async def run_continuous_ranked(
         )
     if record_dir is not None and not os.fspath(record_dir):
         raise ValueError("record_dir must be a non-empty path or None")
+    if presentation is not None and not isinstance(
+        presentation, ContinuousRankedPresentationFeed
+    ):
+        raise TypeError("presentation must be a ContinuousRankedPresentationFeed")
 
     completed_games = 0
     failed_games = 0
@@ -249,9 +269,19 @@ async def run_continuous_ranked(
             break
 
         policy = profile.policy_factory()
+        # presentationの有無でone-game primitiveの呼び出し引数を変えない。
+        presentation_kwargs = (
+            {} if presentation is None else {"presentation": presentation.open_game()}
+        )
         try:
             if record_dir is None:
-                await run_ranked_game(policy, token, url=url, trace_path=trace_path)
+                await run_ranked_game(
+                    policy,
+                    token,
+                    url=url,
+                    trace_path=trace_path,
+                    **presentation_kwargs,
+                )
             else:
                 destination = resolve_ranked_record_path(os.fspath(record_dir))
                 if (
@@ -265,6 +295,7 @@ async def run_continuous_ranked(
                     url=url,
                     profile_identity=profile.name,
                     policy_identity=type(policy).__name__,
+                    **presentation_kwargs,
                 )
         except TransportError as error:
             failed_games += 1
@@ -330,8 +361,19 @@ def format_continuous_summary(summary: ContinuousRunSummary) -> str:
     )
 
 
-def _run_cli(argv: Sequence[str] | None = None) -> int:
+def run_continuous_ranked_cli(
+    argv: Sequence[str] | None = None,
+    *,
+    presentation: ContinuousRankedPresentationFeed | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+) -> int:
     """continuous ranked CLI entry point。
+
+    `python -m lisjong_arena.riichilab.continuous_ranked`と同じprofile /
+    credential解決、出力、exit codeを、live presentation consumer
+    (`lisjong-play`等)が同じprocess内から再利用するためのpublic関数である
+    (Issue #381)。`presentation` / `stop_requested`はそのまま
+    `run_continuous_ranked()`へ渡し、未指定時の出力とbehaviorは従来どおり。
 
     profile / credential / trace pathはprocess開始時に一度だけresolveする。
     別profileへの暗黙fallbackは行わず、resolution failureはfail closed
@@ -395,6 +437,12 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     print(f"requested completed games: {args.games or 'unbounded'}")
     print(f"requested duration seconds: {args.duration_seconds or 'unbounded'}")
 
+    optional_kwargs: dict[str, object] = {}
+    if presentation is not None:
+        optional_kwargs["presentation"] = presentation
+    if stop_requested is not None:
+        optional_kwargs["stop_requested"] = stop_requested
+
     try:
         summary = asyncio.run(
             run_continuous_ranked(
@@ -404,6 +452,7 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
                 record_dir=args.record_dir,
                 max_completed_games=args.games,
                 max_duration_seconds=args.duration_seconds,
+                **optional_kwargs,
             )
         )
     except DurableRankedGameRecordError as error:
@@ -437,6 +486,11 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
     return 1 if summary.stopped_reason == "failure_budget_exhausted" else 0
 
 
+def _run_cli(argv: Sequence[str] | None = None) -> int:
+    """module実行用entry point。`run_continuous_ranked_cli()`と同一実装。"""
+    return run_continuous_ranked_cli(argv)
+
+
 if __name__ == "__main__":
     sys.exit(_run_cli())
 
@@ -445,4 +499,5 @@ __all__ = [
     "ContinuousRunSummary",
     "format_continuous_summary",
     "run_continuous_ranked",
+    "run_continuous_ranked_cli",
 ]

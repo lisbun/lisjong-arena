@@ -48,9 +48,11 @@ from lisjong_arena.riichilab.errors import UnexpectedDisconnectError
 from lisjong_arena.riichilab.live_presentation import (
     DEFAULT_DECISION_BUFFER_CAPACITY,
     BoundedRankedPresentationBuffer,
+    ContinuousRankedPresentationFeed,
     RankedCompletionPresentation,
     RankedDecisionPresentation,
     RankedFailurePresentation,
+    RankedGamePresentation,
 )
 from lisjong_arena.riichilab.ranked import run_ranked_game
 from lisjong_arena.riichilab.session import RankedSession, ValidationSession
@@ -348,6 +350,82 @@ class BoundedBufferTest(unittest.TestCase):
             buffer.publish_completion(object())
         with self.assertRaises(TypeError):
             buffer.publish_failure(object())
+
+
+class ContinuousPresentationFeedTest(unittest.TestCase):
+    """Issue #381: continuous runner用per-game buffer handoff。"""
+
+    def _completion(self) -> RankedCompletionPresentation:
+        return RankedCompletionPresentation(self_seat=Seat.SEAT_0, scores=None)
+
+    def test_current_is_none_before_first_game(self) -> None:
+        self.assertIsNone(ContinuousRankedPresentationFeed().current())
+
+    def test_each_game_gets_a_fresh_buffer_with_increasing_ordinal(self) -> None:
+        feed = ContinuousRankedPresentationFeed(decision_capacity=3)
+        first = feed.open_game()
+        current = feed.current()
+        self.assertIsInstance(current, RankedGamePresentation)
+        self.assertEqual(current.game_ordinal, 1)
+        self.assertIs(current.buffer, first)
+        self.assertEqual(first.capacity, 3)
+
+        second = feed.open_game()
+        self.assertIsNot(second, first)
+        self.assertEqual(feed.current().game_ordinal, 2)
+        self.assertIs(feed.current().buffer, second)
+
+    def test_previous_game_terminal_survives_next_game_open(self) -> None:
+        """consumerがordinal変化を見てから旧bufferを最終drainできること。"""
+        feed = ContinuousRankedPresentationFeed()
+        first = feed.open_game()
+        consumer_handle = feed.current()
+        first.publish_completion(self._completion())
+        feed.open_game()
+
+        self.assertEqual(feed.current().game_ordinal, 2)
+        batch = consumer_handle.buffer.drain()
+        self.assertEqual(batch.completion, self._completion())
+
+    def test_second_game_terminal_is_not_blocked_by_undrained_first(self) -> None:
+        feed = ContinuousRankedPresentationFeed()
+        feed.open_game().publish_completion(self._completion())
+        second = feed.open_game()
+        second.publish_failure(RankedFailurePresentation("TransportError"))
+        batch = feed.current().buffer.drain()
+        self.assertIsNone(batch.completion)
+        self.assertEqual(batch.failure.failure_type, "TransportError")
+
+    def test_detach_detaches_current_and_future_buffers_without_raising(
+        self,
+    ) -> None:
+        feed = ContinuousRankedPresentationFeed()
+        first = feed.open_game()
+        feed.detach()
+        feed.detach()
+        self.assertFalse(feed.is_attached)
+        self.assertFalse(first.is_attached)
+
+        later = feed.open_game()
+        self.assertFalse(later.is_attached)
+        later.publish_completion(self._completion())
+        self.assertTrue(later.drain().is_empty)
+        self.assertEqual(feed.current().game_ordinal, 2)
+
+    def test_invalid_capacity_fails_closed(self) -> None:
+        for invalid in (0, -1, True, 1.5):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises((TypeError, ValueError)):
+                    ContinuousRankedPresentationFeed(decision_capacity=invalid)
+
+    def test_game_handle_validates_fields(self) -> None:
+        buffer = BoundedRankedPresentationBuffer()
+        for invalid in (0, True, "1"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises((TypeError, ValueError)):
+                    RankedGamePresentation(game_ordinal=invalid, buffer=buffer)
+        with self.assertRaises(TypeError):
+            RankedGamePresentation(game_ordinal=1, buffer=object())
 
 
 class RankedSessionPresentationSeamTest(unittest.TestCase):

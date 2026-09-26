@@ -265,6 +265,11 @@ presentationの有無で変化しない。
 
 generic event bus / telemetry framework / viewer frameworkへは拡張しない。
 
+continuous ranked runnerでは、game attemptごとに新しいbufferを開く
+`ContinuousRankedPresentationFeed`を使う(Issue #381、詳細は
+[continuous ranked](continuous-ranked.md#live-presentation-opt-in-issue-381))。
+1つのbufferを複数gameで使い回さない。
+
 ### `SessionStatus` detached snapshot
 
 `SessionStatus`はimmutable objectであることを要求しないが、呼び出し

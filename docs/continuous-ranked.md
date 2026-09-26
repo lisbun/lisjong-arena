@@ -83,6 +83,36 @@ RIICHILAB_TRACE_PATH
 
 The conflict is rejected before ranked execution starts.
 
+## Live presentation (opt-in, Issue #381)
+
+`run_continuous_ranked(..., presentation=feed)` accepts a
+`ContinuousRankedPresentationFeed`. For every one-game attempt, including a
+`TransportError` retry, the runner opens a fresh
+`BoundedRankedPresentationBuffer` from the feed and passes it only to that
+attempt's `run_ranked_game()` / durable acquisition. A buffer is never reused
+across games, so the one-run terminal contract of the buffer is preserved.
+
+```text
+continuous runner
+  -> feed.open_game()            (new buffer, game_ordinal + 1)
+  -> one-game primitive(presentation=buffer)
+       -> decision / completion / failure facts
+  -> primitive returns           (terminal fact already published)
+  -> next feed.open_game()
+```
+
+The feed keeps only the latest game handle. A consumer that notices a new
+`game_ordinal` can drain the buffer it already holds one last time to receive
+the previous game's terminal fact. `detach()` makes the current and all later
+buffers no-op publishers and never stops the run. Without `presentation` the
+one-game primitive receives exactly the same arguments as before.
+
+`run_continuous_ranked_cli(argv, *, presentation=None, stop_requested=None)`
+is the module CLI as a public function, so a same-process presentation consumer
+(for example the lisjong-play HTML live viewer) reuses the Arena profile /
+credential resolution, output, and exit code instead of duplicating them. The
+summary lines stay in the format that `aws_run_verify` parses.
+
 ## Manual smoke after merge
 
 The first live smoke for Issue #232 is intentionally small:

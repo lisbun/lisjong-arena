@@ -282,9 +282,107 @@ class BoundedRankedPresentationBuffer:
             self._coalesced_since_drain = 0
 
 
+@dataclass(frozen=True, slots=True)
+class RankedGamePresentation:
+    """continuous runの1 game attemptに対応するpresentation handle。
+
+    `game_ordinal`はcontinuous runnerがone-game primitiveを呼び出した順番
+    (1始まり)である。`TransportError`でretryしたattemptも1 attemptとして
+    数えるため、completed hanchan数とは一致しない。
+    """
+
+    game_ordinal: int
+    buffer: BoundedRankedPresentationBuffer
+
+    def __post_init__(self) -> None:
+        if isinstance(self.game_ordinal, bool) or not isinstance(
+            self.game_ordinal, int
+        ):
+            raise TypeError("game_ordinal must be an int")
+        if self.game_ordinal < 1:
+            raise ValueError("game_ordinal must be a positive int")
+        if not isinstance(self.buffer, BoundedRankedPresentationBuffer):
+            raise TypeError("buffer must be a BoundedRankedPresentationBuffer")
+
+
+class ContinuousRankedPresentationFeed:
+    """continuous ranked runnerからconsumerへper-game bufferを渡すhandoff。
+
+    `BoundedRankedPresentationBuffer`は1 runにつきterminal factを1件だけ持つ
+    contractなので、continuous runでは同じbufferを複数gameで使い回さない。
+    runner(`run_continuous_ranked`)がgame attemptごとに`open_game()`で新しい
+    bufferを開き、consumerは`current()`で最新gameのhandleを取得する。
+
+    - feedが保持するのは最新game attemptのhandleだけである。consumerが
+      drainしない間に複数gameが進んでも、feed側に古いbufferは蓄積しない
+    - runnerは前gameのone-game primitiveが戻った後(terminal factをpublish
+      済みの後)にだけ次の`open_game()`を呼ぶ。したがってconsumerは`current()`
+      の`game_ordinal`が変わったことを観測した後に、手元の前game bufferを
+      最終drainすればterminal factを取りこぼさない
+    - `open_game()`はbuffer生成とhandle差し替えだけを行い、consumer callbackを
+      呼ばない。ranked execution timingを支配しない
+    - `detach()`後に開くbufferは最初からdetach済みであり、publishはno-op相当
+      になる。ranked runは中断しない
+    """
+
+    __slots__ = ("_decision_capacity", "_lock", "_current", "_opened", "_attached")
+
+    def __init__(
+        self, *, decision_capacity: int = DEFAULT_DECISION_BUFFER_CAPACITY
+    ) -> None:
+        if isinstance(decision_capacity, bool) or not isinstance(
+            decision_capacity, int
+        ):
+            raise TypeError("decision_capacity must be an int")
+        if decision_capacity < 1:
+            raise ValueError("decision_capacity must be a positive int")
+
+        self._decision_capacity = decision_capacity
+        self._lock = threading.Lock()
+        self._current: RankedGamePresentation | None = None
+        self._opened = 0
+        self._attached = True
+
+    @property
+    def decision_capacity(self) -> int:
+        return self._decision_capacity
+
+    @property
+    def is_attached(self) -> bool:
+        with self._lock:
+            return self._attached
+
+    def open_game(self) -> BoundedRankedPresentationBuffer:
+        """runner側: 次のgame attempt用の新しいbufferを開いて返す。"""
+        buffer = BoundedRankedPresentationBuffer(capacity=self._decision_capacity)
+        with self._lock:
+            self._opened += 1
+            if not self._attached:
+                buffer.detach()
+            self._current = RankedGamePresentation(
+                game_ordinal=self._opened, buffer=buffer
+            )
+        return buffer
+
+    def current(self) -> RankedGamePresentation | None:
+        """consumer側: 最新game attemptのhandle。未開始なら`None`。"""
+        with self._lock:
+            return self._current
+
+    def detach(self) -> None:
+        """consumerの離脱を記録する。idempotentで、ranked runを中断しない。"""
+        with self._lock:
+            self._attached = False
+            current = self._current
+            if current is not None:
+                current.buffer.detach()
+
+
 __all__ = [
     "DEFAULT_DECISION_BUFFER_CAPACITY",
     "BoundedRankedPresentationBuffer",
+    "ContinuousRankedPresentationFeed",
+    "RankedGamePresentation",
     "RankedCompletionPresentation",
     "RankedDecisionPresentation",
     "RankedFailurePresentation",
