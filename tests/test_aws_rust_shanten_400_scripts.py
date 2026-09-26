@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from lisjong_arena.policy_catalog import POLICY_CATALOG
-from lisjong_arena.shanten_backend_verification import backend
+from lisjong_arena.shanten_backend_verification import backend, plan
 
 _ROOT = Path(__file__).resolve().parents[1]
 _BOOTSTRAP = _ROOT / "scripts" / "aws" / "bootstrap-rust-shanten-400.sh"
@@ -42,6 +42,45 @@ class BootstrapTest(unittest.TestCase):
         self.assertEqual(
             _shell_value(self.text, "WHEEL_SHA256"), backend.EXPECTED_WHEEL_SHA256
         )
+
+    def test_workload_constants_are_the_frozen_plan(self) -> None:
+        for prefix, policy in (
+            ("CHAMPION", plan.CHAMPION),
+            ("TWO_STEP", plan.TWO_STEP),
+        ):
+            self.assertEqual(
+                _shell_value(self.text, f"{prefix}_CATALOG"), policy.catalog
+            )
+            self.assertEqual(
+                _shell_value(self.text, f"{prefix}_CLASS"), policy.replay_class
+            )
+            self.assertEqual(
+                _shell_value(self.text, f"{prefix}_DECISIONS"), policy.decisions_file
+            )
+            self.assertEqual(
+                _shell_value(self.text, f"{prefix}_DECISIONS_SHA256"),
+                policy.decisions_sha256,
+            )
+            self.assertEqual(
+                _shell_value(self.text, f"{prefix}_SEED0_SEMANTIC"),
+                policy.seed0_semantic_sha256,
+            )
+        self.assertEqual(_shell_value(self.text, "GAME_MODE"), plan.GAME_MODE)
+        self.assertEqual(
+            int(_shell_value(self.text, "MULTI_WORKERS")), plan.MULTI_WORKERS
+        )
+        self.assertEqual(
+            tuple(range(int(_shell_value(self.text, "MULTI_SEED_LAST")) + 1)),
+            plan.MULTI_SEEDS,
+        )
+        self.assertEqual(
+            int(_shell_value(self.text, "STARTUP_REPEAT")), plan.STARTUP_REPEAT
+        )
+        order = re.search(r"^REPLAY_ORDER=\(([^)]*)\)$", self.text, re.MULTILINE)
+        self.assertEqual(tuple(order.group(1).split()), plan.REPLAY_ORDER)
+        self.assertIn(f"--repeat {plan.REPLAY_REPEAT})", self.text)
+        self.assertIn("--seeds 0 ", self.text)
+        self.assertEqual(plan.SINGLE_SEEDS, (0,))
 
     def test_policies_are_the_213_champion_and_two_step(self) -> None:
         for name in ("CHAMPION_CATALOG", "TWO_STEP_CATALOG"):

@@ -14,7 +14,8 @@ python -m lisjong_arena.shanten_backend_verification report <run output dir>    
 
 ``probe`` / ``games`` read the backend from ``LISJONG_SHANTEN_BACKEND`` and
 refuse to run unless it equals ``--backend``.  Every command exits non-zero on
-a verification failure or a mismatch.
+a verification failure or a mismatch; ``report`` exits 3 when the evidence is
+incomplete or does not match the frozen plan.
 """
 
 from __future__ import annotations
@@ -110,10 +111,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             _emit({key: summary[key] for key in ("backend", "games", "wall_s")})
         elif arguments.command == "report":
-            _emit(
-                evaluate(arguments.run_directory, hourly_usd=arguments.hourly_usd),
-                arguments.out,
-            )
+            report = evaluate(arguments.run_directory, hourly_usd=arguments.hourly_usd)
+            _emit(report, arguments.out)
+            if report["decision"] == "incomplete-evidence":
+                print(
+                    "INCOMPLETE EVIDENCE: no adoption decision; see evidence.problems",
+                    file=sys.stderr,
+                )
+                return 3
         else:
             result = compare_games(
                 arguments.left,

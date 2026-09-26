@@ -410,6 +410,10 @@ def compare_games(
         "left": str(left),
         "right": str(right),
         "seeds": sorted(set(first) | set(second)),
+        "expected_semantic": {
+            str(seed): digest
+            for seed, digest in sorted((expected_semantic or {}).items())
+        },
         "mismatches": mismatches,
         "ok": not mismatches,
     }

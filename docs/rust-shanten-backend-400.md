@@ -140,7 +140,14 @@ multi-workerは、16 worker（8物理core・HT）のため1半荘あたり1.3〜
 
 - **合計の見積もり**：1.5〜2.5時間。**fail-safe**：4時間（launch-clock、runnerのpoweroffとは独立）。
 - **概算compute費用**：`c7i.4xlarge`は約$0.90/h（概算。Preflightのpricing結果を正とする）。2.5時間で約$2.3、4時間で約$3.6。
-  public IPv4、EBS 30 GiB、S3は数セント以下。**CostBudgetUsd = 5**。
+  public IPv4、EBS 30 GiB、S3は数セント以下。
+- **`CostBudgetUsd = 5`は請求の上限ではない**。Preflightの受け入れ条件で、
+  「fail-safe時間 × Preflightの時間単価 + S3上限」が$5を超える計画をLaunch前に拒否するだけである。
+  実際の停止は、instance内のpoweroff timer（boot fail-safeと、Launch時に設定するcost fail-safe）と
+  terminate-on-shutdownによる。timerが働かない場合（instanceの異常など）、外部から自動停止する仕組みはない。
+  失敗runのbucket / SGは`Collect` / `Cleanup`まで残る。
+  したがって実費の判断は、Preflightが出す時間単価・最大稼働時間（fail-safe 4時間）・停止方式を確認して行う。
+  実行中は`Status`で経過と費用を確認する。
 - 同値性のgate（phase 3、4、6の行動不一致、7の比較）で1件でも不一致があれば、bootstrapはその時点で停止する（非0終了）。以降の性能測定は行わない。
   証跡はrunnerがuploadする。不一致は原因を調査してから扱い、性能判断へ進まない。
 
@@ -156,8 +163,24 @@ multi-workerは、16 worker（8物理core・HT）のため1半荘あたり1.3〜
 | 複数worker | phase 7：16 workerすべてで検査が通ること。同じ32半荘のwall time短縮率。system使用メモリの増分（MemTotal − MemAvailable、2秒間隔のpeak − 開始時）がR ≤ P + 16 × 20 MB | 全worker観測、**30%以上短縮**、メモリ条件 |
 | 参考（判定外） | two-stepの短縮率、単一対局の半荘時間、半荘/時、games中のworker peak RSS（taskのworker割当がrunごとに異なるため）、1,000半荘あたりの推定compute費用（`--hourly-usd`） | — |
 
+**証跡の完全性（判定より先に検証する）**：`report`は、指標を計算する前に、run directoryが§5.2〜§5.4の計画と一致するかを検査する
+（`shanten_backend_verification/plan.py`・`evidence.py`）。
+
+- replay：各Policy・各backendで、計画した3回（`REPLAY_ORDER`の位置）のfileがそろい、各1 passであること。
+  計画にないfileがないこと。Policy class・入力のbytes SHA-256・decision数・backend・native call数（rustは1以上、pythonはなし）が一致すること。
+- multi：両backendとも16 worker要求・16 worker観測・distinct worker pid 16、32半荘、seed 0..31、Champion、`4p-red-half`。
+  各gameのworker backend・lisjong revision・`SOURCE_REVISION`が一致すること。
+- 単一対局：両Policy・両backendで1 worker・seed 0。
+- 比較：比較対象のdirectory、seed集合、#213 seed-0 digestの照合が実際に行われたこと。
+- differential：必須2項目（native tests、Rust選択full suite）が両方あり、exit codeであること。
+- startup：各backend 10 sample。wheel identity（file名・SHA-256）とrust / python probeのrevisionが一致すること。
+
+1つでも欠損・不足・条件違いがあれば`decision = incomplete-evidence`とし、criteria・findingsは出さない（CLIはexit 3）。
+bootstrapを正常に完走すれば完全な証跡になる。この検査は、不完全な証跡や、別runが混ざった証跡を再集計するときに誤った判定を防ぐためのものである。
+
 判定の対応（`report.decision`）：
 
+- `incomplete-evidence`：上記の完全性・条件を満たさない。採用判断をしない。
 - `investigate-mismatch`：同値性に1件でも不一致がある。性能判断をしない。
 - `decline`（見送り）：Championの単一worker短縮率が15%未満（#213の基準）。
 - `recommend-opt-in`（対象AWS環境でのopt-in利用を推奨）：上表の判定をすべて満たす。
@@ -167,22 +190,32 @@ multi-workerは、16 worker（8物理core・HT）のため1半荘あたり1.3〜
 
 ### 5.6 起動・停止・cleanup（承認後）
 
+実行前に、使うAWS profileを`aws configure list-profiles`で確認する（このマシンでは`lisbun-admin`）。
+merge SHAは`git fetch origin`の後に確認したcommitで固定し、それがorigin/mainに含まれる#401のmerge commitであることを確かめる。
+
 ```powershell
+git fetch origin
+$sha = '<確認済みの#401 merge commit（40桁）>'
+git merge-base --is-ancestor $sha origin/main; if ($LASTEXITCODE -ne 0) { throw 'not on origin/main' }
+git checkout --detach $sha   # 実行するbootstrapと同じrevisionから起動する
+$awsProfile = 'lisbun-admin'
 $wheel = 'C:\Dev\lisjong-artifacts\issue-216-rust-wheel\wheel\lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl'
 $inputs = 'C:\Dev\lisjong-artifacts\issue-213-rust-backend-prototype\inputs'
-$run = @{ AwsProfile = 'lisjong'; Label = 'lisjong-400-rust'; InstanceType = 'c7i.4xlarge'; Workers = 16
+$run = @{ AwsProfile = $awsProfile; Label = 'lisjong-400-rust'; InstanceType = 'c7i.4xlarge'; Workers = 16
           MinMemoryMiBPerWorker = 1024
           Bootstrap = 'scripts\aws\bootstrap-rust-shanten-400.sh'
-          BootstrapArgs = @('--arena-revision', '<merged main sha>')
+          BootstrapArgs = @('--arena-revision', $sha)
           InputFile = @($wheel, "$inputs\decisions-placement-aware-speed-call.pickle", "$inputs\decisions-two-step.pickle")
           EstimatedRuntimeHours = @(1.5, 2.5); FailSafeHours = 4; CostBudgetUsd = 5 }
 .\scripts\aws\lisjong-ec2.ps1 -Action Preflight @run
 .\scripts\aws\lisjong-ec2.ps1 -Action Launch @run -Plan <run dir>\plan.json
-.\scripts\aws\lisjong-ec2.ps1 -Action Status  -RunId <run-id> -AwsProfile lisjong
-.\scripts\aws\lisjong-ec2.ps1 -Action Collect -RunId <run-id> -AwsProfile lisjong
+.\scripts\aws\lisjong-ec2.ps1 -Action Status  -RunId <run-id> -AwsProfile $awsProfile
+.\scripts\aws\lisjong-ec2.ps1 -Action Collect -RunId <run-id> -AwsProfile $awsProfile
 ```
 
+- Launch判断：Preflightの`plan.json`で、時間単価・見積もり・fail-safe worst caseを確認してから行う。
 - 停止条件：同値性gateの失敗（bootstrapが停止）、fail-safe 4時間、または手動（`Collect -ForceTerminate`）。
+  失敗runではinstanceは自動終了しないため、`Collect`（必要なら`-ForceTerminate`）で終了させる。
   成功時は、証跡upload後にrunnerがinstanceを終了する（#396）。
 - cleanup：`Collect`で終了・download・SHA-256照合・SG / bucket削除・residual sweepを行う。
   bucketが残った場合は`Cleanup`を使う。EC2、SG、bucketが残っていないことを親Issueに記録する。

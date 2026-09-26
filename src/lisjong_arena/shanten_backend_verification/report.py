@@ -17,6 +17,11 @@ Layout read here (written by ``scripts/aws/bootstrap-rust-shanten-400.sh``)::
     replay/<policy>-<backend>-<n>.json lisjong tools/benchmark_tile_efficiency.py
     games-multi/compare.json
     games-multi/champion-<backend>/summary.json
+
+Before any metric, ``evidence.validate_evidence()`` checks that the directory
+holds exactly the planned amount of work under the planned conditions
+(``plan.py``).  Incomplete or mismatching evidence yields the decision
+``incomplete-evidence`` with the list of problems and no criteria at all.
 """
 
 from __future__ import annotations
@@ -24,6 +29,9 @@ from __future__ import annotations
 import json
 import statistics
 from pathlib import Path
+
+from . import plan
+from .evidence import validate_evidence
 
 REDUCTION_MIN = 0.30
 """Primary: single-worker Champion decision time reduction vs Python."""
@@ -34,8 +42,8 @@ EXTRA_MEMORY_MAX_BYTES = 20_000_000
 STARTUP_EXTRA_MAX_MS = 100.0
 """Additional import + first calculation time."""
 
-SINGLE_POLICIES = ("champion", "two-step")
-REPLAY_POLICIES = ("champion", "two-step")
+SINGLE_POLICIES = tuple(policy.label for policy in plan.POLICIES)
+REPLAY_POLICIES = SINGLE_POLICIES
 
 
 def _load(path: Path):
@@ -43,8 +51,10 @@ def _load(path: Path):
 
 
 def _replays(root: Path, policy: str, backend: str) -> list[dict[str, object]]:
-    runs = sorted((root / "replay").glob(f"{policy}-{backend}-*.json"))
-    return [_load(path) for path in runs]
+    return [
+        _load(root / "replay" / f"{policy}-{backend}-{index}.json")
+        for index in plan.replay_indices(backend)
+    ]
 
 
 def _median(values: list[float]) -> float | None:
@@ -63,6 +73,22 @@ def _check(passed: bool | None) -> bool:
 
 def evaluate(run_directory: str | Path, *, hourly_usd: float | None = None):
     root = Path(run_directory)
+    thresholds = {
+        "reduction_min": REDUCTION_MIN,
+        "decline_reduction_below": DECLINE_REDUCTION_BELOW,
+        "extra_memory_max_bytes": EXTRA_MEMORY_MAX_BYTES,
+        "startup_extra_max_ms": STARTUP_EXTRA_MAX_MS,
+    }
+    problems = validate_evidence(root)
+    if problems:
+        return {
+            "run_directory": str(root),
+            "thresholds": thresholds,
+            "evidence": {"complete": False, "problems": problems},
+            "findings": None,
+            "criteria": None,
+            "decision": "incomplete-evidence",
+        }
     findings: dict[str, object] = {}
 
     # ---- distribution / fail-closed -------------------------------------
@@ -263,12 +289,8 @@ def evaluate(run_directory: str | Path, *, hourly_usd: float | None = None):
 
     return {
         "run_directory": str(root),
-        "thresholds": {
-            "reduction_min": REDUCTION_MIN,
-            "decline_reduction_below": DECLINE_REDUCTION_BELOW,
-            "extra_memory_max_bytes": EXTRA_MEMORY_MAX_BYTES,
-            "startup_extra_max_ms": STARTUP_EXTRA_MAX_MS,
-        },
+        "thresholds": thresholds,
+        "evidence": {"complete": True, "problems": []},
         "findings": findings,
         "criteria": criteria,
         "decision": decision,
