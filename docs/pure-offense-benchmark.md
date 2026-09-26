@@ -212,9 +212,96 @@ python -m lisjong_arena.pure_offense_benchmark summarize \
 - The provenance check runs before any game. A failed or partial run writes
   nothing.
 
+- `--focal canonical-first` and `--focal outcome-q --focal-artifact DIR` run
+  the lisjong semantic-envelope Policy with a residual runtime. canonical-first
+  uses `ConstantResidualRuntime`; outcome-q uses the outcome-Q artifact
+  (`manifest.json` / `weights.f32`) loaded by
+  `lisjong.learning.load_outcome_q_policy_factory`. Neither option takes
+  `--focal-identity`.
+  - The focal identity is `<kind>@<runtime identity>`.
+  - The focal reference records the runtime identity. For outcome-q it also
+    records the artifact identity and the SHA-256 of `manifest.json` and
+    `weights.f32`.
+  - Each worker process loads the runtime once, runs torch with one thread and
+    fails closed if the runtime identity differs from the resolved focal.
+  - This adds focal Policies only. The benchmark protocol, manifest and record
+    schemas are unchanged.
+
 **`summarize`:**
 
 - It re-derives everything from the saved arms.
 - Arms are compared as `arm_j − arm_i` for every `i < j`, in the order given.
   List them in lineage order.
 - Retain arm directories and `summary.json` outside Git.
+
+## AWS calibration run (#389)
+
+The 1,000-seed calibration runs on one EC2 instance through the existing
+[`scripts/aws/lisjong-ec2.ps1`](../scripts/aws/lisjong-ec2.ps1) lifecycle
+wrapper (#379). The workload is
+[`scripts/aws/bootstrap-pure-offense-389.sh`](../scripts/aws/bootstrap-pure-offense-389.sh).
+There is no benchmark-specific AWS launcher.
+
+```text
+allocation   df8460868ac26cc3505f04b5f4f8f524ccc14dc2423a114487775a1cb69ccb0f
+             riichienv-4p-red-single-v1, 389000..389999, DEVELOPMENT
+arms         shanten -> ukeire -> two-step -> canonical-first -> outcome-q
+             (sequential, lineage order, 4,000 games each, 20,000 in total)
+instance     c7i.4xlarge, 16 workers, one instance
+```
+
+The arm order separates two effects. `two-step -> canonical-first` shows the
+envelope / O0 guard effect. `canonical-first -> outcome-q` shows the learned
+residual effect.
+
+The bootstrap fails closed on each of these checks:
+
+- **Arena revision:**
+  - the checkout is exact and clean;
+  - the revision is merged into `main`;
+  - it descends from the allocation's `arena_revision` (`7257e0c`);
+  - `pure_offense_benchmark/protocol.py` is unchanged since that revision.
+- **lisjong pin and torch:**
+  - the lisjong pin is `2a9debe`;
+  - torch is `2.13.0+cpu`;
+  - `environment_verify` passes.
+- **Outcome-Q artifact:** the `manifest.json` / `weights.f32` bytes match the
+  frozen #385 digests.
+- **Focal identities:** each arm's focal identity matches the frozen identity.
+
+The bootstrap fetches the live ledger into the evidence directory. It never
+reserves, commits or retires seeds.
+
+```powershell
+$artifact = 'C:\Dev\lisjong-artifacts\issue-203-step-d\outcome-q-artifact'
+$run = @{ AwsProfile = 'lisjong'; Label = 'lisjong-389-cal'; InstanceType = 'c7i.4xlarge'; Workers = 16
+          Bootstrap = 'scripts\aws\bootstrap-pure-offense-389.sh'
+          BootstrapArgs = @('--arena-revision', '<merged main sha>',
+                            '--allocation-identity', 'df8460868ac26cc3505f04b5f4f8f524ccc14dc2423a114487775a1cb69ccb0f')
+          InputFile = @("$artifact\manifest.json", "$artifact\weights.f32")
+          EstimatedRuntimeHours = @(0.5, 1); FailSafeHours = 2; CostBudgetUsd = 3 }
+.\scripts\aws\lisjong-ec2.ps1 -Action Preflight @run
+.\scripts\aws\lisjong-ec2.ps1 -Action Launch @run -Plan <run dir>\plan.json
+.\scripts\aws\lisjong-ec2.ps1 -Action Status  -RunId <run-id> -AwsProfile lisjong
+.\scripts\aws\lisjong-ec2.ps1 -Action Collect -RunId <run-id> -AwsProfile lisjong
+```
+
+`Status` shows `progress.txt` (arm start / done) and the per-arm
+`progress-<arm>.log`. The runner syncs both to S3 every minute.
+
+`Collect` downloads the following under the run directory and checks their
+SHA-256:
+
+- `arms/<arm>/`
+- `summary.json` / `summary.txt`
+- `seed-ledger.json` / `allocation.json`
+- `arm-timings.tsv`
+- the logs
+
+Re-run `summarize` locally on the downloaded arms as the strict readback. Then
+retain the run outside Git.
+
+The allocation moves to `COMMITTED` through the Seed Registry workflow only
+after that readback passes and the result is recorded on #389. If the run
+fails, decide the seed handling from the cause and whether any result was
+exposed.
