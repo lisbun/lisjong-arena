@@ -299,8 +299,8 @@ class InstanceRunCliTest(unittest.TestCase):
         self.assertEqual(
             [
                 "lisjong-dev\tLISJONG_DEV_BOT_TOKEN\t"
-                "MechanismRiichiDefenseYakuhaiCallPolicy\t9000",
-                "lisjong-baseline\tLISJONG_BASELINE_BOT_TOKEN\tMinimalPolicy\t9001",
+                "PlacementAwareSpeedCallPolicy\t9000",
+                "lisjong-baseline\tLISJONG_BASELINE_BOT_TOKEN\tPlacementAwareSpeedCallPolicy\t9001",
             ],
             stdout.getvalue().splitlines(),
         )
