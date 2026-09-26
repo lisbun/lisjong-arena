@@ -86,6 +86,11 @@ if [[ -n "$SPECTATE_PORT" || -n "$PLAY_REVISION" ]]; then
     fi
     SPECTATE=1
 fi
+# The bot supervisor uses `wait -n -p` (bash 5.1+).
+if ((BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1))); then
+    echo "bash 5.1 or newer is required" >&2
+    exit 2
+fi
 if [[ "$(id -u)" != "0" ]]; then
     echo "bootstrap must run as root under SSM" >&2
     exit 2
@@ -116,8 +121,11 @@ RUNNER_LOG="$WORK_ROOT/continuous.log"
 RECORD_DIR="$WORK_ROOT/records"
 REPO_DIR="$WORK_ROOT/repo"
 PLAY_DIR="$WORK_ROOT/play"
-# Issue #383: stop-riichilab.ps1 creates this file through SSM. The runner
-# checks it before each new hanchan, so an in-progress hanchan always finishes.
+# Issue #383: one instance-wide stop request shared by every bot of this run.
+# Each bot checks it before starting a new hanchan, so a hanchan in progress
+# always finishes. The first writer records why (see request_stop):
+#   operator            stop-riichilab.ps1 through SSM
+#   bot-exited:<name>   a bot of this run exited, so the others stop as well
 STOP_FILE="$WORK_ROOT/stop-requested"
 
 if [[ -e "$REPO_DIR" || -e "$PLAY_DIR" || -e "$RECORD_DIR" || -e "$RUNNER_LOG" ]]; then
@@ -318,8 +326,9 @@ arm_normal_teardown() {
 }
 
 # In an until-stopped run the only other stop is the long cost fail-safe, so
-# once the runner has started, any exit (including runner or verification
-# failure) also arms the normal teardown: this instance runs only this bot.
+# once the bots have started, any exit (including bot or verification failure)
+# also arms the normal teardown. The bootstrap exits only after every bot of
+# this run has exited, so no bot is left running on the instance.
 RUNNER_STARTED=0
 on_exit() {
     unset LISJONG_DEV_BOT_TOKEN
@@ -340,17 +349,55 @@ else
     echo "run: start_utc=$START_UTC cutoff_utc=$CUTOFF_UTC duration_seconds=$DURATION_SECONDS"
 fi
 
+# The first writer wins (noclobber), so the recorded reason is the first one.
+request_stop() {
+    (
+        set -C
+        printf '%s\n' "$1" >"$STOP_FILE"
+    ) 2>/dev/null || true
+}
+
+# Bot supervisor. All bots of a run are started by this one bootstrap and are
+# tracked by PID -> bot name. When any bot exits (normally or not), the others
+# are asked to finish their hanchan in progress and stop. The run currently
+# starts exactly one bot.
+declare -A BOT_NAMES=()
+declare -A BOT_EXIT_CODES=()
 RUNNER_STARTED=1
-set +e
 if [[ "$SPECTATE" == "1" ]]; then
     # Same Arena continuous runner and summary output, plus the loopback-only
     # live viewer in the same process. Reach it with SSM port forwarding.
-    "$PYTHON" -m lisjong_play.riichilab_html         --continuous         --profile "$PROFILE"         "${RUNNER_BOUND_ARGS[@]}"         --record-dir "$RECORD_DIR"         --port "$SPECTATE_PORT"         >"$RUNNER_LOG" 2>&1
+    "$PYTHON" -m lisjong_play.riichilab_html         --continuous         --profile "$PROFILE"         "${RUNNER_BOUND_ARGS[@]}"         --record-dir "$RECORD_DIR"         --port "$SPECTATE_PORT"         >"$RUNNER_LOG" 2>&1 &
 else
-    "$PYTHON" -m lisjong_arena.riichilab.continuous_ranked         --profile "$PROFILE"         "${RUNNER_BOUND_ARGS[@]}"         --record-dir "$RECORD_DIR"         >"$RUNNER_LOG" 2>&1
+    "$PYTHON" -m lisjong_arena.riichilab.continuous_ranked         --profile "$PROFILE"         "${RUNNER_BOUND_ARGS[@]}"         --record-dir "$RECORD_DIR"         >"$RUNNER_LOG" 2>&1 &
 fi
-RUNNER_EXIT_CODE=$?
-set -e
+BOT_NAMES[$!]="$PROFILE"
+echo "run: bot_started name=$PROFILE"
+
+RUNNING_BOT_PIDS=("${!BOT_NAMES[@]}")
+while ((${#RUNNING_BOT_PIDS[@]})); do
+    set +e
+    wait -n -p EXITED_BOT_PID "${RUNNING_BOT_PIDS[@]}"
+    EXITED_BOT_CODE=$?
+    set -e
+    BOT_EXIT_CODES[$EXITED_BOT_PID]=$EXITED_BOT_CODE
+    request_stop "bot-exited:${BOT_NAMES[$EXITED_BOT_PID]}"
+    echo "run: bot_exited name=${BOT_NAMES[$EXITED_BOT_PID]} exit_code=$EXITED_BOT_CODE stop_requested_for_others=1"
+    REMAINING_BOT_PIDS=()
+    for pid in "${RUNNING_BOT_PIDS[@]}"; do
+        if [[ "$pid" != "$EXITED_BOT_PID" ]]; then
+            REMAINING_BOT_PIDS+=("$pid")
+        fi
+    done
+    RUNNING_BOT_PIDS=("${REMAINING_BOT_PIDS[@]}")
+done
+
+RUNNER_EXIT_CODE=0
+for pid in "${!BOT_EXIT_CODES[@]}"; do
+    if [[ "${BOT_EXIT_CODES[$pid]}" -ne 0 ]]; then
+        RUNNER_EXIT_CODE="${BOT_EXIT_CODES[$pid]}"
+    fi
+done
 
 STOP_EPOCH="$(date +%s)"
 STOP_UTC="$(date -u -d "@$STOP_EPOCH" '+%Y-%m-%dT%H:%M:%SZ')"

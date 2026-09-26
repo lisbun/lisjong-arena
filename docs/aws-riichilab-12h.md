@@ -135,9 +135,9 @@ Without `-SpectatePort` the launcher and bootstrap behave exactly as before.
 
 ## Stop request and until-stopped participation (Issue #383)
 
-A running bot can be told to stop from the PC. It finishes the hanchan in
-progress, starts no new one, verifies its records, and the EC2 instance then
-powers off and terminates:
+A running run can be told to stop from the PC. Every bot finishes the hanchan
+in progress and starts no new one. The records are then verified, and the EC2
+instance powers off and terminates:
 
 ```powershell
 # Participate continuously until a stop request (the fail-safe is the ceiling).
@@ -158,15 +158,49 @@ powers off and terminates:
 ```text
 stop-riichilab.ps1
   -> confirms the long SSM command is still active
-  -> SSM: touch /var/lib/lisjong-riichilab-313/stop-requested
-continuous_ranked --stop-file .../stop-requested
+  -> SSM: write "operator" to /var/lib/lisjong-riichilab-313/stop-requested
+     (first writer wins; an existing reason is kept)
+each bot: continuous_ranked --stop-file .../stop-requested
   -> checked only before starting a new hanchan (or retry)
   -> the hanchan in progress finishes, its durable record is finalized
   -> stopped_reason=stop_requested
-bootstrap
-  -> aws_run_verify (stop_requested accepted only if the stop file exists)
+bootstrap bot supervisor
+  -> waits until every bot of the run has exited
+  -> when any bot exits, writes "bot-exited:<name>" (if no reason yet)
+     so that the other bots also finish their hanchan and stop
+  -> aws_run_verify (stop_requested accepted only if the stop file exists
+     and names a known source)
   -> normal teardown timer: poweroff after 5 minutes -> terminate
 ```
+
+### Several bots on one instance
+
+The lifecycle is designed for several bots per instance, all launched by one
+request and supervised by one bootstrap:
+
+- There is one stop file per run (instance), shared by every bot.
+- When any bot exits, for any reason (stop, duration, failure budget, crash),
+  the supervisor writes the stop file. The remaining bots then finish their
+  hanchan in progress and stop.
+- The bootstrap verifies and arms the teardown only after every bot has
+  exited. The instance therefore powers off only when no bot of the run is
+  left running.
+- The verified summary records the first reason as `stop_request_source`
+  (`operator` or `bot-exited:<name>`). `operator_stop_requested` is true only
+  for an operator stop.
+
+The launcher currently starts exactly one bot (`lisjong-dev`). Actually
+starting several additionally needs:
+
+- a bot list in the launcher and bootstrap (profile, secret, expected Policy)
+- IAM secret checks for each bot
+- a record directory and runner log per bot
+- one verification per bot
+- a collector summary per bot
+- a separate spectate port per bot
+
+These are separate from this stop / teardown lifecycle, which does not need to
+change.
 
 - The stop request works for both modes. A duration-bound run that receives it
   stops early with `stopped_reason=stop_requested`; without it, behavior is
@@ -176,20 +210,20 @@ bootstrap
   the SSM `executionTimeout` maximum of 48 hours). The fail-safe still powers the
   instance off at that ceiling even if no stop was requested, and may interrupt
   a hanchan in progress. The preflight cost estimate uses this ceiling.
-- One instance runs exactly one bot, so once that bot has stopped nothing else
-  keeps the instance alive. In `-UntilStopped` mode the teardown timer is also
-  armed when the runner or verification fails after the runner started, so a
-  failed until-stopped run does not wait for the long fail-safe. Duration-bound
+- In `-UntilStopped` mode the teardown timer is also armed when a bot or the
+  verification fails after the bots started, so a failed until-stopped run does
+  not wait for the long fail-safe. Duration-bound
   runs keep the previous failure behavior (the collector terminates).
 - A stop requested before the first hanchan completes verifies with zero
   records (`provenance` is then `null`).
 - The verified summary is `schema_version: 2`: `requested_duration_seconds` and
-  `cutoff_utc` are `null` for an until-stopped run, and
-  `operator_stop_requested` records whether the stop file existed.
+  `cutoff_utc` are `null` for an until-stopped run, and `stop_request_source` /
+  `operator_stop_requested` record who requested the stop first. Unrecognized
+  stop file content fails verification.
 - With `-SpectatePort`, the lisjong-play viewer must forward `--stop-file`.
   Until it does, the bootstrap fails closed for `-UntilStopped` and a
   duration-bound spectating run keeps the stop request disabled.
-- `stop-riichilab.ps1` only creates the stop file. It never terminates,
+- `stop-riichilab.ps1` only writes the stop file. It never terminates,
   interrupts, or signals anything; a run that is no longer active is left to
   the collector.
 

@@ -234,6 +234,7 @@ class AwsRunOperatorStopTest(unittest.TestCase):
         log: str,
         record_names: tuple[str, ...] = ("record-a", "record-b"),
         create_stop_file: bool = True,
+        stop_file_content: str = "operator\n",
         expected_duration_seconds: int | None = None,
         cutoff_utc: str | None = None,
         pass_stop_file: bool = True,
@@ -246,7 +247,7 @@ class AwsRunOperatorStopTest(unittest.TestCase):
         runner_log.write_text(log, encoding="utf-8")
         stop_file = root / "stop-requested"
         if create_stop_file:
-            stop_file.touch()
+            stop_file.write_text(stop_file_content, encoding="ascii")
         records = self._records()
         with patch(
             "lisjong_arena.riichilab.aws_run_verify.load_ranked_game_record",
@@ -277,9 +278,45 @@ class AwsRunOperatorStopTest(unittest.TestCase):
         self.assertEqual(2, summary["schema_version"])
         self.assertEqual("stop_requested", summary["stopped_reason"])
         self.assertTrue(summary["operator_stop_requested"])
+        self.assertEqual("operator", summary["stop_request_source"])
         self.assertIsNone(summary["requested_duration_seconds"])
         self.assertIsNone(summary["cutoff_utc"])
         self.assertEqual(2, summary["record_count"])
+
+    def test_stop_after_another_bot_exited_passes_and_names_the_bot(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            summary = self._verify(
+                Path(raw),
+                log=_runner_log(stopped_reason="stop_requested", duration="unbounded"),
+                stop_file_content="bot-exited:lisjong-baseline\n",
+            )
+        self.assertEqual("bot-exited:lisjong-baseline", summary["stop_request_source"])
+        self.assertFalse(summary["operator_stop_requested"])
+
+    def test_duration_stop_records_the_supervisor_stop_request(self) -> None:
+        # The supervisor writes the stop file after the bot itself exits.
+        with tempfile.TemporaryDirectory() as raw:
+            summary = self._verify(
+                Path(raw),
+                log=_runner_log(duration="10800"),
+                stop_file_content="bot-exited:lisjong-dev\n",
+                expected_duration_seconds=10800,
+                cutoff_utc="2026-09-20T03:00:00Z",
+            )
+        self.assertEqual("duration_reached", summary["stopped_reason"])
+        self.assertFalse(summary["operator_stop_requested"])
+
+    def test_unrecognized_stop_file_content_is_rejected(self) -> None:
+        for content in ("", "operator please\n", "bot-exited:\n", "bot-exited:a b"):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as raw:
+                with self.assertRaisesRegex(AwsRunVerificationError, "stop file"):
+                    self._verify(
+                        Path(raw),
+                        log=_runner_log(
+                            stopped_reason="stop_requested", duration="unbounded"
+                        ),
+                        stop_file_content=content,
+                    )
 
     def test_stop_requested_without_stop_file_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

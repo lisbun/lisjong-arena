@@ -361,6 +361,7 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
         self.assertIn("VERIFY_BOUND_ARGS+=(--until-stopped)", text)
         self.assertIn('grep -q -- "--stop-file" <<<"$CONTINUOUS_HELP"', text)
         # Both runner invocations and the verifier use the bound arguments.
+        # (Runner invocations are backgrounded and supervised.)
         self.assertEqual(2, text.count('"${RUNNER_BOUND_ARGS[@]}"'))
         self.assertEqual(1, text.count('"${VERIFY_BOUND_ARGS[@]}"'))
         self.assertNotIn('--duration-seconds "$DURATION_SECONDS"         ', text)
@@ -397,7 +398,7 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
         success_arm = text.rindex("\narm_normal_teardown\n")
         self.assertLess(verify, success_arm)
         self.assertLess(
-            text.index("RUNNER_STARTED=1\nset +e"),
+            text.index('RUNNER_STARTED=1\nif [[ "$SPECTATE" == "1" ]]; then'),
             text.index(
                 "-m lisjong_arena.riichilab.continuous_ranked         --profile"
             ),
@@ -421,7 +422,7 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
             text.index('$runStatus -notin @("Pending", "InProgress", "Delayed")'),
             text.index('"ssm", "send-command"'),
         )
-        self.assertIn('"touch $workRoot/stop-requested"', text)
+        self.assertIn("(set -C; printf 'operator\\n' > $workRoot/stop-requested)", text)
         self.assertIn('$workRoot = "/var/lib/lisjong-riichilab-313"', text)
         self.assertIn(
             'WORK_ROOT="/var/lib/lisjong-riichilab-313"',
@@ -437,6 +438,127 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
             "secretsmanager",
         ):
             self.assertNotIn(forbidden, lowered)
+
+
+class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
+    """Issue #383: every bot of a run is supervised by one bootstrap.
+
+    When any bot exits, the shared stop file is written so that the other bots
+    finish their hanchan and stop; the bootstrap continues only after every bot
+    has exited.
+    """
+
+    def _supervisor_script(self) -> str:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        request_stop = text[text.index("request_stop() {") :]
+        request_stop = request_stop[: request_stop.index("\n}\n") + 3]
+        loop = text[text.index('RUNNING_BOT_PIDS=("${!BOT_NAMES[@]}")') :]
+        end = loop.index("RUNNER_EXIT_CODE=0")
+        end = loop.index("\ndone\n", end) + len("\ndone\n")
+        return request_stop + loop[:end]
+
+    def test_bootstrap_backgrounds_every_bot_under_the_supervisor(self) -> None:
+        text = _BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertEqual(2, text.count('>"$RUNNER_LOG" 2>&1 &'))
+        self.assertIn('BOT_NAMES[$!]="$PROFILE"', text)
+        self.assertIn('wait -n -p EXITED_BOT_PID "${RUNNING_BOT_PIDS[@]}"', text)
+        self.assertIn('request_stop "bot-exited:${BOT_NAMES[$EXITED_BOT_PID]}"', text)
+        self.assertIn("bash 5.1 or newer is required", text)
+        # Verification runs only after the supervisor loop has drained.
+        self.assertLess(
+            text.index("RUNNER_EXIT_CODE=0"),
+            text.index("-m lisjong_arena.riichilab.aws_run_verify"),
+        )
+
+    def test_one_bot_exit_stops_the_others_after_their_hanchan(self) -> None:
+        bash = _bash()
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        harness = (
+            "set -euo pipefail\n"
+            'STOP_FILE="$1"\n'
+            "bot() {\n"
+            "    # $1 name, $2 exit code when it exits on its own, $3 own ticks\n"
+            "    local i=0\n"
+            "    while ((i < 100)); do\n"
+            '        if [[ -e "$STOP_FILE" ]]; then\n'
+            "            sleep 0.2  # finish the hanchan in progress\n"
+            '            echo "stopped:$1" >>"$STOP_FILE.log"\n'
+            "            exit 0\n"
+            "        fi\n"
+            "        sleep 0.05\n"
+            "        i=$((i + 1))\n"
+            '        if ((i == $3)); then exit "$2"; fi\n'
+            "    done\n"
+            "    exit 99\n"
+            "}\n"
+            "declare -A BOT_NAMES=()\n"
+            "declare -A BOT_EXIT_CODES=()\n"
+            'bot failing 3 4 & BOT_NAMES[$!]="failing"\n'
+            'bot steady 0 1000 & BOT_NAMES[$!]="steady"\n'
+            'bot other 0 1000 & BOT_NAMES[$!]="other"\n'
+            + self._supervisor_script()
+            + 'echo "exit=$RUNNER_EXIT_CODE"\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "harness.sh"
+            script.write_text(harness, encoding="utf-8")
+            stop_file = root / "stop-requested"
+            try:
+                result = subprocess.run(
+                    [bash, str(script), str(stop_file)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except OSError as error:
+                self.skipTest(f"bash cannot be executed: {error}")
+            self.assertEqual(0, result.returncode, result.stderr)
+            # The first writer wins: the failing bot's exit is the recorded reason.
+            self.assertEqual(
+                "bot-exited:failing\n", stop_file.read_text(encoding="utf-8")
+            )
+            stopped = sorted(
+                (root / "stop-requested.log").read_text(encoding="utf-8").split()
+            )
+        self.assertEqual(["stopped:other", "stopped:steady"], stopped)
+        self.assertIn("exit=3", result.stdout)
+        self.assertEqual(3, result.stdout.count("run: bot_exited"))
+
+    def test_an_existing_operator_stop_reason_is_kept(self) -> None:
+        bash = _bash()
+        if bash is None:
+            self.skipTest("bash is unavailable")
+        harness = (
+            "set -euo pipefail\n"
+            'STOP_FILE="$1"\n'
+            "printf 'operator\\n' >\"$STOP_FILE\"\n"
+            "declare -A BOT_NAMES=()\n"
+            "declare -A BOT_EXIT_CODES=()\n"
+            'true & BOT_NAMES[$!]="only"\n'
+            + self._supervisor_script()
+            + 'echo "exit=$RUNNER_EXIT_CODE"\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "harness.sh"
+            script.write_text(harness, encoding="utf-8")
+            stop_file = root / "stop-requested"
+            try:
+                result = subprocess.run(
+                    [bash, str(script), str(stop_file)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except OSError as error:
+                self.skipTest(f"bash cannot be executed: {error}")
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual("operator\n", stop_file.read_text(encoding="utf-8"))
+        self.assertIn("exit=0", result.stdout)
 
 
 if __name__ == "__main__":

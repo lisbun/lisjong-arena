@@ -1,8 +1,10 @@
 """Secret-safe verification for the bounded AWS RiichiLab run (Issue #313).
 
-Issue #383 adds operator stop requests: a run may also stop with
-``stop_requested`` when the operator created the stop file, and a run may be
-started without a duration bound (until stopped).
+Issue #383 adds stop requests: a run may also stop with ``stop_requested`` when
+the run's stop file exists, and a run may be started without a duration bound
+(until stopped).  The stop file is shared by every bot of the run and records
+who requested the stop first: ``operator`` (stop-riichilab.ps1) or
+``bot-exited:<name>`` (a bot of the run exited, so the others stop as well).
 
 This module intentionally does not provision AWS resources.  The AWS launcher owns
 EC2/SSM lifecycle, while this module owns the testable post-run checks that depend
@@ -27,6 +29,7 @@ from lisjong_arena.riichilab.durable_ranked_game_record import (
     load_ranked_game_record,
 )
 
+_STOP_REQUEST_SOURCE_RE = re.compile(r"operator|bot-exited:[A-Za-z0-9._-]+")
 _AWS_ACCESS_KEY_RE = re.compile(rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
 _AWS_CREDENTIAL_NAME_RE = re.compile(
     rb"(?i)\b(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)\b"
@@ -47,6 +50,24 @@ def _parse_utc(value: str, field_name: str) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise AwsRunVerificationError(f"{field_name} must include a timezone")
     return parsed
+
+
+def _read_stop_request_source(stop_file: Path | None) -> str | None:
+    """Return who requested the stop, or ``None`` when no stop was requested."""
+
+    if stop_file is None or not os.path.lexists(stop_file):
+        return None
+    try:
+        raw = stop_file.read_bytes()
+    except OSError as exc:
+        raise AwsRunVerificationError("stop file could not be read") from exc
+    try:
+        source = raw.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
+        raise AwsRunVerificationError("stop file content is not recognized") from exc
+    if _STOP_REQUEST_SOURCE_RE.fullmatch(source) is None:
+        raise AwsRunVerificationError("stop file content is not recognized")
+    return source
 
 
 def _parse_runner_summary(path: Path) -> dict[str, str]:
@@ -163,7 +184,8 @@ def verify_run(
     ``expected_duration_seconds=None`` verifies an until-stopped run; it then
     requires ``stop_file`` and a ``stop_requested`` stop.  ``stop_requested`` is
     accepted only when ``stop_file`` is given and exists, so a run that stopped
-    for any other reason fails closed.
+    for any other reason fails closed.  An existing stop file must name a known
+    source.
     """
 
     if expected_duration_seconds is not None and expected_duration_seconds <= 0:
@@ -185,11 +207,11 @@ def verify_run(
     if runner["records"] != "on":
         raise AwsRunVerificationError("durable records were not enabled")
     stopped_reason = runner["stopped reason"]
-    operator_stop_requested = stop_file is not None and os.path.lexists(stop_file)
+    stop_request_source = _read_stop_request_source(stop_file)
     if stopped_reason == "stop_requested":
-        if not operator_stop_requested:
+        if stop_request_source is None:
             raise AwsRunVerificationError(
-                "runner stopped on request but no operator stop file exists"
+                "runner stopped on request but no stop file exists"
             )
     elif stopped_reason != "duration_reached" or expected_duration_seconds is None:
         raise AwsRunVerificationError(
@@ -219,8 +241,8 @@ def verify_run(
         for path in record_dir.iterdir()
         if path.is_dir() and not path.name.startswith(".")
     )
-    # An operator may stop before the first hanchan completes; any other stop
-    # must have published at least one durable record.
+    # A stop may be requested before the first hanchan completes; any other
+    # stop must have published at least one durable record.
     if not record_paths and stopped_reason != "stop_requested":
         raise AwsRunVerificationError("no published durable records were found")
 
@@ -308,7 +330,8 @@ def verify_run(
         "final_consecutive_failures": consecutive_failures,
         "last_failure_type": runner["last failure type"],
         "stopped_reason": stopped_reason,
-        "operator_stop_requested": operator_stop_requested,
+        "stop_request_source": stop_request_source,
+        "operator_stop_requested": stop_request_source == "operator",
         "record_count": len(records),
         "strict_readback_pass_count": len(records),
         "strict_readback_failure_count": 0,

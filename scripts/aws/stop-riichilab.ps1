@@ -6,10 +6,11 @@ param(
 
 # Issue #383: request a normal stop of a running AWS RiichiLab run.
 #
-# Creates the runner's stop file on the instance through SSM. The bot finishes
-# the hanchan in progress, starts no new one, the bootstrap verifies the durable
-# records, and the instance then powers off (-> terminate) through the normal
-# five-minute teardown timer. Nothing is interrupted or terminated from here;
+# Creates the run's instance-wide stop file on the instance through SSM. Every
+# bot of the run finishes its hanchan in progress and starts no new one; after
+# all bots have exited the bootstrap verifies the durable records, and the
+# instance then powers off (-> terminate) through the normal five-minute
+# teardown timer. Nothing is interrupted or terminated from here;
 # run collect-riichilab-12h.ps1 afterwards to recover the verified summary and
 # confirm teardown.
 
@@ -64,7 +65,8 @@ if ($runStatus -notin @("Pending", "InProgress", "Delayed")) {
 }
 
 # Fixed path owned by bootstrap-riichilab-12h.sh. The work root must already
-# exist: the stop request is for this run, not for a future one.
+# exist: the stop request is for this run, not for a future one. The first
+# writer wins (noclobber), so a bot that already exited keeps its reason.
 $workRoot = "/var/lib/lisjong-riichilab-313"
 $requestPath = Join-Path ([System.IO.Path]::GetDirectoryName($StatePath)) "ssm-stop.json"
 $request = [ordered]@{
@@ -75,7 +77,8 @@ $request = [ordered]@{
         commands = @(
             "set -eu",
             "test -d $workRoot",
-            "touch $workRoot/stop-requested",
+            "(set -C; printf 'operator\n' > $workRoot/stop-requested) 2>/dev/null || true",
+            "test -f $workRoot/stop-requested",
             "echo LISJONG_STOP_REQUESTED"
         )
         executionTimeout = @("120")
@@ -115,6 +118,6 @@ $state | Add-Member -NotePropertyName "stop_command_id" -NotePropertyValue $stop
 $state | ConvertTo-Json -Depth 20 | Set-Content -Path $StatePath -Encoding utf8NoBOM
 
 Write-Host "STOP REQUESTED at $stoppedAt."
-Write-Host "The bot finishes the hanchan in progress and starts no new one."
-Write-Host "After verification the instance powers off and terminates about five minutes later."
+Write-Host "Every bot finishes its hanchan in progress and starts no new one."
+Write-Host "After all bots have stopped and been verified, the instance powers off and terminates about five minutes later."
 Write-Host "Collect the verified summary and confirm teardown with: .\scripts\aws\collect-riichilab-12h.ps1 -AwsProfile $AwsProfile -StatePath '$StatePath'"
