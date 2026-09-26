@@ -355,7 +355,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-arena-revision", required=True)
     parser.add_argument("--expected-profile", default="lisjong-dev")
     parser.add_argument(
-        "--expected-policy", default="MechanismRiichiDefenseYakuhaiCallPolicy"
+        "--expected-policy", default="PlacementAwareSpeedCallPolicy"
     )
     duration = parser.add_mutually_exclusive_group(required=True)
     duration.add_argument("--expected-duration-seconds", type=int)
