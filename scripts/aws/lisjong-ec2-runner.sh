@@ -7,10 +7,16 @@
 #   3. sync the runner / bootstrap log and progress* files to S3 every
 #      SYNC_SECONDS, so a fail-safe poweroff still leaves recent evidence
 #   4. on exit, upload output/ with sha256sums.txt and _completion.json (last)
+#   5. (#396) only when the workload exited 0 and every step-4 upload succeeded,
+#      schedule a poweroff AUTO_TERMINATE_DELAY_SECONDS after the runner exits,
+#      so SSM records the result first. The launch request sets
+#      InstanceInitiatedShutdownBehavior=terminate, so the instance terminates.
+#      Failed runs keep running until Collect / the boot fail-safe.
 # It never interprets the workload's outputs.
 set -euo pipefail
 
 SYNC_SECONDS=60
+AUTO_TERMINATE_DELAY_SECONDS=60
 WORK_ROOT="/mnt/lisjong-ec2"
 RUN_ID=""
 BUCKET=""
@@ -48,13 +54,26 @@ chmod 700 "$WORK_ROOT"
 RUNNER_LOG="$OUTPUT_DIR/runner.log"
 PREFIX="s3://$BUCKET/$RUN_ID"
 SYNC_PID=""
+UPLOAD_FAILED=0
 PHASE="input"
 START_EPOCH="$(date +%s)"
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$RUNNER_LOG"; }
 
 put() {
-    # $1: local path, $2: key below output/. Errors are logged, never fatal.
-    aws s3 cp --only-show-errors --region "$REGION" "$1" "$PREFIX/output/$2" >>"$RUNNER_LOG" 2>&1 || log "upload failed: $2"
+    # $1: local path, $2: key below output/. Errors are logged, never fatal, but
+    # a failure blocks the auto-terminate (sync_logs runs in a subshell).
+    aws s3 cp --only-show-errors --region "$REGION" "$1" "$PREFIX/output/$2" >>"$RUNNER_LOG" 2>&1 ||
+        { log "upload failed: $2"; UPLOAD_FAILED=1; }
+}
+
+schedule_auto_terminate() {
+    # A transient timer outlives this SSM command; poweroff then terminates the instance.
+    if systemd-run --quiet --unit=lisjong-auto-terminate --on-active="${AUTO_TERMINATE_DELAY_SECONDS}s" \
+        --timer-property=AccuracySec=5s /usr/bin/systemctl poweroff; then
+        echo "LISJONG_EC2_AUTO_TERMINATE scheduled in ${AUTO_TERMINATE_DELAY_SECONDS}s"
+    else
+        echo "LISJONG_EC2_AUTO_TERMINATE not scheduled; Collect or the boot fail-safe terminates the instance"
+    fi
 }
 
 sync_logs() {
@@ -76,7 +95,7 @@ finalize() {
     )
     aws s3 cp --only-show-errors --recursive --region "$REGION" "$OUTPUT_DIR" "$PREFIX/output/" \
         --exclude runner.log --exclude sha256sums.txt --exclude _completion.json >>"$RUNNER_LOG" 2>&1 ||
-        log "output upload failed"
+        { log "output upload failed"; UPLOAD_FAILED=1; }
     put "$OUTPUT_DIR/sha256sums.txt" sha256sums.txt
     put "$RUNNER_LOG" runner.log
     printf '{"run_id":"%s","phase":"%s","exit_code":%d,"start_epoch":%d,"end_epoch":%d,"nproc":%d,"workers":%d}\n' \
@@ -86,12 +105,26 @@ finalize() {
     if [[ "$status" -ne 0 ]]; then
         echo "--- bootstrap log tail"
         tail -n 60 "$OUTPUT_DIR/bootstrap.log" 2>/dev/null
+    elif [[ "$UPLOAD_FAILED" -ne 0 ]]; then
+        echo "LISJONG_EC2_AUTO_TERMINATE skipped: an evidence upload failed"
+    else
+        schedule_auto_terminate
     fi
     exit "$status"
 }
 trap finalize EXIT
 
-(while sleep "$SYNC_SECONDS"; do sync_logs; done) &
+# The loop kills its own sleep on TERM: an orphaned sleep would keep this command's
+# stdout open, delaying SSM's result past the auto-terminate poweroff (#396).
+(
+    trap 'kill "$SLEEP_PID" 2>/dev/null; exit 0' TERM
+    while true; do
+        sleep "$SYNC_SECONDS" &
+        SLEEP_PID=$!
+        wait "$SLEEP_PID"
+        sync_logs
+    done
+) &
 SYNC_PID=$!
 
 log "downloading inputs"
