@@ -16,7 +16,9 @@ Actions
              arm fail-safe, submit scripts/aws/lisjong-ec2-runner.sh, then Collect
   Status     EC2 / SSM / elapsed / cost / CPU / memory / progress for -RunId
   Collect    wait for completion + S3 evidence, terminate, download, sha256-check,
-             delete SG (and bucket when complete), residual sweep.
+             delete SG (and bucket when complete), residual sweep. The runner
+             already terminates a successful run itself once its evidence is
+             uploaded (#396); Collect accepts that terminated instance.
              -ForceTerminate stops a running workload deliberately.
   Cleanup    delete a retained bucket / SG after Collect, residual sweep
 
@@ -324,6 +326,16 @@ function Invoke-Collect([string]$Id) {
                 "The fail-safe remains armed. Inspect with -Action Status, or stop deliberately with -Action Collect -ForceTerminate.")
         }
     }
+    if ($null -eq $invocation -and $null -ne $instance) {
+        # The runner auto-terminates a successful run (#396), so the instance may already be
+        # gone; SSM still keeps the invocation, which is recorded for the evidence.
+        $commandId = Get-Tag @($instance.Tags) "lisjong-command-id"
+        if ($commandId) {
+            $probe = Invoke-AwsTextAllowFailure -Arguments @(
+                "ssm", "get-command-invocation", "--command-id", $commandId, "--instance-id", ([string]$instance.InstanceId), "--output", "json")
+            if ($probe.ExitCode -eq 0) { $invocation = $probe.Text | ConvertFrom-Json }
+        }
+    }
     if ($null -ne $invocation) { [IO.File]::WriteAllText((Join-Path $runDir "ssm-invocation.json"), ($invocation | ConvertTo-Json -Depth 10), $utf8) }
     if ($null -ne $instance -and [string]$instance.State.Name -ne "terminated") {
         if ($ForceTerminate) { Write-Warning "-ForceTerminate: terminating $([string]$instance.InstanceId) regardless of workload state." }
@@ -365,8 +377,9 @@ function Invoke-Collect([string]$Id) {
         downloaded = $downloaded; checksum_errors = $checksumErrors; completion = $completion }
     if ($null -ne $instance) {
         $launch = [DateTimeOffset]::Parse([string]$instance.LaunchTime, $invariant)
-        $end = $(if ([string]$instance.StateTransitionReason -match "\((.+) GMT\)") {
-                [DateTimeOffset]::Parse("$($Matches[1]) +00:00", $invariant) } else { [DateTimeOffset]::UtcNow })
+        $timed = [string]$instance.StateTransitionReason -match "\((.+) GMT\)"
+        $end = $(if ($timed) { [DateTimeOffset]::Parse("$($Matches[1]) +00:00", $invariant) } else { [DateTimeOffset]::UtcNow })
+        $collection.billable_end_source = $(if ($timed) { "state-transition" } else { "collect-time-upper-bound" })
         $seconds = [math]::Max(0, ($end - $launch).TotalSeconds)
         $hourly = Get-Tag @($instance.Tags) "lisjong-hourly-usd"
         $collection.instance_id = [string]$instance.InstanceId
@@ -388,8 +401,10 @@ function Invoke-Collect([string]$Id) {
 
 if ($Action -in @("Status", "Collect", "Cleanup")) {
     Test-RunId $RunId
-    if ($Action -eq "Status") { Show-Status $RunId; return }
-    if ($Action -eq "Collect") { Invoke-Collect $RunId; return }
+    # Explicit exit 0 (#396): otherwise a caller's $LASTEXITCODE is whatever the last
+    # native call returned, e.g. 254 from the expected head-bucket 404 after deletion.
+    if ($Action -eq "Status") { Show-Status $RunId; exit 0 }
+    if ($Action -eq "Collect") { Invoke-Collect $RunId; exit 0 }
     $instance = Find-RunInstance $RunId
     if ($null -ne $instance -and [string]$instance.State.Name -ne "terminated") { throw "Instance is still $([string]$instance.State.Name); run -Action Collect first." }
     $accountId = [string](Invoke-AwsJson -Arguments @("sts", "get-caller-identity")).Account
@@ -402,7 +417,7 @@ if ($Action -in @("Status", "Collect", "Cleanup")) {
     $left = @($residual.Values | ForEach-Object { @($_) } | Where-Object { $_ })
     if ($left.Count -ne 0) { throw "Residual resources remain: $($left -join ', ')" }
     Write-Host "No residual resources for $RunId."
-    return
+    exit 0
 }
 
 # ---------------------------------------------------------------------------
@@ -664,3 +679,4 @@ try {
 }
 
 Invoke-Collect $runId
+exit 0
