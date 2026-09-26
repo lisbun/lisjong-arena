@@ -1,4 +1,4 @@
-"""Issue #223: RiichiLab lisjong-dev profileのcurrent Policy mappingを固定する。"""
+"""Issue #402: RiichiLab dev/baseline profileのChampion Policy mappingを固定する。"""
 
 import contextlib
 import io
@@ -6,7 +6,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from lisjong.policies import MechanismRiichiDefenseYakuhaiCallPolicy, MinimalPolicy
+from lisjong.policies import MinimalPolicy, PlacementAwareSpeedCallPolicy
 from lisjong.policy_contract.seat import Seat
 
 from lisjong_arena.riichilab.profile import (
@@ -28,23 +28,24 @@ _TRACE_PATH_VAR = "RIICHILAB_TRACE_PATH"
 
 
 class DevProfileMappingTest(unittest.TestCase):
-    def test_lisjong_dev_maps_to_exact_mechanism_policy(self) -> None:
+    def test_lisjong_dev_maps_to_exact_champion_policy(self) -> None:
         profile = resolve_profile("lisjong-dev")
 
         self.assertEqual(profile.credential_env_var, _DEV_TOKEN_VAR)
         self.assertEqual(profile.runtime_namespace, "lisjong-dev")
         self.assertIs(
-            type(profile.policy_factory()), MechanismRiichiDefenseYakuhaiCallPolicy
+            type(profile.policy_factory()), PlacementAwareSpeedCallPolicy
         )
         self.assertIsNot(profile.policy_factory(), profile.policy_factory())
 
-    def test_other_profile_policy_mappings_are_unchanged(self) -> None:
+    def test_baseline_uses_champion_and_production_mapping_is_unchanged(self) -> None:
         self.assertIs(
-            type(resolve_profile("lisjong-baseline").policy_factory()), MinimalPolicy
+            type(resolve_profile("lisjong-baseline").policy_factory()),
+            PlacementAwareSpeedCallPolicy,
         )
         self.assertIs(type(resolve_profile("lisjong").policy_factory()), MinimalPolicy)
 
-    def test_runtime_summary_reports_the_actual_mechanism_policy(self) -> None:
+    def test_runtime_summary_reports_the_actual_champion_policy(self) -> None:
         profile = resolve_profile("lisjong-dev")
         policy = profile.policy_factory()
         summary = build_runtime_summary(
@@ -52,16 +53,16 @@ class DevProfileMappingTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            summary.policy_label, "MechanismRiichiDefenseYakuhaiCallPolicy"
+            summary.policy_label, "PlacementAwareSpeedCallPolicy"
         )
         self.assertIn(
-            "policy: MechanismRiichiDefenseYakuhaiCallPolicy",
+            "policy: PlacementAwareSpeedCallPolicy",
             format_runtime_summary(summary),
         )
 
 
 class DevProfileCliCompositionTest(unittest.TestCase):
-    def test_ranked_cli_passes_exact_mechanism_policy_to_one_game_runner(
+    def test_ranked_cli_passes_exact_champion_policy_to_one_game_runner(
         self,
     ) -> None:
         captured: dict[str, object] = {}
@@ -92,10 +93,10 @@ class DevProfileCliCompositionTest(unittest.TestCase):
             return_code = run_ranked_cli(["--profile", "lisjong-dev"])
 
         self.assertEqual(return_code, 0)
-        self.assertIs(type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy)
+        self.assertIs(type(captured["policy"]), PlacementAwareSpeedCallPolicy)
         self.assertEqual(captured["token"], "unit-test-token")
 
-    def test_validation_cli_passes_exact_mechanism_policy_to_validator(
+    def test_validation_cli_passes_exact_champion_policy_to_validator(
         self,
     ) -> None:
         captured: dict[str, object] = {}
@@ -127,7 +128,7 @@ class DevProfileCliCompositionTest(unittest.TestCase):
             return_code = run_validation_cli(["--profile", "lisjong-dev"])
 
         self.assertEqual(return_code, 0)
-        self.assertIs(type(captured["policy"]), MechanismRiichiDefenseYakuhaiCallPolicy)
+        self.assertIs(type(captured["policy"]), PlacementAwareSpeedCallPolicy)
         self.assertEqual(captured["token"], "unit-test-token")
 
 
