@@ -56,6 +56,8 @@ import subprocess
 import sys
 import time
 
+from lisjong_arena.decision_capture import RecordingPolicy, semantic_digest
+
 
 def _policy_factory(reference: str):
     if ":" in reference:
@@ -64,33 +66,6 @@ def _policy_factory(reference: str):
     from lisjong_arena.policy_catalog import POLICY_CATALOG
 
     return POLICY_CATALOG[reference].factory
-
-
-class _RecordingPolicy:
-    """Delegate to the wrapped Policy and record its input and output."""
-
-    def __init__(self, inner, sink: list) -> None:
-        self._inner = inner
-        self._sink = sink
-
-    def choose_action(self, decision):
-        action = self._inner.choose_action(decision)
-        self._sink.append((decision, action))
-        return action
-
-
-def semantic_digest(records) -> str:
-    """Seat-by-seat digest that ignores the within-step recording order."""
-    by_seat: dict[int, list[str]] = {}
-    for decision, action in records:
-        by_seat.setdefault(int(decision.input.self_seat), []).append(
-            repr((decision, action))
-        )
-    digest = hashlib.sha256()
-    for seat in sorted(by_seat):
-        for line in by_seat[seat]:
-            digest.update(f"{seat}\t{line}\n".encode("utf-8"))
-    return digest.hexdigest()
 
 
 def _source_identity(module) -> dict[str, object]:
@@ -131,7 +106,7 @@ def _capture(arguments: argparse.Namespace) -> int:
 
     factory = _policy_factory(arguments.policy)
     records: list = []
-    policies = {seat: _RecordingPolicy(factory(), records) for seat in Seat}
+    policies = {seat: RecordingPolicy(factory(), records) for seat in Seat}
     started = time.perf_counter()
     result = LocalGameRunner(
         policies, seed=arguments.seed, game_mode=arguments.game_mode

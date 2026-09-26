@@ -32,10 +32,14 @@ class BootstrapTest(unittest.TestCase):
             self.skipTest("bash is unavailable")
         subprocess.run([bash, "-n", str(_BOOTSTRAP)], check=True)
 
-    def test_frozen_lisjong_revision_is_the_current_arena_pin(self) -> None:
+    def test_frozen_lisjong_revision_is_the_locked_375_pin(self) -> None:
+        # The #375 workload is locked: its bootstrap refuses any Arena checkout whose
+        # pyproject does not pin this revision, so it keeps running from its own merged
+        # revision. #400 moved the current pin to lisjong 2553c1b; this test checks the
+        # locked value instead of following the current pin.
         revision = _shell_value(self.text, "FROZEN_LISJONG_REVISION")
-        project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn(f"lisjong.git@{revision}", project)
+        self.assertEqual(revision, "2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1")
+        self.assertIn('grep -q "lisjong.git@$FROZEN_LISJONG_REVISION"', self.text)
         self.assertIn(revision, _LAUNCHER.read_text(encoding="utf-8"))
 
     def test_participant_factories_are_exact_bindings(self) -> None:
