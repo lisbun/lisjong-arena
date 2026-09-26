@@ -1,0 +1,220 @@
+# Pure-offense benchmark v1 (Issue #389)
+
+[Issue #389](https://github.com/lisbun/lisjong-arena/issues/389) is the
+scientific authority for purpose, scope and interpretation. This document
+records the implemented contract and the operator commands. Numeric results
+belong in the Issue, not here.
+
+Benchmark identity: `arena-pure-offense-passive-tsumogiri-v1`
+(`src/lisjong_arena/pure_offense_benchmark/`).
+
+## What it measures
+
+One focal Policy against three fixed passive tsumogiri opponents. It measures
+**offense under passive opposition**. It says nothing about overall
+4-player strength, defense, call strategy, placement, Champion promotion or
+RiichiLab strength. v1 is descriptive: it produces **no** PASS / FAIL /
+IMPROVED label (`terminal_classification: null`).
+
+## Frozen v1 semantics
+
+```text
+backend / mode      RiichiEnv 4p-red-single
+seed domain         riichienv-4p-red-single-v1
+execution shape     existing ABBB single-round path
+                    rotation r: focal at seat r, passive tsumogiri at the others
+opponent            arena-p1-gate-b-passive-tsumogiri-v1 (reused unchanged)
+max_steps           10000
+statistical unit    seed block = mean over the 4 focal-seat rotations
+```
+
+All of these are protocol invariants recorded in the benchmark manifest
+(`protocol.protocol_manifest()`); readback fails closed if the manifest
+differs.
+
+- **turn** = the focal player's own discard count. Turn 0 is the state before
+  the first focal discard.
+- **first formal tenpai turn** = the existing `SeatRoundStats.first_tenpai_turn`
+  (the discard count after which the hand is first formal tenpai; opening-hand
+  tenpai is 0).
+- **formal tenpai** = `HandEvaluator.is_tenpai()`. It includes no-yaku and
+  furiten tenpai and is reported as `formal_tenpai`, not as winnable tenpai.
+- **win turn** = the winner's discard count at the moment of the win.
+  Tenhou / chiihou is 0. A tsumo after the Nth discard is N. A ron on an
+  opponent's discard is the winner's current discard count.
+- **riichi turn** = the discard count after the riichi declaration discard.
+  `riichi_accepted` is false when the declaration tile is ronned.
+- **termination** = `win`, `exhaustive_draw` or `abortive_draw`. Every
+  `ryukyoku` whose reason is not `exhaustive_draw` is classified as
+  `abortive_draw`. The raw RiichiEnv reason is kept as `draw_reason`. No
+  termination type is removed from any denominator.
+
+## Records
+
+Each arm is one write-once directory:
+
+```text
+<arm>/strength.json   existing single-round artifact schema v1, unchanged
+<arm>/offense.json    benchmark-owned offense record v1
+```
+
+`SeatRoundStats` and single-round artifact v1 are **not** modified.
+`offense.json` holds only the facts that the existing schema lacks:
+
+- per seat: discard count, win / win turn / tsumo-vs-ron, dealt-in, riichi
+  turn / accepted;
+- per kyoku: dealer, termination and raw draw reason.
+
+These facts are derived from the same objective MJAI events that
+`LocalGameRunner` publishes as the `GameTrace`, through its `trace_sink`.
+The benchmark does not read Policy-internal analysis.
+
+`offense.json` also binds the following:
+
+- the SHA-256 of `strength.json`;
+- the benchmark manifest;
+- the focal identity and reference;
+- the Seed Registry allocation binding.
+
+On readback the loader re-checks every record against `SeatRoundStats`
+(win, deal-in, exhaustive draw, and tenpai-before-win / before-riichi) and
+fails closed on any disagreement.
+
+Focal Arena, lisjong and lisjong-engine revisions come from the existing
+`strength.json` provenance. That provenance requires a clean, committed Arena
+checkout.
+
+## Metrics
+
+### Arm profile (descriptive)
+
+- **Score:** mean raw kyoku score delta (end − start of the kyoku; no
+  uma / oka).
+- **Formal tenpai:**
+  - reached rate;
+  - cumulative incidence by turn 5 / 8 / 12, and the full curve 0..last
+    discard;
+  - mean first turn among reached kyoku.
+- **Win:**
+  - rate;
+  - cumulative incidence by turn 5 / 8 / 12, and the full curve;
+  - mean turn among wins;
+  - mean points among wins;
+  - tsumo / ron counts.
+- **Riichi:**
+  - declared rate and accepted count;
+  - mean turn among declared kyoku.
+- **Deal-in:** rate and mean loss. Always reported, because passive opponents
+  can ron the focal player.
+- **Termination counts:** focal win, opponent win, exhaustive draw, and
+  abortive draw by reason.
+- **Exhaustive-draw tenpai rate.**
+- **Dealer / non-dealer split.**
+
+Cumulative incidences use **all benchmark kyoku** as the denominator. The
+conditional means always appear next to their rate and curve. They are never
+paired endpoints.
+
+### Paired comparison
+
+Only unconditional per-kyoku quantities are paired:
+
+- `score_delta`
+- `win`
+- `formal_tenpai_by_turn_{5,8,12}`
+- `win_by_turn_{5,8,12}`
+
+For each pair of arms, the per-seed-block means are differenced:
+`D_s = other_s − reference_s`. The summary reports the mean paired
+difference, the paired SD, the standard error, a normal-approx 95% CI and
+N seed blocks. The mechanics are the existing `lisjong_arena.paired_evaluation`.
+
+The arms must share:
+
+- the same ordered seeds;
+- the same Seed Registry allocation;
+- the same RiichiEnv version.
+
+The 4,000 rotated kyoku of a 1,000-block run are **not** treated as
+independent samples.
+
+### Sample size over the predeclared grid
+
+The grid is fixed in the manifest before any execution:
+
+```text
+score_delta            50 / 100 / 200 / 300 points per kyoku
+rate metrics           1 / 2 / 5 percentage points
+```
+
+For each paired metric and each grid delta, the summary reports two sizes,
+both with a minimum of 2:
+
+```text
+ci_half_width_seed_blocks  = ceil((1.96 * paired_sd / delta)^2)
+power_80_seed_blocks       = ceil(((1.96 + 0.8416) * paired_sd / delta)^2)
+```
+
+The first is the number of seed blocks for which the 95% CI half-width is at
+most delta. The second is the number for two-sided 5% / 80% power.
+
+## Seeds
+
+Seeds come only from the Seed Registry. Reserve the calibration population
+through the **Arena Seed Registry** workflow after this implementation is
+merged:
+
+```text
+owner_issue  lisbun/lisjong-arena#389
+seed_domain  riichienv-4p-red-single-v1
+population   (e.g.) pure-offense-calibration
+split        (e.g.) DEVELOPMENT
+seeds        1,000 fresh seeds
+```
+
+The CLI accepts only an active (`RESERVED` / `COMMITTED`) allocation owned by
+#389 in that domain, read from a live-ledger snapshot (see
+[seed-registry.md](seed-registry.md)).
+
+The calibration population is DEVELOPMENT / CALIBRATION evidence. It may be
+reused for later descriptive regression benchmarking. It must not be
+presented as fresh confirmatory evidence after it has been used to estimate
+variance or inspect Policy differences.
+
+## Operator commands
+
+Run from a clean checkout of merged `main`:
+
+```text
+git fetch --no-tags origin +refs/heads/seed-registry:refs/remotes/origin/seed-registry
+git show origin/seed-registry:src/lisjong_arena/seed-ledger.json > <ledger.json>
+
+python -m lisjong_arena.pure_offense_benchmark run \
+    --focal lisjong.policies.shanten:ShantenPolicy --focal-identity shanten \
+    --ledger <ledger.json> --allocation-identity <sha256> \
+    --workers <N> --out <arms-dir>/shanten
+
+python -m lisjong_arena.pure_offense_benchmark run \
+    --focal two-step \
+    --ledger <ledger.json> --allocation-identity <sha256> \
+    --workers <N> --out <arms-dir>/two-step
+
+python -m lisjong_arena.pure_offense_benchmark summarize \
+    <arms-dir>/shanten <arms-dir>/two-step [...] \
+    --out <arms-dir>/summary.json
+```
+
+**`run`:**
+
+- `--focal` accepts a curated catalog alias or an explicit first-party
+  `lisjong.<module>:<attribute>` reference. An explicit reference also needs
+  `--focal-identity`.
+- The provenance check runs before any game. A failed or partial run writes
+  nothing.
+
+**`summarize`:**
+
+- It re-derives everything from the saved arms.
+- Arms are compared as `arm_j − arm_i` for every `i < j`, in the order given.
+  List them in lineage order.
+- Retain arm directories and `summary.json` outside Git.
