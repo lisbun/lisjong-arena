@@ -791,6 +791,28 @@
       "seed_membership_identity": "9f690487a52367d9988e172b021c4e7767f80fc42800687e80d1217b414b7f5b",
       "split": null,
       "state": "RETIRED"
+    },
+    {
+      "allocation_identity": "df8460868ac26cc3505f04b5f4f8f524ccc14dc2423a114487775a1cb69ccb0f",
+      "allocation_timestamp": "2026-09-26T08:08:15.941745Z",
+      "arena_revision": "7257e0c2e0718355e14a21a93062e65771f1ab84",
+      "owner_issue": "lisbun/lisjong-arena#389",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "pure-offense-calibration",
+      "protocol": "arena-pure-offense-passive-tsumogiri-v1",
+      "protocol_revision": "arena-pure-offense-passive-tsumogiri-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/389",
+      "purpose": "#389 pure-offense benchmark development/calibration (not confirmatory/holdout)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-single-v1",
+      "seed_membership": {
+        "first": 389000,
+        "kind": "range",
+        "last": 389999
+      },
+      "seed_membership_identity": "60d50d95448d85c589b2b8d2e6a9b6de6684332d9b2ff9dd710e7ec655b6814f",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
     }
   ],
   "owner_repository": "lisbun/lisjong-arena",
