@@ -13,6 +13,8 @@ python -m lisjong_arena.pure_offense_benchmark summarize \
 ``run``はclean committed Arena checkoutからだけ実行できる（provenanceを
 実行前に確定できない場合はgameを1つも実行しない）。seedはSeed Registryの
 live ledger snapshotにある#389所有のactive allocationからだけ解決する。
+``--focal canonical-first`` / ``--focal outcome-q --focal-artifact DIR``は
+lisjong residual runtimeのfocalであり、``focal``moduleが解決する。
 ``summarize``は保存済みarmだけから再導出し、指定順をlineage順として
 ``(i, j), i < j``の全組について``arm_j - arm_i``をpaired比較する。
 """
@@ -31,6 +33,7 @@ from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 from .artifact import load_benchmark_arm, resolve_seed_allocation, save_benchmark_arm
 from .execution import benchmark_plan, run_benchmark_arm
+from .focal import RUNTIME_FOCALS, resolve_runtime_focal
 from .protocol import BENCHMARK_IDENTITY
 from .summary import build_summary, format_summary, save_summary
 
@@ -41,9 +44,21 @@ def _run(arguments: argparse.Namespace) -> int:
         raise FileExistsError(f"arm destination already exists: {destination}")
     if not destination.parent.is_dir():
         raise FileNotFoundError(f"arm parent directory does not exist: {destination}")
-    focal = resolve_policy_reference(
-        arguments.focal, explicit_identity=arguments.focal_identity
-    )
+    if arguments.focal in RUNTIME_FOCALS:
+        if arguments.focal_identity is not None:
+            raise ValueError(
+                f"--focal {arguments.focal} does not take --focal-identity"
+            )
+        focal, focal_reference = resolve_runtime_focal(
+            arguments.focal, arguments.focal_artifact
+        )
+    else:
+        if arguments.focal_artifact is not None:
+            raise ValueError("--focal-artifact is only valid with --focal outcome-q")
+        focal = resolve_policy_reference(
+            arguments.focal, explicit_identity=arguments.focal_identity
+        )
+        focal_reference = arguments.focal
     allocation = resolve_seed_allocation(
         load_ledger(arguments.ledger), arguments.allocation_identity
     )
@@ -59,10 +74,11 @@ def _run(arguments: argparse.Namespace) -> int:
     finally:
         reporter.close()
     save_benchmark_arm(
-        arm, destination, focal_reference=arguments.focal, allocation=allocation
+        arm, destination, focal_reference=focal_reference, allocation=allocation
     )
     print(f"benchmark={BENCHMARK_IDENTITY}")
     print(f"focal_identity={focal.identity}")
+    print(f"focal_reference={focal_reference}")
     print(f"seed_blocks={len(plan.seeds)}")
     print(f"arm_written={destination}")
     return 0
@@ -88,6 +104,7 @@ def _parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="run one focal Policy arm")
     run.add_argument("--focal", required=True, help="catalog alias or module:attr")
     run.add_argument("--focal-identity", default=None)
+    run.add_argument("--focal-artifact", default=None, type=Path)
     run.add_argument("--ledger", required=True, type=Path)
     run.add_argument("--allocation-identity", required=True)
     run.add_argument("--workers", required=True, type=int)
