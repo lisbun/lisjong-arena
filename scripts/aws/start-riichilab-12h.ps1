@@ -740,9 +740,8 @@ try {
             -FailSafeHours $FailSafeHours
         throw "Local monitor detached; remote execution status is unknown."
     }
+    $invocation = $monitorResult.Invocation
     $commandTerminal = $true
-    # The collector also handles a remote failure: it preserves the secret-safe
-    # per-bot summary when one was returned, terminates, and then throws.
 
     $collectorPath = Join-Path $PSScriptRoot "collect-riichilab-12h.ps1"
     $collectorArgs = @{
@@ -752,6 +751,18 @@ try {
     }
     if ($null -ne $HourlyPriceUsd) {
         $collectorArgs.HourlyPriceUsd = [double]$HourlyPriceUsd
+    }
+    if ([string]$monitorResult.Outcome -eq "RemoteFailure") {
+        # Issue #386: a failed run still returns its secret-safe per-bot
+        # summary. The collector preserves it and terminates the instance
+        # (and throws for the failure it sees); the confirmed failure is then
+        # reported here as before.
+        try {
+            & $collectorPath @collectorArgs
+        } catch {
+            Write-Warning $_.Exception.Message
+        }
+        throw "Remote scientific execution failure confirmed: SSM status $($invocation.Status)."
     }
     & $collectorPath @collectorArgs
 } catch {
