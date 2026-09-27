@@ -147,9 +147,50 @@ function Get-HourlyPrice {
     }
 }
 
+$AbsentInstanceState = "absent-or-terminated"
+
+function Get-SavedInstance {
+    # A self-terminated instance leaves the describe result empty, or is
+    # rejected as not found once EC2 has forgotten it (Issue #405). Both mean
+    # the saved instance no longer exists; any other failure still throws.
+    $probe = Invoke-AwsTextAllowFailure -Arguments @(
+        "ec2", "describe-instances", "--instance-ids", $instanceId, "--output", "json"
+    )
+    if ($probe.ExitCode -ne 0) {
+        if ($probe.Text -match "InvalidInstanceID\.NotFound") {
+            return $null
+        }
+        throw "AWS CLI failed ($($probe.ExitCode)): aws ec2 describe-instances --instance-ids $instanceId $([Environment]::NewLine)$($probe.Text)"
+    }
+    if ([string]::IsNullOrWhiteSpace($probe.Text)) {
+        return $null
+    }
+    $described = $probe.Text | ConvertFrom-Json
+    if ($null -eq $described -or $null -eq $described.PSObject.Properties["Reservations"]) {
+        return $null
+    }
+    foreach ($reservation in @($described.Reservations)) {
+        if ($null -eq $reservation -or $null -eq $reservation.PSObject.Properties["Instances"]) {
+            continue
+        }
+        foreach ($instance in @($reservation.Instances)) {
+            if ($null -ne $instance -and [string]$instance.InstanceId -eq $instanceId) {
+                return $instance
+            }
+        }
+    }
+    return $null
+}
+
 function Ensure-InstanceTerminated {
-    $described = Invoke-AwsJson -Arguments @("ec2", "describe-instances", "--instance-ids", $instanceId)
-    $instance = @($described.Reservations[0].Instances)[0]
+    $instance = Get-SavedInstance
+    if ($null -eq $instance) {
+        return [pscustomobject]@{
+            Confirmed = $true
+            Requested = $false
+            ObservedState = $AbsentInstanceState
+        }
+    }
     $instanceState = [string]$instance.State.Name
 
     if ($instanceState -eq "terminated") {
@@ -177,6 +218,33 @@ function Ensure-InstanceTerminated {
             Requested = ($instanceState -ne "shutting-down")
             ObservedState = $instanceState
         }
+    }
+}
+
+function Get-TaggedResidue {
+    # Volumes of a just-terminated instance can take a moment to disappear.
+    $deadline = (Get-Date).AddMinutes(5)
+    $volumeCount = -1
+    do {
+        $volumes = Invoke-AwsJson -Arguments @(
+            "ec2", "describe-volumes",
+            "--filters", "Name=tag:lisjong-run-id,Values=$runId"
+        )
+        $volumeCount = @($volumes.Volumes).Count
+        if ($volumeCount -eq 0) {
+            break
+        }
+        Start-Sleep -Seconds 10
+    } while ((Get-Date) -lt $deadline)
+
+    $snapshots = Invoke-AwsJson -Arguments @(
+        "ec2", "describe-snapshots",
+        "--owner-ids", "self",
+        "--filters", "Name=tag:lisjong-run-id,Values=$runId"
+    )
+    return [pscustomobject]@{
+        VolumeCount = $volumeCount
+        SnapshotCount = @($snapshots.Snapshots).Count
     }
 }
 
@@ -265,9 +333,25 @@ if ($status -ne "Success") {
     $termination = Ensure-InstanceTerminated
     Set-StateField -Name "termination_confirmed_after_remote_failure" -Value $termination.Confirmed
     Set-StateField -Name "termination_requested_after_remote_failure" -Value $termination.Requested
+    Set-StateField -Name "instance_state_observed_after_remote_failure" -Value $termination.ObservedState
     Write-JsonFile -Value $state -Path $StatePath
+    if ($termination.ObservedState -eq $AbsentInstanceState) {
+        Write-Host "INSTANCE: $instanceId is already gone (absent from describe-instances); no termination request was needed."
+    } elseif ($termination.ObservedState -eq "terminated") {
+        Write-Host "INSTANCE: $instanceId had already terminated; no termination request was needed."
+    } else {
+        Write-Host "INSTANCE: $instanceId was $($termination.ObservedState); termination confirmed: $($termination.Confirmed)"
+    }
 
-    throw "Remote bounded run ended with SSM status $status. The run is not PASS; termination was attempted for cost safety."
+    # An absent instance says nothing about its volumes or snapshots, so the
+    # run-tagged residue is still observed rather than assumed clean.
+    $residue = Get-TaggedResidue
+    Set-StateField -Name "tagged_ebs_volume_residue_count_after_remote_failure" -Value $residue.VolumeCount
+    Set-StateField -Name "tagged_snapshot_residue_count_after_remote_failure" -Value $residue.SnapshotCount
+    Write-JsonFile -Value $state -Path $StatePath
+    Write-Host "RESIDUE: tagged EBS volumes $($residue.VolumeCount), tagged snapshots $($residue.SnapshotCount)"
+
+    throw "Remote bounded run ended with SSM status $status. The run is not PASS; instance state: $($termination.ObservedState), termination confirmed: $($termination.Confirmed)."
 }
 
 $summary = Get-CompletionSummary -Stdout ([string]$invocation.StandardOutputContent)
@@ -293,33 +377,17 @@ $associatedEipCount = @($eip.Addresses).Count
 $terminationObservedAtUtc = (Get-Date).ToUniversalTime()
 $termination = Ensure-InstanceTerminated
 
-$residueDeadline = (Get-Date).AddMinutes(5)
-$volumeResidueCount = -1
-do {
-    $volumesAfter = Invoke-AwsJson -Arguments @(
-        "ec2", "describe-volumes",
-        "--filters", "Name=tag:lisjong-run-id,Values=$runId"
-    )
-    $volumeResidueCount = @($volumesAfter.Volumes).Count
-    if ($volumeResidueCount -eq 0) {
-        break
-    }
-    Start-Sleep -Seconds 10
-} while ((Get-Date) -lt $residueDeadline)
-
-$snapshotsAfter = Invoke-AwsJson -Arguments @(
-    "ec2", "describe-snapshots",
-    "--owner-ids", "self",
-    "--filters", "Name=tag:lisjong-run-id,Values=$runId"
-)
-$snapshotResidueCount = @($snapshotsAfter.Snapshots).Count
+$residue = Get-TaggedResidue
+$volumeResidueCount = $residue.VolumeCount
+$snapshotResidueCount = $residue.SnapshotCount
 
 $instanceRuntimeHours = $null
 $terminationTimeBasis = "unavailable"
 if ($null -ne $state.PSObject.Properties["launch_time_utc"] -and
     -not [string]::IsNullOrWhiteSpace([string]$state.launch_time_utc)) {
     $launchTimeUtc = ([datetime]$state.launch_time_utc).ToUniversalTime()
-    if ($termination.Requested -or [string]$termination.ObservedState -ne "terminated") {
+    if ($termination.Requested -or
+        [string]$termination.ObservedState -notin @("terminated", $AbsentInstanceState)) {
         $estimatedTerminationUtc = $terminationObservedAtUtc
         $terminationTimeBasis = "collector_observed_or_requested"
     } elseif ($null -ne $summary.PSObject.Properties["stop_utc"] -and

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
+import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -605,6 +609,365 @@ class AwsRiichiLabFailureTeardownTest(unittest.TestCase):
             ensure.index('"ec2", "terminate-instances"'),
         )
         self.assertNotIn("send-command", collector)
+
+
+# Answers keyed by "service operation" from a scenario file; every call is logged.
+_COLLECTOR_STUB_AWS = textwrap.dedent(
+    """\
+    import json, sys
+    args = sys.argv[1:]
+    with open({log!r}, "a", encoding="utf-8") as log:
+        log.write(json.dumps(args) + "\\n")
+    if args == ["--version"]:
+        print("aws-cli/2.0.0 stub")
+        sys.exit(0)
+    while args and args[0] in ("--profile", "--region"):
+        args = args[2:]
+    key = " ".join(args[:2])
+    with open({scenario!r}, encoding="utf-8") as source:
+        answers = json.load(source)
+    if key not in answers:
+        sys.stderr.write("stub aws: unexpected call " + key + "\\n")
+        sys.exit(254)
+    answer = answers[key]
+    if isinstance(answer, dict) and "error" in answer:
+        sys.stderr.write(answer["error"] + "\\n")
+        sys.exit(254)
+    if answer is not None:
+        print(json.dumps(answer))
+    """
+)
+
+
+def _completion_stdout(summary: dict[str, object]) -> str:
+    encoded = base64.b64encode(json.dumps(summary).encode("utf-8")).decode("ascii")
+    return f"bootstrap output\nLISJONG_COMPLETION_JSON_B64={encoded}\n"
+
+
+_FAILED_SUMMARY = {
+    "schema_id": "lisjong-arena-aws-riichilab-instance-run-summary",
+    "status": "FAIL",
+    "bots": [
+        {"profile": "lisjong-dev", "status": "PASS", "failure_reason": ""},
+        {
+            "profile": "lisjong-baseline",
+            "status": "FAIL",
+            "failure_reason": "bot runner exited with code 1",
+        },
+    ],
+}
+
+
+class AwsRiichiLabCollectorTerminationTest(unittest.TestCase):
+    """Issue #405: Collect after a failed instance has already gone.
+
+    The collector runs end to end against a stub ``aws`` command, so no AWS
+    call is made. An absent instance is a terminal state, never an array
+    crash; the workload stays failed and nothing is resubmitted or launched.
+    """
+
+    _INSTANCE_ID = "i-034d63c1ca7890c1b"
+    _NOT_FOUND = {
+        "error": "An error occurred (InvalidInstanceID.NotFound) when calling the "
+        "DescribeInstances operation: The instance ID 'i-034d63c1ca7890c1b' "
+        "does not exist"
+    }
+
+    def setUp(self) -> None:
+        self.pwsh = shutil.which("pwsh")
+        if self.pwsh is None:
+            self.skipTest("pwsh is unavailable")
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        bin_dir = self.tmp / "bin"
+        bin_dir.mkdir()
+        self.log = self.tmp / "aws-calls.jsonl"
+        self.scenario = self.tmp / "scenario.json"
+        stub = bin_dir / "aws-stub.py"
+        stub.write_text(
+            _COLLECTOR_STUB_AWS.format(log=str(self.log), scenario=str(self.scenario)),
+            encoding="utf-8",
+        )
+        aws = bin_dir / "aws"
+        aws.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{stub}" "$@"\n')
+        aws.chmod(0o755)
+        (bin_dir / "aws.cmd").write_text(
+            f'@"{sys.executable}" "{stub}" %*\r\n', encoding="utf-8"
+        )
+        self.env = {
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        }
+        self.run_dir = self.tmp / "run"
+        self.run_dir.mkdir()
+        self.state_path = self.run_dir / "state.json"
+        self.completion_path = self.run_dir / "completion.json"
+        self._write_state(state="submitted")
+
+    def _write_state(self, **extra: object) -> None:
+        state = {
+            "run_id": "20260926T192007Z-8539f043",
+            "instance_id": self._INSTANCE_ID,
+            "command_id": "2decd2ad-05a3-4aae-bdca-55cbcc263437",
+            "arena_revision": "7adcae82db3020f57f8b973a42ef4e0a7cf9c9b4",
+            "region": "ap-northeast-1",
+            "launch_time_utc": "2026-09-26T19:21:00Z",
+            "hourly_price_usd": 0.1,
+            **extra,
+        }
+        self.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    def _scenario(
+        self,
+        *,
+        status: str,
+        summary: dict[str, object] | None,
+        described: object,
+    ) -> None:
+        answers = {
+            "sts get-caller-identity": {"Account": "123456789012"},
+            "ssm get-command-invocation": {
+                "Status": status,
+                "ResponseCode": 0 if status == "Success" else 1,
+                "StandardOutputContent": (
+                    _completion_stdout(summary) if summary is not None else ""
+                ),
+            },
+            "ec2 describe-instances": described,
+            "ec2 terminate-instances": {"TerminatingInstances": []},
+            "ec2 wait": None,
+            "ec2 describe-addresses": {"Addresses": []},
+            "ec2 describe-volumes": {"Volumes": []},
+            "ec2 describe-snapshots": {"Snapshots": []},
+        }
+        self.scenario.write_text(json.dumps(answers), encoding="utf-8")
+
+    def _instance(self, state: str) -> dict[str, object]:
+        return {
+            "Reservations": [
+                {
+                    "Instances": [
+                        {"InstanceId": self._INSTANCE_ID, "State": {"Name": state}}
+                    ]
+                }
+            ]
+        }
+
+    def _collect(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                self.pwsh,
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                str(_COLLECTOR),
+                "-StatePath",
+                str(self.state_path),
+                "-AwsProfile",
+                "stub",
+            ],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+
+    def _operations(self) -> list[str]:
+        if not self.log.exists():
+            return []
+        operations = []
+        for line in self.log.read_text(encoding="utf-8").splitlines():
+            args = json.loads(line)
+            while args and args[0] in ("--profile", "--region"):
+                args = args[2:]
+            operations.append(" ".join(args[:2]))
+        return operations
+
+    def _state(self) -> dict[str, object]:
+        return json.loads(self.state_path.read_text(encoding="utf-8"))
+
+    def _assert_no_relaunch(self) -> None:
+        operations = self._operations()
+        for forbidden in ("ssm send-command", "ec2 run-instances"):
+            self.assertNotIn(forbidden, operations)
+
+    def _assert_failed_run(self, result: subprocess.CompletedProcess[str]) -> None:
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertNotIn("Index was outside the bounds", output)
+        self.assertNotIn("PASS: AWS 12H", output)
+        self.assertIn("ended with SSM status Failed", output)
+        self.assertIn("The run is not PASS", output)
+        self.assertIn(
+            "BOT lisjong-baseline: FAIL bot runner exited with code 1", output
+        )
+        state = self._state()
+        self.assertEqual(state["state"], "remote_failed")
+        self.assertEqual(state["last_observed_ssm_status"], "Failed")
+        self.assertIs(state["termination_confirmed_after_remote_failure"], True)
+        self.assertEqual(
+            state["tagged_ebs_volume_residue_count_after_remote_failure"], 0
+        )
+        self.assertEqual(state["tagged_snapshot_residue_count_after_remote_failure"], 0)
+        completion = json.loads(self.completion_path.read_text(encoding="utf-8"))
+        self.assertEqual(completion, _FAILED_SUMMARY)
+        self._assert_no_relaunch()
+
+    def _assert_absent_instance_accepted(self, described: object) -> None:
+        self._scenario(status="Failed", summary=_FAILED_SUMMARY, described=described)
+        result = self._collect()
+        self._assert_failed_run(result)
+        self.assertIn("is already gone", result.stdout)
+        state = self._state()
+        self.assertEqual(
+            state["instance_state_observed_after_remote_failure"],
+            "absent-or-terminated",
+        )
+        self.assertIs(state["termination_requested_after_remote_failure"], False)
+        operations = self._operations()
+        self.assertNotIn("ec2 terminate-instances", operations)
+        self.assertNotIn("ec2 wait", operations)
+        # Absence is not a clean-residue claim: residue is still observed.
+        self.assertIn("ec2 describe-volumes", operations)
+        self.assertIn("ec2 describe-snapshots", operations)
+
+    def test_failed_run_with_empty_reservations_is_absent_not_a_crash(self) -> None:
+        self._assert_absent_instance_accepted({"Reservations": []})
+
+    def test_failed_run_with_empty_instances_is_absent_not_a_crash(self) -> None:
+        self._assert_absent_instance_accepted({"Reservations": [{"Instances": []}]})
+
+    def test_failed_run_with_forgotten_instance_id_is_absent(self) -> None:
+        self._assert_absent_instance_accepted(self._NOT_FOUND)
+
+    def test_failed_run_with_terminated_instance_needs_no_request(self) -> None:
+        self._scenario(
+            status="Failed",
+            summary=_FAILED_SUMMARY,
+            described=self._instance("terminated"),
+        )
+        result = self._collect()
+        self._assert_failed_run(result)
+        self.assertIn("had already terminated", result.stdout)
+        self.assertEqual(
+            self._state()["instance_state_observed_after_remote_failure"], "terminated"
+        )
+        operations = self._operations()
+        self.assertNotIn("ec2 terminate-instances", operations)
+        self.assertNotIn("ec2 wait", operations)
+
+    def test_failed_run_with_running_instance_requests_and_waits(self) -> None:
+        self._scenario(
+            status="Failed",
+            summary=_FAILED_SUMMARY,
+            described=self._instance("running"),
+        )
+        result = self._collect()
+        self._assert_failed_run(result)
+        state = self._state()
+        self.assertIs(state["termination_requested_after_remote_failure"], True)
+        self.assertEqual(
+            state["instance_state_observed_after_remote_failure"], "running"
+        )
+        operations = self._operations()
+        self.assertLess(
+            operations.index("ec2 terminate-instances"), operations.index("ec2 wait")
+        )
+
+    def test_failed_run_with_shutting_down_instance_only_waits(self) -> None:
+        self._scenario(
+            status="Failed",
+            summary=_FAILED_SUMMARY,
+            described=self._instance("shutting-down"),
+        )
+        result = self._collect()
+        self._assert_failed_run(result)
+        self.assertIs(
+            self._state()["termination_requested_after_remote_failure"], False
+        )
+        operations = self._operations()
+        self.assertNotIn("ec2 terminate-instances", operations)
+        self.assertIn("ec2 wait", operations)
+
+    def test_failure_summary_is_kept_when_termination_handling_fails(self) -> None:
+        self._scenario(
+            status="Failed",
+            summary=_FAILED_SUMMARY,
+            described={"error": "An error occurred (UnauthorizedOperation)"},
+        )
+        result = self._collect()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("UnauthorizedOperation", result.stdout + result.stderr)
+        self.assertEqual(self._state()["state"], "remote_failed")
+        completion = json.loads(self.completion_path.read_text(encoding="utf-8"))
+        self.assertEqual(completion, _FAILED_SUMMARY)
+        self._assert_no_relaunch()
+
+    def test_repeated_collect_of_a_failed_run_stays_failed_and_safe(self) -> None:
+        self._scenario(
+            status="Failed", summary=_FAILED_SUMMARY, described={"Reservations": []}
+        )
+        first = self._collect()
+        self._assert_failed_run(first)
+        second = self._collect()
+        self._assert_failed_run(second)
+        self.assertNotIn("ec2 terminate-instances", self._operations())
+
+    def test_residue_after_failure_is_reported_not_assumed_clean(self) -> None:
+        self._scenario(
+            status="Failed", summary=_FAILED_SUMMARY, described={"Reservations": []}
+        )
+        answers = json.loads(self.scenario.read_text(encoding="utf-8"))
+        answers["ec2 describe-snapshots"] = {"Snapshots": [{"SnapshotId": "snap-1"}]}
+        self.scenario.write_text(json.dumps(answers), encoding="utf-8")
+        result = self._collect()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tagged snapshots 1", result.stdout)
+        self.assertEqual(
+            self._state()["tagged_snapshot_residue_count_after_remote_failure"], 1
+        )
+
+    def test_successful_run_with_absent_instance_completes(self) -> None:
+        summary = {
+            "schema_id": "lisjong-arena-aws-riichilab-instance-run-summary",
+            "status": "PASS",
+            "stop_utc": "2026-09-27T07:21:00Z",
+            "bots": [{"profile": "lisjong-dev", "status": "PASS"}],
+        }
+        self._scenario(
+            status="Success", summary=summary, described={"Reservations": []}
+        )
+        result = self._collect()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: AWS 12H GRACEFUL CONTINUOUS RUN COMPLETE", result.stdout)
+        completion = json.loads(self.completion_path.read_text(encoding="utf-8"))
+        teardown = completion["teardown"]
+        self.assertEqual(teardown["status"], "PASS")
+        self.assertEqual(
+            teardown["instance_state_observed_before_teardown"], "absent-or-terminated"
+        )
+        self.assertEqual(
+            completion["aws_execution"]["instance_runtime_time_basis"],
+            "verified_stop_plus_5m_teardown_timer_estimate",
+        )
+        self.assertEqual(self._state()["state"], "completed")
+        self._assert_no_relaunch()
+
+    def test_already_completed_run_makes_no_further_calls(self) -> None:
+        self._write_state(state="completed")
+        self.completion_path.write_text('{"status": "PASS"}', encoding="utf-8")
+        self._scenario(
+            status="Failed", summary=_FAILED_SUMMARY, described={"Reservations": []}
+        )
+        result = self._collect()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS: run is already completed.", result.stdout)
+        self.assertEqual(self._operations(), ["--version", "sts get-caller-identity"])
+        self.assertEqual(
+            json.loads(self.completion_path.read_text(encoding="utf-8")),
+            {"status": "PASS"},
+        )
 
 
 class AwsRiichiLabBotSupervisorTest(unittest.TestCase):
