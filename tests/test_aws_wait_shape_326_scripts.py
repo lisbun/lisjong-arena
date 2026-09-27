@@ -22,6 +22,7 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
     def _run_status_with_fake_aws(
         self,
         rules: list[tuple[tuple[str, ...], dict[str, object]]],
+        status_arguments: tuple[str, ...] = (),
     ) -> subprocess.CompletedProcess[str]:
         pwsh = shutil.which("pwsh")
         if pwsh is None:
@@ -53,7 +54,13 @@ class AwsWaitShape326ScriptTest(unittest.TestCase):
                 "    $global:LASTEXITCODE = 41",
                 '    [Console]::Error.WriteLine("unexpected fake AWS call: $joined")',
                 "}",
-                f"& '{status_path}' -RunId run-1 -AwsProfile fake -Region ap-northeast-1",
+                f"& '{status_path}' -RunId run-1 -AwsProfile fake -Region ap-northeast-1 "
+                + " ".join(
+                    "'" + arg.replace("'", "''") + "'"
+                    if not arg.startswith("-")
+                    else arg
+                    for arg in status_arguments
+                ),
             ]
         )
         with tempfile.TemporaryDirectory() as temp:

@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory = $true)][string]$RunId,
     [string]$AwsProfile = $env:AWS_PROFILE,
     [string]$Region = "ap-northeast-1",
-    [string]$StatePath = ""
+    [string]$StatePath = "",
+    [string]$ProgressOutPath = "",
+    [string]$Python = "python"
 )
 
 Set-StrictMode -Version Latest
@@ -124,7 +126,7 @@ function Read-ProgressThroughSsm {
             if ($probe.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($probe.Text)) {
                 $invocation = $probe.Text | ConvertFrom-Json
                 if ([string]$invocation.Status -eq "Success") {
-                    return ([string]$invocation.StandardOutputContent).Trim() | ConvertFrom-Json
+                    return ([string]$invocation.StandardOutputContent).Trim()
                 }
                 if ([string]$invocation.Status -notin @("Pending", "InProgress", "Delayed")) {
                     return $null
@@ -241,6 +243,7 @@ if (-not [string]::IsNullOrWhiteSpace($instanceType)) {
 $ssmPing = "not-found"
 $scientificCommandState = "unknown"
 $progress = $null
+$progressJson = $null
 if (
     $null -ne $instance -and
     $instanceState -notin @("stopped", "terminated") -and
@@ -266,7 +269,29 @@ if (
         }
     }
     if ($instanceState -eq "running" -and $ssmPing -eq "Online" -and -not [string]::IsNullOrWhiteSpace($progressPath)) {
-        $progress = Read-ProgressThroughSsm -InstanceId $instanceId -ProgressPath $progressPath
+        $progressJson = Read-ProgressThroughSsm -InstanceId $instanceId -ProgressPath $progressPath
+        if (-not [string]::IsNullOrWhiteSpace($progressJson)) {
+            $progress = $progressJson | ConvertFrom-Json -DateKind String
+        }
+    }
+}
+
+# Export the retrieved operational document, without dashboard-specific fields.
+# The Python contract also rejects unknown/scientific fields and wrong RunIds.
+if (-not [string]::IsNullOrWhiteSpace($ProgressOutPath)) {
+    if ($null -eq $progress) {
+        throw "Progress is unavailable; no progress file was written."
+    }
+    $progressTemp = [System.IO.Path]::GetTempFileName()
+    try {
+        $progressJson | Set-Content -LiteralPath $progressTemp -Encoding utf8NoBOM
+        & $Python -m lisjong_arena.aws_execution_observability export-progress `
+            --input-path $progressTemp --output-path $ProgressOutPath --run-id $RunId
+        if ($LASTEXITCODE -ne 0) {
+            throw "Progress validation/export failed; output was not replaced."
+        }
+    } finally {
+        Remove-Item -LiteralPath $progressTemp -Force -ErrorAction SilentlyContinue
     }
 }
 

@@ -585,6 +585,10 @@ def write_plan(path: str | Path, document: dict[str, object]) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
+    export = subparsers.add_parser("export-progress")
+    export.add_argument("--input-path", required=True)
+    export.add_argument("--output-path", required=True)
+    export.add_argument("--run-id", required=True)
     plan = subparsers.add_parser("plan")
     plan.add_argument("--output-path", required=True)
     plan.add_argument("--run-id", required=True)
@@ -648,6 +652,12 @@ def _optional_range(
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "export-progress":
+        document = json.loads(Path(args.input_path).read_text(encoding="utf-8-sig"))
+        progress = validate_progress_document(document)
+        _require(progress["run_id"] == args.run_id, "progress RunId mismatch")
+        write_progress(args.output_path, progress)
+        return 0
     predicted_scientific = _optional_range(
         args.predicted_scientific_runtime_min_seconds,
         args.predicted_scientific_runtime_max_seconds,

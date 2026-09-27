@@ -157,3 +157,46 @@ then inspect the existing invocation without resubmitting it:
   -AwsProfile <short-lived-profile> `
   -Region ap-northeast-1
 ```
+
+## Static dashboard (#395)
+
+Generate a disposable, offline HTML view from the existing operational documents:
+
+```powershell
+# Run from the repository with its Python environment installed/activated.
+./scripts/aws/status-run.ps1 -RunId <run-id> -AwsProfile <profile> `
+  -ProgressOutPath <local-run-root>/operational/progress.json
+
+python -m lisjong_arena.aws_execution_dashboard `
+  --plan <local-run-root>/plan.json `
+  --progress <local-run-root>/operational/progress.json `
+  --calibration <local-run-root>/calibration.json `
+  --out <local-run-root>/dashboard.html
+```
+
+Before execution, omit `--progress` and `--calibration`; during execution, omit
+`--calibration`. `--plan` is always required. `status-run.ps1 -Python <executable>`
+can select an installed Arena environment explicitly. Progress export reuses the
+existing Python validator, checks RunId, and atomically saves the document without
+adding display fields. Unavailable/invalid progress fails without replacing an
+existing file; ordinary text status remains available without requesting export.
+
+The dashboard displays an explicit allowlist only: counts, timestamps, instance
+sizing, runtime, cost estimates, warnings, and pricing provenance. Workload
+(scientific) runtime is separate from EC2 billable runtime. Scientific outcomes,
+credentials, account IDs, paths, and unknown fields are not copied into the HTML.
+There are no external resources, network calls, scripts, or automatic refresh.
+Check the snapshot timestamp against the generation timestamp; rerun status and
+the renderer to update the view. Calibration can follow an older progress snapshot,
+so both counts are labelled separately. Missing values display `unavailable`.
+
+The current v1 documents do **not** carry the armed fail-safe deadline. Its
+absolute deadline and remaining time therefore display `unavailable`; use text
+status for those values. The plan's estimated fail-safe EC2 exposure is still
+shown. Do not derive the deadline or realized billable cost from workload start.
+All displayed costs are estimates, not a finalized AWS invoice.
+
+Schema, displayed-field types, and shared identity are validated before writing;
+on failure the renderer exits nonzero and leaves any previous HTML untouched.
+Keep generated HTML under the local run root, outside version control. It is a
+read-only view, not scientific evidence or a new execution/qualification SSOT.
