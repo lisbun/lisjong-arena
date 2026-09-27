@@ -232,7 +232,7 @@ Lifecycle:
   - An operator stop asks every bot to finish its hanchan in progress and
     start no new one.
   - When any bot exits, for any reason (stop, duration, failure budget,
-    crash), the supervisor writes `bot-exited:<profile>` unless a reason is
+    original-game wait bound, crash), the supervisor writes `bot-exited:<profile>` unless a reason is
     already recorded. The remaining bots then finish their hanchan in progress
     and stop.
 - Each bot's evidence is isolated under
@@ -278,7 +278,9 @@ Lifecycle:
   - `transport_failure_event_count` and the latest
     `transport_failure_events` (elapsed seconds, exception class,
     consecutive failure number, backoff seconds, `retry` /
-    `failure_budget_exhausted` / `duration_reached`)
+    `failure_budget_exhausted` / `duration_reached` /
+    `awaiting_original_game` / `original_game_wait_exhausted`; see
+    `docs/continuous-ranked.md` for the Issue #419 original-game wait)
   - `first_transport_failure_event`: the failure that started the sequence,
     kept apart from the latest events
   - Transport diagnostics (Issue #411), per event:
@@ -304,9 +306,10 @@ Lifecycle:
     The class is the canonical evidence; `other` together with the excerpt is
     what shows an unknown text. The keywords are provisional, specific
     phrases (for example "already in game", "concurrent connection"; never a
-    bare "already"). They are evidence only and drive no retry decision; the
-    rule for a same-bot rejection is fixed only after a reproduction shows the
-    real server signal (#411 PR 2).
+    bare "already"). The observed server signal ("This bot is already
+    connected to a game") classifies as `same_bot_already_active`; only that
+    class, and only after a mid-game failure, drives a retry decision (the
+    Issue #419 original-game wait). Every other class is evidence only.
   - A server error message counts only if it was the last frame received
     before the failure. The transport boundary cuts the raw exception chain
     (`__cause__` / `__context__`), so raw close reasons, handshake bodies, and

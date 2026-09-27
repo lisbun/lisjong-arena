@@ -489,7 +489,20 @@ class TransportDiagnosticsFactsTest(unittest.TestCase):
             last_decision_elapsed_seconds=2.345,
         )
         rejected = [_diagnosed(UnexpectedDisconnectError("dc")) for _ in range(4)]
-        code, log = _real_runner_log("lisjong-dev", [first, *rejected])
+        # Issue #419: the same-bot rejections spend no failure budget, so only
+        # the ordinary failures that follow exhaust it.
+        ordinary = [
+            _diagnosed(
+                TransportError("connect"),
+                phase="connect",
+                operation="connect",
+                close_code_received=None,
+                server_reason_class="other",
+                server_reason_excerpt=None,
+            )
+            for _ in range(4)
+        ]
+        code, log = _real_runner_log("lisjong-dev", [first, *rejected, *ordinary])
         self.assertEqual(1, code)
         runner_log = self.root / "continuous.log"
         runner_log.write_text(log, encoding="utf-8")
@@ -519,17 +532,27 @@ class TransportDiagnosticsFactsTest(unittest.TestCase):
             },
             facts["first_transport_failure_event"],
         )
-        last = facts["transport_failure_events"][-1]
-        self.assertEqual("before_start_game", last["phase"])
-        self.assertEqual("same_bot_already_active", last["server_reason_class"])
-        self.assertEqual("Bot already in game", last["server_reason_excerpt"])
-        self.assertEqual(4000, last["close_code_received"])
+        events = facts["transport_failure_events"]
+        # Only the last MAX_RUNNER_FACT_EVENTS (8) of the 9 events are kept.
+        for rejection in events[0:4]:
+            self.assertEqual("before_start_game", rejection["phase"])
+            self.assertEqual(
+                "same_bot_already_active", rejection["server_reason_class"]
+            )
+            self.assertEqual("Bot already in game", rejection["server_reason_excerpt"])
+            self.assertEqual(4000, rejection["close_code_received"])
+            self.assertEqual("awaiting_original_game", rejection["outcome"])
+            self.assertEqual(1, rejection["consecutive_failures"])
+        self.assertEqual("failure_budget_exhausted", events[-1]["outcome"])
+        self.assertEqual(5, events[-1]["consecutive_failures"])
+        self.assertEqual(5, facts["failed_games"])
+        self.assertEqual("failure_budget_exhausted", facts["stopped_reason"])
         self.assertEqual(
-            {"before_start_game": 4, "in_game": 1},
+            {"before_start_game": 4, "connect": 4, "in_game": 1},
             facts["transport_failure_phase_counts"],
         )
         self.assertEqual(
-            {"none": 1, "same_bot_already_active": 4},
+            {"none": 1, "other": 4, "same_bot_already_active": 4},
             facts["server_reason_class_counts"],
         )
 

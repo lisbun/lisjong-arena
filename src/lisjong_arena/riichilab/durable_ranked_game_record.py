@@ -49,7 +49,7 @@ import os
 import platform
 import shutil
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1240,6 +1240,7 @@ async def acquire_ranked_game_record(
     policy_identity: str | None = None,
     provenance: RankedRecordProvenance | None = None,
     presentation: BoundedRankedPresentationBuffer | None = None,
+    on_game_started: Callable[[], None] | None = None,
 ) -> DurableRankedGameRecord:
     """1 ranked hanchanを実行し、完走した場合だけdurable recordへpublishする。
 
@@ -1258,7 +1259,8 @@ async def acquire_ranked_game_record(
     `--record-dir`とlive presentationを同時利用できるようにするためのもので
     あり、record schema / payload / provenance / digest semanticsのいずれも
     presentationの有無で変化しない(presentationはrecord layerを一切通らず、
-    protocol trace writerにも触れない)。
+    protocol trace writerにも触れない)。`on_game_started`(Issue #419)も
+    同様に`run_ranked_game()`へthread throughするだけである。
     """
     target = Path(destination)
     if target.exists():
@@ -1286,6 +1288,7 @@ async def acquire_ranked_game_record(
             url=url,
             trace_path=trace_path,
             presentation=presentation,
+            on_game_started=on_game_started,
         )
         return save_ranked_game_record(
             result, trace_path, target, provenance=provenance

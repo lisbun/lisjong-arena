@@ -45,6 +45,19 @@ and exits normally.
 
 When `--duration-seconds` is omitted, the existing unbounded-until-stop behavior is preserved. This option is a graceful orchestration bound, not a process-kill timeout and not an absolute-time scheduler.
 
+## Original-game wait after a mid-game disconnect (Issue #419)
+
+After a mid-game disconnect RiichiLab keeps the original hanchan running and rejects a reconnect of the same bot with "This bot is already connected to a game" (normalized `server_reason_class=same_bot_already_active`). The runner treats this as "the original game still owns this bot", not as another transient failure:
+
+- A `TransportError` whose diagnostics have `phase=in_game` counts as one failed game (ordinary failure budget and backoff) and starts the original-game wait.
+- While waiting, a `TransportError` with `server_reason_class=same_bot_already_active` (and a phase other than `in_game`) does not increment `failed_games` or `consecutive_failures` and cannot exhaust the failure budget. It is counted as a same-bot rejection and retried with the same bounded backoff shape keyed on the rejection count of the current wait (5 s, 10 s, 20 s, 40 s, then 60 s).
+- The wait is bounded independently: 3600 s (monotonic) after the in-game failure that started it. The bound is applied when a same-bot rejection arrives, before each retry (a backoff never sleeps past the bound), and while a retried connection is still waiting for `start_game`: such an attempt is cancelled at the bound and no record is finalized. A game whose `start_game` has arrived is never interrupted. Reaching the bound stops the runner with `stopped reason: original_game_wait_exhausted` and a non-zero exit.
+- The wait ends as soon as a retried connection receives `start_game` (event `kind=original_game_wait outcome=recovered_from_original_game_wait`). The consecutive failures still reset only when a game completes. A failure of that new game is reported and counted as an ordinary failure, not as waiting for the original game; an in-game failure starts a new wait.
+- Any other transport failure while waiting is ordinary (it spends the failure budget); the wait is kept.
+- A same-bot rejection without a preceding in-game failure, or after a failure without diagnostics, gets no special treatment. Non-transport failures still fail closed. The duration bound and stop requests stop retries while waiting as usual.
+
+Events of the wait carry `awaiting_original_game=true`, the run's `same_bot_rejections` count, and `outcome=awaiting_original_game` / `original_game_wait_exhausted` (a `transport_failure` at a rejection, otherwise `kind=original_game_wait`). The summary (and the terminal facts of a fail-closed exit) add `awaiting original game: yes|no` and `same-bot rejections: N`. Only the normalized class is used; no server text is added to these facts.
+
 ## Per-hanchan durable records
 
 Use `--record-dir` to acquire each completed hanchan through the existing Issue #168 durable ranked game record contract:
