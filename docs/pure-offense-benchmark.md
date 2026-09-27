@@ -346,3 +346,103 @@ $run = @{ AwsProfile = 'lisjong'; Label = 'lisjong-393-champ'; InstanceType = 'c
 ```
 
 `Preflight`, `Launch`, `Status` and `Collect` work as in the #389 run.
+
+## 0004 reference Policy vs ukeire / two-step on the Rust backend (#406)
+
+[Issue #406](https://github.com/lisbun/lisjong-arena/issues/406) measures the
+lisjong port of the kobalab 0004 reference Policy on the unchanged v1
+benchmark:
+
+- class `Kobalab0004ReferencePolicy`, identity
+  `kobalab-0004-tile-efficiency-reference-v1`;
+- spec: lisjong `docs/kobalab-0004-reference.md`.
+
+Label its results as "0004参照Policy（lisjong移植版）". They are not results
+of kobalab's original implementation or of RiichiLab「牌効率くん」.
+
+The controls `ukeire` and `two-step` are **re-measured** in the same run.
+Their #389 arms ran at lisjong `2a9debe` on the Python backend, so they are not
+mixed with the new arm. After Collect, the new control arms are compared game
+by game with the #389 arms as a reproducibility check.
+
+```text
+allocation   df8460868ac26cc3505f04b5f4f8f524ccc14dc2423a114487775a1cb69ccb0f (reused)
+             riichienv-4p-red-single-v1, 389000..389999, DEVELOPMENT, COMMITTED
+arms         ukeire -> two-step -> kobalab-0004 (lineage order for summarize)
+lisjong      2553c1b (current pin = wheel build source)
+backend      rust, #400 wheel ff8aaa40...166c
+workload     scripts/aws/bootstrap-pure-offense-kobalab-406.sh (input: the wheel)
+```
+
+The allocation is reused as descriptive DEVELOPMENT evidence (see
+[Seeds](#seeds)). It is not confirmatory. The bootstrap never reserves,
+commits or retires seeds.
+
+### Opt-in shanten backend check
+
+```text
+LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.pure_offense_benchmark run \
+    ... --shanten-backend rust --shanten-backend-record <backend.json>
+```
+
+- The parent process and every game process run the #400
+  `require_shanten_backend` check once:
+  - the variable is set explicitly;
+  - the installed lisjong is the pin;
+  - for rust, `SOURCE_REVISION` matches and a native call happens.
+- Every game must also pass a per-game check:
+  - rust: at least one native call during the game;
+  - python: the native extension is never imported.
+- Any failure fails the whole arm. Nothing falls back to Python.
+- The aggregated record goes to `<backend.json>`, outside the arm. It holds the
+  backend, the revisions, the per-worker game and native-call counts, and the
+  minimum native calls per game.
+- The arm directory and its schemas are unchanged.
+- Without the option nothing changes, and the default backend stays Python.
+
+### Supplementary paired metrics
+
+`python -m lisjong_arena.pure_offense_benchmark.supplementary ARM... --out`
+reports seed-block paired differences with the same `paired_evaluation`
+mechanics. It covers unconditional per-kyoku quantities that the v1 summary
+does not pair:
+
+- `formal_tenpai_reached`, `riichi_declared`, `deal_in`, `abortive_draw`
+  (0/1);
+- `deal_in_loss`, `win_points` (0 when the event did not happen).
+
+Conditional means stay descriptive in the v1 arm profile. There is no
+composite score and no label.
+
+### Bootstrap checks
+
+The bootstrap reuses the #389 / #393 / #400 checks and fails closed when any of
+the following holds:
+
+- **Arena revision:** the checkout is not exact and clean, the revision is not
+  merged into `main`, or it does not descend from the allocation revision
+  `7257e0c`.
+- **Protocol:** `protocol.py` differs from the allocation revision.
+- **Pins:** the lisjong pin or RiichiEnv `0.4.10` differs.
+- **Allocation:** any frozen field differs, including state `COMMITTED`.
+- **Rust fail-closed probe:** the rust probe succeeds before the wheel is
+  installed.
+- **Wheel:** the wheel's name or SHA-256 differs, or it cannot be installed
+  binary-only.
+- **Arm output:** an arm reports the wrong focal identity or seed-block count,
+  a backend other than rust, or fewer than `LISJONG_WORKERS` workers.
+- **Readback:** an arm fails its strict readback, or its backend record fails
+  its checks (games, revisions, workers, native calls).
+
+```powershell
+$wheel = 'C:\Dev\lisjong-artifacts\issue-216-rust-wheel\wheel\lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl'
+$run = @{ AwsProfile = 'lisbun-admin'; Label = 'lisjong-406-kobalab'; InstanceType = 'c7i.4xlarge'; Workers = 16
+          MinMemoryMiBPerWorker = 1024
+          Bootstrap = 'scripts\aws\bootstrap-pure-offense-kobalab-406.sh'
+          BootstrapArgs = @('--arena-revision', '<merged main sha>',
+                            '--allocation-identity', 'df8460868ac26cc3505f04b5f4f8f524ccc14dc2423a114487775a1cb69ccb0f')
+          InputFile = @($wheel)
+          EstimatedRuntimeHours = @(0.25, 0.5); FailSafeHours = 1.5; CostBudgetUsd = 2 }
+```
+
+`Preflight`, `Launch`, `Status` and `Collect` work as in the #389 run.
