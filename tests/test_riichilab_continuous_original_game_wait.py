@@ -134,6 +134,7 @@ class _Harness:
         self.events: list[ContinuousRunEvent] = []
         self.stop_after_calls = stop_after_calls
         self.cancelled = False
+        self.cleanup_done = False
         self.hooks: list[bool] = []
 
     async def _game(self, policy, token, **kwargs) -> None:
@@ -152,6 +153,9 @@ class _Harness:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
                 self.cancelled = True
+                # connection / record cleanup that itself takes time
+                await asyncio.sleep(0.02)
+                self.cleanup_done = True
                 raise
         if outcome is _STARTED_SLOW:
             start()
@@ -174,21 +178,42 @@ class _Harness:
     def _stop_requested(self) -> bool:
         return self.stop_after_calls is not None and self.calls >= self.stop_after_calls
 
+    def _runner(self, **kwargs):
+        return run_continuous_ranked(
+            _profile(),
+            _TOKEN,
+            sleep=self._sleep,
+            monotonic=lambda: self.clock,
+            stop_requested=self._stop_requested,
+            on_event=self.events.append,
+            **kwargs,
+        )
+
     def run(self, **kwargs):
         with patch(
             "lisjong_arena.riichilab.continuous_ranked.run_ranked_game", self._game
         ):
-            return asyncio.run(
-                run_continuous_ranked(
-                    _profile(),
-                    _TOKEN,
-                    sleep=self._sleep,
-                    monotonic=lambda: self.clock,
-                    stop_requested=self._stop_requested,
-                    on_event=self.events.append,
-                    **kwargs,
-                )
-            )
+            return asyncio.run(self._runner(**kwargs))
+
+    def run_and_cancel_while_hanging(self) -> None:
+        """Cancel the runner while its attempt waits for `start_game`."""
+
+        async def main() -> None:
+            runner = asyncio.ensure_future(self._runner())
+            while self.calls < 2:
+                await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            runner.cancel()
+            try:
+                await runner
+            finally:
+                # The runner is done only after the attempt finished cleanup.
+                self.cleanup_done_when_runner_ended = self.cleanup_done
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game", self._game
+        ):
+            asyncio.run(main())
 
 
 class OriginalGameWaitTest(unittest.TestCase):
@@ -417,6 +442,60 @@ class OriginalGameWaitTest(unittest.TestCase):
             (last.kind, last.outcome),
         )
 
+    def test_outer_cancellation_waits_for_the_attempt_cleanup(self) -> None:
+        harness = _Harness([_in_game(), _HANG])
+
+        with self.assertRaises(asyncio.CancelledError):
+            harness.run_and_cancel_while_hanging()
+
+        self.assertTrue(harness.cancelled)
+        self.assertTrue(harness.cleanup_done_when_runner_ended)
+
+    def test_ordinary_failure_backoff_is_capped_at_the_wait_bound(self) -> None:
+        # Wait from t=30 to t=70.  The connect failure at t=65 would back off
+        # 10 s; it sleeps only the 5 s left and the runner stops at t=70.
+        harness = _Harness([_in_game(), _connect_failure(), _connect_failure()])
+
+        summary = harness.run(original_game_wait_seconds=40.0)
+
+        self.assertEqual("original_game_wait_exhausted", summary.stopped_reason)
+        self.assertEqual([5.0, 5.0], harness.delays)
+        self.assertEqual(70.0, harness.clock)
+        self.assertEqual(2, harness.calls)
+        self.assertEqual((0, 2, 2), _counts(summary))
+        self.assertEqual(
+            ["retry", "retry", "original_game_wait_exhausted"],
+            [e.outcome for e in harness.events],
+        )
+
+    def test_initial_disconnect_backoff_is_capped_at_the_wait_bound(self) -> None:
+        harness = _Harness([_in_game(), _same_bot()])
+
+        summary = harness.run(original_game_wait_seconds=3.0)
+
+        self.assertEqual("original_game_wait_exhausted", summary.stopped_reason)
+        self.assertEqual([3.0], harness.delays)
+        self.assertEqual(33.0, harness.clock)
+        self.assertEqual(1, harness.calls)
+
+    def test_ordinary_failure_after_the_wait_bound_stops_without_sleep(
+        self,
+    ) -> None:
+        # Wait from t=30 to t=40; the retry starts at t=35 and its connect
+        # failure arrives at t=65, past the bound.
+        harness = _Harness([_in_game(), _connect_failure(), _connect_failure()])
+
+        summary = harness.run(original_game_wait_seconds=10.0)
+
+        self.assertEqual("original_game_wait_exhausted", summary.stopped_reason)
+        self.assertEqual([5.0], harness.delays)
+        last = harness.events[-1]
+        self.assertEqual(
+            ("transport_failure", "original_game_wait_exhausted", None),
+            (last.kind, last.outcome, last.backoff_seconds),
+        )
+        self.assertEqual((0, 2, 2), _counts(summary))
+
     def test_started_game_is_not_cancelled_at_the_wait_bound(self) -> None:
         harness = _Harness([_in_game(), _STARTED_SLOW])
 
@@ -588,13 +667,12 @@ class OriginalGameWaitFactsTest(unittest.TestCase):
         return code, stdout.getvalue(), stderr.getvalue()
 
     def test_cli_wait_exhaustion_exits_non_zero_without_secrets(self) -> None:
-        # The bound has already passed before the first retry starts.
+        # The bound has already passed when the in-game failure backs off.
         code, stdout, stderr = self._cli([_in_game()], wait_seconds=1e-9)
 
         self.assertEqual(1, code)
         self.assertIn("stopped reason: original_game_wait_exhausted", stdout)
         self.assertIn("same-bot rejections: 0", stdout)
-        self.assertIn("kind=original_game_wait", stderr)
         self.assertIn("outcome=original_game_wait_exhausted", stderr)
         for text in (stdout, stderr):
             self.assertNotIn(_TOKEN, text)

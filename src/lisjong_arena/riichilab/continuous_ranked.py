@@ -667,6 +667,17 @@ async def run_continuous_ranked(
             **game_kwargs,
         )
 
+    async def cancel_and_wait(game: asyncio.Future[None]) -> None:
+        """attemptをcancelし、その後処理が終わるまで待つ。
+
+        `asyncio.wait`は待つだけで例外を送出しないため、外側のcancellationは
+        握りつぶさない。cancel前に終わっていたfailureは取得済みにする。
+        """
+        game.cancel()
+        await asyncio.wait({game})
+        if not game.cancelled():
+            game.exception()
+
     async def play_one_game_while_waiting(
         policy: Policy, game_kwargs: dict[str, object]
     ) -> bool:
@@ -701,16 +712,14 @@ async def run_continuous_ranked(
                 return_when=asyncio.FIRST_COMPLETED,
             )
         except BaseException:
-            game.cancel()
+            # 外側のcancellation等。attemptの接続・record後処理の完了を待って
+            # から伝播させる。
+            await cancel_and_wait(game)
             raise
         finally:
             started_wait.cancel()
         if not game.done() and not started.is_set():
-            game.cancel()
-            # 外側のcancellationは握りつぶさない(`asyncio.wait`は待つだけ)。
-            await asyncio.wait({game})
-            if not game.cancelled():
-                game.exception()  # 取得済みにする(cancel前に終わったfailure)
+            await cancel_and_wait(game)
             return False
         # 開始済み(または終了済み)。外側のcancellationは標準semanticsどおり
         # gameへ伝わる。
@@ -810,10 +819,24 @@ async def run_continuous_ranked(
                 )
                 break
 
+            backoff = _backoff_seconds(consecutive_failures)
+            if awaiting_original_game:
+                # wait中のordinary failureでもboundより後まで眠らない。
+                remaining_wait = wait_remaining()
+                if remaining_wait <= 0:
+                    stopped_reason = OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED
+                    emit(
+                        EVENT_TRANSPORT_FAILURE,
+                        exception_type=last_failure_type,
+                        transport=failure_diagnostics,
+                        outcome=OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED,
+                    )
+                    break
+                backoff = min(backoff, remaining_wait)
             if await backoff_before_retry(
                 last_failure_type,
                 failure_diagnostics,
-                _backoff_seconds(consecutive_failures),
+                backoff,
                 OUTCOME_RETRY,
             ):
                 continue
