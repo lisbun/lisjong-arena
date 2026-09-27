@@ -23,6 +23,10 @@
 - opt-in live presentation(Issue #381)。game attemptごとに
   `ContinuousRankedPresentationFeed`から新しいbufferを開いてone-game
   primitiveへ渡すだけで、presentationの有無でexecution semanticsは変わらない
+- secret-safeなper-game event(Issue #404)。completed gameと各
+  `TransportError`ごとに`ContinuousRunEvent`をopt-inの`on_event`へ渡す。
+  CLIはこれを`continuous-event:`行としてstderrへ即時出力し、fail-closedな
+  例外で終了する場合もそれまでのrunner stateを`terminal ...`行として残す
 - 停止要求後は新しいgameへrequeueしない graceful shutdown。CLIの
   `--stop-file PATH`は、そのpathが存在することを停止要求として扱う
   (Issue #383。AWS運用で外部から「今の半荘を終えたら止める」を指示する)。
@@ -167,6 +171,64 @@ async def _acquire_ranked_record(
     )
 
 
+#: `ContinuousRunEvent.kind`の値。
+EVENT_GAME_COMPLETED = "game_completed"
+EVENT_TRANSPORT_FAILURE = "transport_failure"
+#: transport failure eventの`outcome`の値。
+OUTCOME_RETRY = "retry"
+OUTCOME_FAILURE_BUDGET_EXHAUSTED = "failure_budget_exhausted"
+OUTCOME_DURATION_REACHED = "duration_reached"
+#: `format_continuous_event()`が出力する行のprefix。
+CONTINUOUS_EVENT_PREFIX = "continuous-event:"
+
+
+@dataclass(frozen=True, slots=True)
+class ContinuousRunEvent:
+    """completed gameまたはretryable transport failure 1件のsecret-safe event。
+
+    例外はclass名だけを保持し、例外message・protocol payload・token /
+    Authorization / credential値・fingerprintは含まない。counterはevent
+    発生直後のrunner stateである。
+
+    `transport_failure`では`outcome`がretry継続(`retry`)、failure budget
+    到達(`failure_budget_exhausted`)、deadline到達(`duration_reached`)の
+    いずれかを示す。`backoff_seconds`は実際にsleepする秒数で、sleepしない
+    場合は`None`である。
+    """
+
+    kind: str
+    elapsed_seconds: float
+    profile: str
+    completed_games: int
+    failed_games: int
+    consecutive_failures: int
+    exception_type: str | None = None
+    backoff_seconds: float | None = None
+    outcome: str | None = None
+
+
+def format_continuous_event(event: ContinuousRunEvent) -> str:
+    """eventを`continuous-event: key=value ...`の1行へformatする。"""
+    fields = [
+        f"kind={event.kind}",
+        f"elapsed_seconds={event.elapsed_seconds:.1f}",
+        f"profile={event.profile}",
+        f"completed_games={event.completed_games}",
+        f"failed_games={event.failed_games}",
+        f"consecutive_failures={event.consecutive_failures}",
+    ]
+    if event.kind == EVENT_TRANSPORT_FAILURE:
+        backoff = (
+            "none" if event.backoff_seconds is None else f"{event.backoff_seconds:g}"
+        )
+        fields += [
+            f"exception={event.exception_type}",
+            f"backoff_seconds={backoff}",
+            f"outcome={event.outcome}",
+        ]
+    return " ".join([CONTINUOUS_EVENT_PREFIX, *fields])
+
+
 @dataclass(frozen=True, slots=True)
 class ContinuousRunSummary:
     """continuous runner終了時のsecret-safeな運用summary。
@@ -199,6 +261,7 @@ async def run_continuous_ranked(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     failure_budget: int = _FAILURE_BUDGET,
+    on_event: Callable[[ContinuousRunEvent], None] | None = None,
 ) -> ContinuousRunSummary:
     """one-game ranked primitiveを繰り返すresilient / bounded-capable loop。
 
@@ -235,6 +298,10 @@ async def run_continuous_ranked(
     `ProtocolTraceError`、durable record finalization/readback failure、
     profile/credential failure、Policy/Adapter例外、`asyncio.CancelledError`を
     含むその他unexpected exception)はcatch-allせずそのまま伝播させる。
+
+    `on_event`(default `None`・opt-in、Issue #404)を渡した場合は、completed
+    gameごとと`TransportError`ごとに`ContinuousRunEvent`を渡す。transport
+    failure eventはbackoff sleepの前に渡す。未指定時はbehaviorを変えない。
     """
     _validate_max_completed_games(max_completed_games)
     _validate_max_duration_seconds(max_duration_seconds)
@@ -255,9 +322,25 @@ async def run_continuous_ranked(
     last_failure_type: str | None = None
     stopped_reason = "stop_requested"
     records_enabled = record_dir is not None
+    started = monotonic()
     deadline = (
-        monotonic() + max_duration_seconds if max_duration_seconds is not None else None
+        started + max_duration_seconds if max_duration_seconds is not None else None
     )
+
+    def emit(kind: str, **fields: object) -> None:
+        if on_event is None:
+            return
+        on_event(
+            ContinuousRunEvent(
+                kind=kind,
+                elapsed_seconds=monotonic() - started,
+                profile=profile.name,
+                completed_games=completed_games,
+                failed_games=failed_games,
+                consecutive_failures=consecutive_failures,
+                **fields,
+            )
+        )
 
     while True:
         if max_completed_games is not None and completed_games >= max_completed_games:
@@ -304,24 +387,47 @@ async def run_continuous_ranked(
             consecutive_failures += 1
             last_failure_type = type(error).__name__
             if consecutive_failures >= failure_budget:
-                stopped_reason = "failure_budget_exhausted"
+                stopped_reason = OUTCOME_FAILURE_BUDGET_EXHAUSTED
+                emit(
+                    EVENT_TRANSPORT_FAILURE,
+                    exception_type=last_failure_type,
+                    outcome=OUTCOME_FAILURE_BUDGET_EXHAUSTED,
+                )
                 break
 
             backoff = _backoff_seconds(consecutive_failures)
             if deadline is not None:
                 remaining = deadline - monotonic()
                 if remaining <= 0:
-                    stopped_reason = "duration_reached"
+                    stopped_reason = OUTCOME_DURATION_REACHED
+                    emit(
+                        EVENT_TRANSPORT_FAILURE,
+                        exception_type=last_failure_type,
+                        outcome=OUTCOME_DURATION_REACHED,
+                    )
                     break
                 if remaining < backoff:
+                    emit(
+                        EVENT_TRANSPORT_FAILURE,
+                        exception_type=last_failure_type,
+                        backoff_seconds=remaining,
+                        outcome=OUTCOME_DURATION_REACHED,
+                    )
                     await sleep(remaining)
-                    stopped_reason = "duration_reached"
+                    stopped_reason = OUTCOME_DURATION_REACHED
                     break
+            emit(
+                EVENT_TRANSPORT_FAILURE,
+                exception_type=last_failure_type,
+                backoff_seconds=backoff,
+                outcome=OUTCOME_RETRY,
+            )
             await sleep(backoff)
             continue
 
         completed_games += 1
         consecutive_failures = 0
+        emit(EVENT_GAME_COMPLETED)
 
     return ContinuousRunSummary(
         profile=profile.name,
@@ -360,6 +466,54 @@ def format_continuous_summary(summary: ContinuousRunSummary) -> str:
             f"records: {'on' if summary.records_enabled else 'off'}",
             f"stopped reason: {summary.stopped_reason}",
         ]
+    )
+
+
+class _RunnerProgress:
+    """CLIがeventから保持する最新のrunner state(terminal facts用)。"""
+
+    def __init__(self, profile: str) -> None:
+        self.profile = profile
+        self.completed_games = 0
+        self.failed_games = 0
+        self.consecutive_failures = 0
+        self.last_failure_type: str | None = None
+
+    def record(self, event: ContinuousRunEvent) -> None:
+        self.completed_games = event.completed_games
+        self.failed_games = event.failed_games
+        self.consecutive_failures = event.consecutive_failures
+        if event.exception_type is not None:
+            self.last_failure_type = event.exception_type
+
+
+def _print_event(progress: _RunnerProgress, event: ContinuousRunEvent) -> None:
+    progress.record(event)
+    print(format_continuous_event(event), file=sys.stderr, flush=True)
+
+
+def _print_terminal_facts(
+    progress: _RunnerProgress, error: BaseException, category: str
+) -> None:
+    """fail-closedな終了時、例外前までのrunner stateをsecret-safeに出力する。
+
+    例外はclass名とcategoryだけを出し、messageは含めない。
+    """
+    print(
+        "\n".join(
+            [
+                f"terminal profile: {progress.profile}",
+                f"terminal completed games: {progress.completed_games}",
+                f"terminal failed games: {progress.failed_games}",
+                f"terminal consecutive failures: {progress.consecutive_failures}",
+                f"terminal last failure type: {progress.last_failure_type or 'none'}",
+                f"terminal exception type: {type(error).__name__}",
+                f"terminal exception category: {category}",
+                "terminal stopped reason: runner_exception",
+            ]
+        ),
+        file=sys.stderr,
+        flush=True,
     )
 
 
@@ -470,7 +624,10 @@ def run_continuous_ranked_cli(
     print(f"requested duration seconds: {args.duration_seconds or 'unbounded'}")
     print(f"stop file: {'on' if args.stop_file is not None else 'off'}")
 
-    optional_kwargs: dict[str, object] = {}
+    progress = _RunnerProgress(profile.name)
+    optional_kwargs: dict[str, object] = {
+        "on_event": lambda event: _print_event(progress, event)
+    }
     if presentation is not None:
         optional_kwargs["presentation"] = presentation
     effective_stop_requested = _combine_stop_requested(stop_requested, args.stop_file)
@@ -490,6 +647,7 @@ def run_continuous_ranked_cli(
             )
         )
     except DurableRankedGameRecordError as error:
+        _print_terminal_facts(progress, error, "durable_record")
         print(
             "RiichiLab continuous ranked durable record was not finalized: "
             f"{type(error).__name__}: {error}",
@@ -498,7 +656,9 @@ def run_continuous_ranked_cli(
         return 1
     except OSError as error:
         if args.record_dir is None:
+            _print_terminal_facts(progress, error, "unexpected")
             raise
+        _print_terminal_facts(progress, error, "durable_record")
         print(
             "RiichiLab continuous ranked durable record was not finalized: "
             f"{type(error).__name__}: {error}",
@@ -506,6 +666,7 @@ def run_continuous_ranked_cli(
         )
         return 1
     except RiichiLabClientError as error:
+        _print_terminal_facts(progress, error, "riichilab_client")
         print(
             "RiichiLab continuous ranked runner failed: "
             f"{type(error).__name__}: {error}",
@@ -515,6 +676,11 @@ def run_continuous_ranked_cli(
     except KeyboardInterrupt:
         print("RiichiLab continuous ranked runner stopped by user", file=sys.stderr)
         return 0
+    except Exception as error:
+        # Policy / Adapter等のunexpected exceptionは従来どおりtracebackで
+        # 伝播させ、その前にterminal factsだけを残す。
+        _print_terminal_facts(progress, error, "unexpected")
+        raise
 
     print(format_continuous_summary(summary))
     return 1 if summary.stopped_reason == "failure_budget_exhausted" else 0
@@ -530,7 +696,10 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "CONTINUOUS_EVENT_PREFIX",
+    "ContinuousRunEvent",
     "ContinuousRunSummary",
+    "format_continuous_event",
     "format_continuous_summary",
     "run_continuous_ranked",
     "run_continuous_ranked_cli",

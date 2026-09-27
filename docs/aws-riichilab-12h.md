@@ -251,11 +251,31 @@ Lifecycle:
   bot's evidence for **all** runtime tokens of the run. Teardown is armed only
   after that.
 - The completion summary is `lisjong-arena-aws-riichilab-instance-run-summary`
-  v1. Its fields:
+  v2. Its fields:
   - `bots[]`: profile, secret id, spectate port, exit code, verification or
-    `failure_reason`
+    `failure_reason`, and `runner_facts`
   - `stop_request_source`
   - `status`
+- `runner_facts` (Issue #404) is read back from each bot's `continuous.log`
+  before teardown. It is informational only and never changes PASS / FAIL.
+  It keeps a failed bot diagnosable after the instance is gone:
+  - `completed_games`, `failed_games`, `final_consecutive_failures`,
+    `last_failure_type`, `stopped_reason`
+  - `terminal_exception_type` / `terminal_exception_category`: set when the
+    runner stopped on a fail-closed exception before its normal summary
+  - `transport_failure_event_count` and the latest
+    `transport_failure_events` (elapsed seconds, exception class,
+    consecutive failure number, backoff seconds, `retry` /
+    `failure_budget_exhausted` / `duration_reached`)
+  - `source` shows where the counters came from: `summary`, `terminal`, or
+    `events` (the runner was killed before it printed either)
+
+  The runner writes one `continuous-event:` line to stderr for each
+  completed game and each retryable transport failure. The line carries
+  exception class names only, never messages, payloads, or credentials. The
+  verifier copies only allow-listed values that match strict patterns.
+- On a failed run, the collector prints one `BOT <profile> runner: ...` line
+  per bot with these facts.
 - Overall PASS requires every bot to pass. A FAIL summary is still returned. The
   bootstrap then exits non-zero, and the collector saves `completion.json`
   before it terminates the instance.

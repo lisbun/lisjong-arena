@@ -10,6 +10,12 @@ This module owns the testable parts of that run that depend on Arena contracts:
   independently with :func:`verify_run` and aggregate an instance-level,
   secret-safe summary.  Overall PASS requires every bot to pass.
 
+Issue #404: each bot entry also carries ``runner_facts``, the secret-safe
+runner state read back from the bot's ``continuous.log`` (normal summary,
+``terminal ...`` facts of a fail-closed exit, and the latest transport-failure
+events).  They are informational and never change a bot's PASS / FAIL; they
+keep a failed bot diagnosable after the instance has been torn down.
+
 It does not start processes or provision AWS resources.
 """
 
@@ -31,10 +37,11 @@ from lisjong_arena.riichilab.aws_run_verify import (
     _read_stop_request_source,
     verify_run,
 )
+from lisjong_arena.riichilab.continuous_ranked import CONTINUOUS_EVENT_PREFIX
 from lisjong_arena.riichilab.profile import ProfileError, resolve_profile
 
 INSTANCE_SUMMARY_SCHEMA_ID = "lisjong-arena-aws-riichilab-instance-run-summary"
-INSTANCE_SUMMARY_SCHEMA_VERSION = 1
+INSTANCE_SUMMARY_SCHEMA_VERSION = 2
 
 #: Upper bound of bots per instance.  The instance summary returns through the
 #: SSM stdout sentinel, whose output is truncated at 24,000 characters.
@@ -49,6 +56,17 @@ EXPECTED_POLICY_BY_PROFILE: Mapping[str, str] = {
 }
 
 _SECRET_ID_RE = re.compile(r"[A-Za-z0-9/_+=.@-]+")
+
+#: Transport-failure events kept per bot, newest last.  The instance summary
+#: returns through the size-limited SSM stdout sentinel (see ``MAX_BOTS``).
+MAX_RUNNER_FACT_EVENTS = 8
+
+# Every value copied from a runner log into the summary must match one of
+# these, so free text (exception messages, payloads, credentials) never does.
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
+_PROFILE_VALUE_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
+_NUMBER_RE = re.compile(r"[0-9]{1,9}(?:\.[0-9]{1,6})?")
+_INT_RE = re.compile(r"[0-9]{1,9}")
 _MIN_SPECTATE_PORT = 1024
 _MAX_PORT = 65535
 
@@ -139,6 +157,126 @@ def bot_directory(work_root: Path, profile: str) -> Path:
     return work_root / "bots" / profile
 
 
+def _safe(value: str, pattern: re.Pattern[str]) -> str | None:
+    return value if pattern.fullmatch(value) else None
+
+
+def _safe_int(value: str) -> int | None:
+    return int(value) if _INT_RE.fullmatch(value) else None
+
+
+def _safe_number(value: str) -> float | None:
+    return float(value) if _NUMBER_RE.fullmatch(value) else None
+
+
+def _parse_event(line: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for part in line[len(CONTINUOUS_EVENT_PREFIX) :].split():
+        key, separator, value = part.partition("=")
+        if separator:
+            fields[key] = value
+    return fields
+
+
+def read_runner_facts(runner_log: Path) -> dict[str, Any] | None:
+    """Read secret-safe runner state from one bot's ``continuous.log``.
+
+    Returns ``None`` when the log is missing or unreadable.  Precedence of the
+    counters: the normal runner summary, then the ``terminal ...`` facts of a
+    fail-closed exit, then the latest event.  Only allow-listed fields whose
+    values match a strict pattern are copied; anything else is dropped.
+    """
+
+    try:
+        text = runner_log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    summary: dict[str, str] = {}
+    terminal: dict[str, str] = {}
+    latest_event: dict[str, str] | None = None
+    failure_events: list[dict[str, Any]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith(CONTINUOUS_EVENT_PREFIX):
+            event = _parse_event(line)
+            latest_event = event
+            if event.get("kind") != "transport_failure":
+                continue
+            backoff = event.get("backoff_seconds", "")
+            failure_events.append(
+                {
+                    "elapsed_seconds": _safe_number(event.get("elapsed_seconds", "")),
+                    "exception_type": _safe(event.get("exception", ""), _IDENTIFIER_RE),
+                    "consecutive_failures": _safe_int(
+                        event.get("consecutive_failures", "")
+                    ),
+                    "backoff_seconds": (
+                        None if backoff == "none" else _safe_number(backoff)
+                    ),
+                    "outcome": _safe(event.get("outcome", ""), _IDENTIFIER_RE),
+                }
+            )
+            continue
+        key, separator, value = line.partition(":")
+        if not separator:
+            continue
+        key = key.strip().lower()
+        value = value.strip()
+        if key.startswith("terminal "):
+            terminal[key.removeprefix("terminal ")] = value
+        else:
+            summary[key] = value
+
+    # The CLI prints "profile:" before the run as well; "stopped reason:" is
+    # printed only by the normal end-of-run summary.
+    if "stopped reason" in summary:
+        source, counters = "summary", summary
+    elif "stopped reason" in terminal:
+        source, counters = "terminal", terminal
+    elif latest_event is not None:
+        source = "events"
+        counters = {
+            "completed games": latest_event.get("completed_games", ""),
+            "failed games": latest_event.get("failed_games", ""),
+            "consecutive failures": latest_event.get("consecutive_failures", ""),
+        }
+    else:
+        source, counters = None, {}
+
+    last_failure_type = counters.get("last failure type")
+    if last_failure_type is None and failure_events:
+        last_failure_type = failure_events[-1]["exception_type"]
+    if last_failure_type == "none":
+        last_failure_type = None
+
+    return {
+        "source": source,
+        "completed_games": _safe_int(counters.get("completed games", "")),
+        "failed_games": _safe_int(counters.get("failed games", "")),
+        "final_consecutive_failures": _safe_int(
+            counters.get("consecutive failures", "")
+        ),
+        "last_failure_type": (
+            None
+            if last_failure_type is None
+            else _safe(last_failure_type, _IDENTIFIER_RE)
+        ),
+        "stopped_reason": _safe(counters.get("stopped reason", ""), _IDENTIFIER_RE),
+        "terminal_exception_type": _safe(
+            terminal.get("exception type", ""), _IDENTIFIER_RE
+        ),
+        "terminal_exception_category": _safe(
+            terminal.get("exception category", ""), _IDENTIFIER_RE
+        ),
+        "runner_profile": _safe(
+            summary.get("profile", terminal.get("profile", "")), _PROFILE_VALUE_RE
+        ),
+        "transport_failure_event_count": len(failure_events),
+        "transport_failure_events": failure_events[-MAX_RUNNER_FACT_EVENTS:],
+    }
+
+
 def _verify_bot(
     *,
     work_root: Path,
@@ -162,6 +300,7 @@ def _verify_bot(
         "status": "FAIL",
         "failure_reason": None,
         "verification": None,
+        "runner_facts": read_runner_facts(directory / "continuous.log"),
     }
     try:
         try:
@@ -364,10 +503,12 @@ __all__ = [
     "INSTANCE_SUMMARY_SCHEMA_ID",
     "INSTANCE_SUMMARY_SCHEMA_VERSION",
     "MAX_BOTS",
+    "MAX_RUNNER_FACT_EVENTS",
     "AwsInstanceRunConfigError",
     "BotConfig",
     "bot_directory",
     "check_runtime_policies",
     "parse_bot_configs",
+    "read_runner_facts",
     "verify_instance_run",
 ]

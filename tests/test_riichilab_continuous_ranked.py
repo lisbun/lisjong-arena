@@ -17,9 +17,11 @@ from unittest.mock import patch
 from lisjong.policy_contract import Seat
 
 from lisjong_arena.riichilab.continuous_ranked import (
+    ContinuousRunEvent,
     ContinuousRunSummary,
     _backoff_seconds,
     _run_cli,
+    format_continuous_event,
     format_continuous_summary,
     run_continuous_ranked,
     run_continuous_ranked_cli,
@@ -1012,6 +1014,181 @@ class CliRegressionTest(unittest.TestCase):
         self.assertEqual(return_code, 0)
         self.assertNotIn(dummy_token, stdout.getvalue())
         self.assertNotIn(dummy_token, stderr.getvalue())
+
+
+class RunEventTest(unittest.TestCase):
+    """Issue #404: secret-safe evidence for every retryable transport failure."""
+
+    def _run(self, outcomes, **kwargs) -> tuple[list[ContinuousRunEvent], object]:
+        outcomes = iter(outcomes)
+        events: list[ContinuousRunEvent] = []
+        clock = {"now": 0.0}
+
+        async def _fake_run_ranked_game(policy, token, **_kwargs):
+            clock["now"] += 30.0
+            outcome = next(outcomes)
+            if isinstance(outcome, BaseException):
+                raise outcome
+
+        async def _sleep(delay: float) -> None:
+            clock["now"] += delay
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(),
+                    "unit-test-token",
+                    sleep=_sleep,
+                    monotonic=lambda: clock["now"],
+                    on_event=events.append,
+                    **kwargs,
+                )
+            )
+        return events, summary
+
+    def test_every_transport_failure_emits_backoff_and_outcome(self) -> None:
+        events, summary = self._run(
+            [None, UnexpectedDisconnectError("dc")] + [TransportError("boom")] * 4,
+            failure_budget=5,
+        )
+
+        self.assertEqual(summary.stopped_reason, "failure_budget_exhausted")
+        failures = [e for e in events if e.kind == "transport_failure"]
+        self.assertEqual(len(failures), summary.failed_games)
+        self.assertEqual(
+            [(e.consecutive_failures, e.backoff_seconds, e.outcome) for e in failures],
+            [
+                (1, 5.0, "retry"),
+                (2, 10.0, "retry"),
+                (3, 20.0, "retry"),
+                (4, 40.0, "retry"),
+                (5, None, "failure_budget_exhausted"),
+            ],
+        )
+        self.assertEqual(
+            [e.exception_type for e in failures],
+            ["UnexpectedDisconnectError"] + ["TransportError"] * 4,
+        )
+        completed = events[0]
+        self.assertEqual(completed.kind, "game_completed")
+        self.assertEqual(completed.completed_games, 1)
+        self.assertEqual(completed.elapsed_seconds, 30.0)
+        # The first failure is reported before its backoff sleep.
+        self.assertEqual(failures[0].elapsed_seconds, 60.0)
+        self.assertEqual(failures[1].elapsed_seconds, 95.0)
+        self.assertTrue(all(e.profile == "unit-test-profile" for e in events))
+
+    def test_deadline_capped_backoff_reports_duration_reached(self) -> None:
+        events, summary = self._run([TransportError("boom")], max_duration_seconds=33)
+
+        self.assertEqual(summary.stopped_reason, "duration_reached")
+        (failure,) = events
+        self.assertEqual(failure.outcome, "duration_reached")
+        self.assertEqual(failure.backoff_seconds, 3.0)
+
+    def test_formatted_event_is_one_secret_free_line(self) -> None:
+        line = format_continuous_event(
+            ContinuousRunEvent(
+                kind="transport_failure",
+                elapsed_seconds=61.25,
+                profile="lisjong-dev",
+                completed_games=2,
+                failed_games=3,
+                consecutive_failures=1,
+                exception_type="UnexpectedDisconnectError",
+                backoff_seconds=5.0,
+                outcome="retry",
+            )
+        )
+        self.assertEqual(
+            line,
+            "continuous-event: kind=transport_failure elapsed_seconds=61.2 "
+            "profile=lisjong-dev completed_games=2 failed_games=3 "
+            "consecutive_failures=1 exception=UnexpectedDisconnectError "
+            "backoff_seconds=5 outcome=retry",
+        )
+
+
+class CliTerminalFactsTest(unittest.TestCase):
+    """Issue #404: a fail-closed exit keeps the runner state it had reached."""
+
+    _TOKEN = "unit-test-dummy-token-should-not-leak"
+
+    def _cli(self, outcomes) -> tuple[int | None, str, str, BaseException | None]:
+        outcomes = iter(outcomes)
+        original = run_continuous_ranked
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            outcome = next(outcomes)
+            if isinstance(outcome, BaseException):
+                raise outcome
+
+        async def _no_sleep_runner(profile, token, **kwargs):
+            return await original(profile, token, sleep=_no_sleep, **kwargs)
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        code: int | None = None
+        raised: BaseException | None = None
+        with (
+            patch.dict(os.environ, {_DEV_TOKEN_VAR: self._TOKEN}),
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+                _fake_run_ranked_game,
+            ),
+            patch(
+                "lisjong_arena.riichilab.continuous_ranked.run_continuous_ranked",
+                _no_sleep_runner,
+            ),
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            try:
+                code = _run_cli(["--profile", "lisjong-dev"])
+            except RuntimeError as error:
+                raised = error
+        for text in (stdout.getvalue(), stderr.getvalue()):
+            self.assertNotIn(self._TOKEN, text)
+        return code, stdout.getvalue(), stderr.getvalue(), raised
+
+    def test_retry_events_are_written_to_stderr(self) -> None:
+        code, stdout, stderr, _ = self._cli([TransportError("boom")] * 5)
+
+        self.assertEqual(code, 1)
+        self.assertIn("stopped reason: failure_budget_exhausted", stdout)
+        self.assertEqual(stderr.count("continuous-event: kind=transport_failure"), 5)
+        self.assertIn("outcome=failure_budget_exhausted", stderr)
+        self.assertNotIn("terminal ", stderr)
+
+    def test_client_error_keeps_counts_and_exception_class_only(self) -> None:
+        code, stdout, stderr, _ = self._cli(
+            [None, UnexpectedDisconnectError("dc"), ProtocolError("raw payload")]
+        )
+
+        self.assertEqual(code, 1)
+        self.assertNotIn("stopped reason:", stdout)
+        facts = "\n".join(
+            line for line in stderr.splitlines() if line.startswith("terminal ")
+        )
+        self.assertIn("terminal completed games: 1", facts)
+        self.assertIn("terminal failed games: 1", facts)
+        self.assertIn("terminal consecutive failures: 1", facts)
+        self.assertIn("terminal last failure type: UnexpectedDisconnectError", facts)
+        self.assertIn("terminal exception type: ProtocolError", facts)
+        self.assertIn("terminal exception category: riichilab_client", facts)
+        self.assertIn("terminal stopped reason: runner_exception", facts)
+        self.assertNotIn("raw payload", facts)
+
+    def test_unexpected_exception_keeps_facts_and_still_propagates(self) -> None:
+        _, _, stderr, raised = self._cli([RuntimeError("policy bug")])
+
+        self.assertIsInstance(raised, RuntimeError)
+        self.assertIn("terminal completed games: 0", stderr)
+        self.assertIn("terminal exception type: RuntimeError", stderr)
+        self.assertIn("terminal exception category: unexpected", stderr)
 
 
 if __name__ == "__main__":
