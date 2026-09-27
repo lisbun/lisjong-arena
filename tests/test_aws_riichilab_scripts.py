@@ -664,6 +664,19 @@ _FAILED_SUMMARY = {
                 "terminal_exception_category": None,
                 "runner_profile": "lisjong-baseline",
                 "transport_failure_event_count": 5,
+                "transport_failure_phase_counts": {
+                    "before_start_game": 4,
+                    "in_game": 1,
+                },
+                "server_reason_class_counts": {
+                    "none": 1,
+                    "same_bot_already_active": 4,
+                },
+                "first_transport_failure_event": {
+                    "phase": "in_game",
+                    "operation": "send",
+                    "close_code_received": 1006,
+                },
                 "transport_failure_events": [],
             },
         },
@@ -821,6 +834,12 @@ class AwsRiichiLabCollectorTerminationTest(unittest.TestCase):
             "stopped=failure_budget_exhausted terminal= transport_failures=5",
             output,
         )
+        self.assertIn(
+            "BOT lisjong-baseline transport: first=in_game/send "
+            "first_close_received=1006 phases=before_start_game:4,in_game:1 "
+            "reasons=none:1,same_bot_already_active:4",
+            output,
+        )
         state = self._state()
         self.assertEqual(state["state"], "remote_failed")
         self.assertEqual(state["last_observed_ssm_status"], "Failed")
@@ -859,6 +878,29 @@ class AwsRiichiLabCollectorTerminationTest(unittest.TestCase):
 
     def test_failed_run_with_forgotten_instance_id_is_absent(self) -> None:
         self._assert_absent_instance_accepted(self._NOT_FOUND)
+
+    def test_failed_summary_without_transport_diagnostics_still_prints(
+        self,
+    ) -> None:
+        # A summary from before Issue #411 has runner_facts without the
+        # transport-diagnostics fields; strict mode must not trip on them.
+        legacy = json.loads(json.dumps(_FAILED_SUMMARY))
+        facts = legacy["bots"][1]["runner_facts"]
+        for key in (
+            "transport_failure_phase_counts",
+            "server_reason_class_counts",
+            "first_transport_failure_event",
+        ):
+            del facts[key]
+        self._scenario(
+            status="Failed", summary=legacy, described=self._instance("terminated")
+        )
+        result = self._collect()
+        output = result.stdout + result.stderr
+        self.assertIn("BOT lisjong-baseline runner: source=summary", output)
+        self.assertNotIn("BOT lisjong-baseline transport:", output)
+        self.assertNotIn("PropertyNotFound", output)
+        self.assertEqual(self._state()["state"], "remote_failed")
 
     def test_failed_run_with_terminated_instance_needs_no_request(self) -> None:
         self._scenario(

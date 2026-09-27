@@ -46,6 +46,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from lisjong.policy_contract.policy import Policy
 
@@ -70,6 +71,7 @@ from lisjong_arena.riichilab.profile import (
 )
 from lisjong_arena.riichilab.ranked import run_ranked_game
 from lisjong_arena.riichilab.transport import DEFAULT_RANKED_URL
+from lisjong_arena.riichilab.transport_diagnostics import TransportDiagnostics
 
 #: backoff baseline (実装前レビュー): 5s -> 10s -> 20s -> 40s -> 60s cap。
 _INITIAL_BACKOFF_SECONDS = 5.0
@@ -194,6 +196,9 @@ class ContinuousRunEvent:
     到達(`failure_budget_exhausted`)、deadline到達(`duration_reached`)の
     いずれかを示す。`backoff_seconds`は実際にsleepする秒数で、sleepしない
     場合は`None`である。
+
+    `transport`(Issue #411)はtransport layerがsanitize済みの
+    `TransportDiagnostics`で、例外に無い場合は`None`である。
     """
 
     kind: str
@@ -205,6 +210,11 @@ class ContinuousRunEvent:
     exception_type: str | None = None
     backoff_seconds: float | None = None
     outcome: str | None = None
+    transport: TransportDiagnostics | None = None
+
+
+def _event_value(value: object) -> str:
+    return "none" if value is None else str(value)
 
 
 def format_continuous_event(event: ContinuousRunEvent) -> str:
@@ -226,6 +236,25 @@ def format_continuous_event(event: ContinuousRunEvent) -> str:
             f"backoff_seconds={backoff}",
             f"outcome={event.outcome}",
         ]
+        diagnostics = event.transport
+        if diagnostics is not None:
+            decision = diagnostics.last_decision_elapsed_seconds
+            excerpt = diagnostics.server_reason_excerpt
+            fields += [
+                f"phase={diagnostics.phase}",
+                f"operation={diagnostics.operation}",
+                f"http_status={_event_value(diagnostics.http_status)}",
+                f"close_code_received={_event_value(diagnostics.close_code_received)}",
+                f"close_code_sent={_event_value(diagnostics.close_code_sent)}",
+                f"server_reason_class={diagnostics.server_reason_class}",
+                # 値に空白を含み得るためpercent-encodeして1 tokenにする。
+                "server_reason_excerpt="
+                + ("none" if excerpt is None else quote(excerpt, safe="")),
+                f"local_close_reason_class={diagnostics.local_close_reason_class}",
+                f"requests_received={diagnostics.requests_received}",
+                "last_decision_elapsed_seconds="
+                + ("none" if decision is None else f"{decision:.3f}"),
+            ]
     return " ".join([CONTINUOUS_EVENT_PREFIX, *fields])
 
 
@@ -386,11 +415,17 @@ async def run_continuous_ranked(
             failed_games += 1
             consecutive_failures += 1
             last_failure_type = type(error).__name__
+            failure_diagnostics = (
+                error.diagnostics
+                if isinstance(error.diagnostics, TransportDiagnostics)
+                else None
+            )
             if consecutive_failures >= failure_budget:
                 stopped_reason = OUTCOME_FAILURE_BUDGET_EXHAUSTED
                 emit(
                     EVENT_TRANSPORT_FAILURE,
                     exception_type=last_failure_type,
+                    transport=failure_diagnostics,
                     outcome=OUTCOME_FAILURE_BUDGET_EXHAUSTED,
                 )
                 break
@@ -403,6 +438,7 @@ async def run_continuous_ranked(
                     emit(
                         EVENT_TRANSPORT_FAILURE,
                         exception_type=last_failure_type,
+                        transport=failure_diagnostics,
                         outcome=OUTCOME_DURATION_REACHED,
                     )
                     break
@@ -410,6 +446,7 @@ async def run_continuous_ranked(
                     emit(
                         EVENT_TRANSPORT_FAILURE,
                         exception_type=last_failure_type,
+                        transport=failure_diagnostics,
                         backoff_seconds=remaining,
                         outcome=OUTCOME_DURATION_REACHED,
                     )
@@ -419,6 +456,7 @@ async def run_continuous_ranked(
             emit(
                 EVENT_TRANSPORT_FAILURE,
                 exception_type=last_failure_type,
+                transport=failure_diagnostics,
                 backoff_seconds=backoff,
                 outcome=OUTCOME_RETRY,
             )

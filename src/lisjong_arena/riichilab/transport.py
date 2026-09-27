@@ -7,11 +7,18 @@ validation/rankedは同じconnect/receive/send loopを使い、terminal条件だ
 
 `websockets`はArena自身のdirect dependencyであり(Issue #23)、Policy
 契約・`RiichiLabSeatAdapter`へは依存を逆流させない。
+
+Issue #411: transport failureはsecret-safeな`TransportDiagnostics`
+(phase / operation / close code / server reason classification / 直前の
+decision所要時間)を`TransportError.diagnostics`へ持つ。rawな事実は
+`drive_session()`が例外へ一時的に付け、tokenを知る唯一の場所である
+`connect_transport()`が接続の外へ出す前にsanitizeする。
 """
 
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Protocol
@@ -24,8 +31,22 @@ from lisjong_arena.riichilab.errors import (
     TransportError,
     UnexpectedDisconnectError,
 )
-from lisjong_arena.riichilab.session import RankedSession, ValidationSession
+from lisjong_arena.riichilab.session import (
+    EVENT_TYPE_REQUEST_ACTION,
+    RankedSession,
+    ValidationSession,
+)
 from lisjong_arena.riichilab.trace import JsonlProtocolTraceWriter
+from lisjong_arena.riichilab.transport_diagnostics import (
+    OPERATION_CONNECT,
+    OPERATION_RECV,
+    OPERATION_SEND,
+    PHASE_BEFORE_START_GAME,
+    PHASE_CONNECT,
+    PHASE_IN_GAME,
+    RawTransportFailure,
+    sanitize_transport_failure,
+)
 
 DEFAULT_VALIDATION_URL = "wss://game.riichi.dev/ws/validate"
 DEFAULT_RANKED_URL = "wss://game.riichi.dev/ws/ranked"
@@ -36,7 +57,39 @@ class TransportClosed(Exception):
 
     `drive_session()`側で`UnexpectedDisconnectError`へ変換する
     ための内部signalであり、呼び出し側の公開APIには漏らさない。
+
+    close frameが分かる場合はcode / reasonを持つ(Issue #411)。reasonは
+    rawなので、sanitizeされるまでlogへ出さない。
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code_received: int | None = None,
+        reason_received: str | None = None,
+        code_sent: int | None = None,
+        reason_sent: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code_received = code_received
+        self.reason_received = reason_received
+        self.code_sent = code_sent
+        self.reason_sent = reason_sent
+
+    @classmethod
+    def from_connection_closed(
+        cls, error: websockets.exceptions.ConnectionClosed
+    ) -> TransportClosed:
+        received = error.rcvd
+        sent = error.sent
+        return cls(
+            str(error),
+            code_received=None if received is None else received.code,
+            reason_received=None if received is None else received.reason,
+            code_sent=None if sent is None else sent.code,
+            reason_sent=None if sent is None else sent.reason,
+        )
 
 
 class Transport(Protocol):
@@ -66,13 +119,13 @@ class WebSocketTransport:
         try:
             return await self._connection.recv()
         except websockets.exceptions.ConnectionClosed as error:
-            raise TransportClosed(str(error)) from error
+            raise TransportClosed.from_connection_closed(error) from error
 
     async def send(self, message: str) -> None:
         try:
             await self._connection.send(message)
         except websockets.exceptions.ConnectionClosed as error:
-            raise TransportClosed(str(error)) from error
+            raise TransportClosed.from_connection_closed(error) from error
 
     async def close(self) -> None:
         await self._connection.close()
@@ -86,18 +139,100 @@ async def connect_transport(url: str, token: str) -> AsyncIterator[Transport]:
     `Transport`・結果側には一切保持しない。mid-game reconnectは行わない
     (`websockets.connect()`を`async with`のreconnectループとしてではなく、
     1回の接続としてだけ使用する)。
+
+    接続の内側から出る`TransportError`のraw failure factsは、ここで`token`を
+    使ってsanitizeし`diagnostics`へ置き換える(Issue #411)。
     """
     headers = {"Authorization": f"Bearer {token}"}
+    connect_diagnostics = None
     try:
         connection = await websockets.connect(url, additional_headers=headers)
     except Exception as error:
-        raise TransportError(f"failed to connect to {url}") from error
+        connect_diagnostics = sanitize_transport_failure(
+            _connect_failure(error), (token,)
+        )
+    if connect_diagnostics is not None:
+        # exceptブロックの外でraiseし、raw handshake response(body等)を
+        # `__context__`にも残さない。
+        failure = TransportError(f"failed to connect to {url}")
+        failure.diagnostics = connect_diagnostics
+        raise failure
 
     transport = WebSocketTransport(connection)
     try:
         yield transport
+    except TransportError as error:
+        raw = getattr(error, _RAW_FAILURE_ATTRIBUTE, None)
+        if isinstance(raw, RawTransportFailure):
+            error.diagnostics = sanitize_transport_failure(raw, (token,))
+            delattr(error, _RAW_FAILURE_ATTRIBUTE)
+        _drop_raw_chain(error)
+        raise
     finally:
         await connection.close()
+
+
+def _drop_raw_chain(error: BaseException) -> None:
+    """raw close reason等を持つ`__cause__` / `__context__`を接続の外へ出さない。
+
+    `ConnectionClosed` / `TransportClosed`はserverのraw close reasonを
+    messageに持つ。transport境界を出る例外はsanitize済み`diagnostics`だけを
+    持ち、raw例外chainは切り離す。
+    """
+    error.__cause__ = None
+    error.__context__ = None
+    error.__suppress_context__ = True
+
+
+#: 例外へ一時的に付けるraw failure factsのattribute名(module外へ出さない)。
+_RAW_FAILURE_ATTRIBUTE = "_raw_transport_failure"
+
+
+def _connect_failure(error: BaseException) -> RawTransportFailure:
+    """handshake失敗のraw facts。rejectされたHTTP responseがあればstatusとbody。"""
+    http_status: int | None = None
+    body: str | None = None
+    if isinstance(error, websockets.exceptions.InvalidStatus):
+        http_status = error.response.status_code
+        raw_body = error.response.body
+        if raw_body:
+            body = bytes(raw_body).decode("utf-8", errors="replace")
+    return RawTransportFailure(
+        phase=PHASE_CONNECT,
+        operation=OPERATION_CONNECT,
+        http_status=http_status,
+        server_text=body,
+    )
+
+
+def _server_error_text(event: dict) -> str | None:
+    """`type`を持たないserver error message(`{"error": ...}`)のtext。"""
+    if "type" in event:
+        return None
+    message = event.get("error")
+    return message if isinstance(message, str) else None
+
+
+def _session_failure(
+    session: ValidationSession | RankedSession,
+    operation: str,
+    closed: TransportClosed,
+    *,
+    server_text: str | None,
+    last_decision_elapsed_seconds: float | None,
+) -> RawTransportFailure:
+    status = session.status()
+    return RawTransportFailure(
+        phase=PHASE_BEFORE_START_GAME if status.seat is None else PHASE_IN_GAME,
+        operation=operation,
+        close_code_received=closed.code_received,
+        close_code_sent=closed.code_sent,
+        # 明示的なserver error messageを優先し、なければ受信したclose reason。
+        server_text=server_text if server_text is not None else closed.reason_received,
+        local_close_reason=closed.reason_sent,
+        requests_received=status.requests_received,
+        last_decision_elapsed_seconds=last_decision_elapsed_seconds,
+    )
 
 
 @asynccontextmanager
@@ -146,16 +281,39 @@ async def drive_session(
       send actionはJSON serializationに成功した後・実`transport.send()`の前に
       記録する。そのため送信recordは「送信を試みた」ことを表し、「相手へ届いた」
       ことは保証しない(実sendが失敗した場合もrecordは残る)
+    - transport failureにはraw failure facts(phase / operation / close
+      code・reason / `type`なしserver error message / 直前の`request_action`
+      処理時間)を付ける(Issue #411)。server error messageは、failure直前に
+      受信したframeがそれだった場合だけ使う。`type`なしeventはこれまでどおり
+      sessionへ渡し、session semanticsは変えない。raw factsと例外chainは
+      `connect_transport()`がsanitize・切り離してから外へ出す
     """
+    server_text: str | None = None
+    last_decision_elapsed_seconds: float | None = None
     while not session.is_complete:
         try:
             message = await transport.recv()
         except TransportClosed as error:
-            raise UnexpectedDisconnectError(
+            disconnect = UnexpectedDisconnectError(
                 "WebSocket connection closed before "
                 f"{session.terminal_event_name} was received"
-            ) from error
+            )
+            setattr(
+                disconnect,
+                _RAW_FAILURE_ATTRIBUTE,
+                _session_failure(
+                    session,
+                    OPERATION_RECV,
+                    error,
+                    server_text=server_text,
+                    last_decision_elapsed_seconds=last_decision_elapsed_seconds,
+                ),
+            )
+            raise disconnect from error
 
+        # server reasonは直前に受信したframeがserver error messageだった場合
+        # だけ次のfailureへ結びつける(以後のframeで古いreasonを持ち越さない)。
+        server_text = None
         if isinstance(message, bytes):
             continue
 
@@ -163,7 +321,16 @@ async def drive_session(
         if trace is not None:
             trace.record("recv", event.get("type"), event)
 
+        server_text = _server_error_text(event)
+
+        decision_started = (
+            _decision_clock()
+            if event.get("type") == EVENT_TYPE_REQUEST_ACTION
+            else None
+        )
         outgoing = session.handle_event(event)
+        if decision_started is not None:
+            last_decision_elapsed_seconds = _decision_clock() - decision_started
         if outgoing is None:
             continue
 
@@ -178,7 +345,24 @@ async def drive_session(
         try:
             await transport.send(outgoing_text)
         except TransportClosed as error:
-            raise TransportError("failed to send action: connection closed") from error
+            send_failure = TransportError("failed to send action: connection closed")
+            setattr(
+                send_failure,
+                _RAW_FAILURE_ATTRIBUTE,
+                _session_failure(
+                    session,
+                    OPERATION_SEND,
+                    error,
+                    server_text=server_text,
+                    last_decision_elapsed_seconds=last_decision_elapsed_seconds,
+                ),
+            )
+            raise send_failure from error
+
+
+def _decision_clock() -> float:
+    """`request_action`処理時間の計測用clock(testから差し替え可能)。"""
+    return time.perf_counter()
 
 
 async def drive_validation_session(

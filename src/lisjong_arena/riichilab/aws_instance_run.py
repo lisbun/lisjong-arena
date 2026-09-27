@@ -26,10 +26,11 @@ import json
 import os
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from lisjong_arena.riichilab.aws_run_verify import (
     AwsRunVerificationError,
@@ -39,9 +40,20 @@ from lisjong_arena.riichilab.aws_run_verify import (
 )
 from lisjong_arena.riichilab.continuous_ranked import CONTINUOUS_EVENT_PREFIX
 from lisjong_arena.riichilab.profile import ProfileError, resolve_profile
+from lisjong_arena.riichilab.transport_diagnostics import (
+    MAX_EXCERPT_LENGTH,
+    OPERATION_CONNECT,
+    OPERATION_RECV,
+    OPERATION_SEND,
+    PHASE_BEFORE_START_GAME,
+    PHASE_CONNECT,
+    PHASE_IN_GAME,
+    REASON_CLASSES,
+    is_confirmed_secret_free,
+)
 
 INSTANCE_SUMMARY_SCHEMA_ID = "lisjong-arena-aws-riichilab-instance-run-summary"
-INSTANCE_SUMMARY_SCHEMA_VERSION = 2
+INSTANCE_SUMMARY_SCHEMA_VERSION = 3
 
 #: Upper bound of bots per instance.  The instance summary returns through the
 #: SSM stdout sentinel, whose output is truncated at 24,000 characters.
@@ -61,12 +73,22 @@ _SECRET_ID_RE = re.compile(r"[A-Za-z0-9/_+=.@-]+")
 #: returns through the size-limited SSM stdout sentinel (see ``MAX_BOTS``).
 MAX_RUNNER_FACT_EVENTS = 8
 
+#: Upper bound of the compact summary JSON.  Base64 grows it by 4/3, so this
+#: leaves room for the bootstrap's own stdout under the 24,000-character SSM
+#: limit.  Older event history is trimmed first (Issue #411).
+MAX_SUMMARY_JSON_CHARS = 15000
+
 # Every value copied from a runner log into the summary must match one of
 # these, so free text (exception messages, payloads, credentials) never does.
 _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
 _PROFILE_VALUE_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
 _NUMBER_RE = re.compile(r"[0-9]{1,9}(?:\.[0-9]{1,6})?")
 _INT_RE = re.compile(r"[0-9]{1,9}")
+_EXCERPT_RE = re.compile(
+    r"[A-Za-z0-9 .,:;_()'\[\]?-]{1," + str(MAX_EXCERPT_LENGTH) + "}"
+)
+_PHASES = frozenset({PHASE_CONNECT, PHASE_BEFORE_START_GAME, PHASE_IN_GAME})
+_OPERATIONS = frozenset({OPERATION_CONNECT, OPERATION_RECV, OPERATION_SEND})
 _MIN_SPECTATE_PORT = 1024
 _MAX_PORT = 65535
 
@@ -178,14 +200,180 @@ def _parse_event(line: str) -> dict[str, str]:
     return fields
 
 
-def read_runner_facts(runner_log: Path) -> dict[str, Any] | None:
+def _member(value: str | None, allowed: Iterable[str]) -> str | None:
+    return value if value in allowed else None
+
+
+def _safe_excerpt(value: str | None, secrets: tuple[str, ...]) -> str | None:
+    """Decode a percent-encoded excerpt and keep it only if confirmed safe."""
+    if value is None or value == "none":
+        return None
+    try:
+        excerpt = unquote(value, errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if _EXCERPT_RE.fullmatch(excerpt) is None:
+        return None
+    if not is_confirmed_secret_free(excerpt.replace("[redacted]", " "), secrets):
+        return None
+    return excerpt
+
+
+def _failure_event(event: dict[str, str], secrets: tuple[str, ...]) -> dict[str, Any]:
+    backoff = event.get("backoff_seconds", "")
+    decision = event.get("last_decision_elapsed_seconds", "")
+    return {
+        "elapsed_seconds": _safe_number(event.get("elapsed_seconds", "")),
+        "exception_type": _safe(event.get("exception", ""), _IDENTIFIER_RE),
+        "consecutive_failures": _safe_int(event.get("consecutive_failures", "")),
+        "backoff_seconds": None if backoff == "none" else _safe_number(backoff),
+        "outcome": _safe(event.get("outcome", ""), _IDENTIFIER_RE),
+        # Issue #411 transport diagnostics; None when the event has none.
+        "phase": _member(event.get("phase"), _PHASES),
+        "operation": _member(event.get("operation"), _OPERATIONS),
+        "http_status": _safe_int(event.get("http_status", "")),
+        "close_code_received": _safe_int(event.get("close_code_received", "")),
+        "close_code_sent": _safe_int(event.get("close_code_sent", "")),
+        "server_reason_class": _member(
+            event.get("server_reason_class"), REASON_CLASSES
+        ),
+        "server_reason_excerpt": _safe_excerpt(
+            event.get("server_reason_excerpt"), secrets
+        ),
+        "local_close_reason_class": _member(
+            event.get("local_close_reason_class"), REASON_CLASSES
+        ),
+        "requests_received": _safe_int(event.get("requests_received", "")),
+        "last_decision_elapsed_seconds": (
+            None if decision == "none" else _safe_number(decision)
+        ),
+    }
+
+
+def _counts(events: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for event in events:
+        value = event[key] if event[key] is not None else "unknown"
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _summary_size(summary: Mapping[str, Any]) -> int:
+    return len(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+
+
+#: Longest per-bot ``failure_reason`` kept in the budget-exceeded fallback.
+_FALLBACK_REASON_LENGTH = 200
+SUMMARY_BUDGET_EXCEEDED_REASON = "instance summary exceeds the size budget"
+
+
+def _trim_runner_facts(summary: dict[str, Any]) -> bool:
+    """Drop runner-facts detail until the summary fits; return whether any was.
+
+    Order: the oldest history events (longest history first), then the first
+    event's excerpt, then the first event.  Counts and counters are kept.
+    """
+
+    facts = [
+        entry["runner_facts"]
+        for entry in summary["bots"]
+        if entry.get("runner_facts") is not None
+    ]
+    trimmed = False
+    while _summary_size(summary) > MAX_SUMMARY_JSON_CHARS:
+        longest = max(
+            facts, key=lambda item: len(item["transport_failure_events"]), default=None
+        )
+        if longest is None or not longest["transport_failure_events"]:
+            break
+        longest["transport_failure_events"].pop(0)
+        trimmed = True
+    for stage in ("excerpt", "event"):
+        for item in facts:
+            if _summary_size(summary) <= MAX_SUMMARY_JSON_CHARS:
+                return trimmed
+            first = item["first_transport_failure_event"]
+            if first is None:
+                continue
+            if stage == "excerpt" and first["server_reason_excerpt"] is not None:
+                first["server_reason_excerpt"] = None
+                trimmed = True
+            elif stage == "event":
+                item["first_transport_failure_event"] = None
+                trimmed = True
+    return trimmed
+
+
+def _budget_exceeded_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Fail-closed minimal summary when trimming detail is not enough.
+
+    The run is FAIL: its full evidence cannot be returned.  Each bot keeps only
+    its identity, status, exit code and a bounded failure reason.
+    """
+
+    bots = [
+        {
+            "profile": entry.get("profile"),
+            "status": entry.get("status"),
+            "exit_code": entry.get("exit_code"),
+            "failure_reason": (
+                None
+                if entry.get("failure_reason") is None
+                else str(entry["failure_reason"])[:_FALLBACK_REASON_LENGTH]
+            ),
+        }
+        for entry in summary["bots"]
+    ]
+    return {
+        "schema_id": summary["schema_id"],
+        "schema_version": summary.get("schema_version"),
+        "status": "FAIL",
+        "instance_failure_reason": SUMMARY_BUDGET_EXCEEDED_REASON,
+        "summary_budget_exceeded": True,
+        "runner_facts_trimmed": True,
+        "start_utc": summary.get("start_utc"),
+        "stop_utc": summary.get("stop_utc"),
+        "configured_bots": summary.get("configured_bots"),
+        "bot_count": len(bots),
+        "bots": bots,
+    }
+
+
+def _fit_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Return a summary whose compact JSON is at most ``MAX_SUMMARY_JSON_CHARS``.
+
+    ``runner_facts_trimmed`` (and ``summary_budget_exceeded``) are part of the
+    measured summary.  When trimming detail is not enough, the result is the
+    fail-closed ``_budget_exceeded_summary``.  The cap is a final invariant.
+    """
+
+    summary["runner_facts_trimmed"] = False
+    summary["summary_budget_exceeded"] = False
+    # The flags only ever change to shorter values below ("false" -> "true").
+    summary["runner_facts_trimmed"] = _trim_runner_facts(summary)
+    if _summary_size(summary) > MAX_SUMMARY_JSON_CHARS:
+        summary = _budget_exceeded_summary(summary)
+    if _summary_size(summary) > MAX_SUMMARY_JSON_CHARS:
+        raise AwsRunVerificationError("instance summary cannot fit the size budget")
+    return summary
+
+
+def read_runner_facts(
+    runner_log: Path, secrets: Iterable[str] = ()
+) -> dict[str, Any] | None:
     """Read secret-safe runner state from one bot's ``continuous.log``.
 
     Returns ``None`` when the log is missing or unreadable.  Precedence of the
     counters: the normal runner summary, then the ``terminal ...`` facts of a
     fail-closed exit, then the latest event.  Only allow-listed fields whose
-    values match a strict pattern are copied; anything else is dropped.
+    values match a strict pattern are copied; anything else is dropped.  A
+    server-reason excerpt is kept only when it holds none of ``secrets`` (the
+    run's runtime tokens) nor Authorization material.  The first transport
+    failure is kept apart from the latest ones, because it is the one that
+    started a failure sequence.
     """
+
+    kept_secrets = tuple(secret for secret in secrets if secret)
 
     try:
         text = runner_log.read_text(encoding="utf-8", errors="replace")
@@ -203,20 +391,7 @@ def read_runner_facts(runner_log: Path) -> dict[str, Any] | None:
             latest_event = event
             if event.get("kind") != "transport_failure":
                 continue
-            backoff = event.get("backoff_seconds", "")
-            failure_events.append(
-                {
-                    "elapsed_seconds": _safe_number(event.get("elapsed_seconds", "")),
-                    "exception_type": _safe(event.get("exception", ""), _IDENTIFIER_RE),
-                    "consecutive_failures": _safe_int(
-                        event.get("consecutive_failures", "")
-                    ),
-                    "backoff_seconds": (
-                        None if backoff == "none" else _safe_number(backoff)
-                    ),
-                    "outcome": _safe(event.get("outcome", ""), _IDENTIFIER_RE),
-                }
-            )
+            failure_events.append(_failure_event(event, kept_secrets))
             continue
         key, separator, value = line.partition(":")
         if not separator:
@@ -273,6 +448,11 @@ def read_runner_facts(runner_log: Path) -> dict[str, Any] | None:
             summary.get("profile", terminal.get("profile", "")), _PROFILE_VALUE_RE
         ),
         "transport_failure_event_count": len(failure_events),
+        "transport_failure_phase_counts": _counts(failure_events, "phase"),
+        "server_reason_class_counts": _counts(failure_events, "server_reason_class"),
+        "first_transport_failure_event": (
+            failure_events[0] if failure_events else None
+        ),
         "transport_failure_events": failure_events[-MAX_RUNNER_FACT_EVENTS:],
     }
 
@@ -300,7 +480,9 @@ def _verify_bot(
         "status": "FAIL",
         "failure_reason": None,
         "verification": None,
-        "runner_facts": read_runner_facts(directory / "continuous.log"),
+        "runner_facts": read_runner_facts(
+            directory / "continuous.log", tokens_by_profile.values()
+        ),
     }
     try:
         try:
@@ -401,7 +583,7 @@ def verify_instance_run(
     status = (
         "PASS" if instance_failure_reason is None and passed == len(entries) else "FAIL"
     )
-    return {
+    summary = {
         "schema_id": INSTANCE_SUMMARY_SCHEMA_ID,
         "schema_version": INSTANCE_SUMMARY_SCHEMA_VERSION,
         "status": status,
@@ -419,6 +601,7 @@ def verify_instance_run(
         "stop_request_source": stop_request_source,
         "bots": entries,
     }
+    return _fit_summary(summary)
 
 
 def _add_bot_arguments(parser: argparse.ArgumentParser) -> None:
@@ -504,6 +687,8 @@ __all__ = [
     "INSTANCE_SUMMARY_SCHEMA_VERSION",
     "MAX_BOTS",
     "MAX_RUNNER_FACT_EVENTS",
+    "MAX_SUMMARY_JSON_CHARS",
+    "SUMMARY_BUDGET_EXCEEDED_REASON",
     "AwsInstanceRunConfigError",
     "BotConfig",
     "bot_directory",

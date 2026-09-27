@@ -13,10 +13,15 @@ import asyncio
 import json
 import os
 import tempfile
+import traceback
 import unittest
 from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy
+from websockets.datastructures import Headers
+from websockets.exceptions import ConnectionClosedError, InvalidStatus
+from websockets.frames import Close
+from websockets.http11 import Response
 
 from lisjong_arena.riichilab.adapter import SendReadyResponse
 from lisjong_arena.riichilab.errors import (
@@ -29,8 +34,13 @@ from lisjong_arena.riichilab.session import RankedSession, ValidationSession
 from lisjong_arena.riichilab.trace import JsonlProtocolTraceWriter, ProtocolTraceError
 from lisjong_arena.riichilab.transport import (
     TransportClosed,
+    connect_transport,
     drive_ranked_session,
     drive_validation_session,
+)
+from lisjong_arena.riichilab.transport_diagnostics import (
+    RawTransportFailure,
+    TransportDiagnostics,
 )
 
 _PATCH_TARGET = "lisjong_arena.riichilab.session.RiichiLabSeatAdapter"
@@ -487,6 +497,291 @@ class ProtocolTraceIntegrationTest(unittest.TestCase):
             self.assertNotIn("token", raw_text.lower())
             self.assertNotIn("authorization", raw_text.lower())
             self.assertNotIn("bearer", raw_text.lower())
+
+
+_DIAG_TOKEN = "rl_live_4f9c2a7e1b3d5f6a"
+
+
+def _raw_failure(error: BaseException) -> RawTransportFailure:
+    raw = getattr(error, "_raw_transport_failure")
+    assert isinstance(raw, RawTransportFailure)
+    return raw
+
+
+class FailurePhaseTest(unittest.TestCase):
+    """Issue #411: each failure records where it happened and what was said."""
+
+    def test_close_before_start_game_records_codes_and_server_error(self) -> None:
+        session = RankedSession(MinimalPolicy())
+        messages = [_event_text({"error": "Bot is already in game"})]
+        transport = FakeTransport([])
+
+        async def _recv():
+            if messages:
+                return messages.pop(0)
+            raise TransportClosed(
+                "closed", code_received=4000, reason_received="policy violation"
+            )
+
+        transport.recv = _recv
+        with self.assertRaises(UnexpectedDisconnectError) as caught:
+            _run(drive_ranked_session(session, transport))
+
+        raw = _raw_failure(caught.exception)
+        self.assertEqual("before_start_game", raw.phase)
+        self.assertEqual("recv", raw.operation)
+        self.assertEqual(4000, raw.close_code_received)
+        # The explicit server error message wins over the close reason.
+        self.assertEqual("Bot is already in game", raw.server_text)
+        self.assertEqual(0, raw.requests_received)
+        self.assertIsNone(raw.last_decision_elapsed_seconds)
+        # The untyped message did not change session semantics.
+        self.assertIsNone(session.status().seat)
+
+    def test_in_game_send_failure_records_the_previous_decision_time(self) -> None:
+        session = RankedSession(MinimalPolicy())
+        transport = FakeTransport(
+            [
+                _event_text({"type": "start_game", "id": 0}),
+                _event_text(_request_action(1)),
+            ]
+        )
+        transport._send_should_fail = True
+        ticks = iter([10.0, 12.5])
+        with (
+            patch(_PATCH_TARGET, _fake_adapter_factory),
+            patch(
+                "lisjong_arena.riichilab.transport._decision_clock",
+                lambda: next(ticks),
+            ),
+        ):
+            with self.assertRaises(TransportError) as caught:
+                _run(drive_ranked_session(session, transport))
+
+        self.assertNotIsInstance(caught.exception, UnexpectedDisconnectError)
+        raw = _raw_failure(caught.exception)
+        self.assertEqual("in_game", raw.phase)
+        self.assertEqual("send", raw.operation)
+        self.assertEqual(1, raw.requests_received)
+        self.assertEqual(2.5, raw.last_decision_elapsed_seconds)
+
+    def _close_after(self, frames: list, **closed) -> RawTransportFailure:
+        session = RankedSession(MinimalPolicy())
+        transport = FakeTransport([])
+        pending = list(frames)
+
+        async def _recv():
+            if pending:
+                return pending.pop(0)
+            raise TransportClosed("closed", **closed)
+
+        transport.recv = _recv
+        with patch(_PATCH_TARGET, _fake_adapter_factory):
+            with self.assertRaises(UnexpectedDisconnectError) as caught:
+                _run(drive_ranked_session(session, transport))
+        return _raw_failure(caught.exception)
+
+    def test_an_earlier_server_error_is_not_carried_past_a_normal_event(
+        self,
+    ) -> None:
+        raw = self._close_after(
+            [
+                _event_text({"error": "Bot is already in game"}),
+                _event_text({"type": "start_game", "id": 0}),
+            ],
+            code_received=1001,
+            reason_received="server restarting",
+        )
+        self.assertEqual("in_game", raw.phase)
+        # The later close is described by its own reason, not the old error.
+        self.assertEqual("server restarting", raw.server_text)
+
+    def test_an_earlier_server_error_without_a_close_reason_is_dropped(
+        self,
+    ) -> None:
+        raw = self._close_after(
+            [
+                _event_text({"error": "Bot is already in game"}),
+                b"binary",
+            ],
+            code_received=1006,
+        )
+        self.assertIsNone(raw.server_text)
+
+    def test_in_game_recv_close(self) -> None:
+        session = RankedSession(MinimalPolicy())
+        transport = FakeTransport([_event_text({"type": "start_game", "id": 0})])
+        with patch(_PATCH_TARGET, _fake_adapter_factory):
+            with self.assertRaises(UnexpectedDisconnectError) as caught:
+                _run(drive_ranked_session(session, transport))
+        raw = _raw_failure(caught.exception)
+        self.assertEqual(("in_game", "recv"), (raw.phase, raw.operation))
+
+
+class _FakeConnection:
+    def __init__(self, recv_error: BaseException) -> None:
+        self._recv_error = recv_error
+        self.closed = False
+
+    async def recv(self):
+        raise self._recv_error
+
+    async def send(self, message: str) -> None:
+        raise AssertionError("nothing is sent before start_game")
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class RawChainIsolationTest(unittest.TestCase):
+    """No raw reason, body or token leaves the transport boundary via the chain."""
+
+    _RAW_REASON = "unsafe raw reason <payload>"
+
+    def _raised(self, connect) -> TransportError:
+        async def _scenario():
+            async with connect_transport("wss://example.invalid/ws", _DIAG_TOKEN) as t:
+                await drive_ranked_session(RankedSession(MinimalPolicy()), t)
+
+        with patch("websockets.connect", connect):
+            with self.assertRaises(TransportError) as caught:
+                _run(_scenario())
+        return caught.exception
+
+    def _assert_isolated(self, error: TransportError) -> None:
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+        rendered = "".join(traceback.format_exception(error))
+        self.assertNotIn(_DIAG_TOKEN, rendered)
+        self.assertNotIn(self._RAW_REASON, rendered)
+        self.assertNotIn("ConnectionClosed", rendered)
+        self.assertNotIn("TransportClosed", rendered)
+        self.assertNotIn("InvalidStatus", rendered)
+        self.assertNotIn(_DIAG_TOKEN, repr(error.diagnostics))
+
+    def test_recv_close_reason_does_not_leave_via_the_chain(self) -> None:
+        closed = ConnectionClosedError(
+            Close(4000, f"{self._RAW_REASON} {_DIAG_TOKEN}"), None
+        )
+
+        async def _connect(url, additional_headers):
+            return _FakeConnection(closed)
+
+        error = self._raised(_connect)
+        self.assertIsInstance(error, UnexpectedDisconnectError)
+        self._assert_isolated(error)
+
+    def test_send_close_reason_does_not_leave_via_the_chain(self) -> None:
+        closed = ConnectionClosedError(
+            Close(4000, f"{self._RAW_REASON} {_DIAG_TOKEN}"), None
+        )
+
+        class _SendFailingConnection(_FakeConnection):
+            def __init__(self) -> None:
+                super().__init__(closed)
+                self._frames = [
+                    _event_text({"type": "start_game", "id": 0}),
+                    _event_text(_request_action(1)),
+                ]
+
+            async def recv(self):
+                return self._frames.pop(0)
+
+            async def send(self, message: str) -> None:
+                raise closed
+
+        async def _connect(url, additional_headers):
+            return _SendFailingConnection()
+
+        with patch(_PATCH_TARGET, _fake_adapter_factory):
+            error = self._raised(_connect)
+        self.assertNotIsInstance(error, UnexpectedDisconnectError)
+        self.assertEqual("send", error.diagnostics.operation)
+        self._assert_isolated(error)
+
+    def test_rejected_handshake_body_does_not_leave_via_the_chain(self) -> None:
+        response = Response(
+            403, "Forbidden", Headers(), f"{self._RAW_REASON} {_DIAG_TOKEN}".encode()
+        )
+
+        async def _connect(url, additional_headers):
+            raise InvalidStatus(response)
+
+        error = self._raised(_connect)
+        self.assertEqual(403, error.diagnostics.http_status)
+        self._assert_isolated(error)
+
+
+class ConnectTransportSanitizeTest(unittest.TestCase):
+    """The raw facts are sanitized with the token before leaving the connection."""
+
+    def _drive(self, connect):
+        async def _scenario():
+            async with connect_transport("wss://example.invalid/ws", _DIAG_TOKEN) as t:
+                await drive_ranked_session(RankedSession(MinimalPolicy()), t)
+
+        with patch("websockets.connect", connect):
+            with self.assertRaises(TransportError) as caught:
+                _run(_scenario())
+        return caught.exception
+
+    def test_rejected_reconnect_is_classified_and_redacted(self) -> None:
+        closed = ConnectionClosedError(
+            Close(4000, f"Bot already in game; token {_DIAG_TOKEN}"), None
+        )
+
+        async def _connect(url, additional_headers):
+            return _FakeConnection(closed)
+
+        error = self._drive(_connect)
+
+        self.assertIsInstance(error, UnexpectedDisconnectError)
+        self.assertFalse(hasattr(error, "_raw_transport_failure"))
+        diagnostics = error.diagnostics
+        self.assertIsInstance(diagnostics, TransportDiagnostics)
+        self.assertEqual("before_start_game", diagnostics.phase)
+        self.assertEqual("recv", diagnostics.operation)
+        self.assertEqual(4000, diagnostics.close_code_received)
+        self.assertIsNone(diagnostics.close_code_sent)
+        self.assertEqual("same_bot_already_active", diagnostics.server_reason_class)
+        self.assertEqual(
+            "Bot already in game; token [redacted]", diagnostics.server_reason_excerpt
+        )
+        self.assertNotIn(_DIAG_TOKEN, repr(diagnostics))
+
+    def test_rejected_handshake_records_status_and_body_class(self) -> None:
+        response = Response(
+            409,
+            "Conflict",
+            Headers(),
+            b'{"error":"concurrent connection for this bot"}',
+        )
+
+        async def _connect(url, additional_headers):
+            raise InvalidStatus(response)
+
+        error = self._drive(_connect)
+
+        self.assertNotIsInstance(error, UnexpectedDisconnectError)
+        diagnostics = error.diagnostics
+        self.assertEqual(
+            ("connect", "connect"), (diagnostics.phase, diagnostics.operation)
+        )
+        self.assertEqual(409, diagnostics.http_status)
+        self.assertEqual("same_bot_already_active", diagnostics.server_reason_class)
+
+    def test_local_keepalive_close_is_classified(self) -> None:
+        closed = ConnectionClosedError(None, Close(1011, "keepalive ping timeout"))
+
+        async def _connect(url, additional_headers):
+            return _FakeConnection(closed)
+
+        diagnostics = self._drive(_connect).diagnostics
+
+        self.assertIsNone(diagnostics.close_code_received)
+        self.assertEqual(1011, diagnostics.close_code_sent)
+        self.assertEqual("none", diagnostics.server_reason_class)
+        self.assertEqual("keepalive_timeout", diagnostics.local_close_reason_class)
 
 
 if __name__ == "__main__":
