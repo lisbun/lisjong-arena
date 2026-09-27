@@ -163,5 +163,24 @@ class RiichiLabSeatAdapter:
             selected_action=selected,
         )
 
+    def synchronize_request_action(self, raw_request_action: Mapping) -> None:
+        """Policyを呼ばずに、`request_action`のObservationだけをmaterialized stateへ適用する。
+
+        responseを送らない`request_action`(server deadline切れ等、Issue #418)に
+        使う。RiichiLabの`Observation.new_events()`は前回のrequest以降の差分で
+        あるため、Policyを省略するrequestでもこの適用は省略できない。
+        `process_request_action()`と同じ検証を行い、trackerへの効果も同じだが、
+        mapping生成・Policy実行・response構築は行わない。
+        """
+        parsed = parse_request_action(raw_request_action)
+
+        observation_seat = seat_from_player_index(parsed.observation.player_id)
+        if observation_seat != self._self_seat:
+            raise SeatMismatchError(
+                "observation.player_id does not match this adapter's bound seat"
+            )
+
+        self._tracker.apply_observation(parsed.observation)
+
 
 __all__ = ["ProcessedRequestAction", "RiichiLabSeatAdapter", "SendReadyResponse"]

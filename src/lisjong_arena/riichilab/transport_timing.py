@@ -1,15 +1,18 @@
 """Secret-safe timing evidence of one RiichiLab connection (Issue #416).
 
 The first in-game disconnects are `websockets` keepalive timeouts: a PONG was
-not *processed* by the event loop within `ping_timeout` of its PING.  The
-Policy runs synchronously on the same loop, so this can come from a loop
-stall, a late PONG, or both.  This module keeps bounded evidence that tells
-those contributions apart in the next experiment:
+not *processed* by the event loop within `ping_timeout` of its PING.  Until
+Issue #418 the Policy ran synchronously on the same loop, so this could come
+from a loop stall, a late PONG, or both.  Since #418 the decision runs on a
+worker thread and the loop keeps receiving.  This module keeps bounded
+evidence that tells those contributions apart:
 
 - event-loop lag intervals, from a light probe task (`run_timing_probe()`)
   that sleeps `PROBE_INTERVAL_SECONDS` and measures how late it woke up
-- the recent `request_action` timings (dequeue, decision, send attempt, the
-  server time budget fields and the acks received for it)
+- the recent decided `request_action` timings (receive, decision start / end
+  on the worker, send attempt, the server time budget fields and the acks
+  received for it).  A request that was only synchronized without the Policy
+  (Issue #418) is not recorded as a decision
 - successful keepalive latency samples, read from the public
   `connection.latency` attribute whenever it changes
 - when the connection was last seen `OPEN` and first seen not `OPEN`
@@ -24,9 +27,12 @@ Limits, by construction:
   later input once it fails the connection.
 - A lag interval `[expected, actual]` says the loop could not run in that
   interval; when exactly a PONG reached the socket is not observable.
-- The probe cannot run during a synchronous decision, so a lag is attributed
-  to a decision by interval overlap, never by a flag sampled at wake-up.
-- `recv_elapsed` is when Arena dequeued the frame, not when it arrived.
+- A lag is attributed to a decision by interval overlap, never by a flag
+  sampled at wake-up.  Since #418 an overlap means the loop was slow while a
+  worker decision ran (e.g. native code holding the GIL), not that the
+  decision itself ran on the loop.
+- `recv_elapsed` is when Arena's frame reader received the frame from
+  `websockets`, not when it arrived on the wire.
 - Latency samples are change-detected once per probe tick: two equal
   consecutive latencies, or several PONGs within one tick, count once.
 - Connection state is sampled once per probe tick and once more when the
@@ -94,7 +100,7 @@ class LagInterval:
 
 @dataclass(frozen=True, slots=True)
 class DecisionTiming:
-    """One `request_action`: dequeue -> decision -> send attempt."""
+    """One decided `request_action`: receive -> decision -> send attempt."""
 
     ordinal: int
     request_id: int | None

@@ -336,16 +336,17 @@ Lifecycle:
 
 The first in-game disconnects are `websockets` keepalive timeouts
 (`close_code_sent=1011`, `local_close_reason_class=keepalive_timeout`): a PONG
-was not *processed* by the event loop within 20 seconds of its PING. The Policy
-runs synchronously on the same loop. The timeout can therefore come from a loop
-stall, from a late PONG, or from both. Each connection keeps bounded, secret-safe
+was not *processed* by the event loop within 20 seconds of its PING. Until
+Issue #418 the Policy ran synchronously on the same loop, so the timeout could
+come from a loop stall, from a late PONG, or from both. Since #418 the Policy
+runs on a worker thread and the loop keeps receiving. Each connection keeps bounded, secret-safe
 timing evidence to tell these apart:
 
 - A probe task wakes every 0.5 s and records how late it woke up. A lag of at
   least 1 s is kept as an interval `[expected, actual]`: the loop could not run
   in it. The 16 most recent and the 8 largest are kept.
-- The last 8 `request_action`s: when the frame was dequeued, the decision
-  start / end, the send attempt, the server time budget (`grace_ms`,
+- The last 8 decided `request_action`s: when the frame reader received the
+  frame, the decision start / end, the send attempt, the server time budget (`grace_ms`,
   `bank_ms`, `deadline_ms`), and the acks received for it.
 - Up to 8 successful keepalive latencies, read from the public
   `connection.latency` when it changes.
@@ -397,9 +398,9 @@ Limits, by construction:
 - When a PONG reached the socket cannot be observed in-process. Separating
   the stall from the PONG delay at wire level needs a temporary TCP
   observation.
-- The probe cannot run during a synchronous decision. A lag is attributed to a
-  decision by interval overlap, not by a flag sampled at wake-up.
-- The dequeue time is not the wire arrival time.
+- A lag is attributed to a decision by interval overlap, not by a flag sampled
+  at wake-up.
+- The frame reader's receive time is not the wire arrival time.
 - Latency samples are change-detected once per probe tick.
 - The state is sampled once per tick, so a short `CLOSING` may be seen as
   `CLOSED`.

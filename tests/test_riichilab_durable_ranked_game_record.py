@@ -1093,7 +1093,10 @@ def _live_session_messages() -> list[str]:
                 "request_id": 1,
                 "possible_actions": _dahai_possible_actions(observation),
                 "observation": observation.serialize_to_base64(),
-                "time": {"grace_ms": 500, "bank_ms": 10000},
+                # 実Policy(lisjong-dev profile)の初回decisionでもserver
+                # deadline内に収まる予算。deadline切れのrequestにはresponseを
+                # 送らない(Issue #418)。
+                "time": {"grace_ms": 500, "bank_ms": 600000},
             }
         ),
         json.dumps({"type": "action_ack", "request_id": 1, "status": "accepted"}),
