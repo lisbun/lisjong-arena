@@ -653,6 +653,19 @@ _FAILED_SUMMARY = {
             "profile": "lisjong-baseline",
             "status": "FAIL",
             "failure_reason": "bot runner exited with code 1",
+            "runner_facts": {
+                "source": "summary",
+                "completed_games": 2,
+                "failed_games": 5,
+                "final_consecutive_failures": 5,
+                "last_failure_type": "UnexpectedDisconnectError",
+                "stopped_reason": "failure_budget_exhausted",
+                "terminal_exception_type": None,
+                "terminal_exception_category": None,
+                "runner_profile": "lisjong-baseline",
+                "transport_failure_event_count": 5,
+                "transport_failure_events": [],
+            },
         },
     ],
 }
@@ -801,6 +814,12 @@ class AwsRiichiLabCollectorTerminationTest(unittest.TestCase):
         self.assertIn("The run is not PASS", output)
         self.assertIn(
             "BOT lisjong-baseline: FAIL bot runner exited with code 1", output
+        )
+        self.assertIn(
+            "BOT lisjong-baseline runner: source=summary completed=2 failed=5 "
+            "consecutive=5 last_failure=UnexpectedDisconnectError "
+            "stopped=failure_budget_exhausted terminal= transport_failures=5",
+            output,
         )
         state = self._state()
         self.assertEqual(state["state"], "remote_failed")

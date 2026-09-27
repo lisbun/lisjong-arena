@@ -16,20 +16,29 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from lisjong_arena.riichilab import continuous_ranked
 from lisjong_arena.riichilab.aws_instance_run import (
     EXPECTED_POLICY_BY_PROFILE,
     INSTANCE_SUMMARY_SCHEMA_ID,
+    INSTANCE_SUMMARY_SCHEMA_VERSION,
     MAX_BOTS,
+    MAX_RUNNER_FACT_EVENTS,
     AwsInstanceRunConfigError,
     _run_cli,
     bot_directory,
     check_runtime_policies,
     parse_bot_configs,
+    read_runner_facts,
     verify_instance_run,
 )
 from lisjong_arena.riichilab.durable_ranked_game_record import (
     RANKED_GAME_RECORD_EXECUTION_ENVIRONMENT,
     RankedRecordProvenance,
+)
+from lisjong_arena.riichilab.errors import (
+    ProtocolError,
+    TransportError,
+    UnexpectedDisconnectError,
 )
 from lisjong_arena.riichilab.profile import PROFILE_NAMES
 
@@ -75,6 +84,42 @@ def _runner_log(profile: str, *, stopped_reason: str, games: int) -> str:
             "",
         ]
     )
+
+
+def _real_runner_log(profile: str, outcomes: list[object]) -> tuple[int, str]:
+    """Run the real continuous CLI against faked games; return (exit, log).
+
+    stdout and stderr are combined as the bootstrap redirects both into
+    ``continuous.log``.  Backoff sleeps are skipped.
+    """
+
+    games = iter(outcomes)
+    original = continuous_ranked.run_continuous_ranked
+
+    async def _fake_game(policy, token, **kwargs):
+        outcome = next(games)
+        if isinstance(outcome, BaseException):
+            raise outcome
+
+    async def _no_sleep(_delay: float) -> None:
+        return None
+
+    async def _runner(runtime_profile, token, **kwargs):
+        return await original(runtime_profile, token, sleep=_no_sleep, **kwargs)
+
+    env_var = "LISJONG_DEV_BOT_TOKEN"
+    if profile == "lisjong-baseline":
+        env_var = "LISJONG_BASELINE_BOT_TOKEN"
+    output = io.StringIO()
+    with (
+        patch.dict(os.environ, {env_var: _TOKENS[profile]}),
+        patch.object(continuous_ranked, "run_ranked_game", _fake_game),
+        patch.object(continuous_ranked, "run_continuous_ranked", _runner),
+        contextlib.redirect_stdout(output),
+        contextlib.redirect_stderr(output),
+    ):
+        code = continuous_ranked._run_cli(["--profile", profile])
+    return code, output.getvalue()
 
 
 class ParseBotConfigsTest(unittest.TestCase):
@@ -144,6 +189,7 @@ class VerifyInstanceRunTest(unittest.TestCase):
         stop_utc: str = "2026-09-20T03:00:00Z",
         stopped_reason: str = "stop_requested",
         log_extra: str = "",
+        log: str | None = None,
     ) -> None:
         directory = bot_directory(self.root, profile)
         (directory / "records" / f"{profile}-game").mkdir(parents=True)
@@ -151,10 +197,9 @@ class VerifyInstanceRunTest(unittest.TestCase):
             record_identity=profile.ljust(64, "0"),
             provenance=_provenance(profile),
         )
-        (directory / "continuous.log").write_text(
-            _runner_log(profile, stopped_reason=stopped_reason, games=1) + log_extra,
-            encoding="utf-8",
-        )
+        if log is None:
+            log = _runner_log(profile, stopped_reason=stopped_reason, games=1)
+        (directory / "continuous.log").write_text(log + log_extra, encoding="utf-8")
         (directory / "exit_code").write_text(f"{exit_code}\n", encoding="ascii")
         (directory / "stop_utc").write_text(f"{stop_utc}\n", encoding="ascii")
 
@@ -184,7 +229,8 @@ class VerifyInstanceRunTest(unittest.TestCase):
         summary = self._verify()
 
         self.assertEqual(INSTANCE_SUMMARY_SCHEMA_ID, summary["schema_id"])
-        self.assertEqual(1, summary["schema_version"])
+        self.assertEqual(2, INSTANCE_SUMMARY_SCHEMA_VERSION)
+        self.assertEqual(INSTANCE_SUMMARY_SCHEMA_VERSION, summary["schema_version"])
         self.assertEqual("PASS", summary["status"])
         self.assertEqual(
             ["lisjong-dev", "lisjong-baseline"], summary["configured_bots"]
@@ -208,9 +254,87 @@ class VerifyInstanceRunTest(unittest.TestCase):
         self.assertEqual(
             10800, by_profile["lisjong-dev"]["verification"]["actual_elapsed_seconds"]
         )
+        facts = by_profile["lisjong-dev"]["runner_facts"]
+        self.assertEqual("summary", facts["source"])
+        self.assertEqual(1, facts["completed_games"])
+        self.assertEqual("stop_requested", facts["stopped_reason"])
         rendered = json.dumps(summary)
         for token in _TOKENS.values():
             self.assertNotIn(token, rendered)
+
+    def test_budget_exhausted_bot_keeps_its_facts_while_another_drains(
+        self,
+    ) -> None:
+        """The #404 run shape: baseline fails, dev finishes its hanchan and stops."""
+
+        code, log = _real_runner_log(
+            "lisjong-baseline",
+            [None, None] + [UnexpectedDisconnectError("dc")] * 5,
+        )
+        self.assertEqual(1, code)
+        self.stop_file.write_text("bot-exited:lisjong-baseline\n", encoding="ascii")
+        self._bot("lisjong-dev")
+        self._bot("lisjong-baseline", exit_code=1, log=log)
+
+        summary = self._verify()
+
+        self.assertEqual("FAIL", summary["status"])
+        self.assertEqual(1, summary["passed_bot_count"])
+        dev, baseline = summary["bots"]
+        self.assertEqual("PASS", dev["status"])
+        self.assertEqual("FAIL", baseline["status"])
+        self.assertEqual("bot runner exited with code 1", baseline["failure_reason"])
+        facts = baseline["runner_facts"]
+        self.assertEqual("summary", facts["source"])
+        self.assertEqual(2, facts["completed_games"])
+        self.assertEqual(5, facts["failed_games"])
+        self.assertEqual(5, facts["final_consecutive_failures"])
+        self.assertEqual("UnexpectedDisconnectError", facts["last_failure_type"])
+        self.assertEqual("failure_budget_exhausted", facts["stopped_reason"])
+        self.assertIsNone(facts["terminal_exception_type"])
+        self.assertEqual(5, facts["transport_failure_event_count"])
+        self.assertEqual(
+            [
+                (1, 5.0, "retry"),
+                (2, 10.0, "retry"),
+                (3, 20.0, "retry"),
+                (4, 40.0, "retry"),
+                (5, None, "failure_budget_exhausted"),
+            ],
+            [
+                (e["consecutive_failures"], e["backoff_seconds"], e["outcome"])
+                for e in facts["transport_failure_events"]
+            ],
+        )
+        rendered = json.dumps(summary)
+        for token in _TOKENS.values():
+            self.assertNotIn(token, rendered)
+
+    def test_client_error_before_a_normal_summary_keeps_terminal_facts(
+        self,
+    ) -> None:
+        code, log = _real_runner_log(
+            "lisjong-baseline",
+            [None, TransportError("boom"), ProtocolError("raw protocol payload")],
+        )
+        self.assertEqual(1, code)
+        self.stop_file.write_text("bot-exited:lisjong-baseline\n", encoding="ascii")
+        self._bot("lisjong-dev")
+        self._bot("lisjong-baseline", exit_code=1, log=log)
+
+        summary = self._verify()
+
+        facts = summary["bots"][1]["runner_facts"]
+        self.assertEqual("terminal", facts["source"])
+        self.assertEqual(1, facts["completed_games"])
+        self.assertEqual(1, facts["failed_games"])
+        self.assertEqual(1, facts["final_consecutive_failures"])
+        self.assertEqual("TransportError", facts["last_failure_type"])
+        self.assertEqual("runner_exception", facts["stopped_reason"])
+        self.assertEqual("ProtocolError", facts["terminal_exception_type"])
+        self.assertEqual("riichilab_client", facts["terminal_exception_category"])
+        self.assertEqual(1, facts["transport_failure_event_count"])
+        self.assertNotIn("raw protocol payload", json.dumps(summary))
 
     def test_one_failing_bot_is_not_hidden_by_a_passing_one(self) -> None:
         self.stop_file.write_text("bot-exited:lisjong-dev\n", encoding="ascii")
@@ -278,6 +402,89 @@ class VerifyInstanceRunTest(unittest.TestCase):
             with self.subTest(case=name):
                 with self.assertRaises(AwsInstanceRunConfigError):
                     self._verify(tokens_by_profile=tokens)
+
+
+class ReadRunnerFactsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.log = Path(self.enterContext(tempfile.TemporaryDirectory())) / "log"
+
+    def test_missing_log_has_no_facts(self) -> None:
+        self.assertIsNone(read_runner_facts(self.log))
+
+    def test_killed_runner_falls_back_to_the_latest_event(self) -> None:
+        self.log.write_text(
+            "profile: lisjong-dev\n"
+            "continuous-event: kind=game_completed elapsed_seconds=900.0 "
+            "profile=lisjong-dev completed_games=1 failed_games=0 "
+            "consecutive_failures=0\n"
+            "continuous-event: kind=transport_failure elapsed_seconds=1000.5 "
+            "profile=lisjong-dev completed_games=1 failed_games=1 "
+            "consecutive_failures=1 exception=UnexpectedDisconnectError "
+            "backoff_seconds=5 outcome=retry\n",
+            encoding="utf-8",
+        )
+
+        facts = read_runner_facts(self.log)
+
+        self.assertEqual("events", facts["source"])
+        self.assertEqual(1, facts["completed_games"])
+        self.assertEqual(1, facts["failed_games"])
+        self.assertEqual("UnexpectedDisconnectError", facts["last_failure_type"])
+        self.assertIsNone(facts["stopped_reason"])
+        self.assertEqual(
+            [
+                {
+                    "elapsed_seconds": 1000.5,
+                    "exception_type": "UnexpectedDisconnectError",
+                    "consecutive_failures": 1,
+                    "backoff_seconds": 5.0,
+                    "outcome": "retry",
+                }
+            ],
+            facts["transport_failure_events"],
+        )
+
+    def test_values_that_are_not_strict_identifiers_are_dropped(self) -> None:
+        self.log.write_text(
+            "terminal completed games: 1 extra\n"
+            "terminal exception type: Bearer secret-value\n"
+            "terminal exception category: riichilab_client\n"
+            "terminal stopped reason: runner_exception\n"
+            "continuous-event: kind=transport_failure elapsed_seconds=x "
+            "exception=Authorization:abc backoff_seconds=5 outcome=retry\n",
+            encoding="utf-8",
+        )
+
+        facts = read_runner_facts(self.log)
+
+        self.assertIsNone(facts["completed_games"])
+        self.assertIsNone(facts["terminal_exception_type"])
+        self.assertEqual("riichilab_client", facts["terminal_exception_category"])
+        (event,) = facts["transport_failure_events"]
+        self.assertIsNone(event["elapsed_seconds"])
+        self.assertIsNone(event["exception_type"])
+        rendered = json.dumps(facts)
+        self.assertNotIn("secret-value", rendered)
+        self.assertNotIn("Authorization", rendered)
+
+    def test_only_the_latest_events_are_kept(self) -> None:
+        line = (
+            "continuous-event: kind=transport_failure elapsed_seconds={n}.0 "
+            "profile=lisjong-dev completed_games=0 failed_games={n} "
+            "consecutive_failures=1 exception=TransportError backoff_seconds=5 "
+            "outcome=retry\n"
+        )
+        total = MAX_RUNNER_FACT_EVENTS + 3
+        self.log.write_text(
+            "".join(line.format(n=n) for n in range(1, total + 1)), encoding="utf-8"
+        )
+
+        facts = read_runner_facts(self.log)
+
+        self.assertEqual(total, facts["transport_failure_event_count"])
+        events = facts["transport_failure_events"]
+        self.assertEqual(MAX_RUNNER_FACT_EVENTS, len(events))
+        self.assertEqual(float(total), events[-1]["elapsed_seconds"])
 
 
 class InstanceRunCliTest(unittest.TestCase):

@@ -326,6 +326,18 @@ if ($status -ne "Success") {
         if ($null -ne $failedSummary.PSObject.Properties["bots"]) {
             foreach ($botResult in @($failedSummary.bots)) {
                 Write-Host "BOT $($botResult.profile): $($botResult.status) $($botResult.failure_reason)"
+                # Issue #404: secret-safe runner state read back from the
+                # bot's log before the instance was torn down.
+                $factsProperty = $botResult.PSObject.Properties["runner_facts"]
+                if ($null -ne $factsProperty -and $null -ne $factsProperty.Value) {
+                    $facts = $factsProperty.Value
+                    Write-Host ("BOT $($botResult.profile) runner: source=$($facts.source) " +
+                        "completed=$($facts.completed_games) failed=$($facts.failed_games) " +
+                        "consecutive=$($facts.final_consecutive_failures) " +
+                        "last_failure=$($facts.last_failure_type) stopped=$($facts.stopped_reason) " +
+                        "terminal=$($facts.terminal_exception_type) " +
+                        "transport_failures=$($facts.transport_failure_event_count)")
+                }
             }
         }
     }
