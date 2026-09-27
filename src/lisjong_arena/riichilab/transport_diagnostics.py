@@ -50,12 +50,14 @@ REASON_TOKEN_OR_BOT_REJECTED = "token_or_bot_rejected"
 REASON_KEEPALIVE_TIMEOUT = "keepalive_timeout"
 REASON_OTHER = "other"
 
-#: Classes in match order.  The keyword rules are a provisional heuristic for
-#: evidence only and drive no control decision: RiichiLab does not document its
-#: rejection texts, so `other` together with the excerpt is what reveals an
-#: unknown one.  Phrases stay specific (no bare "already" / "in game") so that
-#: unrelated texts are not labelled a same-bot rejection; the final rule is
-#: fixed only after a reproduction shows the real server signal (#411 PR 2).
+#: Classes in match order.  RiichiLab does not document its rejection texts, so
+#: `other` together with the excerpt is what reveals an unknown one.  Phrases
+#: stay specific (no bare "already" / "in game") so that unrelated texts are not
+#: labelled a same-bot rejection.  The reproduced server signal ("This bot is
+#: already connected to a game", #411) matches `same_bot_already_active`, which
+#: is the only class that drives a control decision: the continuous runner's
+#: original-game wait after a mid-game failure (Issue #419).  The other classes
+#: are evidence only.
 REASON_CLASSES = (
     REASON_NONE,
     REASON_SAME_BOT_ALREADY_ACTIVE,

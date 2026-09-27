@@ -45,6 +45,18 @@ and exits normally.
 
 When `--duration-seconds` is omitted, the existing unbounded-until-stop behavior is preserved. This option is a graceful orchestration bound, not a process-kill timeout and not an absolute-time scheduler.
 
+## Original-game wait after a mid-game disconnect (Issue #419)
+
+After a mid-game disconnect RiichiLab keeps the original hanchan running and rejects a reconnect of the same bot with "This bot is already connected to a game" (normalized `server_reason_class=same_bot_already_active`). The runner treats this as "the original game still owns this bot", not as another transient failure:
+
+- A `TransportError` whose diagnostics have `phase=in_game` counts as one failed game (ordinary failure budget and backoff) and starts the original-game wait.
+- While waiting, a `TransportError` with `server_reason_class=same_bot_already_active` (and a phase other than `in_game`) does not increment `failed_games` or `consecutive_failures` and cannot exhaust the failure budget. It is counted as a same-bot rejection and retried with the same bounded backoff shape keyed on the rejection count of the current wait (5 s, 10 s, 20 s, 40 s, then 60 s).
+- The wait is bounded independently: a rejection received 3600 s (monotonic) or more after the in-game failure that started the wait stops the runner with `stopped reason: original_game_wait_exhausted` and a non-zero exit.
+- Any other transport failure while waiting is ordinary (it spends the failure budget); the wait is kept. Another in-game failure restarts the wait. A completed game ends the wait and resets the consecutive failures as usual; its event carries `outcome=recovered_from_original_game_wait`.
+- A same-bot rejection without a preceding in-game failure, or after a failure without diagnostics, gets no special treatment. Non-transport failures still fail closed. The duration bound and stop requests stop retries while waiting as usual.
+
+Events of the wait carry `awaiting_original_game=true`, the run's `same_bot_rejections` count, and `outcome=awaiting_original_game` / `original_game_wait_exhausted`. The summary (and the terminal facts of a fail-closed exit) add `awaiting original game: yes|no` and `same-bot rejections: N`. Only the normalized class is used; no server text is added to these facts.
+
 ## Per-hanchan durable records
 
 Use `--record-dir` to acquire each completed hanchan through the existing Issue #168 durable ranked game record contract:
