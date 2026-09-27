@@ -13,10 +13,19 @@ Issue #411: transport failureはsecret-safeな`TransportDiagnostics`
 decision所要時間)を`TransportError.diagnostics`へ持つ。rawな事実は
 `drive_session()`が例外へ一時的に付け、tokenを知る唯一の場所である
 `connect_transport()`が接続の外へ出す前にsanitizeする。
+
+Issue #416: `connect_transport()`は接続中だけ軽量なtiming probe task
+(`transport_timing.run_timing_probe()`)を動かし、event-loop lag、keepalive
+latency(公開attribute `latency`)、connection state(公開property `state`)を
+bounded `ConnectionTiming`へ記録する。`drive_session()`は各`request_action`の
+dequeue / decision / send attemptとackを同じ`ConnectionTiming`へ記録し、
+transport failure時にそのsnapshotをraw failure factsへ付ける。probeと記録は
+観測専用であり、送受信・Policy・session semanticsを変えない。
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -32,6 +41,7 @@ from lisjong_arena.riichilab.errors import (
     UnexpectedDisconnectError,
 )
 from lisjong_arena.riichilab.session import (
+    EVENT_TYPE_ACTION_ACK,
     EVENT_TYPE_REQUEST_ACTION,
     RankedSession,
     ValidationSession,
@@ -46,6 +56,10 @@ from lisjong_arena.riichilab.transport_diagnostics import (
     PHASE_IN_GAME,
     RawTransportFailure,
     sanitize_transport_failure,
+)
+from lisjong_arena.riichilab.transport_timing import (
+    ConnectionTiming,
+    run_timing_probe,
 )
 
 DEFAULT_VALIDATION_URL = "wss://game.riichi.dev/ws/validate"
@@ -108,12 +122,18 @@ class Transport(Protocol):
 
 
 class WebSocketTransport:
-    """`websockets`library上の実接続を`Transport` protocolへ適合させる薄いwrapper。"""
+    """`websockets`library上の実接続を`Transport` protocolへ適合させる薄いwrapper。
 
-    __slots__ = ("_connection",)
+    `timing`はこの接続の`ConnectionTiming`(Issue #416)。
+    """
 
-    def __init__(self, connection: object) -> None:
+    __slots__ = ("_connection", "timing")
+
+    def __init__(
+        self, connection: object, timing: ConnectionTiming | None = None
+    ) -> None:
         self._connection = connection
+        self.timing = timing
 
     async def recv(self) -> str | bytes:
         try:
@@ -158,7 +178,15 @@ async def connect_transport(url: str, token: str) -> AsyncIterator[Transport]:
         failure.diagnostics = connect_diagnostics
         raise failure
 
-    transport = WebSocketTransport(connection)
+    timing = ConnectionTiming(state_source=lambda: _connection_state(connection))
+    transport = WebSocketTransport(connection, timing)
+    probe = asyncio.create_task(
+        run_timing_probe(
+            timing,
+            latency_source=lambda: getattr(connection, "latency", None),
+            state_source=lambda: _connection_state(connection),
+        )
+    )
     try:
         yield transport
     except TransportError as error:
@@ -169,7 +197,26 @@ async def connect_transport(url: str, token: str) -> AsyncIterator[Transport]:
         _drop_raw_chain(error)
         raise
     finally:
-        await connection.close()
+        try:
+            await _stop_probe(probe)
+        finally:
+            await connection.close()
+
+
+def _connection_state(connection: object) -> object:
+    """公開`state`を読む。無い・読めない場合は`None`(evidenceに残さない)。"""
+    return getattr(connection, "state", None)
+
+
+async def _stop_probe(probe: asyncio.Task) -> None:
+    """probeをcancelして終了を待つ。
+
+    probe自身の`CancelledError`は`gather(return_exceptions=True)`が結果として
+    受け取る。待っているこのtask自身へのcancel要求は`gather`から
+    `CancelledError`として伝播する。
+    """
+    probe.cancel()
+    await asyncio.gather(probe, return_exceptions=True)
 
 
 def _drop_raw_chain(error: BaseException) -> None:
@@ -220,6 +267,7 @@ def _session_failure(
     *,
     server_text: str | None,
     last_decision_elapsed_seconds: float | None,
+    timing: ConnectionTiming,
 ) -> RawTransportFailure:
     status = session.status()
     return RawTransportFailure(
@@ -232,6 +280,7 @@ def _session_failure(
         local_close_reason=closed.reason_sent,
         requests_received=status.requests_received,
         last_decision_elapsed_seconds=last_decision_elapsed_seconds,
+        timing=timing.evidence(),
     )
 
 
@@ -287,7 +336,11 @@ async def drive_session(
       受信したframeがそれだった場合だけ使う。`type`なしeventはこれまでどおり
       sessionへ渡し、session semanticsは変えない。raw factsと例外chainは
       `connect_transport()`がsanitize・切り離してから外へ出す
+    - `request_action`のdequeue / decision / send attempt時刻とackを、
+      transportの`ConnectionTiming`(無ければこの呼び出し専用のもの)へ記録し、
+      transport failure時にそのsnapshotを付ける(Issue #416)
     """
+    timing = _transport_timing(transport)
     server_text: str | None = None
     last_decision_elapsed_seconds: float | None = None
     while not session.is_complete:
@@ -307,9 +360,11 @@ async def drive_session(
                     error,
                     server_text=server_text,
                     last_decision_elapsed_seconds=last_decision_elapsed_seconds,
+                    timing=timing,
                 ),
             )
             raise disconnect from error
+        received_at = timing.now()
 
         # server reasonは直前に受信したframeがserver error messageだった場合
         # だけ次のfailureへ結びつける(以後のframeで古いreasonを持ち越さない)。
@@ -323,14 +378,24 @@ async def drive_session(
 
         server_text = _server_error_text(event)
 
-        decision_started = (
-            _decision_clock()
-            if event.get("type") == EVENT_TYPE_REQUEST_ACTION
-            else None
-        )
+        event_type = event.get("type")
+        decision = None
+        decision_started = None
+        if event_type == EVENT_TYPE_REQUEST_ACTION:
+            decision_started = _decision_clock()
+            decision_started_at = timing.now()
         outgoing = session.handle_event(event)
         if decision_started is not None:
             last_decision_elapsed_seconds = _decision_clock() - decision_started
+            decision = timing.record_decision(
+                request_id=event.get("request_id"),
+                time_budget=event.get("time"),
+                recv_at=received_at,
+                start_at=decision_started_at,
+                end_at=timing.now(),
+            )
+        elif event_type == EVENT_TYPE_ACTION_ACK:
+            timing.record_ack(event.get("request_id"), event.get("status"))
         if outgoing is None:
             continue
 
@@ -342,6 +407,8 @@ async def drive_session(
         if trace is not None:
             trace.record("send", outgoing.get("type"), outgoing)
 
+        if decision is not None:
+            timing.record_send_attempt(decision, timing.now())
         try:
             await transport.send(outgoing_text)
         except TransportClosed as error:
@@ -355,9 +422,16 @@ async def drive_session(
                     error,
                     server_text=server_text,
                     last_decision_elapsed_seconds=last_decision_elapsed_seconds,
+                    timing=timing,
                 ),
             )
             raise send_failure from error
+
+
+def _transport_timing(transport: Transport) -> ConnectionTiming:
+    """実接続の`ConnectionTiming`。持たないtransport(test double等)には新規作成。"""
+    timing = getattr(transport, "timing", None)
+    return timing if isinstance(timing, ConnectionTiming) else ConnectionTiming()
 
 
 def _decision_clock() -> float:

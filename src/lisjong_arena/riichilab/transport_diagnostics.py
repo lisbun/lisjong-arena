@@ -21,6 +21,11 @@ The transport layer first records a raw `RawTransportFailure` on the exception
 and `connect_transport()` — the only place that knows the token — converts it
 with `sanitize_transport_failure()` before the exception leaves the connection.
 Callers only ever read the sanitized `diagnostics`.
+
+Issue #416: an in-connection failure also carries `timing`, the connection's
+bounded `TransportTimingEvidence` (numbers and fixed names only, no text), so
+that a keepalive timeout can be related to event-loop lag, decisions and
+keepalive latency.
 """
 
 from __future__ import annotations
@@ -28,6 +33,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+
+from lisjong_arena.riichilab.transport_timing import TransportTimingEvidence
 
 PHASE_CONNECT = "connect"
 PHASE_BEFORE_START_GAME = "before_start_game"
@@ -105,6 +112,7 @@ class RawTransportFailure:
     local_close_reason: str | None = None
     requests_received: int = 0
     last_decision_elapsed_seconds: float | None = None
+    timing: TransportTimingEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +122,10 @@ class TransportDiagnostics:
     `last_decision_elapsed_seconds` is how long the most recent
     `request_action` handling (Policy decision included) took before the
     failure.  It is not a decision in flight at the failure.
+
+    `timing` (Issue #416) is the connection's timing evidence, `None` for a
+    failed handshake.  It holds only numbers and fixed names, so it passes
+    through sanitization unchanged.
     """
 
     phase: str
@@ -126,6 +138,7 @@ class TransportDiagnostics:
     local_close_reason_class: str
     requests_received: int
     last_decision_elapsed_seconds: float | None
+    timing: TransportTimingEvidence | None = None
 
 
 def classify_reason(text: str | None) -> str:
@@ -197,6 +210,7 @@ def sanitize_transport_failure(
         local_close_reason_class=classify_reason(raw.local_close_reason),
         requests_received=raw.requests_received,
         last_decision_elapsed_seconds=raw.last_decision_elapsed_seconds,
+        timing=raw.timing,
     )
 
 

@@ -27,6 +27,9 @@
   `TransportError`ごとに`ContinuousRunEvent`をopt-inの`on_event`へ渡す。
   CLIはこれを`continuous-event:`行としてstderrへ即時出力し、fail-closedな
   例外で終了する場合もそれまでのrunner stateを`terminal ...`行として残す
+- transport failureのconnection timing evidence(Issue #416)。
+  `continuous-event:`行にはscalar数個だけを載せ、ring全体はopt-inの
+  `--transport-evidence PATH`へbounded JSON Linesとして書く
 - 停止要求後は新しいgameへrequeueしない graceful shutdown。CLIの
   `--stop-file PATH`は、そのpathが存在することを停止要求として扱う
   (Issue #383。AWS運用で外部から「今の半荘を終えたら止める」を指示する)。
@@ -41,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 import time
@@ -72,6 +76,7 @@ from lisjong_arena.riichilab.profile import (
 from lisjong_arena.riichilab.ranked import run_ranked_game
 from lisjong_arena.riichilab.transport import DEFAULT_RANKED_URL
 from lisjong_arena.riichilab.transport_diagnostics import TransportDiagnostics
+from lisjong_arena.riichilab.transport_timing import TransportTimingEvidence
 
 #: backoff baseline (実装前レビュー): 5s -> 10s -> 20s -> 40s -> 60s cap。
 _INITIAL_BACKOFF_SECONDS = 5.0
@@ -182,6 +187,18 @@ OUTCOME_FAILURE_BUDGET_EXHAUSTED = "failure_budget_exhausted"
 OUTCOME_DURATION_REACHED = "duration_reached"
 #: `format_continuous_event()`が出力する行のprefix。
 CONTINUOUS_EVENT_PREFIX = "continuous-event:"
+#: transport failure行へ載せるIssue #416 timing scalarのkey(出力順)。
+TIMING_EVENT_FIELDS = (
+    "max_event_loop_lag_seconds",
+    "max_lag_ending_in_close_window_seconds",
+    "material_lag_ended_in_close_window",
+    "max_lag_overlapping_decision_seconds",
+    "max_lag_outside_decision_seconds",
+    "max_recent_decision_seconds",
+    "max_recent_keepalive_latency_seconds",
+    "defaulted_acks",
+    "stale_acks",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +232,44 @@ class ContinuousRunEvent:
 
 def _event_value(value: object) -> str:
     return "none" if value is None else str(value)
+
+
+def _seconds_value(value: float | None) -> str:
+    return "none" if value is None else f"{value:.3f}"
+
+
+def _timing_fields(timing: TransportTimingEvidence | None) -> list[str]:
+    """Issue #416のscalar summary。ring全体はtransport evidence fileへ出す。
+
+    timing evidenceを持たないfailure(handshake失敗等)ではfieldを出さない。
+    """
+    if timing is None:
+        return []
+    ended = timing.material_lag_ended_in_close_window
+    values = {
+        "max_event_loop_lag_seconds": _seconds_value(timing.max_event_loop_lag_seconds),
+        "max_lag_ending_in_close_window_seconds": _seconds_value(
+            timing.max_lag_ending_in_close_window_seconds
+        ),
+        "material_lag_ended_in_close_window": (
+            "none" if ended is None else str(ended).lower()
+        ),
+        "max_lag_overlapping_decision_seconds": _seconds_value(
+            timing.max_lag_overlapping_decision_seconds
+        ),
+        "max_lag_outside_decision_seconds": _seconds_value(
+            timing.max_lag_outside_decision_seconds
+        ),
+        "max_recent_decision_seconds": _seconds_value(
+            timing.max_recent_decision_seconds
+        ),
+        "max_recent_keepalive_latency_seconds": _seconds_value(
+            timing.max_recent_keepalive_latency_seconds
+        ),
+        "defaulted_acks": str(timing.defaulted_ack_count),
+        "stale_acks": str(timing.stale_ack_count),
+    }
+    return [f"{name}={values[name]}" for name in TIMING_EVENT_FIELDS]
 
 
 def format_continuous_event(event: ContinuousRunEvent) -> str:
@@ -254,8 +309,102 @@ def format_continuous_event(event: ContinuousRunEvent) -> str:
                 f"requests_received={diagnostics.requests_received}",
                 "last_decision_elapsed_seconds="
                 + ("none" if decision is None else f"{decision:.3f}"),
+                *_timing_fields(diagnostics.timing),
             ]
     return " ".join([CONTINUOUS_EVENT_PREFIX, *fields])
+
+
+TRANSPORT_EVIDENCE_SCHEMA_ID = "lisjong-arena-riichilab-transport-evidence"
+TRANSPORT_EVIDENCE_SCHEMA_VERSION = 1
+#: transport evidence fileへ書くfailure数の上限。以降のfailureは書かない
+#: (最初のfailureが連鎖の起点であるため先頭を残す)。
+MAX_TRANSPORT_EVIDENCE_ENTRIES = 32
+
+
+def transport_evidence_record(
+    event: ContinuousRunEvent, sequence: int
+) -> dict[str, object]:
+    """transport failure 1件のbounded evidence record(JSON-ready)。
+
+    例外class名、固定vocabulary、数値だけを持ち、server reason excerptを
+    含むfree text・payload・token / Authorization値は含めない。
+    """
+    diagnostics = event.transport
+    record: dict[str, object] = {
+        "schema_id": TRANSPORT_EVIDENCE_SCHEMA_ID,
+        "schema_version": TRANSPORT_EVIDENCE_SCHEMA_VERSION,
+        "sequence": sequence,
+        "profile": event.profile,
+        "elapsed_seconds": round(event.elapsed_seconds, 3),
+        "completed_games": event.completed_games,
+        "failed_games": event.failed_games,
+        "consecutive_failures": event.consecutive_failures,
+        "exception_type": event.exception_type,
+        "outcome": event.outcome,
+        "transport": None,
+    }
+    if diagnostics is not None:
+        decision = diagnostics.last_decision_elapsed_seconds
+        record["transport"] = {
+            "phase": diagnostics.phase,
+            "operation": diagnostics.operation,
+            "http_status": diagnostics.http_status,
+            "close_code_received": diagnostics.close_code_received,
+            "close_code_sent": diagnostics.close_code_sent,
+            "server_reason_class": diagnostics.server_reason_class,
+            "local_close_reason_class": diagnostics.local_close_reason_class,
+            "requests_received": diagnostics.requests_received,
+            "last_decision_elapsed_seconds": (
+                None if decision is None else round(decision, 3)
+            ),
+            "timing": (
+                None
+                if diagnostics.timing is None
+                else diagnostics.timing.to_evidence_dict()
+            ),
+        }
+    return record
+
+
+class _TransportEvidenceWriter:
+    """transport failureごとに1行のJSONを`path`へ追記する(Issue #416)。
+
+    fileは新規作成のみとし、既存fileへは追記しない。書き込みに失敗した場合は
+    1回だけstderrへclass名を出して以降の記録を止める。evidenceは観測専用で
+    あり、ranked runのbehaviorを変えない。
+    """
+
+    def __init__(self, path: str) -> None:
+        self._path = path
+        self._written = 0
+        self._disabled = False
+
+    def create(self) -> None:
+        with open(self._path, "x", encoding="utf-8"):
+            pass
+
+    def write(self, event: ContinuousRunEvent) -> None:
+        if self._disabled or event.kind != EVENT_TRANSPORT_FAILURE:
+            return
+        if self._written >= MAX_TRANSPORT_EVIDENCE_ENTRIES:
+            return
+        line = json.dumps(
+            transport_evidence_record(event, self._written + 1),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        try:
+            with open(self._path, "a", encoding="utf-8") as evidence:
+                evidence.write(line + "\n")
+        except OSError as error:
+            self._disabled = True
+            print(
+                f"transport evidence write failed: {type(error).__name__}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+        self._written += 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -595,6 +744,8 @@ def run_continuous_ranked_cli(
     recordとして保存し、diagnostic traceとの同時利用はfail closedにする。
     `--stop-file PATH`指定時はPATHの存在を停止要求として扱い、injectされた
     `stop_requested`とORで合成する。
+    `--transport-evidence PATH`指定時はtransport failureごとのtiming evidenceを
+    PATH(新規file)へbounded JSON Linesとして書く(Issue #416)。
     """
     parser = build_arg_parser(
         prog="python -m lisjong_arena.riichilab.continuous_ranked",
@@ -629,9 +780,22 @@ def run_continuous_ranked_cli(
             "進行中のhanchanは完了してから停止する"
         ),
     )
+    parser.add_argument(
+        "--transport-evidence",
+        default=None,
+        metavar="PATH",
+        help=(
+            "transport failureごとのconnection timing evidenceをPATHへ"
+            "JSON Linesで書く(新規fileのみ、最大"
+            f"{MAX_TRANSPORT_EVIDENCE_ENTRIES}件)"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.stop_file is not None and not args.stop_file:
         print("--stop-file must be a non-empty path", file=sys.stderr)
+        return 2
+    if args.transport_evidence is not None and not args.transport_evidence:
+        print("--transport-evidence must be a non-empty path", file=sys.stderr)
         return 2
 
     try:
@@ -660,12 +824,30 @@ def run_continuous_ranked_cli(
     print(f"records: {'on' if args.record_dir is not None else 'off'}")
     print(f"requested completed games: {args.games or 'unbounded'}")
     print(f"requested duration seconds: {args.duration_seconds or 'unbounded'}")
+    evidence_writer = None
+    if args.transport_evidence is not None:
+        evidence_writer = _TransportEvidenceWriter(args.transport_evidence)
+        try:
+            evidence_writer.create()
+        except OSError as error:
+            print(
+                "--transport-evidence could not be created as a new file: "
+                f"{type(error).__name__}",
+                file=sys.stderr,
+            )
+            return 2
+
     print(f"stop file: {'on' if args.stop_file is not None else 'off'}")
+    print(f"transport evidence: {'on' if evidence_writer is not None else 'off'}")
 
     progress = _RunnerProgress(profile.name)
-    optional_kwargs: dict[str, object] = {
-        "on_event": lambda event: _print_event(progress, event)
-    }
+
+    def on_event(event: ContinuousRunEvent) -> None:
+        _print_event(progress, event)
+        if evidence_writer is not None:
+            evidence_writer.write(event)
+
+    optional_kwargs: dict[str, object] = {"on_event": on_event}
     if presentation is not None:
         optional_kwargs["presentation"] = presentation
     effective_stop_requested = _combine_stop_requested(stop_requested, args.stop_file)
@@ -735,10 +917,15 @@ if __name__ == "__main__":
 
 __all__ = [
     "CONTINUOUS_EVENT_PREFIX",
+    "MAX_TRANSPORT_EVIDENCE_ENTRIES",
+    "TIMING_EVENT_FIELDS",
+    "TRANSPORT_EVIDENCE_SCHEMA_ID",
+    "TRANSPORT_EVIDENCE_SCHEMA_VERSION",
     "ContinuousRunEvent",
     "ContinuousRunSummary",
     "format_continuous_event",
     "format_continuous_summary",
     "run_continuous_ranked",
     "run_continuous_ranked_cli",
+    "transport_evidence_record",
 ]
