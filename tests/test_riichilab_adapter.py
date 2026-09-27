@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 from lisjong.policies import MinimalPolicy
 from lisjong.policy_contract import PassAction, PolicyActionValidationError, Seat
-from riichienv import RiichiEnv
+from riichienv import ActionType, RiichiEnv
 
 from lisjong_arena.riichienv.adapter import (
     AdapterSyncError,
@@ -231,6 +231,102 @@ class RiichiLabSeatAdapterFailClosedTest(unittest.TestCase):
 
         with self.assertRaises(PossibleActionsValidationError):
             adapter.process_request_action(request)
+
+
+def _consecutive_seat_observations(seat: int, count: int, seed: int = 1) -> list:
+    """`seat`が続けて受け取るObservationを、間を飛ばさず`count`件集める。"""
+    env, observations = _reset_observations(seed=seed)
+    collected = []
+    while len(collected) < count:
+        chosen = {}
+        for player_id, observation in observations.items():
+            legal = observation.legal_actions()
+            if not legal:
+                continue
+            if player_id == seat:
+                collected.append(observation)
+            chosen[player_id] = next(
+                (
+                    action
+                    for action in legal
+                    if action.action_type == ActionType.DISCARD
+                ),
+                legal[0],
+            )
+        observations = env.step(chosen)
+    return collected[:count]
+
+
+class _InputRecordingPolicy:
+    def __init__(self) -> None:
+        self.inputs = []
+
+    def choose_action(self, decision):
+        self.inputs.append(decision.input)
+        return MinimalPolicy().choose_action(decision)
+
+
+class RiichiLabSeatAdapterSynchronizeTest(unittest.TestCase):
+    """Policyを呼ばないrequestもmaterialized stateへ順番どおり同期する(Issue #418)。"""
+
+    def test_skipped_request_leaves_the_same_state_as_a_decided_one(self) -> None:
+        first, skipped, third = _consecutive_seat_observations(seat=0, count=3)
+        requests = [
+            _dahai_request_action(observation, request_id=request_id)
+            for request_id, observation in ((1, first), (2, skipped), (3, third))
+        ]
+
+        decided_all = _InputRecordingPolicy()
+        adapter = RiichiLabSeatAdapter(Seat.SEAT_0, decided_all)
+        for request in requests:
+            adapter.process_request_action(request)
+
+        with_skip = _InputRecordingPolicy()
+        adapter = RiichiLabSeatAdapter(Seat.SEAT_0, with_skip)
+        adapter.process_request_action(requests[0])
+        adapter.synchronize_request_action(requests[1])
+        response = adapter.process_request_action(requests[2])
+
+        self.assertEqual(3, response.request_id)
+        self.assertEqual(2, len(with_skip.inputs))
+        self.assertEqual(decided_all.inputs[2], with_skip.inputs[1])
+
+    def test_dropping_a_skipped_request_breaks_the_state(self) -> None:
+        """Sanity check: the skipped Observation cannot simply be dropped."""
+        first, _skipped, third = _consecutive_seat_observations(seat=0, count=3)
+        adapter = RiichiLabSeatAdapter(Seat.SEAT_0, MinimalPolicy())
+        adapter.process_request_action(_dahai_request_action(first, request_id=1))
+
+        with self.assertRaises(AdapterSyncError):
+            adapter.process_request_action(_dahai_request_action(third, request_id=3))
+
+    def test_synchronize_does_not_call_the_policy_or_build_a_mapping(self) -> None:
+        (observation,) = _consecutive_seat_observations(seat=0, count=1)
+        policy = _InputRecordingPolicy()
+        adapter = RiichiLabSeatAdapter(Seat.SEAT_0, policy)
+
+        with patch("lisjong_arena.riichilab.adapter.build_decision") as build_decision:
+            adapter.synchronize_request_action(
+                _dahai_request_action(observation, request_id=1)
+            )
+
+        build_decision.assert_not_called()
+        self.assertEqual([], policy.inputs)
+
+    def test_synchronize_fails_closed_like_a_decision(self) -> None:
+        (observation,) = _consecutive_seat_observations(seat=0, count=1)
+        adapter = RiichiLabSeatAdapter(Seat.SEAT_1, MinimalPolicy())
+        with self.assertRaises(SeatMismatchError):
+            adapter.synchronize_request_action(
+                _dahai_request_action(observation, request_id=1)
+            )
+
+        request = _dahai_request_action(observation, request_id=1)
+        del request["observation"]
+        with self.assertRaises(Exception):
+            RiichiLabSeatAdapter(
+                Seat.SEAT_0, MinimalPolicy()
+            ).synchronize_request_action(request)
 
 
 if __name__ == "__main__":

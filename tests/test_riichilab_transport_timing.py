@@ -414,7 +414,7 @@ class DriveSessionTimingTest(unittest.TestCase):
         pending = _frames(
             {"type": "start_game", "id": 1},
             _request_action(1, time={"grace_ms": 2000, "bank_ms": 9000}),
-            {"type": "action_ack", "request_id": 1, "status": "defaulted"},
+            {"type": "action_ack", "request_id": 1, "status": "accepted"},
             _request_action(2),
         )
 
@@ -443,14 +443,17 @@ class DriveSessionTimingTest(unittest.TestCase):
         first, second = timing.decisions
         self.assertEqual((1, 1), (first.ordinal, first.request_id))
         self.assertEqual(2.0, first.recv_elapsed)
-        self.assertEqual(2.0, first.send_attempt_elapsed)
+        # The reader keeps receiving during the decision (Issue #418): this
+        # fake never suspends, so all five recvs happen before the send.
+        self.assertEqual(5.0, first.send_attempt_elapsed)
         self.assertEqual(
             (2000.0, 9000.0, None), (first.grace_ms, first.bank_ms, first.deadline_ms)
         )
-        self.assertEqual(("defaulted",), first.ack_statuses)
+        self.assertEqual(("accepted",), first.ack_statuses)
         self.assertEqual(2, second.request_id)
+        self.assertEqual(4.0, second.recv_elapsed)
         self.assertEqual((), second.ack_statuses)
-        self.assertEqual(1, timing.defaulted_ack_count)
+        self.assertEqual(0, timing.defaulted_ack_count)
 
     def test_send_failure_keeps_the_send_attempt_of_the_failing_decision(
         self,

@@ -287,6 +287,22 @@ class _GameSession:
         self._adapter = RiichiLabSeatAdapter(self_seat=seat, policy=self._policy)
 
     def _handle_request_action(self, event: Mapping) -> dict:
+        request_id = self.accept_request_action(event)
+        # Policy判断・Action mapping・送信前validationはAdapterへ委譲する。
+        response, decision_facts = self.decide_request_action(event)
+        return self.complete_request_action(request_id, response, decision_facts)
+
+    # `request_action`の3段階(Issue #418)。`handle_event()`は3段階を続けて
+    # 呼ぶ。`drive_session()`はaccept / completeをevent loop上で、decide /
+    # synchronizeを単一worker threadで直列に呼ぶ。Adapter(materialized
+    # state・mapping session)に触れるのはdecide / synchronizeだけである。
+
+    def accept_request_action(self, event: Mapping) -> int:
+        """`request_action`をrequest_id lifecycleへ受理し、`request_id`を返す。
+
+        Adapterには触れない。違反はこれまでどおり`ProtocolError`でfail
+        closedする。
+        """
         if self._adapter is None:
             raise ProtocolError("request_action received before start_game")
 
@@ -308,9 +324,32 @@ class _GameSession:
         self._accepted_request_ids.add(request_id)
         self._last_accepted_request_id = request_id
         self._requests_received += 1
+        return request_id
 
-        # Policy判断・Action mapping・送信前validationはAdapterへ委譲する。
-        response, decision_facts = self._process_request_action(event)
+    def decide_request_action(
+        self, event: Mapping
+    ) -> tuple[SendReadyResponse, ProcessedRequestAction | None]:
+        """受理済み`request_action`をAdapterへ渡し、Policy判断まで行う。
+
+        session自身のlifecycle stateは変更しない。
+        """
+        return self._process_request_action(event)
+
+    def synchronize_request_action(self, event: Mapping) -> None:
+        """Policyを呼ばずに、受理済み`request_action`のObservationをAdapterへ同期する。
+
+        期限切れ等でresponseを送らないrequestにも、そのObservationの
+        `new_events()`を順番どおりmaterialized stateへ適用するために使う。
+        """
+        self._adapter.synchronize_request_action(event)
+
+    def complete_request_action(
+        self,
+        request_id: int,
+        response: SendReadyResponse,
+        decision_facts: ProcessedRequestAction | None,
+    ) -> dict:
+        """decide結果をcurrent requestへbindし、送信するpayloadを返す。"""
         if response.request_id != request_id:
             raise ProtocolError(
                 "adapter response request_id does not match the current request"

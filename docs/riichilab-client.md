@@ -158,8 +158,10 @@ module-level boundaryを超えて固定しない。
 1 ackとは仮定しない。
 
 - `accepted`: historyへ記録
-- `stale`: non-fatalとしてhistoryへ記録
-- `defaulted`: non-fatalとしてhistoryへ記録
+- `stale`: non-fatalとしてhistoryへ記録。そのrequestの未送信decision結果は
+  送らない(Issue #418)
+- `defaulted`: non-fatalとしてhistoryへ記録。そのrequestの未送信decision
+  結果は送らない(Issue #418)
 - `rejected`: historyへ記録後fail closed
 - `unparseable`: historyへ記録後fail closed
 - unknown request ID、未知status、malformed fieldはfail closed
@@ -174,6 +176,15 @@ request、未知の理由はfail closedする。理由はclient側の判断で�
 `RankedGameResult`は`unanswered_requests`(request_id -> reason)を持つ。durable record
 での扱いは[`docs/durable-ranked-game-record.md`](durable-ranked-game-record.md)の
 「未送信request」を参照。
+
+driverはlive requestの待機中、およびdecision終了時の送信前確認で放棄を
+確定した際にこのAPIを呼ぶ。local cutoffを過ぎていれば`local_cutoff`、
+そうでなければ先読みした`defaulted` / `stale`による`late_ack`を記録する。
+放棄済みworkerの遅着結果やbacklogの同期では二重に記録しない。
+`record_dir`付きcontinuousでは、対応する`defaulted`が終局前のtraceにあれば
+保存して次対局へ進む。ackなし・`stale`のみでは記録を公開せず停止する。
+この経路は`test_riichilab_pipeline_record_integration.py`で、通信境界だけを
+差し替え、実driver / adapter / writer / strict readerを通して検証する。
 
 ### validation terminal
 
@@ -301,14 +312,18 @@ Arenaは`websockets==17.0.1`を自身のdirect dependencyとして宣言する
 dependencyは`lisjong_arena.riichilab`内へ閉じ込め、`lisjong`側Policy
 契約へ逆流させない。
 
-`drive_session()`の基本順序は次である。
+`drive_session()`の基本順序は次である。受信frameの処理順はIssue #418後も
+受信順のままである(recvとPolicy実行の分離は次節)。
 
 ```text
-recv
+recv (FrameReader task)
  -> frame種別判定
  -> JSON parse
  -> optional recv trace
- -> session.handle_event()
+ -> request_action: session.accept_request_action()
+      -> decision worker: session.decide_request_action()
+      -> session.complete_request_action()
+    その他: session.handle_event()
  -> outgoing JSON serialize
  -> optional send trace
  -> transport.send()
@@ -324,6 +339,73 @@ recv
 
 1 invocation = 1 WebSocket connectionを維持する。retry / reconnect /
 backoff / automatic requeueは追加しない。
+
+### Policy execution boundary (Issue #418)
+
+Policy decisionをWebSocketと同じevent loop上で同期実行すると、slow
+decisionの間keepalive / control frame処理が止まる(#416の実測では最大
+113 sのloop lag)。単にPolicyだけをthreadへ移してrecvを止めたままにすると、
+その間に届くframeが`websockets`の受信queue(`max_queue` 16)を超えた時点で
+読み取りがpauseされ、keepalive PONGも読まれず同じtimeoutになる
+(`tests/test_riichilab_decision_pipeline.py`のcontrol testで再現)。
+そのため受信とdecisionを分離する。
+
+```text
+FrameReader task (event loop)     recvを止めずに続け、bounded bufferへ積む
+drive loop (event loop)           frameを受信順に処理し、accept / 送信を行う
+decision worker (1 thread)        Adapter work(decide / synchronize)をFIFOで
+                                  1件ずつ実行する
+```
+
+- **Adapterは直列**: `RiichiLabSeatAdapter`(materialized state / mapping
+  session)に触れるのはdecision worker threadだけで、同時に1件しか入らない。
+  session lifecycle(`request_id`、ack history、presentation publish)は
+  event loop側だけで扱う
+- **live request**: 最後に受理した`request_action`で、まだresponseを送って
+  おらず、local cutoffを過ぎておらず、`stale` / `defaulted` ackを受けて
+  いないもの。live requestがある間は後続frameを処理しない(従来の順序を
+  保つ)。decisionが間に合えば送る。local cutoffを過ぎるか、そのrequestへの
+  `stale` / `defaulted` ackを受信した時点で放棄し、後続frameの処理へ進む
+- **late result discard**: 放棄したrequestのdecision結果は、後から返っても
+  送信せず、別requestへ適用もしない(logical cancellation)。worker threadは
+  強制停止できないため走り終わるまで待つが、同時に走るworkerは常に1本で、
+  `drive_session()`はそれが終わってから戻る
+- **Policyへ渡すrequest**: worker開始時点でlive requestであるものだけ。
+  それ以外(serverがdefault済み、cutoff後、後続requestに追い越された)は
+  Policyを呼ばず`synchronize_request_action()`でObservationだけを順番どおり
+  materialized stateへ適用する。RiichiLabの`Observation.new_events()`は前回
+  request以降の差分なので、この適用は省略できない(省略すると次のdecisionが
+  `AdapterSyncError`になる)
+- **bounded**: 未処理frameは`MAX_BUFFERED_FRAMES`(1024)、worker待ちの
+  `request_action`は`MAX_PENDING_REQUESTS`(64)まで。超過は
+  `DecisionBacklogError`でfail closedする。`websockets`の`max_queue`へ
+  backlogを押し込まない
+- **fail closed**: Adapter / Policy例外は、そのrequestの結果を送らない場合も
+  (terminal event後に返った場合も)伝播する
+
+Python threadはGILを共有するが、pure-Python Policyでもinterpreterの
+thread switch(既定5 ms)でevent loopへ制御が戻る。GILを長時間解放しない
+native extension呼び出しはこの境界でも防げない(現在のdecision pathで
+RiichiEnv native codeを呼ぶのはObservation deserialize等の短い処理だけ)。
+
+#### `request_action.time`の意味とlocal cutoff
+
+`time`はserverがそのrequestを出した時点からの相対時間(ms)である。実traceでは
+`deadline_ms == grace_ms + bank_ms`(例: `3000 + 15000 = 18000`)で、`bank_ms`は
+そのseatの残りbank。server deadlineを過ぎるとserverがdefaultし`defaulted`
+ackを返す。default後に届いたresponseには`stale`が返る。
+
+server送信時刻はclientから観測できないため、localの基準はFrameReaderが
+frameを受け取った時刻(`ConnectionTiming`のmonotonic clock)とする。
+
+```text
+cutoff = recv時刻 + (deadline_ms、なければgrace_ms + bank_ms) / 1000 - 0.5 s
+```
+
+0.5 s(`RESPONSE_SAFETY_MARGIN_SECONDS`)はserver送信からlocal recvまで、
+およびresponse送信の遅延を見込む余裕である。`time`が無い、または必要な値が
+有限の数値でない場合はlocal cutoffを持たず、`stale` / `defaulted` ackによる
+放棄だけが働く。`time`は引き続きPolicy / `DecisionContext`へは渡さない。
 
 ## reconnect / continuous execution
 
@@ -423,6 +505,7 @@ fail closedする。
 ```text
 RiichiLabClientError
     ├── ProtocolError
+    ├── DecisionBacklogError
     ├── TransportError
     │     └── UnexpectedDisconnectError
     └── ProtocolTraceError
@@ -477,7 +560,9 @@ Adapter error hierarchy)は[`docs/riichilab-protocol-bridge.md`](riichilab-proto
 - ranked `end_game`に存在する不正scores
 - WebSocket send / receive failure
 - unexpected disconnect
+- 未処理frame / worker待ち`request_action`のbounded上限超過
 - Adapter / Policy / action mapping / possible-action validation failure
+  (結果を送らないrequestで起きた場合も含む)
 - trace writer failure
 
 どのfailureでも`possible_actions[0]`、tsumogiri、`none`等のarbitrary

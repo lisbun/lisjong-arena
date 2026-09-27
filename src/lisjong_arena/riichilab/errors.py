@@ -37,6 +37,15 @@ class TransportError(RiichiLabClientError):
     diagnostics: object | None = None
 
 
+class DecisionBacklogError(RiichiLabClientError):
+    """受信frameまたは未処理`request_action`がbounded上限を超えた場合(Issue #418)。
+
+    slow Policy中にもWebSocket受信は止めないが、その間に溜まるframe・
+    request数は無制限にしない。上限超過は接続の問題ではないため
+    `TransportError`ではなく、retry対象外としてfail closedする。
+    """
+
+
 class UnexpectedDisconnectError(TransportError):
     """mode固有terminal event受信前にconnectionが切断された場合。
 
@@ -46,6 +55,7 @@ class UnexpectedDisconnectError(TransportError):
 
 
 __all__ = [
+    "DecisionBacklogError",
     "ProtocolError",
     "RiichiLabClientError",
     "TransportError",
