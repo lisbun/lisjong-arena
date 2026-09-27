@@ -14,6 +14,9 @@ Issue #406: ``shanten_backend``を指定した場合だけ、各game実行proces
 1回行い、各gameの前後でnative call数を検査する。rustでnative callが0、pythonで
 native extensionがimportされていれば、そのgameを失敗としてarm全体をfail closed
 する。observationはarm artifactへ入れず、呼び出し側が別fileへ記録する。
+Issue #409: rustではnative ``API_VERSION``と、lisjong#224の一括構造評価
+（``discard_evaluation_call_count()``）のgame前後差も記録する。一括評価は0004参照
+Policyだけが使うため、差が0でもgameは失敗にしない（使用確認は記録で行う）。
 未指定時の実行経路・結果は変わらない。
 """
 
@@ -47,6 +50,7 @@ from lisjong_arena.shanten_backend_verification.backend import (
     PYTHON_BACKEND,
     ShantenBackendVerificationError,
     native_call_count,
+    native_discard_evaluation_count,
     require_shanten_backend,
 )
 from lisjong_arena.single_round_evaluation import (
@@ -134,20 +138,29 @@ def _run_benchmark_game_with_backend_check(
     """1 gameを実行し、このprocess・このgameのshanten backendを検査する。"""
     process = _verified_process_backend(backend)
     calls_before = native_call_count()
+    evaluations_before = native_discard_evaluation_count()
     result, facts = _run_benchmark_game(policies, seed=seed, max_steps=max_steps)
     calls_after = native_call_count()
+    evaluations_after = native_discard_evaluation_count()
     if backend == PYTHON_BACKEND:
         if NATIVE_MODULE in sys.modules:
             raise ShantenBackendVerificationError(
                 "the python backend imported the native extension during a game"
             )
         native_calls = None
+        discard_evaluations = None
     else:
-        if calls_before is None or calls_after is None:
+        if (
+            calls_before is None
+            or calls_after is None
+            or evaluations_before is None
+            or evaluations_after is None
+        ):
             raise ShantenBackendVerificationError(
                 f"seed {seed}: the rust backend has no native extension loaded"
             )
         native_calls = calls_after - calls_before
+        discard_evaluations = evaluations_after - evaluations_before
         if native_calls < 1:
             raise ShantenBackendVerificationError(
                 f"seed {seed}: the rust backend made no native calls in this game"
@@ -160,7 +173,11 @@ def _run_benchmark_game_with_backend_check(
         "native_source_revision": (
             None if native is None else native["source_revision"]  # type: ignore[index]
         ),
+        "native_api_version": (
+            None if native is None else native["api_version"]  # type: ignore[index]
+        ),
         "native_calls": native_calls,
+        "native_discard_evaluations": discard_evaluations,
     }
     return result, facts, observation
 
@@ -401,8 +418,9 @@ def shanten_backend_record(
 ) -> dict[str, object]:
     """#406: armのper-game backend observationを集約し、不整合をfail closedする。
 
-    全gameが要求backend・pinned lisjong revision・同じnative ``SOURCE_REVISION``
-    で実行されたこと（rustでは全gameでnative call >= 1）を確認した記録を返す。
+    全gameが要求backend・pinned lisjong revision・同じnative ``SOURCE_REVISION``・
+    ``API_VERSION``で実行されたこと（rustでは全gameでnative call >= 1）を確認した
+    記録を返す。一括構造評価の回数（#409）はworkerごと・全体で集計して残す。
     """
     observations = arm.shanten_backend_observations
     records = arm.offense_records
@@ -414,6 +432,9 @@ def shanten_backend_record(
         "native_source_revision": (
             None if parent["native"] is None else parent["native"]["source_revision"]  # type: ignore[index]
         ),
+        "native_api_version": (
+            None if parent["native"] is None else parent["native"]["api_version"]  # type: ignore[index]
+        ),
     }
     workers: dict[int, dict[str, object]] = {}
     for record, observation in zip(records, observations, strict=True):
@@ -424,8 +445,9 @@ def shanten_backend_record(
                     f"{observation[key]!r} differs from {value!r}"
                 )
         calls = observation["native_calls"]
+        evaluations = observation["native_discard_evaluations"]
         if backend == PYTHON_BACKEND:
-            if calls is not None:
+            if calls is not None or evaluations is not None:
                 raise ShantenBackendVerificationError(
                     "a python-backend game reported native calls"
                 )
@@ -433,13 +455,23 @@ def shanten_backend_record(
             raise ShantenBackendVerificationError(
                 f"seed {record.seed} rotation {record.rotation}: no native calls"
             )
+        elif type(evaluations) is not int or evaluations < 0:
+            raise ShantenBackendVerificationError(
+                f"seed {record.seed} rotation {record.rotation}: malformed "
+                "native discard evaluation count"
+            )
         worker = workers.setdefault(
             int(observation["pid"]),  # type: ignore[arg-type]
-            {"games": 0, "native_calls": None if calls is None else 0},
+            {
+                "games": 0,
+                "native_calls": None if calls is None else 0,
+                "native_discard_evaluations": None if evaluations is None else 0,
+            },
         )
         worker["games"] += 1  # type: ignore[operator]
         if calls is not None:
             worker["native_calls"] += calls  # type: ignore[operator]
+            worker["native_discard_evaluations"] += evaluations  # type: ignore[operator]
     native_calls = [observation["native_calls"] for observation in observations]
     return {
         **expected,
@@ -447,6 +479,14 @@ def shanten_backend_record(
         "games": len(observations),
         "min_native_calls_per_game": (
             None if backend == PYTHON_BACKEND else min(native_calls)  # type: ignore[type-var]
+        ),
+        "native_discard_evaluations": (
+            None
+            if backend == PYTHON_BACKEND
+            else sum(
+                observation["native_discard_evaluations"]  # type: ignore[misc]
+                for observation in observations
+            )
         ),
         "workers_observed": len(workers),
         "workers": {str(pid): workers[pid] for pid in sorted(workers)},

@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from . import plan
-from .backend import BACKENDS, EXPECTED_WHEEL_FILENAME, EXPECTED_WHEEL_SHA256
+from .backend import BACKENDS
 
 DIFFERENTIAL_KEYS = frozenset({"native_tests_exit", "lisjong_suite_rust_exit"})
 FAIL_CLOSED_KEYS = frozenset(
@@ -96,13 +96,13 @@ def _check_distribution(evidence: _Evidence) -> None:
             evidence.problem("install.json: wheel identity is missing")
         else:
             evidence.expect(
-                "install.json", "wheel.file", wheel.get("file"), EXPECTED_WHEEL_FILENAME
+                "install.json", "wheel.file", wheel.get("file"), plan.WHEEL_FILENAME
             )
             evidence.expect(
                 "install.json",
                 "wheel.sha256",
                 wheel.get("sha256"),
-                EXPECTED_WHEEL_SHA256,
+                plan.WHEEL_SHA256,
             )
         if not isinstance(install.get("install_s"), (int, float)):
             evidence.problem("install.json: install_s is missing")

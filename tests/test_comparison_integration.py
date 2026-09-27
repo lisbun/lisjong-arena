@@ -106,13 +106,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # L0.3 focal exploration selector / outcome source consumerを含む
         # revisionへ、Arena #375でlisjong #199 PlacementAwareSpeedCallPolicyを
         # 含むrevisionへ、Arena #400でlisjong #217 Rust shanten wheel build元の
+        # revisionへ、Arena #409でlisjong #225（0004構造評価の一括native化）の
         # revisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "2553c1b9f22545bb2fcb914adce1879d15cdc58d",
+            "8bdfd3f942ced49830bcee1894aefe3d2e0acc3a",
         )
 
 

@@ -2,7 +2,7 @@
 
 ```text
 python -m lisjong_arena.shanten_backend_verification verify-wheel <wheel>
-python -m lisjong_arena.shanten_backend_verification probe --backend rust
+python -m lisjong_arena.shanten_backend_verification probe --backend rust [--wheel <wheel>]
 python -m lisjong_arena.shanten_backend_verification startup --repeat 10 --out f.json
 python -m lisjong_arena.shanten_backend_verification games \\
     --policy placement-aware-speed-call --seeds 0 1 --backend rust \\
@@ -27,8 +27,10 @@ from pathlib import Path
 
 from .backend import (
     BACKENDS,
+    RUST_BACKEND,
     ShantenBackendVerificationError,
     require_shanten_backend,
+    verify_installed_native,
     verify_wheel_file,
 )
 from .measure import compare_games, run_games, run_startup
@@ -54,6 +56,12 @@ def _parser() -> argparse.ArgumentParser:
 
     probe = commands.add_parser("probe")
     probe.add_argument("--backend", required=True, choices=BACKENDS)
+    probe.add_argument(
+        "--wheel",
+        type=Path,
+        default=None,
+        help="rust only: also check the loaded extension files against this wheel",
+    )
 
     startup = commands.add_parser("startup")
     startup.add_argument("--repeat", required=True, type=int)
@@ -97,7 +105,14 @@ def main(argv: list[str] | None = None) -> int:
         if arguments.command == "verify-wheel":
             _emit(verify_wheel_file(arguments.wheel))
         elif arguments.command == "probe":
-            _emit(require_shanten_backend(arguments.backend))
+            record = require_shanten_backend(arguments.backend)
+            if arguments.wheel is not None:
+                if arguments.backend != RUST_BACKEND:
+                    raise ShantenBackendVerificationError(
+                        "--wheel is only valid with --backend rust"
+                    )
+                record["installed_wheel"] = verify_installed_native(arguments.wheel)
+            _emit(record)
         elif arguments.command == "startup":
             _emit(run_startup(arguments.repeat), arguments.out)
         elif arguments.command == "games":

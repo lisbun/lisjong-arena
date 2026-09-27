@@ -13,10 +13,6 @@ from pathlib import Path
 
 from lisjong_arena.shanten_backend_verification import plan
 from lisjong_arena.shanten_backend_verification.__main__ import main
-from lisjong_arena.shanten_backend_verification.backend import (
-    EXPECTED_WHEEL_FILENAME,
-    EXPECTED_WHEEL_SHA256,
-)
 from lisjong_arena.shanten_backend_verification.report import evaluate
 
 _REVISION = plan.LISJONG_REVISION
@@ -138,8 +134,8 @@ def _run_directory(
         root / "install.json",
         {
             "wheel": {
-                "file": EXPECTED_WHEEL_FILENAME,
-                "sha256": EXPECTED_WHEEL_SHA256,
+                "file": plan.WHEEL_FILENAME,
+                "sha256": plan.WHEEL_SHA256,
                 "bytes": 1,
             },
             "install_s": 0.8,
@@ -472,7 +468,7 @@ class EvidenceCompletenessTest(unittest.TestCase):
         self._assert_incomplete(
             lambda root: self._edit(
                 root / "install.json",
-                wheel={"file": EXPECTED_WHEEL_FILENAME, "sha256": "0" * 64},
+                wheel={"file": plan.WHEEL_FILENAME, "sha256": "0" * 64},
             ),
             "wheel.sha256",
         )

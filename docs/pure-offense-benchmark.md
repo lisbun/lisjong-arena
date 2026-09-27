@@ -369,7 +369,7 @@ by game with the #389 arms as a reproducibility check.
 allocation   df8460868ac26cc3505f04b5f4f8f524ccc14dc2423a114487775a1cb69ccb0f (reused)
              riichienv-4p-red-single-v1, 389000..389999, DEVELOPMENT, COMMITTED
 arms         ukeire -> two-step -> kobalab-0004 (lineage order for summarize)
-lisjong      2553c1b (current pin = wheel build source)
+lisjong      2553c1b (the pin at #406 = wheel build source; #409 moved the pin)
 backend      rust, #400 wheel ff8aaa40...166c
 workload     scripts/aws/bootstrap-pure-offense-kobalab-406.sh (input: the wheel)
 ```
@@ -389,7 +389,8 @@ LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.pure_offense_benchmark run 
   `require_shanten_backend` check once:
   - the variable is set explicitly;
   - the installed lisjong is the pin;
-  - for rust, `SOURCE_REVISION` matches and a native call happens.
+  - for rust, `SOURCE_REVISION` matches, `API_VERSION` is 2 (#409) and a
+    native call happens.
 - Every game must also pass a per-game check:
   - rust: at least one native call during the game;
   - python: the native extension is never imported.
@@ -397,6 +398,11 @@ LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.pure_offense_benchmark run 
 - The aggregated record goes to `<backend.json>`, outside the arm. It holds the
   backend, the revisions, the per-worker game and native-call counts, and the
   minimum native calls per game.
+- Since #409 it also holds the native `API_VERSION` and the per-game
+  `discard_evaluation_call_count()` delta, summed per worker and overall. Only
+  the 0004 reference Policy uses that batched evaluation, so a zero delta does
+  not fail other Policies. See
+  [the current combination](lisjong-native-wheel-current.md).
 - The arm directory and its schemas are unchanged.
 - Without the option nothing changes, and the default backend stays Python.
 

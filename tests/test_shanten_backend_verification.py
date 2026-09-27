@@ -6,6 +6,7 @@ checked with an injected stand-in module (identity / wiring failures) and the
 real extension is exercised on the target environment by the #400 bootstrap.
 """
 
+import io
 import json
 import os
 import subprocess
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import types
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -155,14 +157,31 @@ class StartupProbeTest(unittest.TestCase):
         self.assertGreater(sample["import_first_call_ms"], 0.0)
 
 
+_NO_ATTRIBUTE = object()
+
+
 class _FakeNative(types.ModuleType):
-    def __init__(self, revision: object) -> None:
+    def __init__(
+        self,
+        revision: object,
+        *,
+        api_version: object = backend.EXPECTED_NATIVE_API_VERSION,
+        counting: bool = False,
+    ) -> None:
         super().__init__(backend.NATIVE_MODULE)
         self.SOURCE_REVISION = revision
+        if api_version is not _NO_ATTRIBUTE:
+            self.API_VERSION = api_version
         self.__file__ = "fake"
+        self._calls = 7
+        self._counting = counting
 
     def standard_shanten_call_count(self) -> int:
-        return 7
+        # With ``counting`` every read moves, standing in for the probe call
+        # that the python-imported lisjong core does not route here.
+        if self._counting:
+            self._calls += 1
+        return self._calls
 
 
 class RustIdentityTest(unittest.TestCase):
@@ -195,6 +214,109 @@ class RustIdentityTest(unittest.TestCase):
             backend.ShantenBackendVerificationError, "did not reach"
         ):
             self._require_rust(_FakeNative(backend.EXPECTED_LISJONG_REVISION))
+
+    def test_extension_with_another_native_api_fails(self) -> None:
+        # A pre-lisjong#224 wheel has no API_VERSION attribute (read as 1).
+        for api_version in (_NO_ATTRIBUTE, 1, 3):
+            with self.subTest(api_version=api_version):
+                with self.assertRaisesRegex(
+                    backend.ShantenBackendVerificationError, "API_VERSION"
+                ):
+                    self._require_rust(
+                        _FakeNative(
+                            backend.EXPECTED_LISJONG_REVISION,
+                            api_version=api_version,
+                            counting=True,
+                        )
+                    )
+
+    def test_matching_extension_records_its_identity(self) -> None:
+        native = _FakeNative(backend.EXPECTED_LISJONG_REVISION, counting=True)
+        with mock.patch.dict(os.environ, _environment("rust"), clear=True):
+            with mock.patch.dict(sys.modules, {backend.NATIVE_MODULE: native}):
+                record = backend.require_shanten_backend("rust")
+        self.assertEqual(
+            record["native"]["source_revision"], backend.EXPECTED_LISJONG_REVISION
+        )
+        self.assertEqual(record["native"]["api_version"], 2)
+        self.assertEqual(record["native"]["probe_native_calls"], 1)
+
+
+class InstalledNativeTest(unittest.TestCase):
+    """The loaded extension files must be the frozen wheel's files (#409)."""
+
+    _FILES = {
+        "_lisjong_native/__init__.py": b"from ._lisjong_native import *\n",
+        "_lisjong_native/_lisjong_native.cpython-314-x86_64-linux-gnu.so": b"so",
+    }
+
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.wheel = self.directory / backend.EXPECTED_WHEEL_FILENAME
+        with zipfile.ZipFile(self.wheel, "w") as archive:
+            for name, payload in self._FILES.items():
+                archive.writestr(name, payload)
+            archive.writestr("lisjong_native-0.1.0.dist-info/RECORD", b"")
+        self.site = self.directory / "site" / backend.NATIVE_MODULE
+        self.site.mkdir(parents=True)
+        for name, payload in self._FILES.items():
+            (self.site / name.partition("/")[2]).write_bytes(payload)
+        native = types.ModuleType(backend.NATIVE_MODULE)
+        native.__file__ = str(self.site / "__init__.py")
+        digest = backend.file_sha256(self.wheel)
+        for patcher in (
+            mock.patch.object(backend, "EXPECTED_WHEEL_SHA256", digest),
+            mock.patch.dict(sys.modules, {backend.NATIVE_MODULE: native}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_installed_files_of_the_wheel_are_accepted(self) -> None:
+        record = backend.verify_installed_native(self.wheel)
+        self.assertEqual(record["files"], sorted(self._FILES))
+        self.assertEqual(record["installed_directory"], str(self.site))
+
+    def test_files_from_another_wheel_are_refused(self) -> None:
+        # Same file name and package version, different build (#400 vs #409).
+        (self.site / "_lisjong_native.cpython-314-x86_64-linux-gnu.so").write_bytes(
+            b"old build"
+        )
+        with self.assertRaisesRegex(
+            backend.ShantenBackendVerificationError, "force-reinstall"
+        ):
+            backend.verify_installed_native(self.wheel)
+
+    def test_missing_installed_file_is_refused(self) -> None:
+        (self.site / "__init__.py").unlink()
+        with self.assertRaisesRegex(
+            backend.ShantenBackendVerificationError, "not installed"
+        ):
+            backend.verify_installed_native(self.wheel)
+
+    def test_unloaded_extension_is_refused(self) -> None:
+        sys.modules.pop(backend.NATIVE_MODULE)
+        with self.assertRaisesRegex(
+            backend.ShantenBackendVerificationError, "not imported"
+        ):
+            backend.verify_installed_native(self.wheel)
+
+    def test_unverified_wheel_is_refused_first(self) -> None:
+        with mock.patch.object(backend, "EXPECTED_WHEEL_SHA256", "0" * 64):
+            with self.assertRaisesRegex(
+                backend.ShantenBackendVerificationError, "SHA-256"
+            ):
+                backend.verify_installed_native(self.wheel)
+
+    def test_probe_wheel_option_requires_the_rust_backend(self) -> None:
+        sys.modules.pop(backend.NATIVE_MODULE)
+        with (
+            mock.patch.dict(os.environ, _environment("python"), clear=True),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            code = main(["probe", "--backend", "python", "--wheel", str(self.wheel)])
+        self.assertEqual(code, 2)
+        self.assertIn("--wheel is only valid", stderr.getvalue())
 
 
 class DecisionDigestTest(unittest.TestCase):
@@ -249,6 +371,14 @@ class GamesAndCompareTest(unittest.TestCase):
             self.assertIsNone(game["worker"]["native"])
             self.assertNotEqual(game["worker"]["pid"], summary["parent"]["pid"])
             self.assertIsNone(game["native_calls"])
+            self.assertIsNone(game["native_discard_evaluations"])
+        self.assertIsNone(summary["native_discard_evaluations"])
+        self.assertEqual(
+            sum(entry["games"] for entry in summary["per_worker"].values()), 2
+        )
+        for entry in summary["per_worker"].values():
+            self.assertIsNone(entry["native_calls"])
+            self.assertIsNone(entry["native_discard_evaluations"])
         self.assertTrue(measure.compare_games(serial, parallel)["ok"])
 
         expected = {0: games[0]["semantic_sha256"]}

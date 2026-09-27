@@ -29,19 +29,22 @@ class BootstrapTest(unittest.TestCase):
             self.skipTest("bash is unavailable")
         subprocess.run([bash, "-n", str(_BOOTSTRAP)], check=True)
 
-    def test_frozen_identities_match_the_python_constants_and_the_pin(self) -> None:
+    def test_frozen_identities_match_the_frozen_plan_not_the_current_pin(
+        self,
+    ) -> None:
+        # #409 moved the project pin; the #400 bootstrap and plan keep the
+        # lisjong#217 combination and only accept the Arena commits pinning it.
         revision = _shell_value(self.text, "FROZEN_LISJONG_REVISION")
-        self.assertEqual(revision, backend.EXPECTED_LISJONG_REVISION)
+        self.assertEqual(revision, plan.LISJONG_REVISION)
+        self.assertNotEqual(revision, backend.EXPECTED_LISJONG_REVISION)
         project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn(f"lisjong.git@{revision}", project)
+        self.assertNotIn(f"lisjong.git@{revision}", project)
+        self.assertIn('grep -q "lisjong.git@$FROZEN_LISJONG_REVISION"', self.text)
         riichienv = _shell_value(self.text, "FROZEN_RIICHIENV_VERSION")
         self.assertIn(f'"riichienv=={riichienv}"', project)
-        self.assertEqual(
-            _shell_value(self.text, "WHEEL_FILE"), backend.EXPECTED_WHEEL_FILENAME
-        )
-        self.assertEqual(
-            _shell_value(self.text, "WHEEL_SHA256"), backend.EXPECTED_WHEEL_SHA256
-        )
+        self.assertEqual(_shell_value(self.text, "WHEEL_FILE"), plan.WHEEL_FILENAME)
+        self.assertEqual(_shell_value(self.text, "WHEEL_SHA256"), plan.WHEEL_SHA256)
+        self.assertNotEqual(plan.WHEEL_SHA256, backend.EXPECTED_WHEEL_SHA256)
 
     def test_workload_constants_are_the_frozen_plan(self) -> None:
         for prefix, policy in (

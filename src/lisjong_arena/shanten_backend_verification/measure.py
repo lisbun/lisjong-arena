@@ -37,6 +37,7 @@ from .backend import (
     ShantenBackendVerificationError,
     _probe_tiles,
     native_call_count,
+    native_discard_evaluation_count,
     require_shanten_backend,
 )
 
@@ -205,18 +206,23 @@ def _play(seed: int, game_mode: str) -> dict[str, object]:
     factory = _WORKER["factory"]
     policies = {seat: RecordingPolicy(factory(), records) for seat in Seat}
     calls_before = native_call_count()
+    evaluations_before = native_discard_evaluation_count()
     started = time.perf_counter()
     result = _WORKER["runner"](policies, seed=seed, game_mode=game_mode).run()
     elapsed = time.perf_counter() - started
     calls_after = native_call_count()
+    evaluations_after = native_discard_evaluation_count()
     if _WORKER["backend"] == PYTHON_BACKEND:
         if NATIVE_MODULE in sys.modules:
             raise ShantenBackendVerificationError(
                 "the python backend imported the native extension during a game"
             )
         native_calls = None
+        discard_evaluations = None
     else:
         native_calls = calls_after - calls_before
+        # #409: lisjong#224 batched structural evaluation (0004 reference only).
+        discard_evaluations = evaluations_after - evaluations_before
         if native_calls < 1:
             raise ShantenBackendVerificationError(
                 f"seed {seed}: the rust backend made no native calls"
@@ -232,6 +238,7 @@ def _play(seed: int, game_mode: str) -> dict[str, object]:
         "seats": {str(seat): value for seat, value in seat_digests(records).items()},
         "elapsed_s": elapsed,
         "native_calls": native_calls,
+        "native_discard_evaluations": discard_evaluations,
         "worker": _WORKER["record"],
         "peak_rss_kib": peak_rss_kib(),
     }
@@ -308,9 +315,18 @@ def run_games(
         worker = game["worker"]
         entry = per_worker.setdefault(
             worker["pid"],
-            {"games": 0, "init_peak_rss_kib": worker["init_peak_rss_kib"]},
+            {
+                "games": 0,
+                "init_peak_rss_kib": worker["init_peak_rss_kib"],
+                "native_calls": None,
+                "native_discard_evaluations": None,
+            },
         )
         entry["games"] += 1
+        for key in ("native_calls", "native_discard_evaluations"):
+            # Games written before #409 have no discard evaluation count.
+            if game.get(key) is not None:
+                entry[key] = (entry[key] or 0) + game[key]
         entry["peak_rss_kib"] = (
             max(entry.get("peak_rss_kib") or 0, game["peak_rss_kib"] or 0) or None
         )
@@ -331,6 +347,11 @@ def run_games(
             None
             if backend == PYTHON_BACKEND
             else sum(game["native_calls"] for game in games)
+        ),
+        "native_discard_evaluations": (
+            None
+            if backend == PYTHON_BACKEND
+            else sum(game["native_discard_evaluations"] for game in games)
         ),
         "worker_init_peak_rss_kib": _distribution(
             [
