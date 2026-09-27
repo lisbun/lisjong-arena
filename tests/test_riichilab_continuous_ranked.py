@@ -38,6 +38,7 @@ from lisjong_arena.riichilab.live_presentation import (
 )
 from lisjong_arena.riichilab.profile import RuntimeProfile
 from lisjong_arena.riichilab.trace import ProtocolTraceError
+from lisjong_arena.riichilab.transport_diagnostics import TransportDiagnostics
 
 _DEV_TOKEN_VAR = "LISJONG_DEV_BOT_TOKEN"
 
@@ -1109,6 +1110,86 @@ class RunEventTest(unittest.TestCase):
             "profile=lisjong-dev completed_games=2 failed_games=3 "
             "consecutive_failures=1 exception=UnexpectedDisconnectError "
             "backoff_seconds=5 outcome=retry",
+        )
+
+
+class TransportDiagnosticsEventTest(unittest.TestCase):
+    """Issue #411: a failure's diagnostics reach its event, retries unchanged."""
+
+    _DIAGNOSTICS = TransportDiagnostics(
+        phase="before_start_game",
+        operation="recv",
+        http_status=None,
+        close_code_received=4000,
+        close_code_sent=None,
+        server_reason_class="same_bot_already_active",
+        server_reason_excerpt="Bot already in game; token [redacted]",
+        local_close_reason_class="none",
+        requests_received=0,
+        last_decision_elapsed_seconds=1.25,
+    )
+
+    def test_diagnostics_are_attached_and_retry_semantics_are_unchanged(
+        self,
+    ) -> None:
+        def _failure() -> UnexpectedDisconnectError:
+            error = UnexpectedDisconnectError("dc")
+            error.diagnostics = self._DIAGNOSTICS
+            return error
+
+        outcomes = iter([_failure(), TransportError("no diagnostics")] * 3)
+        events: list[ContinuousRunEvent] = []
+        delays: list[float] = []
+
+        async def _fake_run_ranked_game(policy, token, **kwargs):
+            raise next(outcomes)
+
+        with patch(
+            "lisjong_arena.riichilab.continuous_ranked.run_ranked_game",
+            _fake_run_ranked_game,
+        ):
+            summary = asyncio.run(
+                run_continuous_ranked(
+                    _make_profile(),
+                    "unit-test-token",
+                    sleep=_recording_sleep(delays),
+                    on_event=events.append,
+                    failure_budget=5,
+                )
+            )
+
+        self.assertEqual(summary.stopped_reason, "failure_budget_exhausted")
+        self.assertEqual(delays, [5.0, 10.0, 20.0, 40.0])
+        self.assertEqual(
+            [event.transport for event in events],
+            [self._DIAGNOSTICS, None, self._DIAGNOSTICS, None, self._DIAGNOSTICS],
+        )
+
+    def test_formatted_diagnostics_are_single_tokens(self) -> None:
+        line = format_continuous_event(
+            ContinuousRunEvent(
+                kind="transport_failure",
+                elapsed_seconds=343.2,
+                profile="lisjong-dev",
+                completed_games=0,
+                failed_games=2,
+                consecutive_failures=2,
+                exception_type="UnexpectedDisconnectError",
+                backoff_seconds=10.0,
+                outcome="retry",
+                transport=self._DIAGNOSTICS,
+            )
+        )
+        self.assertTrue(
+            line.endswith(
+                "outcome=retry phase=before_start_game operation=recv "
+                "http_status=none close_code_received=4000 close_code_sent=none "
+                "server_reason_class=same_bot_already_active "
+                "server_reason_excerpt=Bot%20already%20in%20game%3B%20token%20"
+                "%5Bredacted%5D local_close_reason_class=none requests_received=0 "
+                "last_decision_elapsed_seconds=1.250"
+            ),
+            line,
         )
 
 

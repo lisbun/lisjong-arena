@@ -6,6 +6,7 @@ loading is faked; no AWS or RiichiLab access happens here.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import io
 import json
@@ -23,7 +24,9 @@ from lisjong_arena.riichilab.aws_instance_run import (
     INSTANCE_SUMMARY_SCHEMA_VERSION,
     MAX_BOTS,
     MAX_RUNNER_FACT_EVENTS,
+    MAX_SUMMARY_JSON_CHARS,
     AwsInstanceRunConfigError,
+    _fit_summary,
     _run_cli,
     bot_directory,
     check_runtime_policies,
@@ -41,6 +44,7 @@ from lisjong_arena.riichilab.errors import (
     UnexpectedDisconnectError,
 )
 from lisjong_arena.riichilab.profile import PROFILE_NAMES
+from lisjong_arena.riichilab.transport_diagnostics import TransportDiagnostics
 
 _ARENA_REVISION = "2" * 40
 _DEV = "lisjong-dev=lisjong/riichilab/dev-token"
@@ -229,7 +233,7 @@ class VerifyInstanceRunTest(unittest.TestCase):
         summary = self._verify()
 
         self.assertEqual(INSTANCE_SUMMARY_SCHEMA_ID, summary["schema_id"])
-        self.assertEqual(2, INSTANCE_SUMMARY_SCHEMA_VERSION)
+        self.assertEqual(3, INSTANCE_SUMMARY_SCHEMA_VERSION)
         self.assertEqual(INSTANCE_SUMMARY_SCHEMA_VERSION, summary["schema_version"])
         self.assertEqual("PASS", summary["status"])
         self.assertEqual(
@@ -404,6 +408,192 @@ class VerifyInstanceRunTest(unittest.TestCase):
                     self._verify(tokens_by_profile=tokens)
 
 
+_NO_DIAGNOSTICS = {
+    "phase": None,
+    "operation": None,
+    "http_status": None,
+    "close_code_received": None,
+    "close_code_sent": None,
+    "server_reason_class": None,
+    "server_reason_excerpt": None,
+    "local_close_reason_class": None,
+    "requests_received": None,
+    "last_decision_elapsed_seconds": None,
+}
+
+
+def _diagnosed(error, **fields):
+    values = {
+        "phase": "before_start_game",
+        "operation": "recv",
+        "http_status": None,
+        "close_code_received": 4000,
+        "close_code_sent": None,
+        "server_reason_class": "same_bot_already_active",
+        "server_reason_excerpt": "Bot already in game",
+        "local_close_reason_class": "none",
+        "requests_received": 0,
+        "last_decision_elapsed_seconds": None,
+        **fields,
+    }
+    error.diagnostics = TransportDiagnostics(**values)
+    return error
+
+
+class TransportDiagnosticsFactsTest(unittest.TestCase):
+    """Issue #411: diagnostics survive the log into the instance summary."""
+
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def test_phase_and_reason_of_each_failure_reach_runner_facts(self) -> None:
+        first = _diagnosed(
+            TransportError("send"),
+            phase="in_game",
+            operation="send",
+            close_code_received=1006,
+            server_reason_class="none",
+            server_reason_excerpt=None,
+            requests_received=41,
+            last_decision_elapsed_seconds=2.345,
+        )
+        rejected = [_diagnosed(UnexpectedDisconnectError("dc")) for _ in range(4)]
+        code, log = _real_runner_log("lisjong-dev", [first, *rejected])
+        self.assertEqual(1, code)
+        runner_log = self.root / "continuous.log"
+        runner_log.write_text(log, encoding="utf-8")
+
+        facts = read_runner_facts(runner_log, _TOKENS.values())
+
+        self.assertEqual(
+            {
+                "elapsed_seconds": facts["first_transport_failure_event"][
+                    "elapsed_seconds"
+                ],
+                "exception_type": "TransportError",
+                "consecutive_failures": 1,
+                "backoff_seconds": 5.0,
+                "outcome": "retry",
+                "phase": "in_game",
+                "operation": "send",
+                "http_status": None,
+                "close_code_received": 1006,
+                "close_code_sent": None,
+                "server_reason_class": "none",
+                "server_reason_excerpt": None,
+                "local_close_reason_class": "none",
+                "requests_received": 41,
+                "last_decision_elapsed_seconds": 2.345,
+            },
+            facts["first_transport_failure_event"],
+        )
+        last = facts["transport_failure_events"][-1]
+        self.assertEqual("before_start_game", last["phase"])
+        self.assertEqual("same_bot_already_active", last["server_reason_class"])
+        self.assertEqual("Bot already in game", last["server_reason_excerpt"])
+        self.assertEqual(4000, last["close_code_received"])
+        self.assertEqual(
+            {"before_start_game": 4, "in_game": 1},
+            facts["transport_failure_phase_counts"],
+        )
+        self.assertEqual(
+            {"none": 1, "same_bot_already_active": 4},
+            facts["server_reason_class_counts"],
+        )
+
+    def test_an_excerpt_holding_a_runtime_token_is_dropped(self) -> None:
+        token = _TOKENS["lisjong-baseline"]
+        runner_log = self.root / "continuous.log"
+        runner_log.write_text(
+            "continuous-event: kind=transport_failure elapsed_seconds=1.0 "
+            "profile=lisjong-dev completed_games=0 failed_games=1 "
+            "consecutive_failures=1 exception=TransportError backoff_seconds=5 "
+            "outcome=retry phase=connect operation=connect http_status=403 "
+            "server_reason_class=other "
+            f"server_reason_excerpt=x%20{token[:20]}\n",
+            encoding="utf-8",
+        )
+
+        (event,) = read_runner_facts(runner_log, _TOKENS.values())[
+            "transport_failure_events"
+        ]
+
+        self.assertIsNone(event["server_reason_excerpt"])
+        self.assertEqual(403, event["http_status"])
+        self.assertEqual("other", event["server_reason_class"])
+
+
+class SummarySizeTest(unittest.TestCase):
+    """The summary must still fit the SSM stdout sentinel with MAX_BOTS bots."""
+
+    @staticmethod
+    def _worst_event() -> dict:
+        return {
+            "elapsed_seconds": 86399.9,
+            "exception_type": "UnexpectedDisconnectError",
+            "consecutive_failures": 999,
+            "backoff_seconds": 40.0,
+            "outcome": "failure_budget_exhausted",
+            "phase": "before_start_game",
+            "operation": "connect",
+            "http_status": 403,
+            "close_code_received": 4000,
+            "close_code_sent": 1011,
+            "server_reason_class": "same_bot_already_active",
+            "server_reason_excerpt": "x" * 80,
+            "local_close_reason_class": "keepalive_timeout",
+            "requests_received": 999,
+            "last_decision_elapsed_seconds": 12345.678,
+        }
+
+    def test_worst_case_summary_is_trimmed_to_the_budget(self) -> None:
+        entries = []
+        for index in range(MAX_BOTS):
+            entries.append(
+                {
+                    "profile": f"bot-{index}",
+                    "verification": {"provenance": {"field": "v" * 1200}},
+                    "runner_facts": {
+                        "transport_failure_event_count": 999,
+                        "transport_failure_phase_counts": {"before_start_game": 999},
+                        "first_transport_failure_event": self._worst_event(),
+                        "transport_failure_events": [
+                            self._worst_event() for _ in range(MAX_RUNNER_FACT_EVENTS)
+                        ],
+                    },
+                }
+            )
+        summary = {"schema_id": INSTANCE_SUMMARY_SCHEMA_ID, "bots": entries}
+
+        _fit_summary(summary)
+
+        rendered = json.dumps(summary, sort_keys=True, separators=(",", ":"))
+        self.assertLessEqual(len(rendered), MAX_SUMMARY_JSON_CHARS)
+        self.assertLess(len(base64.b64encode(rendered.encode())), 24000)
+        self.assertTrue(summary["runner_facts_trimmed"])
+        for entry in entries:
+            self.assertEqual(
+                999, entry["runner_facts"]["transport_failure_event_count"]
+            )
+
+    def test_small_summary_is_not_trimmed(self) -> None:
+        summary = {
+            "bots": [
+                {
+                    "runner_facts": {
+                        "first_transport_failure_event": self._worst_event(),
+                        "transport_failure_events": [self._worst_event()],
+                    }
+                }
+            ]
+        }
+        _fit_summary(summary)
+        self.assertFalse(summary["runner_facts_trimmed"])
+        self.assertEqual(
+            1, len(summary["bots"][0]["runner_facts"]["transport_failure_events"])
+        )
+
+
 class ReadRunnerFactsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.log = Path(self.enterContext(tempfile.TemporaryDirectory())) / "log"
@@ -439,6 +629,7 @@ class ReadRunnerFactsTest(unittest.TestCase):
                     "consecutive_failures": 1,
                     "backoff_seconds": 5.0,
                     "outcome": "retry",
+                    **_NO_DIAGNOSTICS,
                 }
             ],
             facts["transport_failure_events"],

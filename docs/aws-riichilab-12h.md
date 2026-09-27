@@ -251,11 +251,14 @@ Lifecycle:
   bot's evidence for **all** runtime tokens of the run. Teardown is armed only
   after that.
 - The completion summary is `lisjong-arena-aws-riichilab-instance-run-summary`
-  v2. Its fields:
+  v3. Its fields:
   - `bots[]`: profile, secret id, spectate port, exit code, verification or
     `failure_reason`, and `runner_facts`
   - `stop_request_source`
   - `status`
+  - `runner_facts_trimmed`: whether event detail was trimmed to keep the
+    summary within `MAX_SUMMARY_JSON_CHARS` (15,000 characters, so that the
+    base64 sentinel stays under the 24,000-character SSM stdout limit)
 - `runner_facts` (Issue #404) is read back from each bot's `continuous.log`
   before teardown. It is informational only and never changes PASS / FAIL.
   It keeps a failed bot diagnosable after the instance is gone:
@@ -267,6 +270,31 @@ Lifecycle:
     `transport_failure_events` (elapsed seconds, exception class,
     consecutive failure number, backoff seconds, `retry` /
     `failure_budget_exhausted` / `duration_reached`)
+  - `first_transport_failure_event`: the failure that started the sequence,
+    kept apart from the latest events
+  - Transport diagnostics (Issue #411), per event:
+    - `phase`: `connect`, `before_start_game`, or `in_game`
+    - `operation`: `connect`, `recv`, or `send`
+    - `http_status`: the status of a rejected handshake
+    - `close_code_received` / `close_code_sent`: the WebSocket close codes
+    - `server_reason_class`: the server's reason (an untyped
+      `{"error": ...}` message, a rejected handshake body, or the received
+      close reason)
+    - `local_close_reason_class`: the reason this client sent
+    - `server_reason_excerpt`: a bounded (80 characters), redacted excerpt,
+      kept only when explicitly confirmed free of the run's runtime tokens,
+      their fragments, and Authorization / Bearer material
+    - `requests_received`
+    - `last_decision_elapsed_seconds`: how long the most recent
+      `request_action` handling took, Policy decision included. It is not a
+      decision in flight at the failure.
+
+    The classes are `none`, `same_bot_already_active`,
+    `token_or_bot_rejected`, `keepalive_timeout`, and `other`. They are
+    keyword-based, because RiichiLab does not document its rejection texts.
+    The class is the canonical evidence; `other` together with the excerpt is
+    what shows an unknown text.
+  - `transport_failure_phase_counts` / `server_reason_class_counts`
   - `source` shows where the counters came from: `summary`, `terminal`, or
     `events` (the runner was killed before it printed either)
 
@@ -275,7 +303,9 @@ Lifecycle:
   exception class names only, never messages, payloads, or credentials. The
   verifier copies only allow-listed values that match strict patterns.
 - On a failed run, the collector prints one `BOT <profile> runner: ...` line
-  per bot with these facts.
+  per bot with these facts. When the summary has transport diagnostics, it
+  also prints `BOT <profile> transport: ...` with the first failure's phase
+  and the counts.
 - Overall PASS requires every bot to pass. A FAIL summary is still returned. The
   bootstrap then exits non-zero, and the collector saves `completion.json`
   before it terminates the instance.

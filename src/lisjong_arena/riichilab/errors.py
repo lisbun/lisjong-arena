@@ -28,7 +28,13 @@ class ProtocolError(RiichiLabClientError):
 
 
 class TransportError(RiichiLabClientError):
-    """WebSocket接続そのものの送受信が失敗した場合。"""
+    """WebSocket接続そのものの送受信が失敗した場合。
+
+    `diagnostics`(Issue #411)は`connect_transport()`が設定するsecret-safeな
+    `TransportDiagnostics`で、未設定時は`None`である。
+    """
+
+    diagnostics: object | None = None
 
 
 class UnexpectedDisconnectError(TransportError):

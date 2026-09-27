@@ -290,6 +290,26 @@ if ($status -in @("Pending", "InProgress", "Delayed")) {
     return
 }
 
+function Get-OptionalValue {
+    param($Object, [string]$Name)
+    if ($null -eq $Object) {
+        return $null
+    }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+    return $property.Value
+}
+
+function Format-Counts {
+    param($Counts)
+    if ($null -eq $Counts) {
+        return ""
+    }
+    return (@($Counts.PSObject.Properties | ForEach-Object { "$($_.Name):$($_.Value)" }) -join ",")
+}
+
 function Get-CompletionSummary {
     param([string]$Stdout)
     $sentinel = [regex]::Match($Stdout, "LISJONG_COMPLETION_JSON_B64=([A-Za-z0-9+/=]+)")
@@ -337,6 +357,17 @@ if ($status -ne "Success") {
                         "last_failure=$($facts.last_failure_type) stopped=$($facts.stopped_reason) " +
                         "terminal=$($facts.terminal_exception_type) " +
                         "transport_failures=$($facts.transport_failure_event_count)")
+                    # Issue #411: where the first failure happened and how the
+                    # failures split by phase / server reason. Summaries from
+                    # older revisions lack these fields.
+                    $first = Get-OptionalValue $facts "first_transport_failure_event"
+                    if ($null -ne $first) {
+                        Write-Host ("BOT $($botResult.profile) transport: " +
+                            "first=$(Get-OptionalValue $first 'phase')/$(Get-OptionalValue $first 'operation') " +
+                            "first_close_received=$(Get-OptionalValue $first 'close_code_received') " +
+                            "phases=$(Format-Counts (Get-OptionalValue $facts 'transport_failure_phase_counts')) " +
+                            "reasons=$(Format-Counts (Get-OptionalValue $facts 'server_reason_class_counts'))")
+                    }
                 }
             }
         }
