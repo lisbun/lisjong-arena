@@ -117,7 +117,13 @@ class LagEvidenceTest(unittest.TestCase):
 
 
 class CloseWindowTest(unittest.TestCase):
-    def test_stall_ending_inside_the_close_window_spans_the_deadline(self) -> None:
+    """Only "a material lag ended inside the close window" is asserted.
+
+    No keepalive PING time or deadline is observed, so no test claims that a
+    stall crossed the keepalive deadline.
+    """
+
+    def test_stall_ending_inside_the_close_window_is_reported(self) -> None:
         timing = _timing(_Clock())
         _tick(timing, 0.5, 0.5)
         _tick(timing, 1.0, 1.0)  # last seen OPEN
@@ -128,17 +134,18 @@ class CloseWindowTest(unittest.TestCase):
         self.assertEqual(1.0, evidence.last_open_seen_elapsed)
         self.assertEqual(23.0, evidence.first_not_open_seen_elapsed)
         self.assertEqual("CLOSING", evidence.first_not_open_state)
-        self.assertAlmostEqual(21.5, evidence.lag_at_close_seconds)
-        self.assertIs(True, evidence.lag_spans_keepalive_deadline)
+        self.assertAlmostEqual(21.5, evidence.max_lag_ending_in_close_window_seconds)
+        self.assertIs(True, evidence.material_lag_ended_in_close_window)
 
-    def test_stall_seen_open_then_closing_on_the_next_tick_spans(self) -> None:
-        # The probe may wake up before the keepalive task fails the connection.
+    def test_stall_ending_while_still_seen_open_is_in_the_window(self) -> None:
+        # The probe may wake up before the close is seen; the window runs from
+        # that last OPEN sample, so the stall still ends inside it.
         timing = _timing(_Clock())
         _tick(timing, 0.5, 0.5)
         _tick(timing, 1.0, 22.0)  # stall ends, still OPEN
         _tick(timing, 22.5, 22.5, state="CLOSING")
 
-        self.assertIs(True, timing.evidence().lag_spans_keepalive_deadline)
+        self.assertIs(True, timing.evidence().material_lag_ended_in_close_window)
 
     def test_an_earlier_stall_does_not_count_for_the_close(self) -> None:
         timing = _timing(_Clock())
@@ -149,8 +156,8 @@ class CloseWindowTest(unittest.TestCase):
 
         evidence = timing.evidence()
 
-        self.assertEqual(0.0, evidence.lag_at_close_seconds)
-        self.assertIs(False, evidence.lag_spans_keepalive_deadline)
+        self.assertEqual(0.0, evidence.max_lag_ending_in_close_window_seconds)
+        self.assertIs(False, evidence.material_lag_ended_in_close_window)
         self.assertAlmostEqual(4.5, evidence.max_event_loop_lag_seconds)
 
     def test_close_window_not_seen_is_unknown(self) -> None:
@@ -159,8 +166,8 @@ class CloseWindowTest(unittest.TestCase):
 
         evidence = timing.evidence()
 
-        self.assertIsNone(evidence.lag_at_close_seconds)
-        self.assertIsNone(evidence.lag_spans_keepalive_deadline)
+        self.assertIsNone(evidence.max_lag_ending_in_close_window_seconds)
+        self.assertIsNone(evidence.material_lag_ended_in_close_window)
 
     def test_evidence_takes_a_final_state_sample_and_the_open_lag(self) -> None:
         clock = _Clock(100.0)
@@ -179,7 +186,7 @@ class CloseWindowTest(unittest.TestCase):
         pending = evidence.recent_lags[-1]
         self.assertTrue(pending.pending)
         self.assertAlmostEqual(24.0, pending.lag_seconds)
-        self.assertIs(True, evidence.lag_spans_keepalive_deadline)
+        self.assertIs(True, evidence.material_lag_ended_in_close_window)
         self.assertAlmostEqual(24.0, evidence.max_event_loop_lag_seconds)
 
     def test_unknown_state_names_are_not_kept_as_text(self) -> None:
@@ -294,7 +301,7 @@ class EvidenceDictTest(unittest.TestCase):
 
         self.assertEqual(9.123, data["decisions"][0]["decision_end_elapsed"])
         self.assertEqual(["accepted"], data["decisions"][0]["ack_statuses"])
-        self.assertTrue(data["lag_spans_keepalive_deadline"])
+        self.assertTrue(data["material_lag_ended_in_close_window"])
         strings = set()
 
         def _collect(value):
@@ -537,9 +544,10 @@ class ConnectTransportTimingTest(unittest.TestCase):
         self.assertEqual([], leftover)
         return caught.exception
 
-    def test_loop_stall_across_a_keepalive_close_is_evidenced(self) -> None:
+    def test_loop_stall_before_a_keepalive_close_ends_in_the_window(self) -> None:
         # A real (short) blocking stall on the event loop, as a synchronous
-        # decision would cause, ending with the keepalive close.
+        # decision would cause, followed by the keepalive close.  The evidence
+        # shows the stall ended in the close window, nothing about the PING.
         steps = iter(["start", "stall"])
 
         async def _recv(connection):
@@ -562,8 +570,8 @@ class ConnectTransportTimingTest(unittest.TestCase):
         self.assertEqual("keepalive_timeout", diagnostics.local_close_reason_class)
         timing = diagnostics.timing
         self.assertIsNotNone(timing)
-        self.assertIs(True, timing.lag_spans_keepalive_deadline)
-        self.assertGreaterEqual(timing.lag_at_close_seconds, 0.2)
+        self.assertIs(True, timing.material_lag_ended_in_close_window)
+        self.assertGreaterEqual(timing.max_lag_ending_in_close_window_seconds, 0.2)
         self.assertEqual(0.0, timing.max_lag_overlapping_decision_seconds)
         self.assertEqual("CLOSING", timing.first_not_open_state)
         self.assertEqual(1, timing.keepalive_sample_count)

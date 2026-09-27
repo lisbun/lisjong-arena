@@ -117,8 +117,8 @@ summary lines stay in the format that `aws_run_verify` parses.
 
 Each `transport_failure` event that happened inside a connection carries
 connection timing scalars on its `continuous-event:` line:
-`max_event_loop_lag_seconds`, `lag_at_close_seconds`,
-`lag_spans_keepalive_deadline`, `max_lag_overlapping_decision_seconds`,
+`max_event_loop_lag_seconds`, `max_lag_ending_in_close_window_seconds`,
+`material_lag_ended_in_close_window`, `max_lag_overlapping_decision_seconds`,
 `max_lag_outside_decision_seconds`, `max_recent_decision_seconds`,
 `max_recent_keepalive_latency_seconds`, `defaulted_acks`, and `stale_acks`.
 

@@ -47,8 +47,8 @@ from dataclasses import dataclass
 #: for a whole hanchan.
 PROBE_INTERVAL_SECONDS = 0.5
 #: A lag at or above this is "material": it is kept in the recent ring and
-#: counts for `lag_spans_keepalive_deadline`.  Sub-second scheduling noise and
-#: short decisions (which the decision ring already shows) stay out.
+#: counts for `material_lag_ended_in_close_window`.  Sub-second scheduling
+#: noise and short decisions (which the decision ring already shows) stay out.
 MATERIAL_LAG_SECONDS = 1.0
 
 RECENT_LAG_CAPACITY = 16
@@ -148,35 +148,40 @@ class TransportTimingEvidence:
         return self.recent_lags + self.largest_lags
 
     @property
-    def lag_at_close_seconds(self) -> float | None:
+    def max_lag_ending_in_close_window_seconds(self) -> float | None:
         """Largest kept (material) lag whose wake-up falls in the close window.
 
         The close window is `[last seen OPEN, first seen not OPEN]`; the local
-        or remote close happened inside it.  A keepalive timeout is processed
-        right when a stall that spans its deadline ends, so such a stall wakes
-        the probe inside this window.  `0.0` when no kept lag ends there,
+        or remote close happened inside it.  `0.0` when no kept lag ends there,
         `None` when the window was not seen.
+
+        The keepalive PING time and its deadline are not observed, so this
+        does not show that a stall crossed the keepalive deadline.
         """
         end = self.first_not_open_seen_elapsed
         if end is None:
             return None
         start = self.last_open_seen_elapsed
-        spans = [
+        ending = [
             lag.lag_seconds
             for lag in self._lags()
             if lag.actual_elapsed <= end
             and (start is None or lag.actual_elapsed >= start)
         ]
-        return max(spans, default=0.0)
+        return max(ending, default=0.0)
 
     @property
-    def lag_spans_keepalive_deadline(self) -> bool | None:
+    def material_lag_ended_in_close_window(self) -> bool | None:
         """Whether a material loop stall ended inside the close window.
 
-        Meaningful for a keepalive timeout (see `local_close_reason_class`);
-        `None` when the close window was not observed.
+        `None` when the close window was not observed.  For a keepalive
+        timeout (see `local_close_reason_class`), `True` is consistent with a
+        loop stall near the keepalive deadline, but does not prove that the
+        stall crossed the deadline: neither the PING time nor the deadline is
+        observed, and a stall that ended just before the close is counted
+        too.
         """
-        lag = self.lag_at_close_seconds
+        lag = self.max_lag_ending_in_close_window_seconds
         return None if lag is None else lag > 0.0
 
     @property
@@ -213,8 +218,10 @@ class TransportTimingEvidence:
             "probe_ticks": self.probe_ticks,
             "probe_failed": self.probe_failed,
             "max_event_loop_lag_seconds": _ms(self.max_event_loop_lag_seconds),
-            "lag_at_close_seconds": _ms(self.lag_at_close_seconds),
-            "lag_spans_keepalive_deadline": self.lag_spans_keepalive_deadline,
+            "max_lag_ending_in_close_window_seconds": _ms(
+                self.max_lag_ending_in_close_window_seconds
+            ),
+            "material_lag_ended_in_close_window": self.material_lag_ended_in_close_window,
             "max_lag_overlapping_decision_seconds": _ms(
                 self.max_lag_overlapping_decision_seconds
             ),

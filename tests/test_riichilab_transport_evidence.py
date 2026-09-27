@@ -98,8 +98,8 @@ class EventLineTest(unittest.TestCase):
             line.endswith(
                 "last_decision_elapsed_seconds=8.507 "
                 "max_event_loop_lag_seconds=22.100 "
-                "lag_at_close_seconds=22.100 "
-                "lag_spans_keepalive_deadline=true "
+                "max_lag_ending_in_close_window_seconds=22.100 "
+                "material_lag_ended_in_close_window=true "
                 "max_lag_overlapping_decision_seconds=22.000 "
                 "max_lag_outside_decision_seconds=0.100 "
                 "max_recent_decision_seconds=22.490 "
@@ -189,7 +189,9 @@ class EvidenceCliTest(unittest.TestCase):
         self.assertEqual(2, len(lines))
         first, second = (json.loads(line) for line in lines)
         self.assertEqual([1, 2], [first["sequence"], second["sequence"]])
-        self.assertTrue(first["transport"]["timing"]["lag_spans_keepalive_deadline"])
+        self.assertTrue(
+            first["transport"]["timing"]["material_lag_ended_in_close_window"]
+        )
         self.assertIsNone(second["transport"])
         content = self.path.read_text(encoding="utf-8")
         self.assertNotIn(_TOKEN, content)
@@ -271,8 +273,8 @@ class RunnerFactsTimingTest(unittest.TestCase):
         self.assertEqual(
             {
                 "max_event_loop_lag_seconds": 22.1,
-                "lag_at_close_seconds": 22.1,
-                "lag_spans_keepalive_deadline": True,
+                "max_lag_ending_in_close_window_seconds": 22.1,
+                "material_lag_ended_in_close_window": True,
                 "max_lag_overlapping_decision_seconds": 22.0,
                 "max_lag_outside_decision_seconds": 0.1,
                 "max_recent_decision_seconds": 22.49,
@@ -289,17 +291,17 @@ class RunnerFactsTimingTest(unittest.TestCase):
             log.write_text(
                 "continuous-event: kind=transport_failure elapsed_seconds=1.0 "
                 "exception=TransportError max_event_loop_lag_seconds=-1 "
-                "lag_spans_keepalive_deadline=maybe defaulted_acks=x "
-                f"lag_at_close_seconds={_TOKEN}\n",
+                "material_lag_ended_in_close_window=maybe defaulted_acks=x "
+                f"max_lag_ending_in_close_window_seconds={_TOKEN}\n",
                 encoding="utf-8",
             )
             (event,) = read_runner_facts(log, (_TOKEN,))["transport_failure_events"]
 
         timing = event["timing"]
         self.assertIsNone(timing["max_event_loop_lag_seconds"])
-        self.assertIsNone(timing["lag_spans_keepalive_deadline"])
+        self.assertIsNone(timing["material_lag_ended_in_close_window"])
         self.assertIsNone(timing["defaulted_acks"])
-        self.assertIsNone(timing["lag_at_close_seconds"])
+        self.assertIsNone(timing["max_lag_ending_in_close_window_seconds"])
         self.assertNotIn(_TOKEN, json.dumps(event))
 
 

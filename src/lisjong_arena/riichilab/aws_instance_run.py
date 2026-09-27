@@ -17,8 +17,8 @@ events).  They are informational and never change a bot's PASS / FAIL; they
 keep a failed bot diagnosable after the instance has been torn down.
 
 Issue #416: each transport-failure event also carries a few connection timing
-scalars (event-loop lag, lag at the close, decision / keepalive maxima, ack
-counts).  The full bounded rings stay in the bot's ``transport-evidence.jsonl``,
+scalars (event-loop lag, lag ending in the close window, decision / keepalive
+maxima, ack counts).  The full bounded rings stay in the bot's ``transport-evidence.jsonl``,
 which the verifier scans for credentials together with the other evidence.
 
 It does not start processes or provision AWS resources.
@@ -230,7 +230,7 @@ TRANSPORT_EVIDENCE_FILENAME = "transport-evidence.jsonl"
 #: Issue #416 timing scalars copied from an event: numbers (seconds) ...
 _TIMING_SECONDS_FIELDS = (
     "max_event_loop_lag_seconds",
-    "lag_at_close_seconds",
+    "max_lag_ending_in_close_window_seconds",
     "max_lag_overlapping_decision_seconds",
     "max_lag_outside_decision_seconds",
     "max_recent_decision_seconds",
@@ -248,8 +248,8 @@ def _timing_scalars(event: dict[str, str]) -> dict[str, Any] | None:
     values: dict[str, Any] = {
         name: _safe_number(event.get(name, "")) for name in _TIMING_SECONDS_FIELDS
     }
-    values["lag_spans_keepalive_deadline"] = _BOOLEANS.get(
-        event.get("lag_spans_keepalive_deadline", "")
+    values["material_lag_ended_in_close_window"] = _BOOLEANS.get(
+        event.get("material_lag_ended_in_close_window", "")
     )
     for name in _TIMING_COUNT_FIELDS:
         values[name] = _safe_int(event.get(name, ""))

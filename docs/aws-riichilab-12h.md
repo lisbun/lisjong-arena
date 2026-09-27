@@ -358,8 +358,8 @@ The `continuous-event:` line and `runner_facts.*.timing` carry scalars only:
 | field | meaning |
 | --- | --- |
 | `max_event_loop_lag_seconds` | largest probe lag on the connection |
-| `lag_at_close_seconds` | largest material lag that ended inside the close window; `0` when none; `null` when the window was not seen |
-| `lag_spans_keepalive_deadline` | whether such a lag exists. For a keepalive timeout, a stall that spans the deadline ends inside the close window, because the timeout is processed right when the stall ends. |
+| `max_lag_ending_in_close_window_seconds` | largest material lag that ended inside the close window; `0` when none; `null` when the window was not seen |
+| `material_lag_ended_in_close_window` | whether such a lag exists (`null` when the window was not seen) |
 | `max_lag_overlapping_decision_seconds` / `max_lag_outside_decision_seconds` | the largest part of a kept lag covered / not covered by recorded decisions |
 | `max_recent_decision_seconds` | the longest of the recent decisions |
 | `max_recent_keepalive_latency_seconds` | the largest recent successful keepalive latency |
@@ -371,17 +371,26 @@ holds exception class names, fixed vocabularies, and numbers only, with no
 server text excerpt. Times are seconds from the connection's own monotonic
 origin.
 
-How to read one keepalive timeout:
+The keepalive PING time and its deadline are not observed. For a keepalive
+timeout, `material_lag_ended_in_close_window=true` is consistent with a loop
+stall near the deadline. It does not prove that the stall crossed the
+deadline: a stall that ended shortly before the close also counts.
 
-- `lag_spans_keepalive_deadline=true` with the lag overlapping a decision:
-  synchronous Policy work contributed.
-- `lag_spans_keepalive_deadline=true` outside any decision: the loop or the
-  process stalled for another reason.
-- `lag_spans_keepalive_deadline=false` with rising keepalive latencies: the
-  PONG itself was late or missing (network / server side).
+How to read one keepalive timeout (indications for the next experiment, not
+proof):
+
+- `material_lag_ended_in_close_window=true` with the lag overlapping a
+  decision: consistent with synchronous Policy work contributing.
+- `material_lag_ended_in_close_window=true` outside any decision: consistent
+  with the loop or the process stalling for another reason.
+- `material_lag_ended_in_close_window=false` with rising keepalive latencies:
+  points at the PONG itself being late or missing (network / server side).
 
 Limits, by construction:
 
+- The keepalive PING time and deadline are not observed. A lag ending in the
+  close window is consistent with, but does not prove, a stall across the
+  deadline.
 - The PONG of the failing PING is never observed. When the timeout fires, the
   PONG may already sit in the socket buffer, and `websockets` discards all
   later input once it fails the connection.

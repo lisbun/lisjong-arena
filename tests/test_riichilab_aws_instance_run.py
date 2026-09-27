@@ -578,8 +578,8 @@ class SummarySizeTest(unittest.TestCase):
             # Issue #416 timing scalars at their widest.
             "timing": {
                 "max_event_loop_lag_seconds": 123456789.123456,
-                "lag_at_close_seconds": 123456789.123456,
-                "lag_spans_keepalive_deadline": False,
+                "max_lag_ending_in_close_window_seconds": 123456789.123456,
+                "material_lag_ended_in_close_window": False,
                 "max_lag_overlapping_decision_seconds": 123456789.123456,
                 "max_lag_outside_decision_seconds": 123456789.123456,
                 "max_recent_decision_seconds": 123456789.123456,

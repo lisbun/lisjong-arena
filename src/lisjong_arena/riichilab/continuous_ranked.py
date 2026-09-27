@@ -190,8 +190,8 @@ CONTINUOUS_EVENT_PREFIX = "continuous-event:"
 #: transport failure行へ載せるIssue #416 timing scalarのkey(出力順)。
 TIMING_EVENT_FIELDS = (
     "max_event_loop_lag_seconds",
-    "lag_at_close_seconds",
-    "lag_spans_keepalive_deadline",
+    "max_lag_ending_in_close_window_seconds",
+    "material_lag_ended_in_close_window",
     "max_lag_overlapping_decision_seconds",
     "max_lag_outside_decision_seconds",
     "max_recent_decision_seconds",
@@ -245,12 +245,14 @@ def _timing_fields(timing: TransportTimingEvidence | None) -> list[str]:
     """
     if timing is None:
         return []
-    spans = timing.lag_spans_keepalive_deadline
+    ended = timing.material_lag_ended_in_close_window
     values = {
         "max_event_loop_lag_seconds": _seconds_value(timing.max_event_loop_lag_seconds),
-        "lag_at_close_seconds": _seconds_value(timing.lag_at_close_seconds),
-        "lag_spans_keepalive_deadline": (
-            "none" if spans is None else str(spans).lower()
+        "max_lag_ending_in_close_window_seconds": _seconds_value(
+            timing.max_lag_ending_in_close_window_seconds
+        ),
+        "material_lag_ended_in_close_window": (
+            "none" if ended is None else str(ended).lower()
         ),
         "max_lag_overlapping_decision_seconds": _seconds_value(
             timing.max_lag_overlapping_decision_seconds
