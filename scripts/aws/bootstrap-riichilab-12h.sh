@@ -160,7 +160,8 @@ fi
 mkdir -p "$WORK_ROOT"
 chmod 700 "$WORK_ROOT"
 BOOTSTRAP_LOG="$WORK_ROOT/bootstrap.log"
-# Per-bot evidence: $BOTS_DIR/<profile>/{records,continuous.log,exit_code,stop_utc}.
+# Per-bot evidence: $BOTS_DIR/<profile>/{records,continuous.log,exit_code,stop_utc}
+# and, without spectate, transport-evidence.jsonl (Issue #416).
 # Profiles are unique, so no two bots share a record path or log.
 BOTS_DIR="$WORK_ROOT/bots"
 REPO_DIR="$WORK_ROOT/repo"
@@ -378,6 +379,10 @@ if ! grep -q -- "--stop-file" <<<"$CONTINUOUS_HELP"; then
     echo "continuous_ranked does not expose --stop-file" >&2
     exit 1
 fi
+if ! grep -q -- "--transport-evidence" <<<"$CONTINUOUS_HELP"; then
+    echo "continuous_ranked does not expose --transport-evidence" >&2
+    exit 1
+fi
 
 RUNNER_BOUND_ARGS=()
 VERIFY_BOUND_ARGS=("${BOT_CONFIG_ARGS[@]}" --stop-file "$STOP_FILE")
@@ -475,6 +480,9 @@ start_bot() {
             exec "$PYTHON" -m lisjong_play.riichilab_html --continuous "${args[@]}"
         ) >"$directory/continuous.log" 2>&1 &
     else
+        # Issue #416: bounded connection timing evidence per transport failure.
+        # The spectate viewer builds its own runner argv and does not pass it.
+        args+=(--transport-evidence "$directory/transport-evidence.jsonl")
         (
             export "${BOT_ENV_VARS[$profile]}=${BOT_TOKENS[$profile]}"
             unset BOT_TOKENS

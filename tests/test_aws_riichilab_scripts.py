@@ -373,6 +373,11 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
         )
         self.assertIn("VERIFY_BOUND_ARGS+=(--until-stopped)", text)
         self.assertIn('grep -q -- "--stop-file" <<<"$CONTINUOUS_HELP"', text)
+        # Issue #416: bounded timing evidence next to the bot's other evidence.
+        self.assertIn('grep -q -- "--transport-evidence" <<<"$CONTINUOUS_HELP"', text)
+        self.assertIn(
+            'args+=(--transport-evidence "$directory/transport-evidence.jsonl")', text
+        )
         # Every bot (both runner kinds) and the verifier use the bound arguments.
         self.assertEqual(1, text.count('"${RUNNER_BOUND_ARGS[@]}"'))
         self.assertEqual(1, text.count('"${VERIFY_BOUND_ARGS[@]}"'))

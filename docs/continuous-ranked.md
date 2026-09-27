@@ -113,6 +113,32 @@ is the module CLI as a public function, so a same-process presentation consumer
 credential resolution, output, and exit code instead of duplicating them. The
 summary lines stay in the format that `aws_run_verify` parses.
 
+## Connection timing evidence (opt-in file, Issue #416)
+
+Each `transport_failure` event that happened inside a connection carries
+connection timing scalars on its `continuous-event:` line:
+`max_event_loop_lag_seconds`, `lag_at_close_seconds`,
+`lag_spans_keepalive_deadline`, `max_lag_overlapping_decision_seconds`,
+`max_lag_outside_decision_seconds`, `max_recent_decision_seconds`,
+`max_recent_keepalive_latency_seconds`, `defaulted_acks`, and `stale_acks`.
+
+`--transport-evidence PATH` also writes the bounded rings behind those scalars
+to PATH, one JSON line per transport failure (at most 32; the first failures
+are kept):
+
+```powershell
+python -m lisjong_arena.riichilab.continuous_ranked --profile lisjong-dev --duration-seconds 3600 --record-dir .\records --transport-evidence .\transport-evidence.jsonl
+```
+
+- PATH must not exist yet; the runner refuses an existing file.
+- A write failure prints the error class once and stops further writes. It
+  never changes the ranked run.
+- The file holds class names, fixed vocabularies, and numbers only. It holds
+  no server text, payload, token, or Authorization value.
+
+The fields, how to read them, and the observability limits are described in
+`docs/aws-riichilab-12h.md` ("Connection timing evidence").
+
 ## Manual smoke after merge
 
 The first live smoke for Issue #232 is intentionally small:

@@ -125,13 +125,14 @@ def _scan_paths(
     runner_log: Path,
     token: str,
     additional_tokens: tuple[str, ...] = (),
+    additional_paths: tuple[Path, ...] = (),
 ) -> dict[str, bool]:
     if not token or any(not extra for extra in additional_tokens):
         raise AwsRunVerificationError(
             "runtime token is unavailable for exact-byte scan"
         )
     all_token_bytes = [value.encode("utf-8") for value in (token, *additional_tokens)]
-    paths = [runner_log]
+    paths = [runner_log, *additional_paths]
     paths.extend(path for path in record_dir.rglob("*") if path.is_file())
 
     exact_token = False
@@ -180,6 +181,7 @@ def verify_run(
     elapsed_seconds: float,
     stop_file: Path | None = None,
     additional_tokens: tuple[str, ...] = (),
+    additional_scan_paths: tuple[Path, ...] = (),
 ) -> dict[str, Any]:
     """Strict-read all records and return a secret-safe completion document.
 
@@ -189,6 +191,8 @@ def verify_run(
     for any other reason fails closed.  An existing stop file must name a known
     source.  ``additional_tokens`` are the other bots' runtime tokens of the same
     run (Issue #386); their exact bytes must not be persisted either.
+    ``additional_scan_paths`` are further evidence files of the bot (Issue #416
+    transport evidence) that are scanned for credential material as well.
     """
 
     if expected_duration_seconds is not None and expected_duration_seconds <= 0:
@@ -317,6 +321,7 @@ def verify_run(
         runner_log=runner_log,
         token=token,
         additional_tokens=tuple(additional_tokens),
+        additional_paths=tuple(additional_scan_paths),
     )
 
     return {

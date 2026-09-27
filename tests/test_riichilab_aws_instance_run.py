@@ -26,6 +26,7 @@ from lisjong_arena.riichilab.aws_instance_run import (
     MAX_RUNNER_FACT_EVENTS,
     MAX_SUMMARY_JSON_CHARS,
     SUMMARY_BUDGET_EXCEEDED_REASON,
+    TRANSPORT_EVIDENCE_FILENAME,
     AwsInstanceRunConfigError,
     _fit_summary,
     _run_cli,
@@ -369,6 +370,33 @@ class VerifyInstanceRunTest(unittest.TestCase):
         self.assertEqual("runtime token bytes were persisted", dev["failure_reason"])
         self.assertNotIn(_TOKENS["lisjong-baseline"], json.dumps(summary))
 
+    def test_a_token_in_the_transport_evidence_fails_that_bot(self) -> None:
+        # Issue #416: the timing evidence file is scanned like the other evidence.
+        self.stop_file.write_text("operator\n", encoding="ascii")
+        self._bot("lisjong-dev")
+        self._bot("lisjong-baseline")
+        evidence = bot_directory(self.root, "lisjong-dev") / TRANSPORT_EVIDENCE_FILENAME
+        evidence.write_text(
+            json.dumps({"leak": _TOKENS["lisjong-baseline"]}) + "\n", encoding="utf-8"
+        )
+
+        summary = self._verify()
+
+        self.assertEqual("FAIL", summary["status"])
+        dev, baseline = summary["bots"]
+        self.assertEqual("runtime token bytes were persisted", dev["failure_reason"])
+        self.assertEqual("PASS", baseline["status"])
+        self.assertNotIn(_TOKENS["lisjong-baseline"], json.dumps(summary))
+
+    def test_a_clean_transport_evidence_file_passes(self) -> None:
+        self.stop_file.write_text("operator\n", encoding="ascii")
+        self._bot("lisjong-dev")
+        self._bot("lisjong-baseline")
+        evidence = bot_directory(self.root, "lisjong-dev") / TRANSPORT_EVIDENCE_FILENAME
+        evidence.write_text('{"sequence":1}\n', encoding="utf-8")
+
+        self.assertEqual("PASS", self._verify()["status"])
+
     def test_missing_bot_evidence_fails_that_bot(self) -> None:
         self.stop_file.write_text("operator\n", encoding="ascii")
         self._bot("lisjong-dev")
@@ -420,6 +448,7 @@ _NO_DIAGNOSTICS = {
     "local_close_reason_class": None,
     "requests_received": None,
     "last_decision_elapsed_seconds": None,
+    "timing": None,
 }
 
 
@@ -485,6 +514,7 @@ class TransportDiagnosticsFactsTest(unittest.TestCase):
                 "local_close_reason_class": "none",
                 "requests_received": 41,
                 "last_decision_elapsed_seconds": 2.345,
+                "timing": None,
             },
             facts["first_transport_failure_event"],
         )
@@ -545,6 +575,18 @@ class SummarySizeTest(unittest.TestCase):
             "local_close_reason_class": "keepalive_timeout",
             "requests_received": 999,
             "last_decision_elapsed_seconds": 12345.678,
+            # Issue #416 timing scalars at their widest.
+            "timing": {
+                "max_event_loop_lag_seconds": 123456789.123456,
+                "lag_at_close_seconds": 123456789.123456,
+                "lag_spans_keepalive_deadline": False,
+                "max_lag_overlapping_decision_seconds": 123456789.123456,
+                "max_lag_outside_decision_seconds": 123456789.123456,
+                "max_recent_decision_seconds": 123456789.123456,
+                "max_recent_keepalive_latency_seconds": 123456789.123456,
+                "defaulted_acks": 999999999,
+                "stale_acks": 999999999,
+            },
         }
 
     @staticmethod
@@ -610,6 +652,10 @@ class SummarySizeTest(unittest.TestCase):
             self.assertEqual(
                 999, entry["runner_facts"]["transport_failure_event_count"]
             )
+            # The failure that started the sequence keeps its timing (#416).
+            first = entry["runner_facts"]["first_transport_failure_event"]
+            self.assertIsNotNone(first)
+            self.assertEqual(self._worst_event()["timing"], first["timing"])
 
     def test_summary_exactly_at_the_cap_is_kept_whole(self) -> None:
         summary = self._one_bot(self._padding_for(MAX_SUMMARY_JSON_CHARS))

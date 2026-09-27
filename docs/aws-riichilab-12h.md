@@ -239,6 +239,8 @@ Lifecycle:
   `/var/lib/lisjong-riichilab-313/bots/<profile>/`:
   - `records/`
   - `continuous.log`
+  - `transport-evidence.jsonl` (Issue #416, without spectate only; see
+    "Connection timing evidence" below)
   - `exit_code`
   - `stop_utc`
 - After every bot has exited, the following runs:
@@ -248,7 +250,8 @@ Lifecycle:
   ```
 
   It verifies each bot independently with `aws_run_verify` and scans each
-  bot's evidence for **all** runtime tokens of the run. Teardown is armed only
+  bot's evidence (including `transport-evidence.jsonl`) for **all** runtime
+  tokens of the run. Teardown is armed only
   after that.
 - The completion summary is `lisjong-arena-aws-riichilab-instance-run-summary`
   v3. Its fields:
@@ -308,6 +311,9 @@ Lifecycle:
     before the failure. The transport boundary cuts the raw exception chain
     (`__cause__` / `__context__`), so raw close reasons, handshake bodies, and
     the token do not leave with the error.
+  - `timing` (Issue #416), per event: connection timing scalars, or `null`
+    when the failure has none (a failed handshake, or a log from an older
+    revision). See "Connection timing evidence" below.
   - `transport_failure_phase_counts` / `server_reason_class_counts`
   - `source` shows where the counters came from: `summary`, `terminal`, or
     `events` (the runner was killed before it printed either)
@@ -325,6 +331,77 @@ Lifecycle:
   before it terminates the instance.
 - A run started from a revision before Issue #386 returns the per-bot
   `bounded-run-summary`. The collector stores it marked `legacy_single_bot`.
+
+### Connection timing evidence (Issue #416)
+
+The first in-game disconnects are `websockets` keepalive timeouts
+(`close_code_sent=1011`, `local_close_reason_class=keepalive_timeout`): a PONG
+was not *processed* by the event loop within 20 seconds of its PING. The Policy
+runs synchronously on the same loop. The timeout can therefore come from a loop
+stall, from a late PONG, or from both. Each connection keeps bounded, secret-safe
+timing evidence to tell these apart:
+
+- A probe task wakes every 0.5 s and records how late it woke up. A lag of at
+  least 1 s is kept as an interval `[expected, actual]`: the loop could not run
+  in it. The 16 most recent and the 8 largest are kept.
+- The last 8 `request_action`s: when the frame was dequeued, the decision
+  start / end, the send attempt, the server time budget (`grace_ms`,
+  `bank_ms`, `deadline_ms`), and the acks received for it.
+- Up to 8 successful keepalive latencies, read from the public
+  `connection.latency` when it changes.
+- When the connection was last seen `OPEN` and first seen not `OPEN` (the
+  close window).
+- Counts of `defaulted` / `stale` acks on the connection.
+
+The `continuous-event:` line and `runner_facts.*.timing` carry scalars only:
+
+| field | meaning |
+| --- | --- |
+| `max_event_loop_lag_seconds` | largest probe lag on the connection |
+| `lag_at_close_seconds` | largest material lag that ended inside the close window; `0` when none; `null` when the window was not seen |
+| `lag_spans_keepalive_deadline` | whether such a lag exists. For a keepalive timeout, a stall that spans the deadline ends inside the close window, because the timeout is processed right when the stall ends. |
+| `max_lag_overlapping_decision_seconds` / `max_lag_outside_decision_seconds` | the largest part of a kept lag covered / not covered by recorded decisions |
+| `max_recent_decision_seconds` | the longest of the recent decisions |
+| `max_recent_keepalive_latency_seconds` | the largest recent successful keepalive latency |
+| `defaulted_acks` / `stale_acks` | ack counts on the connection |
+
+The full rings go to `transport-evidence.jsonl`: one JSON line per transport
+failure, at most 32 lines per bot. The first failures are kept. Each line
+holds exception class names, fixed vocabularies, and numbers only, with no
+server text excerpt. Times are seconds from the connection's own monotonic
+origin.
+
+How to read one keepalive timeout:
+
+- `lag_spans_keepalive_deadline=true` with the lag overlapping a decision:
+  synchronous Policy work contributed.
+- `lag_spans_keepalive_deadline=true` outside any decision: the loop or the
+  process stalled for another reason.
+- `lag_spans_keepalive_deadline=false` with rising keepalive latencies: the
+  PONG itself was late or missing (network / server side).
+
+Limits, by construction:
+
+- The PONG of the failing PING is never observed. When the timeout fires, the
+  PONG may already sit in the socket buffer, and `websockets` discards all
+  later input once it fails the connection.
+- When a PONG reached the socket cannot be observed in-process. Separating
+  the stall from the PONG delay at wire level needs a temporary TCP
+  observation.
+- The probe cannot run during a synchronous decision. A lag is attributed to a
+  decision by interval overlap, not by a flag sampled at wake-up.
+- The dequeue time is not the wire arrival time.
+- Latency samples are change-detected once per probe tick.
+- The state is sampled once per tick, so a short `CLOSING` may be seen as
+  `CLOSED`.
+
+The spectate viewer (lisjong-play) builds its own runner arguments and writes
+no `transport-evidence.jsonl`. Its `continuous-event:` lines still carry the
+scalars.
+
+`transport-evidence.jsonl` stays on the instance, like the durable records. A
+FAIL run's evidence is read through `runner_facts`, which reaches
+`completion.json`.
 
 Notes:
 
