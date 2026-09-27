@@ -7,7 +7,7 @@ wheelの配布契約はlisbun/lisjong#216 / lisbun/lisjong#217、Arena側の導�
 defaultのbackendはPythonのままで、Rustは明示的なopt-inである。
 推定器・Policyの選択は変えない。0004参照Policyのidentity（`kobalab-0004-tile-efficiency-reference-v1`）も変えない。
 強さや対局速度の改善を新たに主張するものではない。
-lisjong#225の「536→121 ms」は、固定630 decision再生でのPolicy計算の測定値であり、対局全体の速度向上率ではない。
+lisjong#218 / lisjong#219の「536→121 ms」は、固定630 decision再生でのPolicy計算の測定値であり、対局全体の速度向上率ではない。
 
 ## 1. 組み合わせ
 
@@ -107,6 +107,10 @@ RiichiLabで稼働中のbotやAWS instanceは、本Issueでは更新しない。
 compilerのない`amazonlinux:2023` container（x86_64、8 CPU）で行った。
 現行組（Arena `e06b248`）と旧組（Arena `438bf5a`）をそれぞれ新規venvに入れて比べた。
 使ったscriptは`C:\Dev\lisjong-artifacts\issue-409-rust-wheel-8bdfd3f\verification\verify-409.sh`と`verify-409-rollback.sh`で、evidenceは同じ場所の`run-20260927\`・`rollback-20260927\`にある（`sha256sums.txt`付き）。
+証跡manifestについて、初回のcontainer実行は`find`がないため生成段階で失敗し、host側で生成した（検証scriptは修正済み）。
+本検証・rollbackの両directoryについて、保存後に`sha256sums.txt`を読み戻して照合した結果は、本書では未確認である。
+wheel自体の`SHA256SUMS`照合（§1）とは区別する。証跡保持の確認時は各directoryで`sha256sum --strict -c sha256sums.txt`を実行し、終了コードと結果を記録する。
+
 AWSは使っていない。seedの新規予約もしていない。
 使った固定入力は、#400のsmoke seed（0..31、seed 0のdigest）と、#406が再利用したCOMMITTEDの#389 DEVELOPMENT allocation（`df846086…`）である。
 
