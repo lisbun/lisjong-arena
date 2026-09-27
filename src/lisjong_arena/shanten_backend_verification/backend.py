@@ -1,4 +1,4 @@
-"""Frozen wheel identity and per-process shanten backend checks (#400).
+"""Current wheel identity and per-process shanten backend checks (#400, #409).
 
 lisjong selects its numeric shanten core once per process from
 ``LISJONG_SHANTEN_BACKEND`` (``python`` / ``rust``) and already fails closed
@@ -10,11 +10,20 @@ adds the checks that lisjong cannot make on its own:
 - the backend is selected explicitly (an unset variable is refused here, so a
   run cannot silently measure the default);
 - the installed lisjong commit is the frozen pin, and for ``rust`` the
-  extension reports the same build revision (``SOURCE_REVISION``), because the
-  extension mirrors that lisjong revision's tables and dispatch;
+  extension reports the same build revision (``SOURCE_REVISION``) and native
+  entry-point set (``API_VERSION``), because the extension mirrors that lisjong
+  revision's tables and dispatch;
+- the extension files that Python actually loads are the files of the frozen
+  wheel (``verify_installed_native``), because the #400 and #409 wheels share
+  one file name and package version and pip may skip reinstalling it;
 - the selected core actually runs: for ``rust`` the native call counter moves
   on a public ``calculate_shanten()`` call; for ``python`` the extension is not
   even imported.
+
+The ``EXPECTED_*`` values are the *current* combination (#409).  The frozen
+#400 / #406 runs used the lisjong#217 combination, which ``plan`` keeps for
+judging that evidence; those runs are reproduced from their recorded Arena
+commits, not with these values.
 
 Every failure raises ``ShantenBackendVerificationError``.  Nothing falls back
 to the other backend.
@@ -25,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 from lisjong_arena.environment_identity import (
@@ -37,14 +47,19 @@ PYTHON_BACKEND = "python"
 RUST_BACKEND = "rust"
 BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
 
-EXPECTED_LISJONG_REVISION = "2553c1b9f22545bb2fcb914adce1879d15cdc58d"
-"""lisjong#217 merge on ``main``; the project pin and the wheel build source."""
+EXPECTED_LISJONG_REVISION = "8bdfd3f942ced49830bcee1894aefe3d2e0acc3a"
+"""lisjong#225 merge on ``main``; the project pin and the wheel build source."""
 
 EXPECTED_WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 EXPECTED_WHEEL_SHA256 = (
-    "ff8aaa400de5b58e4bb61d040dce596b7875047cda2bf2daa15b1a0e3e90166c"
+    "22ce171059416ba8e25c8801ec2ef425afeacfda792ae67d837865610269e7f8"
 )
-"""``native-wheel`` artifact of lisjong CI run 36257082986 (push to ``main``)."""
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 36296356964
+(push to ``main``)."""
+
+EXPECTED_NATIVE_API_VERSION = 2
+"""``_lisjong_native.API_VERSION`` of the lisjong#225 extension; a wheel built
+before lisjong#224 has no such attribute (lisjong treats it as 1)."""
 
 NATIVE_MODULE = "_lisjong_native"
 
@@ -80,6 +95,48 @@ def verify_wheel_file(path: str | Path) -> dict[str, object]:
             f"wheel SHA-256 mismatch: {digest}; expected {EXPECTED_WHEEL_SHA256}"
         )
     return {"file": wheel.name, "sha256": digest, "bytes": wheel.stat().st_size}
+
+
+def verify_installed_native(path: str | Path) -> dict[str, object]:
+    """Check that the loaded ``_lisjong_native`` files are the frozen wheel's.
+
+    Call it after ``require_shanten_backend("rust")``.  The wheel is checked
+    first, then every file of its ``_lisjong_native`` package is compared
+    byte for byte with the file next to the imported module.
+    """
+    wheel = verify_wheel_file(path)
+    native = sys.modules.get(NATIVE_MODULE)
+    if native is None or getattr(native, "__file__", None) is None:
+        raise ShantenBackendVerificationError(
+            f"{NATIVE_MODULE} is not imported in this process"
+        )
+    package_directory = Path(native.__file__).parent
+    prefix = f"{NATIVE_MODULE}/"
+    compared = []
+    with zipfile.ZipFile(path) as archive:
+        members = sorted(
+            name
+            for name in archive.namelist()
+            if name.startswith(prefix) and not name.endswith("/")
+        )
+        if not members:
+            raise ShantenBackendVerificationError(
+                f"the wheel has no {NATIVE_MODULE} package files"
+            )
+        for name in members:
+            installed = package_directory / name[len(prefix) :]
+            if not installed.is_file():
+                raise ShantenBackendVerificationError(
+                    f"{installed} from the wheel is not installed"
+                )
+            expected = hashlib.sha256(archive.read(name)).hexdigest()
+            if file_sha256(installed) != expected:
+                raise ShantenBackendVerificationError(
+                    f"installed {installed} differs from the wheel's {name}; "
+                    "reinstall the wheel with --force-reinstall"
+                )
+            compared.append(name)
+    return {**wheel, "installed_directory": str(package_directory), "files": compared}
 
 
 def _selected_backend(expected: str) -> str:
@@ -180,6 +237,14 @@ def require_shanten_backend(
             f"{NATIVE_MODULE}.SOURCE_REVISION={source_revision!r} does not match "
             f"the pinned lisjong {expected_revision}"
         )
+    # lisjong reads a missing attribute as 1 and refuses it at import time;
+    # checking again here ties the recorded value to this process.
+    api_version = getattr(native, "API_VERSION", 1)
+    if api_version != EXPECTED_NATIVE_API_VERSION:
+        raise ShantenBackendVerificationError(
+            f"{NATIVE_MODULE}.API_VERSION={api_version!r}; "
+            f"expected {EXPECTED_NATIVE_API_VERSION}"
+        )
     before = native.standard_shanten_call_count()
     calculate_shanten(_probe_tiles())
     calls = native.standard_shanten_call_count() - before
@@ -190,6 +255,7 @@ def require_shanten_backend(
     record["native"] = {
         "module_file": native.__file__,
         "source_revision": source_revision,
+        "api_version": api_version,
         "probe_native_calls": calls,
     }
     return record
@@ -199,3 +265,13 @@ def native_call_count() -> int | None:
     """Native core call counter of this process, or ``None`` without Rust."""
     native = sys.modules.get(NATIVE_MODULE)
     return None if native is None else native.standard_shanten_call_count()
+
+
+def native_discard_evaluation_count() -> int | None:
+    """Batched discard evaluation counter (lisjong#224), or ``None`` without Rust.
+
+    Only the 0004 reference Policy's structural evaluation calls it, so a zero
+    delta is expected for other Policies.
+    """
+    native = sys.modules.get(NATIVE_MODULE)
+    return None if native is None else native.discard_evaluation_call_count()

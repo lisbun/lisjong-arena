@@ -10,7 +10,7 @@ from lisjong.policies.kobalab_0004_reference import KOBALAB_0004_REFERENCE_IDENT
 
 from lisjong_arena.policy_catalog import POLICY_CATALOG
 from lisjong_arena.pure_offense_benchmark import protocol
-from lisjong_arena.shanten_backend_verification import backend
+from lisjong_arena.shanten_backend_verification import backend, plan
 from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -33,19 +33,20 @@ class BootstrapTest(unittest.TestCase):
             self.skipTest("bash is unavailable")
         subprocess.run([bash, "-n", str(_BOOTSTRAP)], check=True)
 
-    def test_frozen_dependencies_match_the_current_pin_and_the_400_wheel(self) -> None:
+    def test_frozen_dependencies_stay_on_the_400_combination(self) -> None:
+        # #406 ran with the #400 combination.  #409 moved the project pin, so
+        # this bootstrap now only accepts the Arena commits it was run from
+        # (its pyproject pin check rejects the current tree).
         project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         revision = _shell_value(self.text, "FROZEN_LISJONG_REVISION")
-        self.assertEqual(revision, backend.EXPECTED_LISJONG_REVISION)
-        self.assertIn(f"lisjong.git@{revision}", project)
+        self.assertEqual(revision, plan.LISJONG_REVISION)
+        self.assertNotEqual(revision, backend.EXPECTED_LISJONG_REVISION)
+        self.assertNotIn(f"lisjong.git@{revision}", project)
+        self.assertIn('grep -q "lisjong.git@$FROZEN_LISJONG_REVISION"', self.text)
         riichienv = _shell_value(self.text, "FROZEN_RIICHIENV_VERSION")
         self.assertIn(f'"riichienv=={riichienv}"', project)
-        self.assertEqual(
-            _shell_value(self.text, "WHEEL_FILE"), backend.EXPECTED_WHEEL_FILENAME
-        )
-        self.assertEqual(
-            _shell_value(self.text, "WHEEL_SHA256"), backend.EXPECTED_WHEEL_SHA256
-        )
+        self.assertEqual(_shell_value(self.text, "WHEEL_FILE"), plan.WHEEL_FILENAME)
+        self.assertEqual(_shell_value(self.text, "WHEEL_SHA256"), plan.WHEEL_SHA256)
         self.assertIn("--only-binary=:all: --no-index --no-deps", self.text)
 
     def test_every_arm_runs_on_the_verified_rust_backend(self) -> None:

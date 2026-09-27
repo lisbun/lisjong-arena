@@ -31,7 +31,7 @@ from lisjong_arena.shanten_backend_verification.backend import (
 from lisjong_arena.single_round_evaluation import SingleRoundEvaluationError
 
 _FOCAL = PolicySpec(identity="minimal", factory=MinimalPolicy)
-_REVISION = "2553c1b9f22545bb2fcb914adce1879d15cdc58d"
+_REVISION = "8bdfd3f942ced49830bcee1894aefe3d2e0acc3a"
 _GAME = game_function(lambda seed, focal: OTHER_ARM[(seed, focal)])
 
 
@@ -42,6 +42,7 @@ def _process_record(backend: str) -> dict:
         else {
             "module_file": "/x/_lisjong_native.so",
             "source_revision": _REVISION,
+            "api_version": 2,
             "probe_native_calls": 1,
         }
     )
@@ -73,7 +74,9 @@ class _BackendPatch(unittest.TestCase):
         execution._PROCESS_BACKEND.clear()
         self.addCleanup(execution._PROCESS_BACKEND.clear)
 
-    def _patches(self, backend: str, *, step: int = 3, require=None):
+    def _patches(
+        self, backend: str, *, step: int = 3, evaluations: int = 2, require=None
+    ):
         return (
             mock.patch.object(
                 execution,
@@ -82,6 +85,9 @@ class _BackendPatch(unittest.TestCase):
             ),
             mock.patch.object(execution, "native_call_count", _Counter(step)),
             mock.patch.object(execution, "_run_benchmark_game", _GAME),
+            mock.patch.object(
+                execution, "native_discard_evaluation_count", _Counter(evaluations)
+            ),
         )
 
 
@@ -100,7 +106,7 @@ class ShantenBackendExecutionTest(_BackendPatch):
     def test_rust_checks_the_process_once_and_every_game(self) -> None:
         require = mock.Mock(return_value=_process_record("rust"))
         patches = self._patches("rust", require=require)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patches[3]:
             arm = execution.run_benchmark_arm(
                 execution.benchmark_plan(_FOCAL, (1, 2)),
                 max_workers=1,
@@ -111,6 +117,13 @@ class ShantenBackendExecutionTest(_BackendPatch):
         self.assertTrue(
             all(item["native_calls"] == 3 for item in arm.shanten_backend_observations)
         )
+        self.assertTrue(
+            all(
+                item["native_discard_evaluations"] == 2
+                and item["native_api_version"] == 2
+                for item in arm.shanten_backend_observations
+            )
+        )
         record = execution.shanten_backend_record(
             arm, backend="rust", parent=_process_record("rust")
         )
@@ -118,10 +131,32 @@ class ShantenBackendExecutionTest(_BackendPatch):
         self.assertEqual(record["workers_observed"], 1)
         self.assertEqual(record["min_native_calls_per_game"], 3)
         self.assertEqual(record["native_source_revision"], _REVISION)
+        self.assertEqual(record["native_api_version"], 2)
+        self.assertEqual(record["native_discard_evaluations"], 16)
+        self.assertEqual(
+            record["workers"]["4321"],
+            {"games": 8, "native_calls": 24, "native_discard_evaluations": 16},
+        )
+
+    def test_rust_game_without_batched_evaluation_is_recorded_not_failed(
+        self,
+    ) -> None:
+        # 一括構造評価は0004参照Policyだけが使う。他のPolicyでは0のまま記録する。
+        patches = self._patches("rust", evaluations=0)
+        with patches[0], patches[1], patches[2], patches[3]:
+            arm = execution.run_benchmark_arm(
+                execution.benchmark_plan(_FOCAL, (1,)),
+                max_workers=1,
+                shanten_backend="rust",
+            )
+        record = execution.shanten_backend_record(
+            arm, backend="rust", parent=_process_record("rust")
+        )
+        self.assertEqual(record["native_discard_evaluations"], 0)
 
     def test_rust_game_without_native_calls_fails_the_arm(self) -> None:
         patches = self._patches("rust", step=0)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patches[3]:
             with self.assertRaises(SingleRoundEvaluationError) as raised:
                 execution.run_benchmark_arm(
                     execution.benchmark_plan(_FOCAL, (1,)),
@@ -137,7 +172,22 @@ class ShantenBackendExecutionTest(_BackendPatch):
         with (
             patches[0],
             patches[2],
+            patches[3],
             mock.patch.object(execution, "native_call_count", return_value=None),
+        ):
+            with self.assertRaises(SingleRoundEvaluationError):
+                execution.run_benchmark_arm(
+                    execution.benchmark_plan(_FOCAL, (1,)),
+                    max_workers=1,
+                    shanten_backend="rust",
+                )
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            mock.patch.object(
+                execution, "native_discard_evaluation_count", return_value=None
+            ),
         ):
             with self.assertRaises(SingleRoundEvaluationError):
                 execution.run_benchmark_arm(
@@ -152,6 +202,7 @@ class ShantenBackendExecutionTest(_BackendPatch):
             patches[0],
             patches[1],
             patches[2],
+            patches[3],
             mock.patch.dict(sys.modules, {NATIVE_MODULE: object()}),
         ):
             with self.assertRaises(SingleRoundEvaluationError):
@@ -200,7 +251,7 @@ class ShantenBackendExecutionTest(_BackendPatch):
         self.assertIn("no wheel", outcome.error_text)
 
         patches = self._patches("rust")
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patches[3]:
             outcome = execution._run_benchmark_game_job(job, shanten_backend="rust")
         self.assertIsNone(outcome.error_text)
         self.assertEqual(outcome.shanten_backend["native_calls"], 3)
@@ -210,7 +261,7 @@ class ShantenBackendExecutionTest(_BackendPatch):
 class ShantenBackendRecordTest(_BackendPatch):
     def _arm(self, backend: str):
         patches = self._patches(backend)
-        with patches[0], patches[1], patches[2]:
+        with patches[0], patches[1], patches[2], patches[3]:
             return execution.run_benchmark_arm(
                 execution.benchmark_plan(_FOCAL, (1,)),
                 max_workers=1,
@@ -223,6 +274,10 @@ class ShantenBackendRecordTest(_BackendPatch):
         other["native"] = {**other["native"], "source_revision": "0" * 40}
         with self.assertRaises(ShantenBackendVerificationError):
             execution.shanten_backend_record(arm, backend="rust", parent=other)
+        old_api = dict(_process_record("rust"))
+        old_api["native"] = {**old_api["native"], "api_version": 1}
+        with self.assertRaises(ShantenBackendVerificationError):
+            execution.shanten_backend_record(arm, backend="rust", parent=old_api)
         with self.assertRaises(ShantenBackendVerificationError):
             execution.shanten_backend_record(
                 arm, backend="python", parent=_process_record("python")
@@ -235,7 +290,11 @@ class ShantenBackendRecordTest(_BackendPatch):
         )
         self.assertIsNone(record["native_source_revision"])
         self.assertIsNone(record["min_native_calls_per_game"])
-        self.assertEqual(record["workers"]["4321"], {"games": 4, "native_calls": None})
+        self.assertIsNone(record["native_discard_evaluations"])
+        self.assertEqual(
+            record["workers"]["4321"],
+            {"games": 4, "native_calls": None, "native_discard_evaluations": None},
+        )
 
     def test_arm_without_observations_has_no_record(self) -> None:
         with mock.patch.object(execution, "_run_benchmark_game", _GAME):
@@ -285,6 +344,7 @@ class ShantenBackendCliTest(_BackendPatch):
             patches[0],
             patches[1],
             patches[2],
+            patches[3],
             mock.patch.object(
                 cli, "require_shanten_backend", return_value=_process_record("rust")
             ),

@@ -3,13 +3,15 @@
 ``scripts/aws/bootstrap-rust-shanten-400.sh`` executes exactly this plan and
 ``report.evaluate()`` refuses to judge evidence that does not match it.  The
 bootstrap contract test ties the shell constants to these values.
+
+The lisjong revision and wheel identity are the lisjong#217 combination that
+#400 (and #406) ran with.  They are frozen here, not taken from ``backend``,
+whose ``EXPECTED_*`` values follow the current pin (#409).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from .backend import EXPECTED_LISJONG_REVISION
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +52,11 @@ TWO_STEP = PlannedPolicy(
 )
 POLICIES = (CHAMPION, TWO_STEP)
 
-LISJONG_REVISION = EXPECTED_LISJONG_REVISION
+LISJONG_REVISION = "2553c1b9f22545bb2fcb914adce1879d15cdc58d"
+"""lisjong#217 merge on ``main``; the #400 pin and wheel build source."""
+WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
+WHEEL_SHA256 = "ff8aaa400de5b58e4bb61d040dce596b7875047cda2bf2daa15b1a0e3e90166c"
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 36257082986."""
 GAME_MODE = "4p-red-half"
 SINGLE_SEEDS = (0,)
 MULTI_WORKERS = 16
