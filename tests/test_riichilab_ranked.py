@@ -65,13 +65,17 @@ def _status(**overrides: object) -> SimpleNamespace:
         "responses_sent": 3,
         "ack_history": {7: ("accepted",)},
         "scores": None,
+        "unanswered_requests": {},
     }
     values.update(overrides)
     return SimpleNamespace(**values)
 
 
 class RankedGameResultContractTest(unittest.TestCase):
-    def test_exact_six_fields_are_preserved(self) -> None:
+    def test_exact_fields_are_preserved(self) -> None:
+        # `unanswered_requests` is the only field added since the original six
+        # (Issue #421); it defaults to empty so existing constructions keep
+        # their meaning.
         self.assertEqual(
             [field.name for field in fields(RankedGameResult)],
             [
@@ -81,6 +85,7 @@ class RankedGameResultContractTest(unittest.TestCase):
                 "responses_sent",
                 "ack_history",
                 "scores",
+                "unanswered_requests",
             ],
         )
 
@@ -185,7 +190,9 @@ class RunRankedGameTest(unittest.TestCase):
 
     def test_policy_token_url_and_status_are_forwarded(self) -> None:
         scores = (30000, 25000, 20000, 25000)
-        result, captured = self._run_with_status(_status(scores=scores))
+        result, captured = self._run_with_status(
+            _status(scores=scores, unanswered_requests={9: "local_cutoff"})
+        )
 
         self.assertIsNotNone(result)
         assert result is not None
@@ -199,6 +206,7 @@ class RunRankedGameTest(unittest.TestCase):
         self.assertEqual(result.responses_sent, 3)
         self.assertEqual(result.ack_history, {7: ("accepted",)})
         self.assertEqual(result.scores, scores)
+        self.assertEqual(result.unanswered_requests, {9: "local_cutoff"})
 
     def test_default_url_uses_arena_local_canonical_constant(self) -> None:
         captured: dict[str, object] = {}

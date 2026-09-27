@@ -202,6 +202,7 @@ class VerifyInstanceRunTest(unittest.TestCase):
         self.records[f"{profile}-game"] = SimpleNamespace(
             record_identity=profile.ljust(64, "0"),
             provenance=_provenance(profile),
+            result=SimpleNamespace(unanswered_requests={}),
         )
         if log is None:
             log = _runner_log(profile, stopped_reason=stopped_reason, games=1)

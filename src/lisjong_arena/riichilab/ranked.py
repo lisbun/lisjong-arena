@@ -19,7 +19,7 @@ import asyncio
 import os
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from lisjong.policy_contract.policy import Policy
 from lisjong.policy_contract.seat import Seat
@@ -61,6 +61,9 @@ class RankedGameResult:
     responses_sent: int
     ack_history: Mapping[int, tuple[str, ...]]
     scores: tuple[int, int, int, int] | None
+    # request_id -> 意図的にresponseを送らなかった理由(Issue #421)。
+    # serverがdefaultしたかどうかは`ack_history`が示す。
+    unanswered_requests: Mapping[int, str] = field(default_factory=dict)
 
 
 async def run_ranked_game(
@@ -143,6 +146,7 @@ async def run_ranked_game(
         responses_sent=status.responses_sent,
         ack_history=status.ack_history,
         scores=status.scores,
+        unanswered_requests=status.unanswered_requests,
     )
 
 

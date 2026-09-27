@@ -164,6 +164,17 @@ module-level boundaryを超えて固定しない。
 - `unparseable`: historyへ記録後fail closed
 - unknown request ID、未知status、malformed fieldはfail closed
 
+### 未送信request (Issue #421)
+
+受理済みrequestへ意図的にresponseを送らない場合、runtimeは
+`mark_request_unanswered(request_id, reason)`で理由を確定する(`local_cutoff` /
+`late_ack`)。記録済みrequestには以後送信できない。送信済み・未受理・記録済みの
+request、未知の理由はfail closedする。理由はclient側の判断であり、serverがdefault
+したかどうかはack historyの`defaulted`だけが示す。`SessionStatus` /
+`RankedGameResult`は`unanswered_requests`(request_id -> reason)を持つ。durable record
+での扱いは[`docs/durable-ranked-game-record.md`](durable-ranked-game-record.md)の
+「未送信request」を参照。
+
 ### validation terminal
 
 validationでは`end_game`だけで完了せず、`validation_result`を待つ。

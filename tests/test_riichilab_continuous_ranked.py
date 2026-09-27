@@ -100,6 +100,73 @@ class BackoffFormulaTest(unittest.TestCase):
         self.assertEqual(_backoff_seconds(20), 60.0)
 
 
+class RecordedDefaultGameTest(unittest.TestCase):
+    """Issue #421: a completed game with a confirmed server default is saved."""
+
+    def test_default_game_is_recorded_and_the_run_moves_on(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import test_riichilab_durable_ranked_game_record as fixtures
+
+        from lisjong_arena.riichilab.durable_ranked_game_record import (
+            iter_ranked_decisions,
+            load_ranked_game_record,
+        )
+
+        games = [
+            (
+                fixtures._unanswered_entries(fixtures._DEFAULTED_ACK),
+                fixtures._unanswered_result(),
+            ),
+            (fixtures._completed_entries(), fixtures._completed_result()),
+        ]
+        played: list[int] = []
+
+        async def _fake_run_ranked_game(policy, token, *, trace_path, **kwargs):
+            # The one-game boundary: the trace the session would have written
+            # and its result.  Everything after it (save, strict readback,
+            # publish, requeue) is the real record_dir path.
+            entries, result = games[len(played)]
+            played.append(len(played))
+            Path(trace_path).write_text(
+                fixtures._trace_text(entries), encoding="utf-8", newline="\n"
+            )
+            return result
+
+        with tempfile.TemporaryDirectory() as raw:
+            record_dir = Path(raw) / "records"
+            with patch(
+                "lisjong_arena.riichilab.durable_ranked_game_record.run_ranked_game",
+                _fake_run_ranked_game,
+            ):
+                summary = asyncio.run(
+                    run_continuous_ranked(
+                        _make_profile(),
+                        "unit-test-token",
+                        record_dir=record_dir,
+                        max_completed_games=2,
+                        sleep=_no_sleep,
+                    )
+                )
+            records = [
+                load_ranked_game_record(path)
+                for path in sorted(record_dir.iterdir())
+                if path.is_dir() and not path.name.startswith(".")
+            ]
+            unanswered = [
+                decision.request_id
+                for record in records
+                for decision in iter_ranked_decisions(record)
+                if decision.sent_action is None
+            ]
+
+        self.assertEqual(2, summary.completed_games)
+        self.assertEqual(0, summary.failed_games)
+        self.assertEqual(2, len(records))
+        self.assertEqual([2], unanswered)
+
+
 class SuccessLoopTest(unittest.TestCase):
     def test_success_proceeds_to_next_game(self) -> None:
         calls: list[tuple[object, str]] = []

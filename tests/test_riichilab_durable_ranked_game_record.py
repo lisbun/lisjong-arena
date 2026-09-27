@@ -781,6 +781,272 @@ class ExistingTargetTest(unittest.TestCase):
             )
 
 
+def _ack(request_id: int, status: str, **extra: object) -> dict:
+    return {
+        "type": "action_ack",
+        "request_id": request_id,
+        "status": status,
+        **extra,
+    }
+
+
+def _unanswered_entries(
+    *acks_for_2: dict, ack_2_after_request_3: bool = False
+) -> list[tuple[str, dict]]:
+    """request 2だけresponseを送らなかった完走game。
+
+    `acks_for_2`はrequest 2へのack。既定ではrequest 2の直後、
+    `ack_2_after_request_3`なら次のrequest 3を受信した後に置く(遅着)。
+    """
+    late = [("recv", ack) for ack in acks_for_2]
+    entries = [
+        ("recv", {"type": "start_game", "id": 0}),
+        ("recv", _request_action(1, seed=7)),
+        ("send", _sent_action(1)),
+        ("recv", _ack(1, "accepted")),
+        ("recv", _request_action(2, seed=8)),
+    ]
+    if not ack_2_after_request_3:
+        entries += late
+    entries.append(("recv", _request_action(3, seed=9)))
+    if ack_2_after_request_3:
+        entries += late
+    entries += [
+        ("send", _sent_action(3)),
+        ("recv", _ack(3, "accepted")),
+        ("recv", {"type": "end_game", "scores": [32000, 24000, 23000, 21000]}),
+    ]
+    return entries
+
+
+def _unanswered_result(
+    statuses_for_2: tuple[str, ...] = ("defaulted",), **overrides: object
+) -> RankedGameResult:
+    ack_history = {1: ("accepted",), 3: ("accepted",)}
+    if statuses_for_2:
+        ack_history[2] = statuses_for_2
+    values: dict[str, object] = {
+        "requests_received": 3,
+        "responses_sent": 2,
+        "ack_history": ack_history,
+        "unanswered_requests": {2: "local_cutoff"},
+    }
+    values.update(overrides)
+    return _completed_result(**values)
+
+
+# serverがdefault時にackへ含めるaction(protocol docs)。Policy出力ではない。
+_DEFAULTED_ACK = _ack(2, "defaulted", action={"type": "dahai", "pai": "9s"})
+
+
+class UnansweredRequestContractTest(unittest.TestCase):
+    """意図的な未送信とserver evidenceの境界(Issue #421)。"""
+
+    def test_unanswered_request_with_a_defaulted_ack_is_a_completed_record(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _save(
+                directory,
+                entries=_unanswered_entries(_DEFAULTED_ACK),
+                result=_unanswered_result(),
+            )
+            loaded = load_ranked_game_record(directory / "record")
+            decisions = iter_ranked_decisions(loaded)
+            summary = summarize_ranked_game_record(loaded)
+
+        self.assertEqual({2: "local_cutoff"}, loaded.result.unanswered_requests)
+        self.assertEqual([1, 2, 3], [decision.request_id for decision in decisions])
+        answered, unanswered, later = decisions
+        # The server default action is not presented as a sent action.
+        self.assertIsNone(unanswered.sent_action)
+        self.assertEqual("local_cutoff", unanswered.unanswered_reason)
+        self.assertEqual(("defaulted",), unanswered.ack_statuses)
+        self.assertEqual(_sent_action(1), answered.sent_action)
+        self.assertIsNone(answered.unanswered_reason)
+        self.assertEqual(_sent_action(3), later.sent_action)
+        self.assertEqual(
+            (3, 2, 1),
+            (summary.requests, summary.responses, summary.unanswered_requests),
+        )
+
+    def test_defaulted_ack_arriving_after_the_next_request_is_accepted(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _save(
+                directory,
+                entries=_unanswered_entries(_DEFAULTED_ACK, ack_2_after_request_3=True),
+                result=_unanswered_result(),
+            )
+            loaded = load_ranked_game_record(directory / "record")
+        self.assertEqual({2: "local_cutoff"}, loaded.result.unanswered_requests)
+
+    def test_late_ack_reason_with_a_defaulted_ack_is_accepted(self) -> None:
+        with TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _save(
+                directory,
+                entries=_unanswered_entries(_DEFAULTED_ACK),
+                result=_unanswered_result(unanswered_requests={2: "late_ack"}),
+            )
+            decisions = iter_ranked_decisions(
+                load_ranked_game_record(directory / "record")
+            )
+        self.assertEqual("late_ack", decisions[1].unanswered_reason)
+
+    def test_server_outcome_must_be_confirmed(self) -> None:
+        cases = {
+            # Local cutoff or the next request alone is not a server default.
+            "no ack, superseded by the next request": ((), ()),
+            # stale answers a reply; it never confirms a default.
+            "stale only": ((_ack(2, "stale"),), ("stale",)),
+            # A reply that was never sent cannot be accepted or discarded.
+            "accepted without a reply": ((_ack(2, "accepted"),), ("accepted",)),
+            "defaulted and stale without a reply": (
+                (_DEFAULTED_ACK, _ack(2, "stale")),
+                ("defaulted", "stale"),
+            ),
+        }
+        for name, (acks, statuses) in cases.items():
+            with self.subTest(name), TemporaryDirectory() as raw:
+                directory = Path(raw)
+                with self.assertRaises(DurableRankedGameRecordError):
+                    _save(
+                        directory,
+                        entries=_unanswered_entries(*acks),
+                        result=_unanswered_result(statuses),
+                    )
+                self.assertFalse((directory / "record").exists())
+
+    def test_a_defaulted_ack_after_end_game_does_not_count(self) -> None:
+        entries = _unanswered_entries()
+        entries.append(("recv", _DEFAULTED_ACK))
+        with TemporaryDirectory() as raw:
+            with self.assertRaises(DurableRankedGameRecordError):
+                _save(Path(raw), entries=entries, result=_unanswered_result())
+
+    def test_missing_send_is_not_mistaken_for_an_intentional_unanswered_request(
+        self,
+    ) -> None:
+        # The trace lacks a send line but the session never recorded a reason:
+        # this is a record gap, even with a defaulted ack.
+        with TemporaryDirectory() as raw:
+            with self.assertRaises(DurableRankedGameRecordError):
+                _save(
+                    Path(raw),
+                    entries=_unanswered_entries(_DEFAULTED_ACK),
+                    result=_unanswered_result(unanswered_requests={}),
+                )
+
+    def test_inconsistent_unanswered_bookkeeping_is_rejected(self) -> None:
+        answered_entries = _unanswered_entries(_DEFAULTED_ACK)
+        answered_entries.insert(6, ("send", _sent_action(2)))
+        cases = {
+            "marked unanswered but sent": (
+                answered_entries,
+                _unanswered_result(responses_sent=3),
+            ),
+            "unknown request_id": (
+                _unanswered_entries(_DEFAULTED_ACK),
+                _unanswered_result(
+                    unanswered_requests={2: "local_cutoff", 9: "local_cutoff"}
+                ),
+            ),
+            "answered request marked unanswered": (
+                _unanswered_entries(_DEFAULTED_ACK),
+                _unanswered_result(
+                    unanswered_requests={1: "local_cutoff", 2: "local_cutoff"}
+                ),
+            ),
+            "unknown reason": (
+                _unanswered_entries(_DEFAULTED_ACK),
+                _unanswered_result(unanswered_requests={2: "server_default"}),
+            ),
+        }
+        for name, (entries, result) in cases.items():
+            with self.subTest(name), TemporaryDirectory() as raw:
+                with self.assertRaises(DurableRankedGameRecordError):
+                    _save(Path(raw), entries=entries, result=result)
+
+    def test_duplicate_response_is_still_rejected(self) -> None:
+        entries = _completed_entries()
+        entries.insert(3, ("send", _sent_action(1)))
+        with TemporaryDirectory() as raw:
+            with self.assertRaises(DurableRankedGameRecordError):
+                _save(Path(raw), entries=entries, result=_completed_result())
+
+    def test_an_answered_late_request_keeps_its_sent_action(self) -> None:
+        # Request 2 of the default fixture was sent and then acknowledged
+        # stale / defaulted: it stays a sent action, never an unanswered one.
+        with TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _save(directory)
+            decisions = iter_ranked_decisions(
+                load_ranked_game_record(directory / "record")
+            )
+        self.assertEqual(_sent_action(2), decisions[1].sent_action)
+        self.assertIsNone(decisions[1].unanswered_reason)
+        self.assertEqual(("stale", "defaulted"), decisions[1].ack_statuses)
+
+
+def _downgrade_to_v1(bundle: Path) -> None:
+    """保存済みbundleを、#421以前のwriterが書いたv1 bundleへ書き換える。"""
+    result = json.loads((bundle / RESULT_FILENAME).read_text(encoding="utf-8"))
+    result.pop("unanswered_requests")
+    (bundle / RESULT_FILENAME).write_text(
+        canonical_json_text(result), encoding="utf-8", newline="\n"
+    )
+    manifest = _read_manifest(bundle)
+    manifest["schema_version"] = 1
+    _write_manifest(bundle, manifest)
+    _repack(bundle)
+
+
+class SchemaV1CompatibilityTest(unittest.TestCase):
+    """v1 bundleは従来のv1規則のまま読める(Issue #421)。"""
+
+    def test_v1_bundle_still_loads_with_its_own_identity(self) -> None:
+        with TemporaryDirectory() as raw:
+            bundle = Path(raw) / "record"
+            _save(Path(raw))
+            _downgrade_to_v1(bundle)
+            identity = _read_manifest(bundle)["record_identity"]
+            loaded = load_ranked_game_record(bundle)
+            decisions = iter_ranked_decisions(loaded)
+
+        self.assertEqual(identity, loaded.record_identity)
+        self.assertEqual({}, loaded.result.unanswered_requests)
+        self.assertTrue(all(decision.sent_action for decision in decisions))
+
+    def test_v1_rules_are_not_relaxed(self) -> None:
+        # A v1 bundle with an unanswered request stays invalid, even with a
+        # defaulted acknowledgement.
+        with TemporaryDirectory() as raw:
+            bundle = Path(raw) / "record"
+            _save(
+                Path(raw),
+                entries=_unanswered_entries(_DEFAULTED_ACK),
+                result=_unanswered_result(),
+            )
+            _downgrade_to_v1(bundle)
+            with self.assertRaises(DurableRankedGameRecordError):
+                load_ranked_game_record(bundle)
+
+    def test_v1_result_must_not_carry_v2_fields(self) -> None:
+        with TemporaryDirectory() as raw:
+            bundle = Path(raw) / "record"
+            _save(Path(raw))
+            manifest = _read_manifest(bundle)
+            manifest["schema_version"] = 1
+            _write_manifest(bundle, manifest)
+            _repack(bundle)
+            with self.assertRaises(DurableRankedGameRecordError):
+                load_ranked_game_record(bundle)
+
+
 class _FakeTransport:
     """`Transport` protocolのtest double。tokenもAuthorization headerも持たない。"""
 
