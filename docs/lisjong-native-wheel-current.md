@@ -108,8 +108,11 @@ compilerのない`amazonlinux:2023` container（x86_64、8 CPU）で行った。
 現行組（Arena `e06b248`）と旧組（Arena `438bf5a`）をそれぞれ新規venvに入れて比べた。
 使ったscriptは`C:\Dev\lisjong-artifacts\issue-409-rust-wheel-8bdfd3f\verification\verify-409.sh`と`verify-409-rollback.sh`で、evidenceは同じ場所の`run-20260927\`・`rollback-20260927\`にある（`sha256sums.txt`付き）。
 証跡manifestについて、初回のcontainer実行は`find`がないため生成段階で失敗し、host側で生成した（検証scriptは修正済み）。
-本検証・rollbackの両directoryについて、保存後に`sha256sums.txt`を読み戻して照合した結果は、本書では未確認である。
-wheel自体の`SHA256SUMS`照合（§1）とは区別する。証跡保持の確認時は各directoryで`sha256sum --strict -c sha256sums.txt`を実行し、終了コードと結果を記録する。
+2026-09-27 15:44:10 +09:00、ユーザー管理環境で既存の`sha256sums.txt`に対する読み戻し照合が成功した（ユーザー提示ログに基づく記録）。
+PowerShellの`Get-FileHash -Algorithm SHA256`で各実ファイルのhashを再計算し、本検証`run-20260927`の67ファイル、rollback `rollback-20260927`の8ファイル、計75ファイルがmanifestと一致した。
+最終出力は`ALL PASS: 2026-09-27T15:44:10.4344701+09:00`で、結果は同じ`verification` directoryの`checksum-readback.txt`に保存された。
+manifestは再生成していない。wheel自体の`SHA256SUMS`照合（§1）とは別の、保存済み検証証跡の照合である。
+記録：[Issue #409のreadback結果](https://github.com/lisbun/lisjong-arena/issues/409#issuecomment-5853513694)。
 
 AWSは使っていない。seedの新規予約もしていない。
 使った固定入力は、#400のsmoke seed（0..31、seed 0のdigest）と、#406が再利用したCOMMITTEDの#389 DEVELOPMENT allocation（`df846086…`）である。
