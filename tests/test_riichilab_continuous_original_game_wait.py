@@ -32,6 +32,7 @@ from lisjong_arena.riichilab.errors import (
     UnexpectedDisconnectError,
 )
 from lisjong_arena.riichilab.profile import RuntimeProfile
+from lisjong_arena.riichilab.session import RankedSession
 from lisjong_arena.riichilab.transport_diagnostics import TransportDiagnostics
 
 _DEV_TOKEN_VAR = "LISJONG_DEV_BOT_TOKEN"
@@ -104,8 +105,26 @@ def _token_rejected() -> TransportError:
     )
 
 
+class _Started:
+    """Outcome: `start_game` arrives, then the new game raises `error`."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+
+#: Outcome: the connection never receives `start_game` (hangs until cancelled).
+_HANG = object()
+#: Outcome: `start_game` arrives, then the game takes real time to finish.
+_STARTED_SLOW = object()
+
+
 class _Harness:
-    """Runs the runner on scripted outcomes with a fake clock and sleep."""
+    """Runs the runner on scripted outcomes with a fake clock and sleep.
+
+    `None` is a game that starts and completes.  A bare exception is raised
+    before `start_game`, except an `in_game` transport failure, which (like a
+    real one) follows `start_game`.
+    """
 
     def __init__(self, outcomes, *, stop_after_calls: int | None = None) -> None:
         self.outcomes = iter(outcomes)
@@ -114,13 +133,39 @@ class _Harness:
         self.delays: list[float] = []
         self.events: list[ContinuousRunEvent] = []
         self.stop_after_calls = stop_after_calls
+        self.cancelled = False
+        self.hooks: list[bool] = []
 
     async def _game(self, policy, token, **kwargs) -> None:
         self.calls += 1
         self.clock += _GAME_SECONDS
         outcome = next(self.outcomes)
+        started = kwargs.get("on_game_started")
+        self.hooks.append(started is not None)
+
+        def start() -> None:
+            if started is not None:
+                started()
+
+        if outcome is _HANG:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+        if outcome is _STARTED_SLOW:
+            start()
+            await asyncio.sleep(0.2)
+            return
+        if isinstance(outcome, _Started):
+            start()
+            raise outcome.error
         if isinstance(outcome, BaseException):
+            diagnostics = getattr(outcome, "diagnostics", None)
+            if diagnostics is not None and diagnostics.phase == "in_game":
+                start()
             raise outcome
+        start()
 
     async def _sleep(self, delay: float) -> None:
         self.delays.append(delay)
@@ -160,7 +205,7 @@ class OriginalGameWaitTest(unittest.TestCase):
         self.assertEqual(0, summary.consecutive_failures)
         self.assertEqual(12, summary.same_bot_rejections)
         self.assertFalse(summary.awaiting_original_game)
-        first, *rejections, completed = harness.events
+        first, *rejections, recovered, completed = harness.events
         self.assertEqual(("retry", True, 1, 1), _state(first))
         self.assertEqual(
             [("awaiting_original_game", True, 1, 1)] * 12,
@@ -169,9 +214,16 @@ class OriginalGameWaitTest(unittest.TestCase):
         self.assertEqual(
             list(range(1, 13)), [e.same_bot_rejections for e in rejections]
         )
+        # The wait ends at start_game; the consecutive failures reset only
+        # when the game completes.
+        self.assertEqual("original_game_wait", recovered.kind)
+        self.assertEqual(
+            ("recovered_from_original_game_wait", False, 1, 1), _state(recovered)
+        )
         self.assertEqual("game_completed", completed.kind)
-        self.assertEqual("recovered_from_original_game_wait", completed.outcome)
-        self.assertFalse(completed.awaiting_original_game)
+        self.assertEqual((None, False, 1, 0), _state(completed))
+        # The hook is passed only while waiting.
+        self.assertEqual([False] + [True] * 13, harness.hooks)
         # Bounded backoff keyed on the rejection count: never zero, capped.
         self.assertEqual([5.0, 5.0, 10.0, 20.0, 40.0] + [60.0] * 8, harness.delays)
 
@@ -203,14 +255,16 @@ class OriginalGameWaitTest(unittest.TestCase):
         self.assertEqual(1, summary.consecutive_failures)
         self.assertTrue(summary.awaiting_original_game)
         last = harness.events[-1]
-        self.assertEqual("original_game_wait_exhausted", last.outcome)
-        self.assertIsNone(last.backoff_seconds)
-        # The wait started at the in-game failure (t=30); every earlier
-        # rejection was within the bound and the terminating one was not.
-        self.assertGreaterEqual(last.elapsed_seconds - _GAME_SECONDS, 600.0)
-        for event in harness.events[1:-1]:
-            self.assertLess(event.elapsed_seconds - _GAME_SECONDS, 600.0)
-        self.assertEqual(len(harness.events) - 1, summary.same_bot_rejections)
+        self.assertEqual(
+            ("original_game_wait", "original_game_wait_exhausted"),
+            (last.kind, last.outcome),
+        )
+        # The wait started at the in-game failure (t=30).  The last backoff is
+        # capped at the bound (t=630) and no retry starts after it.
+        self.assertEqual(630.0, last.elapsed_seconds)
+        self.assertEqual(630.0, harness.clock)
+        self.assertEqual(10.0, harness.delays[-1])
+        self.assertEqual(len(harness.events) - 2, summary.same_bot_rejections)
 
     def test_default_wait_bound_is_finite_and_exceeds_the_failure_budget(
         self,
@@ -221,7 +275,7 @@ class OriginalGameWaitTest(unittest.TestCase):
 
         self.assertEqual("original_game_wait_exhausted", summary.stopped_reason)
         self.assertGreater(summary.same_bot_rejections, 5)
-        self.assertGreaterEqual(harness.events[-1].elapsed_seconds, 3600.0)
+        self.assertEqual(3630.0, harness.events[-1].elapsed_seconds)
 
     def test_duration_cutoff_during_wait_stops_retries(self) -> None:
         harness = _Harness([_in_game(), *[_same_bot() for _ in range(1000)]])
@@ -346,6 +400,46 @@ class OriginalGameWaitTest(unittest.TestCase):
         # The per-wait rejection count restarts, so does its backoff.
         self.assertEqual([5.0, 5.0, 10.0, 5.0], harness.delays)
 
+    def test_pre_start_attempt_is_cancelled_at_the_wait_bound(self) -> None:
+        # The wait starts at t=30 and the retry begins at t=35 with 0.05 s of
+        # the bound left; the connection never receives start_game.
+        harness = _Harness([_in_game(), _HANG])
+
+        summary = harness.run(original_game_wait_seconds=5.05)
+
+        self.assertEqual("original_game_wait_exhausted", summary.stopped_reason)
+        self.assertTrue(harness.cancelled)
+        self.assertEqual(2, harness.calls)
+        self.assertEqual((0, 1, 1), _counts(summary))
+        last = harness.events[-1]
+        self.assertEqual(
+            ("original_game_wait", "original_game_wait_exhausted"),
+            (last.kind, last.outcome),
+        )
+
+    def test_started_game_is_not_cancelled_at_the_wait_bound(self) -> None:
+        harness = _Harness([_in_game(), _STARTED_SLOW])
+
+        summary = harness.run(original_game_wait_seconds=5.05, max_completed_games=1)
+
+        self.assertEqual("target_completed_games_reached", summary.stopped_reason)
+        self.assertEqual((1, 1, 0), _counts(summary))
+        self.assertFalse(summary.awaiting_original_game)
+        self.assertEqual(
+            ["retry", "recovered_from_original_game_wait", None],
+            [e.outcome for e in harness.events],
+        )
+
+    def test_failure_after_start_is_not_reported_as_waiting(self) -> None:
+        for error in (_connect_failure(), ProtocolError("raw payload")):
+            with self.subTest(type(error).__name__):
+                harness = _Harness([_in_game(), _same_bot(), _Started(error)])
+                with contextlib.suppress(ProtocolError):
+                    harness.run(failure_budget=2)
+                recovered = harness.events[2]
+                self.assertEqual("recovered_from_original_game_wait", recovered.outcome)
+                self.assertFalse(harness.events[-1].awaiting_original_game)
+
     def test_non_transport_errors_while_waiting_still_propagate(self) -> None:
         for error in (
             ProtocolError("raw payload"),
@@ -365,6 +459,14 @@ class OriginalGameWaitTest(unittest.TestCase):
                     _Harness([]).run(original_game_wait_seconds=value)
 
 
+def _counts(summary) -> tuple[int, int, int]:
+    return (
+        summary.completed_games,
+        summary.failed_games,
+        summary.consecutive_failures,
+    )
+
+
 def _state(event: ContinuousRunEvent) -> tuple[object, ...]:
     return (
         event.outcome,
@@ -372,6 +474,24 @@ def _state(event: ContinuousRunEvent) -> tuple[object, ...]:
         event.failed_games,
         event.consecutive_failures,
     )
+
+
+class GameStartedHookTest(unittest.TestCase):
+    def test_hook_fires_once_at_the_first_start_game(self) -> None:
+        calls: list[int] = []
+        session = RankedSession(object(), on_game_started=lambda: calls.append(1))
+
+        session.handle_event({"type": "end_of_nothing"})
+        self.assertEqual([], calls)
+        session.handle_event({"type": "start_game", "id": 2})
+        session.handle_event({"type": "start_game", "id": 2})
+
+        self.assertEqual([1], calls)
+
+    def test_no_hook_by_default(self) -> None:
+        session = RankedSession(object())
+        session.handle_event({"type": "start_game", "id": 0})
+        self.assertEqual(0, session.status().seat)
 
 
 class OriginalGameWaitFactsTest(unittest.TestCase):
@@ -400,23 +520,23 @@ class OriginalGameWaitFactsTest(unittest.TestCase):
             line,
         )
 
-    def test_recovered_game_line_carries_its_outcome(self) -> None:
+    def test_recovery_line_carries_its_outcome(self) -> None:
         line = format_continuous_event(
             ContinuousRunEvent(
-                kind="game_completed",
+                kind="original_game_wait",
                 elapsed_seconds=900.0,
                 profile="lisjong-dev",
-                completed_games=1,
+                completed_games=0,
                 failed_games=1,
-                consecutive_failures=0,
+                consecutive_failures=1,
                 outcome="recovered_from_original_game_wait",
                 same_bot_rejections=3,
             )
         )
         self.assertEqual(
-            "continuous-event: kind=game_completed elapsed_seconds=900.0 "
-            "profile=lisjong-dev completed_games=1 failed_games=1 "
-            "consecutive_failures=0 outcome=recovered_from_original_game_wait "
+            "continuous-event: kind=original_game_wait elapsed_seconds=900.0 "
+            "profile=lisjong-dev completed_games=0 failed_games=1 "
+            "consecutive_failures=1 outcome=recovered_from_original_game_wait "
             "same_bot_rejections=3",
             line,
         )
@@ -434,6 +554,9 @@ class OriginalGameWaitFactsTest(unittest.TestCase):
 
         async def _game(policy, token, **kwargs):
             outcome = next(outcomes)
+            if isinstance(outcome, _Started):
+                kwargs["on_game_started"]()
+                raise outcome.error
             if isinstance(outcome, BaseException):
                 raise outcome
 
@@ -465,11 +588,13 @@ class OriginalGameWaitFactsTest(unittest.TestCase):
         return code, stdout.getvalue(), stderr.getvalue()
 
     def test_cli_wait_exhaustion_exits_non_zero_without_secrets(self) -> None:
-        code, stdout, stderr = self._cli([_in_game(), _same_bot()], wait_seconds=1e-9)
+        # The bound has already passed before the first retry starts.
+        code, stdout, stderr = self._cli([_in_game()], wait_seconds=1e-9)
 
         self.assertEqual(1, code)
         self.assertIn("stopped reason: original_game_wait_exhausted", stdout)
-        self.assertIn("same-bot rejections: 1", stdout)
+        self.assertIn("same-bot rejections: 0", stdout)
+        self.assertIn("kind=original_game_wait", stderr)
         self.assertIn("outcome=original_game_wait_exhausted", stderr)
         for text in (stdout, stderr):
             self.assertNotIn(_TOKEN, text)
@@ -486,6 +611,17 @@ class OriginalGameWaitFactsTest(unittest.TestCase):
         self.assertIn("terminal failed games: 1", facts)
         self.assertIn("terminal awaiting original game: yes", facts)
         self.assertIn("terminal same-bot rejections: 1", facts)
+
+    def test_cli_terminal_facts_after_start_report_no_wait(self) -> None:
+        code, _, stderr = self._cli(
+            [_in_game(), _same_bot(), _Started(ProtocolError("raw payload"))],
+            wait_seconds=3600.0,
+        )
+
+        self.assertEqual(1, code)
+        facts = [line for line in stderr.splitlines() if line.startswith("terminal ")]
+        self.assertIn("terminal awaiting original game: no", facts)
+        self.assertIn("outcome=recovered_from_original_game_wait", stderr)
 
 
 if __name__ == "__main__":

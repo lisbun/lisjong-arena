@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from lisjong.policy_contract.policy import Policy
@@ -73,6 +73,7 @@ async def run_ranked_game(
     url: str = DEFAULT_RANKED_URL,
     trace_path: str | os.PathLike | None = None,
     presentation: BoundedRankedPresentationBuffer | None = None,
+    on_game_started: Callable[[], None] | None = None,
 ) -> RankedGameResult:
     """ranked endpointへ1回接続し、1 full hanchanの`end_game`で終了する。
 
@@ -81,6 +82,10 @@ async def run_ranked_game(
     publishする。presentationはread-only consumerであり、Policy response、
     requests / responses count、ack semantics、最終的な`RankedGameResult`の
     いずれも変化させない。
+
+    `on_game_started`(default `None`・opt-in、Issue #419)は最初の
+    `start_game`を受理した時点で1回だけ呼ばれる。protocol semanticsは
+    変化しない。
 
     per-decision factは`RankedSession`が所有する。terminal factはこの
     functionが所有し、1 runにつきcompletionとfailureのどちらか一方だけが
@@ -105,7 +110,11 @@ async def run_ranked_game(
     if not isinstance(token, str) or not token:
         raise ValueError("token must be a non-empty string")
 
-    session = RankedSession(policy, presentation=presentation)
+    # 未指定時はsessionの構築引数も従来どおりにする。
+    started_kwargs = (
+        {} if on_game_started is None else {"on_game_started": on_game_started}
+    )
+    session = RankedSession(policy, presentation=presentation, **started_kwargs)
     trace_writer = None
     try:
         if trace_path is not None:

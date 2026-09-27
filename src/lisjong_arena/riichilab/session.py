@@ -20,7 +20,7 @@ preservingにArenaへcanonical physical migrationしたものである(Arena Iss
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from lisjong.policy_contract import Policy, Seat
 
@@ -473,13 +473,14 @@ class RankedSession(_GameSession):
     両方がdeliveryされてしまう。
     """
 
-    __slots__ = ("_presentation",)
+    __slots__ = ("_on_game_started", "_presentation")
 
     def __init__(
         self,
         policy: Policy,
         *,
         presentation: BoundedRankedPresentationBuffer | None = None,
+        on_game_started: Callable[[], None] | None = None,
     ) -> None:
         if presentation is not None and not isinstance(
             presentation, BoundedRankedPresentationBuffer
@@ -489,10 +490,19 @@ class RankedSession(_GameSession):
             )
         super().__init__(policy)
         self._presentation = presentation
+        self._on_game_started = on_game_started
 
     @property
     def is_complete(self) -> bool:
         return self._end_game_received
+
+    def _handle_start_game(self, event: Mapping) -> None:
+        # `on_game_started`(Issue #419)は最初の`start_game`でseatをbindした
+        # 直後に1回だけ呼ぶ。duplicate `start_game`では呼ばない。
+        first = self._adapter is None
+        super()._handle_start_game(event)
+        if first and self._on_game_started is not None:
+            self._on_game_started()
 
     @property
     def terminal_event_name(self) -> str:

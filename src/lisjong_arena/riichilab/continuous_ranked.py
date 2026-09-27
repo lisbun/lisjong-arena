@@ -95,7 +95,8 @@ _FAILURE_BUDGET = 5
 #: in-game failure後、`same_bot_already_active` rejectionを待ち続ける上限秒数
 #: (Issue #419)。切断された元の半荘がserver側で通常どおり終わるのに十分長く、
 #: stuckしたserver/sessionで無限retryしないfinite値とする。wait開始(in-game
-#: failure時点)からのmonotonic elapsed timeで、rejectionごとに確認する。
+#: failure時点)からのmonotonic elapsed timeで、rejection時・retry前・
+#: `start_game`待ちのconnection中に適用する。開始済みのgameは中断しない。
 _ORIGINAL_GAME_WAIT_SECONDS = 3600.0
 
 
@@ -195,6 +196,8 @@ async def _acquire_ranked_record(
 #: `ContinuousRunEvent.kind`の値。
 EVENT_GAME_COMPLETED = "game_completed"
 EVENT_TRANSPORT_FAILURE = "transport_failure"
+#: Issue #419: original-game waitの終了(新しいgameの開始またはbound到達)。
+EVENT_ORIGINAL_GAME_WAIT = "original_game_wait"
 #: transport failure eventの`outcome`の値。
 OUTCOME_RETRY = "retry"
 OUTCOME_FAILURE_BUDGET_EXHAUSTED = "failure_budget_exhausted"
@@ -203,8 +206,7 @@ OUTCOME_DURATION_REACHED = "duration_reached"
 OUTCOME_AWAITING_ORIGINAL_GAME = "awaiting_original_game"
 #: Issue #419: original-game waitのboundへ到達した(stopped reasonも同じ値)。
 OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED = "original_game_wait_exhausted"
-#: Issue #419: original-game wait中に新しいgameがcompletedした
-#: (`game_completed` eventのoutcome)。
+#: Issue #419: original-game wait中に新しいgameの`start_game`を受理した。
 OUTCOME_RECOVERED_FROM_ORIGINAL_GAME_WAIT = "recovered_from_original_game_wait"
 #: `format_continuous_event()`が出力する行のprefix。
 CONTINUOUS_EVENT_PREFIX = "continuous-event:"
@@ -235,8 +237,11 @@ class ContinuousRunEvent:
     original-game wait中のsame-bot rejection retry(`awaiting_original_game`)、
     original-game wait bound到達(`original_game_wait_exhausted`)の
     いずれかを示す。`backoff_seconds`は実際にsleepする秒数で、sleepしない
-    場合は`None`である。`game_completed`の`outcome`はoriginal-game waitから
-    回復した場合だけ`recovered_from_original_game_wait`で、それ以外は`None`。
+    場合は`None`である。
+
+    `original_game_wait`(Issue #419)はwait中に新しいgameの`start_game`を
+    受理した(`recovered_from_original_game_wait`)か、rejection以外の時点で
+    wait boundへ到達した(`original_game_wait_exhausted`)ことを示す。
 
     `awaiting_original_game` / `same_bot_rejections`(Issue #419)はevent直後の
     original-game wait状態と、run全体でoriginal-game wait中に受けたsame-bot
@@ -526,11 +531,21 @@ async def run_continuous_ranked(
     `in_game`以外)の`TransportError`を受けた場合は、元の半荘がまだbotを保持
     しているとみなし、`failed_games` / `consecutive_failures`を増やさず
     (failure budgetを消費せず)、rejection数だけを数えてbounded backoffで
-    retryする。wait開始から`original_game_wait_seconds`以上経過したrejectionで
-    `original_game_wait_exhausted`として停止する。wait中のそれ以外の
-    transport failureはordinary semanticsで扱う(wait状態は維持)。wait外の
-    same-bot rejectionは特別扱いしない。gameがcompletedするとwait状態を
-    clearする。duration / 停止要求はwait中も通常どおり次のretryを止める。
+    retryする。wait中のそれ以外のtransport failureはordinary semanticsで扱う
+    (wait状態は維持)。wait外のsame-bot rejectionは特別扱いしない。
+
+    wait中のattemptではone-game primitiveへ`on_game_started`を渡し、新しい
+    gameの`start_game`受理時点でwait状態をclearする。`consecutive_failures`の
+    resetは従来どおりgame完走時である。
+
+    wait boundはwait開始から`original_game_wait_seconds`で、rejection時、
+    次のretry前(backoffはboundまでにcapする)、および`start_game`待ちの
+    connection中に適用し、到達すると`original_game_wait_exhausted`として
+    停止する。`start_game`待ちのattemptはbound到達時にcancelする(recordは
+    finalizeされない)が、`start_game`受理後のgameは中断しない。この
+    connection中のboundはevent loopのtimerで測るため、`monotonic`は
+    event loopと同じclock(既定の`time.monotonic`)であることを前提とする。
+    duration / 停止要求はwait中も通常どおり次のretryを止める。
     """
     _validate_max_completed_games(max_completed_games)
     _validate_max_duration_seconds(max_duration_seconds)
@@ -625,6 +640,83 @@ async def run_continuous_ranked(
         await sleep(backoff)
         return True
 
+    def wait_remaining() -> float:
+        """original-game wait boundまでの残り秒数。"""
+        return original_game_wait_started + original_game_wait_seconds - monotonic()
+
+    async def play_one_game(policy: Policy, game_kwargs: dict[str, object]) -> None:
+        if record_dir is None:
+            await run_ranked_game(
+                policy,
+                token,
+                url=url,
+                trace_path=trace_path,
+                **game_kwargs,
+            )
+            return
+        destination = resolve_ranked_record_path(os.fspath(record_dir))
+        if destination is None:  # defensive: non-empty record_dir was validated above
+            raise ValueError("record_dir did not resolve to a destination")
+        await _acquire_ranked_record(
+            policy,
+            token,
+            destination=destination,
+            url=url,
+            profile_identity=profile.name,
+            policy_identity=type(policy).__name__,
+            **game_kwargs,
+        )
+
+    async def play_one_game_while_waiting(
+        policy: Policy, game_kwargs: dict[str, object]
+    ) -> bool:
+        """wait中の1 attempt。`start_game`前にboundへ到達したら`False`を返す。
+
+        `start_game`受理時点でwait状態をclearし、以後はboundを適用せずgameの
+        終了まで待つ。bound到達時は`start_game`前のattemptをcancelする。
+        attemptの例外は`play_one_game()`と同じくそのまま伝播する。
+        """
+        started = asyncio.Event()
+
+        def game_started() -> None:
+            nonlocal awaiting_original_game, same_bot_rejections
+            if started.is_set():
+                return
+            started.set()
+            awaiting_original_game = False
+            same_bot_rejections = 0
+            emit(
+                EVENT_ORIGINAL_GAME_WAIT,
+                outcome=OUTCOME_RECOVERED_FROM_ORIGINAL_GAME_WAIT,
+            )
+
+        game = asyncio.ensure_future(
+            play_one_game(policy, {**game_kwargs, "on_game_started": game_started})
+        )
+        started_wait = asyncio.ensure_future(started.wait())
+        try:
+            await asyncio.wait(
+                {game, started_wait},
+                timeout=max(wait_remaining(), 0.0),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except BaseException:
+            game.cancel()
+            raise
+        finally:
+            started_wait.cancel()
+        if not game.done() and not started.is_set():
+            game.cancel()
+            # 外側のcancellationは握りつぶさない(`asyncio.wait`は待つだけ)。
+            await asyncio.wait({game})
+            if not game.cancelled():
+                game.exception()  # 取得済みにする(cancel前に終わったfailure)
+            return False
+        # 開始済み(または終了済み)。外側のcancellationは標準semanticsどおり
+        # gameへ伝わる。
+        await game
+        return True
+
     while True:
         if max_completed_games is not None and completed_games >= max_completed_games:
             stopped_reason = "target_completed_games_reached"
@@ -635,36 +727,29 @@ async def run_continuous_ranked(
         if stop_requested is not None and stop_requested():
             stopped_reason = "stop_requested"
             break
+        if awaiting_original_game and wait_remaining() <= 0:
+            stopped_reason = OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED
+            emit(
+                EVENT_ORIGINAL_GAME_WAIT,
+                outcome=OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED,
+            )
+            break
 
         policy = profile.policy_factory()
         # presentationの有無でone-game primitiveの呼び出し引数を変えない。
-        presentation_kwargs = (
+        game_kwargs = (
             {} if presentation is None else {"presentation": presentation.open_game()}
         )
         try:
-            if record_dir is None:
-                await run_ranked_game(
-                    policy,
-                    token,
-                    url=url,
-                    trace_path=trace_path,
-                    **presentation_kwargs,
+            if not awaiting_original_game:
+                await play_one_game(policy, game_kwargs)
+            elif not await play_one_game_while_waiting(policy, game_kwargs):
+                stopped_reason = OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED
+                emit(
+                    EVENT_ORIGINAL_GAME_WAIT,
+                    outcome=OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED,
                 )
-            else:
-                destination = resolve_ranked_record_path(os.fspath(record_dir))
-                if (
-                    destination is None
-                ):  # defensive: non-empty record_dir was validated above
-                    raise ValueError("record_dir did not resolve to a destination")
-                await _acquire_ranked_record(
-                    policy,
-                    token,
-                    destination=destination,
-                    url=url,
-                    profile_identity=profile.name,
-                    policy_identity=type(policy).__name__,
-                    **presentation_kwargs,
-                )
+                break
         except TransportError as error:
             failure_diagnostics = (
                 error.diagnostics
@@ -687,9 +772,7 @@ async def run_continuous_ranked(
                 same_bot_rejections += 1
                 total_same_bot_rejections += 1
                 rejection_type = type(error).__name__
-                if monotonic() - original_game_wait_started >= (
-                    original_game_wait_seconds
-                ):
+                if wait_remaining() <= 0:
                     stopped_reason = OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED
                     emit(
                         EVENT_TRANSPORT_FAILURE,
@@ -698,10 +781,11 @@ async def run_continuous_ranked(
                         outcome=OUTCOME_ORIGINAL_GAME_WAIT_EXHAUSTED,
                     )
                     break
+                # boundより後まで眠らない。bound到達は次のloop先頭で確認する。
                 if await backoff_before_retry(
                     rejection_type,
                     failure_diagnostics,
-                    _backoff_seconds(same_bot_rejections),
+                    min(_backoff_seconds(same_bot_rejections), wait_remaining()),
                     OUTCOME_AWAITING_ORIGINAL_GAME,
                 ):
                     continue
@@ -738,13 +822,7 @@ async def run_continuous_ranked(
 
         completed_games += 1
         consecutive_failures = 0
-        recovered = awaiting_original_game
-        awaiting_original_game = False
-        same_bot_rejections = 0
-        emit(
-            EVENT_GAME_COMPLETED,
-            outcome=OUTCOME_RECOVERED_FROM_ORIGINAL_GAME_WAIT if recovered else None,
-        )
+        emit(EVENT_GAME_COMPLETED)
 
     return ContinuousRunSummary(
         profile=profile.name,
