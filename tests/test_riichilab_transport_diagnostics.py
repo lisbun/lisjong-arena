@@ -23,7 +23,10 @@ class ClassifyReasonTest(unittest.TestCase):
             "   ": "none",
             "Bot is already connected": "same_bot_already_active",
             "concurrent connection rejected": "same_bot_already_active",
-            "bot is in a game": "same_bot_already_active",
+            "bot is already in the queue": "same_bot_already_active",
+            # Bare "already" / "in game" are too broad for a same-bot label.
+            "request already processed": "other",
+            "error in game server": "other",
             "Token verification failed: Bot is inactive": "token_or_bot_rejected",
             "keepalive ping timeout": "keepalive_timeout",
             "server shutting down": "other",

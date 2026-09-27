@@ -144,14 +144,19 @@ async def connect_transport(url: str, token: str) -> AsyncIterator[Transport]:
     使ってsanitizeし`diagnostics`へ置き換える(Issue #411)。
     """
     headers = {"Authorization": f"Bearer {token}"}
+    connect_diagnostics = None
     try:
         connection = await websockets.connect(url, additional_headers=headers)
     except Exception as error:
-        failure = TransportError(f"failed to connect to {url}")
-        failure.diagnostics = sanitize_transport_failure(
+        connect_diagnostics = sanitize_transport_failure(
             _connect_failure(error), (token,)
         )
-        raise failure from error
+    if connect_diagnostics is not None:
+        # exceptブロックの外でraiseし、raw handshake response(body等)を
+        # `__context__`にも残さない。
+        failure = TransportError(f"failed to connect to {url}")
+        failure.diagnostics = connect_diagnostics
+        raise failure
 
     transport = WebSocketTransport(connection)
     try:
@@ -161,9 +166,22 @@ async def connect_transport(url: str, token: str) -> AsyncIterator[Transport]:
         if isinstance(raw, RawTransportFailure):
             error.diagnostics = sanitize_transport_failure(raw, (token,))
             delattr(error, _RAW_FAILURE_ATTRIBUTE)
+        _drop_raw_chain(error)
         raise
     finally:
         await connection.close()
+
+
+def _drop_raw_chain(error: BaseException) -> None:
+    """raw close reason等を持つ`__cause__` / `__context__`を接続の外へ出さない。
+
+    `ConnectionClosed` / `TransportClosed`はserverのraw close reasonを
+    messageに持つ。transport境界を出る例外はsanitize済み`diagnostics`だけを
+    持ち、raw例外chainは切り離す。
+    """
+    error.__cause__ = None
+    error.__context__ = None
+    error.__suppress_context__ = True
 
 
 #: 例外へ一時的に付けるraw failure factsのattribute名(module外へ出さない)。
@@ -265,8 +283,10 @@ async def drive_session(
       ことは保証しない(実sendが失敗した場合もrecordは残る)
     - transport failureにはraw failure facts(phase / operation / close
       code・reason / `type`なしserver error message / 直前の`request_action`
-      処理時間)を付ける(Issue #411)。`type`なしeventはこれまでどおり
-      sessionへ渡し、session semanticsは変えない
+      処理時間)を付ける(Issue #411)。server error messageは、failure直前に
+      受信したframeがそれだった場合だけ使う。`type`なしeventはこれまでどおり
+      sessionへ渡し、session semanticsは変えない。raw factsと例外chainは
+      `connect_transport()`がsanitize・切り離してから外へ出す
     """
     server_text: str | None = None
     last_decision_elapsed_seconds: float | None = None
@@ -291,6 +311,9 @@ async def drive_session(
             )
             raise disconnect from error
 
+        # server reasonは直前に受信したframeがserver error messageだった場合
+        # だけ次のfailureへ結びつける(以後のframeで古いreasonを持ち越さない)。
+        server_text = None
         if isinstance(message, bytes):
             continue
 
@@ -298,9 +321,7 @@ async def drive_session(
         if trace is not None:
             trace.record("recv", event.get("type"), event)
 
-        error_text = _server_error_text(event)
-        if error_text is not None:
-            server_text = error_text
+        server_text = _server_error_text(event)
 
         decision_started = (
             _decision_clock()

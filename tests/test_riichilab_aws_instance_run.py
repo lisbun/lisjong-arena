@@ -25,6 +25,7 @@ from lisjong_arena.riichilab.aws_instance_run import (
     MAX_BOTS,
     MAX_RUNNER_FACT_EVENTS,
     MAX_SUMMARY_JSON_CHARS,
+    SUMMARY_BUDGET_EXCEEDED_REASON,
     AwsInstanceRunConfigError,
     _fit_summary,
     _run_cli,
@@ -546,6 +547,39 @@ class SummarySizeTest(unittest.TestCase):
             "last_decision_elapsed_seconds": 12345.678,
         }
 
+    @staticmethod
+    def _size(summary: dict) -> int:
+        return len(json.dumps(summary, sort_keys=True, separators=(",", ":")))
+
+    def _one_bot(self, padding: int, events: int = 1) -> dict:
+        return {
+            "schema_id": INSTANCE_SUMMARY_SCHEMA_ID,
+            "status": "PASS",
+            "padding": "p" * padding,
+            "bots": [
+                {
+                    "profile": "lisjong-dev",
+                    "status": "PASS",
+                    "exit_code": 0,
+                    "failure_reason": None,
+                    "runner_facts": {
+                        "transport_failure_event_count": events,
+                        "first_transport_failure_event": self._worst_event(),
+                        "transport_failure_events": [
+                            self._worst_event() for _ in range(events)
+                        ],
+                    },
+                }
+            ],
+        }
+
+    def _padding_for(self, target: int) -> int:
+        """Padding that makes the untrimmed summary exactly ``target`` long."""
+        probe = self._one_bot(0)
+        probe["runner_facts_trimmed"] = False
+        probe["summary_budget_exceeded"] = False
+        return target - self._size(probe)
+
     def test_worst_case_summary_is_trimmed_to_the_budget(self) -> None:
         entries = []
         for index in range(MAX_BOTS):
@@ -565,32 +599,67 @@ class SummarySizeTest(unittest.TestCase):
             )
         summary = {"schema_id": INSTANCE_SUMMARY_SCHEMA_ID, "bots": entries}
 
-        _fit_summary(summary)
+        fitted = _fit_summary(summary)
 
-        rendered = json.dumps(summary, sort_keys=True, separators=(",", ":"))
+        rendered = json.dumps(fitted, sort_keys=True, separators=(",", ":"))
         self.assertLessEqual(len(rendered), MAX_SUMMARY_JSON_CHARS)
         self.assertLess(len(base64.b64encode(rendered.encode())), 24000)
-        self.assertTrue(summary["runner_facts_trimmed"])
-        for entry in entries:
+        self.assertTrue(fitted["runner_facts_trimmed"])
+        self.assertFalse(fitted["summary_budget_exceeded"])
+        for entry in fitted["bots"]:
             self.assertEqual(
                 999, entry["runner_facts"]["transport_failure_event_count"]
             )
 
-    def test_small_summary_is_not_trimmed(self) -> None:
-        summary = {
-            "bots": [
-                {
-                    "runner_facts": {
-                        "first_transport_failure_event": self._worst_event(),
-                        "transport_failure_events": [self._worst_event()],
-                    }
-                }
-            ]
-        }
-        _fit_summary(summary)
-        self.assertFalse(summary["runner_facts_trimmed"])
+    def test_summary_exactly_at_the_cap_is_kept_whole(self) -> None:
+        summary = self._one_bot(self._padding_for(MAX_SUMMARY_JSON_CHARS))
+
+        fitted = _fit_summary(summary)
+
+        self.assertEqual(MAX_SUMMARY_JSON_CHARS, self._size(fitted))
+        self.assertFalse(fitted["runner_facts_trimmed"])
         self.assertEqual(
-            1, len(summary["bots"][0]["runner_facts"]["transport_failure_events"])
+            1, len(fitted["bots"][0]["runner_facts"]["transport_failure_events"])
+        )
+
+    def test_one_character_over_the_cap_is_trimmed(self) -> None:
+        summary = self._one_bot(self._padding_for(MAX_SUMMARY_JSON_CHARS + 1))
+
+        fitted = _fit_summary(summary)
+
+        # The trimmed flag itself is measured: the result is within the cap.
+        self.assertLessEqual(self._size(fitted), MAX_SUMMARY_JSON_CHARS)
+        self.assertTrue(fitted["runner_facts_trimmed"])
+        self.assertFalse(fitted["summary_budget_exceeded"])
+        self.assertEqual("PASS", fitted["status"])
+        self.assertEqual(
+            [], fitted["bots"][0]["runner_facts"]["transport_failure_events"]
+        )
+
+    def test_untrimmable_summary_fails_closed_within_the_cap(self) -> None:
+        summary = self._one_bot(MAX_SUMMARY_JSON_CHARS * 2)
+        summary["bots"][0]["failure_reason"] = "r" * 1000
+
+        fitted = _fit_summary(summary)
+
+        self.assertLessEqual(self._size(fitted), MAX_SUMMARY_JSON_CHARS)
+        self.assertEqual("FAIL", fitted["status"])
+        self.assertEqual(
+            SUMMARY_BUDGET_EXCEEDED_REASON, fitted["instance_failure_reason"]
+        )
+        self.assertTrue(fitted["summary_budget_exceeded"])
+        self.assertTrue(fitted["runner_facts_trimmed"])
+        self.assertNotIn("padding", fitted)
+        (bot,) = fitted["bots"]
+        self.assertEqual({"profile", "status", "exit_code", "failure_reason"}, set(bot))
+        self.assertEqual(200, len(bot["failure_reason"]))
+
+    def test_small_summary_is_not_trimmed(self) -> None:
+        fitted = _fit_summary(self._one_bot(0))
+        self.assertFalse(fitted["runner_facts_trimmed"])
+        self.assertFalse(fitted["summary_budget_exceeded"])
+        self.assertEqual(
+            1, len(fitted["bots"][0]["runner_facts"]["transport_failure_events"])
         )
 
 

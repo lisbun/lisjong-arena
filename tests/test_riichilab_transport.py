@@ -13,6 +13,7 @@ import asyncio
 import json
 import os
 import tempfile
+import traceback
 import unittest
 from unittest.mock import patch
 
@@ -564,6 +565,49 @@ class FailurePhaseTest(unittest.TestCase):
         self.assertEqual(1, raw.requests_received)
         self.assertEqual(2.5, raw.last_decision_elapsed_seconds)
 
+    def _close_after(self, frames: list, **closed) -> RawTransportFailure:
+        session = RankedSession(MinimalPolicy())
+        transport = FakeTransport([])
+        pending = list(frames)
+
+        async def _recv():
+            if pending:
+                return pending.pop(0)
+            raise TransportClosed("closed", **closed)
+
+        transport.recv = _recv
+        with patch(_PATCH_TARGET, _fake_adapter_factory):
+            with self.assertRaises(UnexpectedDisconnectError) as caught:
+                _run(drive_ranked_session(session, transport))
+        return _raw_failure(caught.exception)
+
+    def test_an_earlier_server_error_is_not_carried_past_a_normal_event(
+        self,
+    ) -> None:
+        raw = self._close_after(
+            [
+                _event_text({"error": "Bot is already in game"}),
+                _event_text({"type": "start_game", "id": 0}),
+            ],
+            code_received=1001,
+            reason_received="server restarting",
+        )
+        self.assertEqual("in_game", raw.phase)
+        # The later close is described by its own reason, not the old error.
+        self.assertEqual("server restarting", raw.server_text)
+
+    def test_an_earlier_server_error_without_a_close_reason_is_dropped(
+        self,
+    ) -> None:
+        raw = self._close_after(
+            [
+                _event_text({"error": "Bot is already in game"}),
+                b"binary",
+            ],
+            code_received=1006,
+        )
+        self.assertIsNone(raw.server_text)
+
     def test_in_game_recv_close(self) -> None:
         session = RankedSession(MinimalPolicy())
         transport = FakeTransport([_event_text({"type": "start_game", "id": 0})])
@@ -587,6 +631,85 @@ class _FakeConnection:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class RawChainIsolationTest(unittest.TestCase):
+    """No raw reason, body or token leaves the transport boundary via the chain."""
+
+    _RAW_REASON = "unsafe raw reason <payload>"
+
+    def _raised(self, connect) -> TransportError:
+        async def _scenario():
+            async with connect_transport("wss://example.invalid/ws", _DIAG_TOKEN) as t:
+                await drive_ranked_session(RankedSession(MinimalPolicy()), t)
+
+        with patch("websockets.connect", connect):
+            with self.assertRaises(TransportError) as caught:
+                _run(_scenario())
+        return caught.exception
+
+    def _assert_isolated(self, error: TransportError) -> None:
+        self.assertIsNone(error.__cause__)
+        self.assertIsNone(error.__context__)
+        rendered = "".join(traceback.format_exception(error))
+        self.assertNotIn(_DIAG_TOKEN, rendered)
+        self.assertNotIn(self._RAW_REASON, rendered)
+        self.assertNotIn("ConnectionClosed", rendered)
+        self.assertNotIn("TransportClosed", rendered)
+        self.assertNotIn("InvalidStatus", rendered)
+        self.assertNotIn(_DIAG_TOKEN, repr(error.diagnostics))
+
+    def test_recv_close_reason_does_not_leave_via_the_chain(self) -> None:
+        closed = ConnectionClosedError(
+            Close(4000, f"{self._RAW_REASON} {_DIAG_TOKEN}"), None
+        )
+
+        async def _connect(url, additional_headers):
+            return _FakeConnection(closed)
+
+        error = self._raised(_connect)
+        self.assertIsInstance(error, UnexpectedDisconnectError)
+        self._assert_isolated(error)
+
+    def test_send_close_reason_does_not_leave_via_the_chain(self) -> None:
+        closed = ConnectionClosedError(
+            Close(4000, f"{self._RAW_REASON} {_DIAG_TOKEN}"), None
+        )
+
+        class _SendFailingConnection(_FakeConnection):
+            def __init__(self) -> None:
+                super().__init__(closed)
+                self._frames = [
+                    _event_text({"type": "start_game", "id": 0}),
+                    _event_text(_request_action(1)),
+                ]
+
+            async def recv(self):
+                return self._frames.pop(0)
+
+            async def send(self, message: str) -> None:
+                raise closed
+
+        async def _connect(url, additional_headers):
+            return _SendFailingConnection()
+
+        with patch(_PATCH_TARGET, _fake_adapter_factory):
+            error = self._raised(_connect)
+        self.assertNotIsInstance(error, UnexpectedDisconnectError)
+        self.assertEqual("send", error.diagnostics.operation)
+        self._assert_isolated(error)
+
+    def test_rejected_handshake_body_does_not_leave_via_the_chain(self) -> None:
+        response = Response(
+            403, "Forbidden", Headers(), f"{self._RAW_REASON} {_DIAG_TOKEN}".encode()
+        )
+
+        async def _connect(url, additional_headers):
+            raise InvalidStatus(response)
+
+        error = self._raised(_connect)
+        self.assertEqual(403, error.diagnostics.http_status)
+        self._assert_isolated(error)
 
 
 class ConnectTransportSanitizeTest(unittest.TestCase):

@@ -262,12 +262,16 @@ def _summary_size(summary: Mapping[str, Any]) -> int:
     return len(json.dumps(summary, sort_keys=True, separators=(",", ":")))
 
 
-def _fit_summary(summary: dict[str, Any]) -> None:
-    """Trim runner-facts detail until the summary fits ``MAX_SUMMARY_JSON_CHARS``.
+#: Longest per-bot ``failure_reason`` kept in the budget-exceeded fallback.
+_FALLBACK_REASON_LENGTH = 200
+SUMMARY_BUDGET_EXCEEDED_REASON = "instance summary exceeds the size budget"
+
+
+def _trim_runner_facts(summary: dict[str, Any]) -> bool:
+    """Drop runner-facts detail until the summary fits; return whether any was.
 
     Order: the oldest history events (longest history first), then the first
     event's excerpt, then the first event.  Counts and counters are kept.
-    ``runner_facts_trimmed`` records whether anything was dropped.
     """
 
     facts = [
@@ -287,7 +291,7 @@ def _fit_summary(summary: dict[str, Any]) -> None:
     for stage in ("excerpt", "event"):
         for item in facts:
             if _summary_size(summary) <= MAX_SUMMARY_JSON_CHARS:
-                break
+                return trimmed
             first = item["first_transport_failure_event"]
             if first is None:
                 continue
@@ -297,7 +301,61 @@ def _fit_summary(summary: dict[str, Any]) -> None:
             elif stage == "event":
                 item["first_transport_failure_event"] = None
                 trimmed = True
-    summary["runner_facts_trimmed"] = trimmed
+    return trimmed
+
+
+def _budget_exceeded_summary(summary: Mapping[str, Any]) -> dict[str, Any]:
+    """Fail-closed minimal summary when trimming detail is not enough.
+
+    The run is FAIL: its full evidence cannot be returned.  Each bot keeps only
+    its identity, status, exit code and a bounded failure reason.
+    """
+
+    bots = [
+        {
+            "profile": entry.get("profile"),
+            "status": entry.get("status"),
+            "exit_code": entry.get("exit_code"),
+            "failure_reason": (
+                None
+                if entry.get("failure_reason") is None
+                else str(entry["failure_reason"])[:_FALLBACK_REASON_LENGTH]
+            ),
+        }
+        for entry in summary["bots"]
+    ]
+    return {
+        "schema_id": summary["schema_id"],
+        "schema_version": summary.get("schema_version"),
+        "status": "FAIL",
+        "instance_failure_reason": SUMMARY_BUDGET_EXCEEDED_REASON,
+        "summary_budget_exceeded": True,
+        "runner_facts_trimmed": True,
+        "start_utc": summary.get("start_utc"),
+        "stop_utc": summary.get("stop_utc"),
+        "configured_bots": summary.get("configured_bots"),
+        "bot_count": len(bots),
+        "bots": bots,
+    }
+
+
+def _fit_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    """Return a summary whose compact JSON is at most ``MAX_SUMMARY_JSON_CHARS``.
+
+    ``runner_facts_trimmed`` (and ``summary_budget_exceeded``) are part of the
+    measured summary.  When trimming detail is not enough, the result is the
+    fail-closed ``_budget_exceeded_summary``.  The cap is a final invariant.
+    """
+
+    summary["runner_facts_trimmed"] = False
+    summary["summary_budget_exceeded"] = False
+    # The flags only ever change to shorter values below ("false" -> "true").
+    summary["runner_facts_trimmed"] = _trim_runner_facts(summary)
+    if _summary_size(summary) > MAX_SUMMARY_JSON_CHARS:
+        summary = _budget_exceeded_summary(summary)
+    if _summary_size(summary) > MAX_SUMMARY_JSON_CHARS:
+        raise AwsRunVerificationError("instance summary cannot fit the size budget")
+    return summary
 
 
 def read_runner_facts(
@@ -543,8 +601,7 @@ def verify_instance_run(
         "stop_request_source": stop_request_source,
         "bots": entries,
     }
-    _fit_summary(summary)
-    return summary
+    return _fit_summary(summary)
 
 
 def _add_bot_arguments(parser: argparse.ArgumentParser) -> None:
@@ -631,6 +688,7 @@ __all__ = [
     "MAX_BOTS",
     "MAX_RUNNER_FACT_EVENTS",
     "MAX_SUMMARY_JSON_CHARS",
+    "SUMMARY_BUDGET_EXCEEDED_REASON",
     "AwsInstanceRunConfigError",
     "BotConfig",
     "bot_directory",

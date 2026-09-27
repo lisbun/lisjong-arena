@@ -258,7 +258,13 @@ Lifecycle:
   - `status`
   - `runner_facts_trimmed`: whether event detail was trimmed to keep the
     summary within `MAX_SUMMARY_JSON_CHARS` (15,000 characters, so that the
-    base64 sentinel stays under the 24,000-character SSM stdout limit)
+    base64 sentinel stays under the 24,000-character SSM stdout limit). The
+    cap is a final invariant: the flags themselves are measured.
+  - `summary_budget_exceeded`: `true` only when trimming the detail was not
+    enough. The run then fails closed: the summary is reduced to status
+    `FAIL`, `instance_failure_reason` "instance summary exceeds the size
+    budget", and per bot only profile, status, exit code, and a failure
+    reason of at most 200 characters.
 - `runner_facts` (Issue #404) is read back from each bot's `continuous.log`
   before teardown. It is informational only and never changes PASS / FAIL.
   It keeps a failed bot diagnosable after the instance is gone:
@@ -293,7 +299,15 @@ Lifecycle:
     `token_or_bot_rejected`, `keepalive_timeout`, and `other`. They are
     keyword-based, because RiichiLab does not document its rejection texts.
     The class is the canonical evidence; `other` together with the excerpt is
-    what shows an unknown text.
+    what shows an unknown text. The keywords are provisional, specific
+    phrases (for example "already in game", "concurrent connection"; never a
+    bare "already"). They are evidence only and drive no retry decision; the
+    rule for a same-bot rejection is fixed only after a reproduction shows the
+    real server signal (#411 PR 2).
+  - A server error message counts only if it was the last frame received
+    before the failure. The transport boundary cuts the raw exception chain
+    (`__cause__` / `__context__`), so raw close reasons, handshake bodies, and
+    the token do not leave with the error.
   - `transport_failure_phase_counts` / `server_reason_class_counts`
   - `source` shows where the counters came from: `summary`, `terminal`, or
     `events` (the runner was killed before it printed either)
