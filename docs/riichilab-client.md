@@ -177,6 +177,15 @@ request、未知の理由はfail closedする。理由はclient側の判断で�
 での扱いは[`docs/durable-ranked-game-record.md`](durable-ranked-game-record.md)の
 「未送信request」を参照。
 
+driverはlive requestの待機中、およびdecision終了時の送信前確認で放棄を
+確定した際にこのAPIを呼ぶ。local cutoffを過ぎていれば`local_cutoff`、
+そうでなければ先読みした`defaulted` / `stale`による`late_ack`を記録する。
+放棄済みworkerの遅着結果やbacklogの同期では二重に記録しない。
+`record_dir`付きcontinuousでは、対応する`defaulted`が終局前のtraceにあれば
+保存して次対局へ進む。ackなし・`stale`のみでは記録を公開せず停止する。
+この経路は`test_riichilab_pipeline_record_integration.py`で、通信境界だけを
+差し替え、実driver / adapter / writer / strict readerを通して検証する。
+
 ### validation terminal
 
 validationでは`end_game`だけで完了せず、`validation_result`を待つ。

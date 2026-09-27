@@ -61,6 +61,8 @@ from lisjong_arena.riichilab.errors import (
 from lisjong_arena.riichilab.session import (
     EVENT_TYPE_ACTION_ACK,
     EVENT_TYPE_REQUEST_ACTION,
+    UNANSWERED_REASON_LATE_ACK,
+    UNANSWERED_REASON_LOCAL_CUTOFF,
     RankedSession,
     ValidationSession,
 )
@@ -459,6 +461,7 @@ class _SessionDriver:
             if self._live is not None:
                 if not self._answerable(self._live):
                     # 放棄: 結果は送らず、後続frameの処理へ進む。
+                    self._mark_unanswered(self._live)
                     self._live = None
                     continue
                 await wait_for_notification(self._notified, self._live_timeout())
@@ -478,6 +481,16 @@ class _SessionDriver:
     def _live_timeout(self) -> float | None:
         cutoff_at = self._live.cutoff_at
         return None if cutoff_at is None else cutoff_at - self._timing.now()
+
+    def _mark_unanswered(self, request: PendingRequest) -> None:
+        # client側の放棄理由だけを記録する。server defaultの確定は
+        # durable recordがtrace中のdefaulted ackと照合する(#421)。
+        reason = (
+            UNANSWERED_REASON_LOCAL_CUTOFF
+            if request.expired(self._timing.now())
+            else UNANSWERED_REASON_LATE_ACK
+        )
+        self._session.mark_request_unanswered(request.request_id, reason)
 
     def _start_next(self, executor: ThreadPoolExecutor) -> None:
         request = self._queued.popleft()
@@ -518,6 +531,7 @@ class _SessionDriver:
             return
         self._live = None
         if not self._answerable(request):
+            self._mark_unanswered(request)
             return
         response, decision_facts = result
         outgoing = self._session.complete_request_action(
