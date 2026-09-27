@@ -85,6 +85,7 @@ from lisjong_arena.riichilab.session import (
     EVENT_TYPE_START_GAME,
     FATAL_ACK_STATUSES,
     KNOWN_ACK_STATUSES,
+    UNANSWERED_REASONS,
 )
 from lisjong_arena.riichilab.transport import DEFAULT_RANKED_URL
 
@@ -101,7 +102,15 @@ from lisjong_arena.single_round_artifact import (
 )
 
 RANKED_GAME_RECORD_SCHEMA_ID = "lisjong-arena-riichilab-durable-ranked-game-record"
-RANKED_GAME_RECORD_SCHEMA_VERSION = 1
+# v2(Issue #421): `result.json`が`unanswered_requests`を持ち、serverが
+# defaultしたことを`defaulted` ackで確認できる未送信requestを許容する。
+# writerは常にcurrent versionを書く。loaderはv1も従来のv1規則(すべての
+# requestにちょうど1つのresponse)のまま読む。
+RANKED_GAME_RECORD_SCHEMA_VERSION = 2
+_SCHEMA_VERSION_V1 = 1
+_SUPPORTED_SCHEMA_VERSIONS = frozenset(
+    {_SCHEMA_VERSION_V1, RANKED_GAME_RECORD_SCHEMA_VERSION}
+)
 RANKED_GAME_RECORD_EXECUTION_BACKEND = "riichilab-ranked"
 RANKED_GAME_RECORD_MODE = "ranked"
 RANKED_GAME_RECORD_COMPLETION_STATUS = "completed"
@@ -131,7 +140,7 @@ _DIRECTIONS = frozenset({_DIRECTION_RECV, _DIRECTION_SEND})
 
 _TRACE_ENTRY_KEYS = {"direction", "event_type", "payload", "timestamp"}
 _PAYLOAD_REFERENCE_KEYS = {"byte_count", "filename", "sha256"}
-_RESULT_KEYS = {
+_RESULT_KEYS_V1 = {
     "ack_history",
     "end_game_received",
     "requests_received",
@@ -139,7 +148,15 @@ _RESULT_KEYS = {
     "scores",
     "seat",
 }
+_RESULT_KEYS = _RESULT_KEYS_V1 | {"unanswered_requests"}
 _ACK_HISTORY_ENTRY_KEYS = {"request_id", "statuses"}
+_UNANSWERED_ENTRY_KEYS = {"request_id", "reason"}
+
+# 未送信requestをserverがdefaultしたと確定する唯一のack status。
+_ACK_DEFAULTED = "defaulted"
+# 送っていないreplyについては届き得ないack status。未送信requestに
+# 付いていれば、send記録の欠損か履歴の矛盾としてfail closedする。
+_ACK_STATUSES_REQUIRING_A_REPLY = frozenset({"accepted", "stale"})
 _MANIFEST_KEYS = {
     "bound_seat",
     "completion_status",
@@ -273,8 +290,14 @@ class RankedDecisionReadback:
     possible_actions: tuple
     time: Any
     request_payload: Mapping[str, object]
-    sent_action: Mapping[str, object]
+    # lisjongが送信を試みたresponse。意図的に送らなかったrequestでは`None`で
+    # あり、server default actionで補完しない。送信済みでもserverが適用した
+    # とは限らない(`ack_statuses`を見る)。
+    sent_action: Mapping[str, object] | None
     ack_statuses: tuple[str, ...]
+    # 送らなかった理由(`UNANSWERED_REASONS`)。送信済みなら`None`。
+    # `sent_action`とちょうど一方だけが`None`になる(Issue #421)。
+    unanswered_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +353,7 @@ class RankedGameRecordSummary:
     seat: int
     requests: int
     responses: int
+    unanswered_requests: int
     acknowledged_requests: int
     deserialized_observations: int
     possible_action_total: int
@@ -427,6 +451,10 @@ def _result_document(result: RankedGameResult) -> dict[str, Any]:
         "responses_sent": result.responses_sent,
         "scores": None if result.scores is None else list(result.scores),
         "seat": int(result.seat),
+        "unanswered_requests": [
+            {"reason": result.unanswered_requests[request_id], "request_id": request_id}
+            for request_id in sorted(result.unanswered_requests)
+        ],
     }
 
 
@@ -450,8 +478,36 @@ def _parse_scores(value: object, context: str) -> tuple[int, int, int, int] | No
     return scores
 
 
-def _parse_result(value: object) -> RankedGameResult:
-    raw = expect_object(value, _RESULT_KEYS, "result")
+def _parse_unanswered(value: object) -> dict[int, str]:
+    entries = expect_list(value, "result.unanswered_requests")
+    unanswered: dict[int, str] = {}
+    previous_request_id: int | None = None
+    for index, item in enumerate(entries):
+        context = f"result.unanswered_requests[{index}]"
+        entry = expect_object(item, _UNANSWERED_ENTRY_KEYS, context)
+        request_id = expect_int(entry["request_id"], f"{context}.request_id")
+        if previous_request_id is not None and request_id <= previous_request_id:
+            raise DurableRankedGameRecordError(
+                "result.unanswered_requests must be ordered by unique request_id"
+            )
+        previous_request_id = request_id
+        reason = expect_str(entry["reason"], f"{context}.reason")
+        if reason not in UNANSWERED_REASONS:
+            raise DurableRankedGameRecordError(
+                f"{context}.reason is not a known unanswered reason"
+            )
+        unanswered[request_id] = reason
+    return unanswered
+
+
+def _parse_result(value: object, schema_version: int) -> RankedGameResult:
+    keys = _RESULT_KEYS_V1 if schema_version == _SCHEMA_VERSION_V1 else _RESULT_KEYS
+    raw = expect_object(value, keys, "result")
+    unanswered = (
+        {}
+        if schema_version == _SCHEMA_VERSION_V1
+        else _parse_unanswered(raw["unanswered_requests"])
+    )
     ack_entries = expect_list(raw["ack_history"], "result.ack_history")
     ack_history: dict[int, tuple[str, ...]] = {}
     previous_request_id: int | None = None
@@ -487,6 +543,7 @@ def _parse_result(value: object) -> RankedGameResult:
         responses_sent=expect_int(raw["responses_sent"], "result.responses_sent"),
         ack_history=ack_history,
         scores=_parse_scores(raw["scores"], "result.scores"),
+        unanswered_requests=unanswered,
     )
 
 
@@ -756,10 +813,8 @@ def _correlate_trace(entries: Sequence[ProtocolTraceEntry]) -> _CorrelatedTrace:
 
     _require(end_game_seen, "completed record requires a recorded end_game")
     _require(seat is not None, "completed record requires a bound seat")
-    _require(
-        set(responses) == set(requests),
-        "every recorded request_action must have exactly one recorded response",
-    )
+    # 各requestにresponseがあるかどうかはschema versionごとの規則であり、
+    # `_validate_response_coverage()`が`result`と合わせて検証する。
     return _CorrelatedTrace(
         seat=seat,
         request_ids=tuple(request_ids),
@@ -770,6 +825,61 @@ def _correlate_trace(entries: Sequence[ProtocolTraceEntry]) -> _CorrelatedTrace:
         },
         scores=scores,
     )
+
+
+def _validate_response_coverage(
+    correlated: _CorrelatedTrace, result: RankedGameResult, schema_version: int
+) -> None:
+    """requestごとのresponse有無を、server evidenceと照合して確定する。
+
+    v1: すべてのrequestにちょうど1つのresponse(従来の規則そのまま)。
+
+    v2 (Issue #421): responseの無いrequestは、`result.unanswered_requests`
+    が理由を記録し、かつserverがそのrequestをdefaultしたことを示す
+    `defaulted` ackがtraceにある場合だけ受理する。local cutoffや後続requestの
+    到着はclient側の事情であり、server defaultの証拠にしない。
+
+    - 理由の記録が無い未送信request: send記録の欠損として拒否
+    - 送信済みなのに未送信と記録されたrequest: 矛盾として拒否
+    - `defaulted` ackの無い未送信request(ackなし、`stale`のみを含む):
+      serverの結果が未確定として拒否
+    - 未送信requestへの`accepted` / `stale` ack: 送っていないreplyへのack
+      であり、send記録の欠損か履歴の矛盾として拒否
+    """
+    requested = set(correlated.requests)
+    responded = set(correlated.responses)
+    if schema_version == _SCHEMA_VERSION_V1:
+        _require(
+            responded == requested,
+            "every recorded request_action must have exactly one recorded response",
+        )
+        return
+
+    unanswered = dict(result.unanswered_requests)
+    _require(
+        not (set(unanswered) & responded),
+        "a request marked unanswered has a recorded response",
+    )
+    _require(
+        set(unanswered) <= requested,
+        "result marks an unknown request_id as unanswered",
+    )
+    _require(
+        requested - responded == set(unanswered),
+        "a recorded request_action has neither a response nor an unanswered reason",
+    )
+    for request_id in sorted(unanswered):
+        statuses = correlated.ack_history.get(request_id, ())
+        _require(
+            _ACK_DEFAULTED in statuses,
+            f"unanswered request_action {request_id} has no defaulted "
+            "acknowledgement; the server outcome is unconfirmed",
+        )
+        _require(
+            not (_ACK_STATUSES_REQUIRING_A_REPLY & set(statuses)),
+            f"unanswered request_action {request_id} was acknowledged as if a "
+            "reply had been sent",
+        )
 
 
 def _validate_recorded_request_actions(
@@ -847,10 +957,8 @@ def _load_ranked_game_record(path: str | Path) -> DurableRankedGameRecord:
         != RANKED_GAME_RECORD_SCHEMA_ID
     ):
         raise DurableRankedGameRecordError("unsupported record schema id")
-    if (
-        expect_int(manifest["schema_version"], "manifest.schema_version")
-        != RANKED_GAME_RECORD_SCHEMA_VERSION
-    ):
+    schema_version = expect_int(manifest["schema_version"], "manifest.schema_version")
+    if schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
         raise DurableRankedGameRecordError("unsupported record schema version")
     if (
         expect_str(manifest["execution_backend"], "manifest.execution_backend")
@@ -896,7 +1004,7 @@ def _load_ranked_game_record(path: str | Path) -> DurableRankedGameRecord:
         result_document = parse_json_text(result_data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise DurableRankedGameRecordError("result payload is not valid JSON") from exc
-    result = _parse_result(result_document)
+    result = _parse_result(result_document, schema_version)
 
     if not result.end_game_received:
         raise DurableRankedGameRecordError(
@@ -924,6 +1032,7 @@ def _load_ranked_game_record(path: str | Path) -> DurableRankedGameRecord:
         raise DurableRankedGameRecordError(
             "recorded end_game scores do not match the ranked result"
         )
+    _validate_response_coverage(correlated, result, schema_version)
 
     return _construct(
         DurableRankedGameRecord,
@@ -966,6 +1075,11 @@ def iter_ranked_decisions(
     `load_ranked_game_record()`が既にinvariantとして検証済みである。ここは
     その正本parserをconsumer向けに再利用するだけであり、record corruptionを
     最初に発見する場所ではない。
+
+    意図的に送らなかったrequest(v2、Issue #421)も省略せずに並べ、
+    `sent_action=None`と`unanswered_reason`で示す。server default actionを
+    `sent_action`へ補完しない。Policy出力のsampleが必要なconsumerは
+    `sent_action is None`のdecisionを明示的に除外する。
     """
     if not isinstance(record, DurableRankedGameRecord):
         raise TypeError("record must be a DurableRankedGameRecord")
@@ -989,8 +1103,9 @@ def iter_ranked_decisions(
                 possible_actions=parsed.possible_actions,
                 time=parsed.time,
                 request_payload=request_payload,
-                sent_action=correlated.responses[request_id],
+                sent_action=correlated.responses.get(request_id),
                 ack_statuses=record.result.ack_history.get(request_id, ()),
+                unanswered_reason=record.result.unanswered_requests.get(request_id),
             )
         )
     return tuple(readbacks)
@@ -1014,6 +1129,7 @@ def summarize_ranked_game_record(
         seat=int(record.bound_seat),
         requests=record.result.requests_received,
         responses=record.result.responses_sent,
+        unanswered_requests=len(record.result.unanswered_requests),
         acknowledged_requests=len(record.result.ack_history),
         deserialized_observations=len(decisions),
         possible_action_total=sum(

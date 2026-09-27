@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from dataclasses import replace
@@ -7,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from lisjong_arena._artifact_io import canonical_json_text
 from lisjong_arena.riichilab.aws_run_verify import (
     AwsRunVerificationError,
     verify_run,
@@ -66,6 +68,139 @@ def _runner_log(
     )
 
 
+class RealRecordVerificationTest(unittest.TestCase):
+    """Strict readback of real bundles, including #421 unanswered requests."""
+
+    def test_confirmed_defaults_and_v1_records_pass_and_are_counted(self) -> None:
+        import test_riichilab_durable_ranked_game_record as fixtures
+
+        from lisjong_arena.riichilab.durable_ranked_game_record import (
+            save_ranked_game_record,
+        )
+
+        games = {
+            "record-answered": (
+                fixtures._completed_entries(),
+                fixtures._completed_result(),
+            ),
+            "record-defaulted": (
+                fixtures._unanswered_entries(fixtures._DEFAULTED_ACK),
+                fixtures._unanswered_result(),
+            ),
+            "record-legacy-v1": (
+                fixtures._completed_entries(),
+                fixtures._completed_result(scores=(1000, 2000, 3000, 94000)),
+            ),
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            record_dir = root / "records"
+            record_dir.mkdir()
+            for name, (entries, result) in games.items():
+                if name == "record-legacy-v1":
+                    entries = entries[:-1] + [
+                        (
+                            "recv",
+                            {"type": "end_game", "scores": [1000, 2000, 3000, 94000]},
+                        )
+                    ]
+                trace_dir = root / f"{name}-trace"
+                trace_dir.mkdir()
+                save_ranked_game_record(
+                    result,
+                    fixtures._write_trace(trace_dir, entries),
+                    record_dir / name,
+                    provenance=_provenance(),
+                )
+            fixtures._downgrade_to_v1(record_dir / "record-legacy-v1")
+            runner_log = root / "continuous.log"
+            runner_log.write_text(_runner_log(completed_games=3), encoding="utf-8")
+
+            summary = verify_run(
+                record_dir=record_dir,
+                runner_log=runner_log,
+                expected_arena_revision=_ARENA_REVISION,
+                expected_profile="lisjong-dev",
+                expected_policy="PlacementAwareSpeedCallPolicy",
+                expected_duration_seconds=43200,
+                token=_TOKEN,
+                start_utc="2026-09-20T00:00:00Z",
+                cutoff_utc="2026-09-20T12:00:00Z",
+                stop_utc="2026-09-20T12:04:00Z",
+                elapsed_seconds=43440,
+            )
+
+        self.assertEqual("PASS", summary["status"])
+        self.assertEqual(3, summary["strict_readback_pass_count"])
+        self.assertEqual(1, summary["unanswered_request_count"])
+
+    def test_unconfirmed_unanswered_request_fails_verification(self) -> None:
+        import test_riichilab_durable_ranked_game_record as fixtures
+
+        from lisjong_arena.riichilab.durable_ranked_game_record import (
+            save_ranked_game_record,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            record_dir = root / "records"
+            record_dir.mkdir()
+            trace_dir = root / "trace"
+            trace_dir.mkdir()
+            save_ranked_game_record(
+                fixtures._unanswered_result(),
+                fixtures._write_trace(
+                    trace_dir, fixtures._unanswered_entries(fixtures._DEFAULTED_ACK)
+                ),
+                record_dir / "record-a",
+                provenance=_provenance(),
+            )
+            # Tamper the published bundle: drop the defaulted ack evidence.
+            bundle = record_dir / "record-a"
+            lines = (bundle / "protocol.jsonl").read_text(encoding="utf-8").splitlines()
+            kept = [line for line in lines if '"defaulted"' not in line]
+            (bundle / "protocol.jsonl").write_text(
+                "".join(line + "\n" for line in kept), encoding="utf-8", newline="\n"
+            )
+            result_path = bundle / "result.json"
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["ack_history"] = [
+                entry for entry in result["ack_history"] if entry["request_id"] != 2
+            ]
+            result_path.write_text(
+                canonical_json_text(result), encoding="utf-8", newline="\n"
+            )
+            fixtures._repack(bundle)
+            runner_log = root / "continuous.log"
+            runner_log.write_text(_runner_log(completed_games=1), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                AwsRunVerificationError, "strict readback"
+            ) as caught:
+                verify_run(
+                    record_dir=record_dir,
+                    runner_log=runner_log,
+                    expected_arena_revision=_ARENA_REVISION,
+                    expected_profile="lisjong-dev",
+                    expected_policy="PlacementAwareSpeedCallPolicy",
+                    expected_duration_seconds=43200,
+                    token=_TOKEN,
+                    start_utc="2026-09-20T00:00:00Z",
+                    cutoff_utc="2026-09-20T12:00:00Z",
+                    stop_utc="2026-09-20T12:04:00Z",
+                    elapsed_seconds=43440,
+                )
+        self.assertIn("server outcome is unconfirmed", str(caught.exception.__cause__))
+
+
+def _record(identity: str, provenance, unanswered=None) -> SimpleNamespace:
+    return SimpleNamespace(
+        record_identity=identity,
+        provenance=provenance,
+        result=SimpleNamespace(unanswered_requests=unanswered or {}),
+    )
+
+
 class AwsRunVerifierTest(unittest.TestCase):
     def _layout(self, root: Path, *, log: str | None = None) -> tuple[Path, Path]:
         record_dir = root / "records"
@@ -80,13 +215,13 @@ class AwsRunVerifierTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             record_dir, runner_log = self._layout(Path(raw))
             records = {
-                "record-a": SimpleNamespace(
-                    record_identity="a" * 64,
-                    provenance=_provenance(),
+                "record-a": _record(
+                    "a" * 64,
+                    _provenance(),
                 ),
-                "record-b": SimpleNamespace(
-                    record_identity="b" * 64,
-                    provenance=_provenance(),
+                "record-b": _record(
+                    "b" * 64,
+                    _provenance(),
                 ),
             }
 
@@ -144,13 +279,13 @@ class AwsRunVerifierTest(unittest.TestCase):
                 encoding="utf-8",
             )
             records = {
-                "record-a": SimpleNamespace(
-                    record_identity="a" * 64,
-                    provenance=_provenance(),
+                "record-a": _record(
+                    "a" * 64,
+                    _provenance(),
                 ),
-                "record-b": SimpleNamespace(
-                    record_identity="b" * 64,
-                    provenance=_provenance(),
+                "record-b": _record(
+                    "b" * 64,
+                    _provenance(),
                 ),
             }
             with (
@@ -179,14 +314,11 @@ class AwsRunVerifierTest(unittest.TestCase):
             record_dir, runner_log = self._layout(Path(raw))
             other = replace(_provenance(), lisjong_engine_revision="4" * 40)
             records = {
-                "record-a": SimpleNamespace(
-                    record_identity="a" * 64,
-                    provenance=_provenance(),
+                "record-a": _record(
+                    "a" * 64,
+                    _provenance(),
                 ),
-                "record-b": SimpleNamespace(
-                    record_identity="b" * 64,
-                    provenance=other,
-                ),
+                "record-b": _record("b" * 64, other),
             }
             with (
                 patch(
@@ -219,12 +351,8 @@ class AwsRunOperatorStopTest(unittest.TestCase):
 
     def _records(self) -> dict[str, SimpleNamespace]:
         return {
-            "record-a": SimpleNamespace(
-                record_identity="a" * 64, provenance=_provenance()
-            ),
-            "record-b": SimpleNamespace(
-                record_identity="b" * 64, provenance=_provenance()
-            ),
+            "record-a": _record("a" * 64, _provenance()),
+            "record-b": _record("b" * 64, _provenance()),
         }
 
     def _verify(

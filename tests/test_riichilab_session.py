@@ -619,5 +619,58 @@ class RankedTerminalTest(unittest.TestCase):
         self.assertNotIn(sentinel, message)
 
 
+class UnansweredRequestTest(unittest.TestCase):
+    """Issue #421: a request deliberately left unanswered, with its reason."""
+
+    def _session_with_unsent_request(self) -> RankedSession:
+        """Request 1 is accepted but never sent (the adapter fails)."""
+        session = RankedSession(MinimalPolicy())
+        with patch(
+            _PATCH_TARGET,
+            _fake_adapter_factory(raise_error=RuntimeError("not answered")),
+        ):
+            session.handle_event(_start_game(0))
+            with self.assertRaises(RuntimeError):
+                session.handle_event(_request_action(1))
+        return session
+
+    def test_marked_request_is_reported_in_the_status(self) -> None:
+        session = self._session_with_unsent_request()
+        session.mark_request_unanswered(1, "local_cutoff")
+        session.handle_event(_action_ack(1, "defaulted"))
+
+        status = session.status()
+        self.assertEqual({1: "local_cutoff"}, status.unanswered_requests)
+        self.assertEqual(0, status.responses_sent)
+        # The server outcome stays in the ack history, not in the reason.
+        self.assertEqual({1: ("defaulted",)}, status.ack_history)
+
+    def test_status_snapshot_is_detached(self) -> None:
+        session = self._session_with_unsent_request()
+        before = session.status()
+        session.mark_request_unanswered(1, "late_ack")
+        self.assertEqual({}, before.unanswered_requests)
+
+    def test_invalid_marks_fail_closed(self) -> None:
+        session = self._session_with_unsent_request()
+        with self.assertRaises(ProtocolError):
+            session.mark_request_unanswered(1, "server_default")
+        with self.assertRaises(ProtocolError):
+            session.mark_request_unanswered(2, "local_cutoff")
+        session.mark_request_unanswered(1, "local_cutoff")
+        with self.assertRaises(ProtocolError):
+            session.mark_request_unanswered(1, "late_ack")
+        self.assertEqual({1: "local_cutoff"}, session.status().unanswered_requests)
+
+    def test_sent_request_cannot_be_marked_unanswered(self) -> None:
+        session = RankedSession(MinimalPolicy())
+        with patch(_PATCH_TARGET, _fake_adapter_factory()):
+            session.handle_event(_start_game(0))
+            session.handle_event(_request_action(1))
+        with self.assertRaises(ProtocolError):
+            session.mark_request_unanswered(1, "local_cutoff")
+        self.assertEqual({}, session.status().unanswered_requests)
+
+
 if __name__ == "__main__":
     unittest.main()

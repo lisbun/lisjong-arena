@@ -345,6 +345,11 @@ def verify_run(
         "strict_readback_pass_count": len(records),
         "strict_readback_failure_count": 0,
         "unique_record_identity_count": len(set(identities)),
+        # 意図的に送らず、serverのdefaultを`defaulted` ackで確認できたrequest
+        # の総数(Issue #421)。strict readbackを通ったrecordだけを数える。
+        "unanswered_request_count": sum(
+            len(record.result.unanswered_requests) for record in records
+        ),
         "provenance": first_provenance,
         "credential_scan": credential_scan,
     }

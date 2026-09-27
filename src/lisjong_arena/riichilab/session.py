@@ -52,6 +52,18 @@ KNOWN_ACK_STATUSES = frozenset(
 FATAL_ACK_STATUSES = frozenset({"rejected", "unparseable"})
 _TIME_BUDGET_FIELDS = ("grace_ms", "bank_ms", "deadline_ms")
 
+# 受理済み`request_action`へ意図的にresponseを送らなかった理由(Issue #421)。
+# どちらもclient側の判断であり、serverがdefaultしたことの証拠ではない。
+# serverの結果は`action_ack`(`defaulted`)だけが示す。
+#
+# - `local_cutoff`: server deadlineへ間に合わないとlocalに判断した
+# - `late_ack`: そのrequestへの`defaulted` / `stale` ackを送信前に受信した
+UNANSWERED_REASON_LOCAL_CUTOFF = "local_cutoff"
+UNANSWERED_REASON_LATE_ACK = "late_ack"
+UNANSWERED_REASONS = frozenset(
+    {UNANSWERED_REASON_LOCAL_CUTOFF, UNANSWERED_REASON_LATE_ACK}
+)
+
 
 class SessionStatus:
     """呼び出し側が確認できる、game lifecycleの現在状態のsnapshot。
@@ -72,6 +84,7 @@ class SessionStatus:
         "responses_sent",
         "ack_history",
         "scores",
+        "unanswered_requests",
     )
 
     def __init__(
@@ -86,6 +99,7 @@ class SessionStatus:
         responses_sent: int,
         ack_history: Mapping[int, tuple[str, ...]],
         scores: tuple[int, int, int, int] | None,
+        unanswered_requests: Mapping[int, str] | None = None,
     ) -> None:
         self.seat = seat
         self.passed = passed
@@ -96,6 +110,10 @@ class SessionStatus:
         self.responses_sent = responses_sent
         self.ack_history = ack_history
         self.scores = scores
+        # request_id -> 未送信理由(`UNANSWERED_REASONS`)。
+        self.unanswered_requests = (
+            {} if unanswered_requests is None else unanswered_requests
+        )
 
 
 def _validate_time_metadata(time_value: object) -> None:
@@ -133,6 +151,7 @@ class _GameSession:
         "_accepted_request_ids",
         "_last_accepted_request_id",
         "_sent_request_ids",
+        "_unanswered_requests",
         "_ack_history",
         "_requests_received",
         "_responses_sent",
@@ -147,6 +166,7 @@ class _GameSession:
         self._accepted_request_ids: set[int] = set()
         self._last_accepted_request_id: int | None = None
         self._sent_request_ids: set[int] = set()
+        self._unanswered_requests: dict[int, str] = {}
         self._ack_history: dict[int, list[str]] = {}
         self._requests_received = 0
         self._responses_sent = 0
@@ -179,7 +199,29 @@ class _GameSession:
                 for request_id, statuses in self._ack_history.items()
             },
             scores=self._scores,
+            unanswered_requests=dict(self._unanswered_requests),
         )
+
+    def mark_request_unanswered(self, request_id: int, reason: str) -> None:
+        """受理済みrequestへresponseを送らないことを、理由とともに確定する。
+
+        client側の判断の記録であり、serverがdefaultした事実は記録しない
+        (それは`action_ack`がack historyへ残す)。送信済み・記録済み・未受理の
+        requestや未知の理由はfail closedする。以後このrequestへは送信できない。
+        """
+        if reason not in UNANSWERED_REASONS:
+            raise ProtocolError(f"unknown unanswered request reason: {reason!r}")
+        if request_id not in self._accepted_request_ids:
+            raise ProtocolError(
+                f"cannot leave an unknown request unanswered: {request_id!r}"
+            )
+        if request_id in self._sent_request_ids:
+            raise ProtocolError(f"request_id already sent a response: {request_id!r}")
+        if request_id in self._unanswered_requests:
+            raise ProtocolError(
+                f"request_id is already marked unanswered: {request_id!r}"
+            )
+        self._unanswered_requests[request_id] = reason
 
     def handle_event(self, event: Mapping) -> dict | None:
         """1件のparsed済みJSON eventをdispatchする。"""
@@ -277,6 +319,10 @@ class _GameSession:
             raise ProtocolError("response is no longer bound to the current request")
         if request_id in self._sent_request_ids:
             raise ProtocolError(f"request_id already sent a response: {request_id!r}")
+        if request_id in self._unanswered_requests:
+            raise ProtocolError(
+                f"request_id was marked unanswered and cannot be sent: {request_id!r}"
+            )
 
         self._sent_request_ids.add(request_id)
         self._responses_sent += 1
@@ -464,6 +510,9 @@ __all__ = [
     "EVENT_TYPE_VALIDATION_RESULT",
     "FATAL_ACK_STATUSES",
     "KNOWN_ACK_STATUSES",
+    "UNANSWERED_REASONS",
+    "UNANSWERED_REASON_LATE_ACK",
+    "UNANSWERED_REASON_LOCAL_CUTOFF",
     "RankedSession",
     "SessionStatus",
     "ValidationSession",
