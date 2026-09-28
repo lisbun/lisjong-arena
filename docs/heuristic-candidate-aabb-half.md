@@ -15,6 +15,9 @@ arena-heuristic-candidate-aabb-half-v1
 > Status: contract + executor only。formal 400-hanchan eventはmerge後に
 > operatorがseed allocation → AWS preflight → launch → collectの順で1回だけ実行する。
 
+最新0004＋Belief-paijia候補のイベントは [#423実行入口](heuristic-candidate-423.md) を参照。
+#375の固定participant / bootstrapはそのまま保持する。
+
 ## 1. 位置づけ
 
 Heuristic candidateとcurrent Heuristic Championを半荘で比べる、**family-internal**

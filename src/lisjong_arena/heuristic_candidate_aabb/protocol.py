@@ -222,8 +222,10 @@ def rotation_plan_document() -> list[list[str]]:
     return [list(assignment) for assignment in ROTATION_PLAN]
 
 
-def protocol_document(seeds: object) -> dict[str, object]:
+def protocol_document(seeds: object, *, event: int = 375) -> dict[str, object]:
     ordered = require_population(seeds)
+    if type(event) is not int or event not in (375, 423):
+        raise HeuristicCandidateProtocolError("unsupported evaluation event")
     return {
         "classification": classification_document(),
         "game_mode": GAME_MODE,
@@ -242,8 +244,8 @@ def protocol_document(seeds: object) -> dict[str, object]:
         "rotation_plan": rotation_plan_document(),
         "seat_result_count": SEAT_RESULT_COUNT,
         "seed_allocation": {
-            "owner_issue": OWNER_ISSUE,
-            "population": ALLOCATION_POPULATION,
+            "owner_issue": f"lisbun/lisjong-arena#{event}",
+            "population": f"heuristic-candidate-aabb-{event}",
             "seed_domain": SEED_DOMAIN,
             "split": ALLOCATION_SPLIT,
         },
@@ -264,7 +266,9 @@ def require_protocol_document(value: object, context: str) -> tuple[int, ...]:
     if type(ordered_seeds) is not list:
         raise HeuristicCandidateProtocolError(f"{context}.ordered_seeds must be a list")
     seeds = require_population(tuple(ordered_seeds))
-    if dict(raw) != protocol_document(seeds):
+    if not any(
+        dict(raw) == protocol_document(seeds, event=event) for event in (375, 423)
+    ):
         raise HeuristicCandidateProtocolError(
             f"{context} differs from locked protocol v1"
         )

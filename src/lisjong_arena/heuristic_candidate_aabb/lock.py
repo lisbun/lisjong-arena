@@ -50,12 +50,10 @@ from lisjong_arena.single_round_artifact import (
 )
 
 from .protocol import (
-    ALLOCATION_POPULATION,
     ALLOCATION_SPLIT,
     CANDIDATE_ROLE,
     EXECUTION_BRANCH,
     INCUMBENT_ROLE,
-    OWNER_ISSUE,
     PROTOCOL_ID,
     SEED_DOMAIN,
     HeuristicCandidateProtocolError,
@@ -130,7 +128,7 @@ def require_participant_sources(
 
 
 def require_seed_allocation(
-    ledger: object, binding: object, seeds: tuple[int, ...]
+    ledger: object, binding: object, seeds: tuple[int, ...], *, event: int = 375
 ) -> dict[str, object]:
     """seed allocation bindingをlive ledger authorityへfail-closedで照合する。"""
     try:
@@ -139,10 +137,10 @@ def require_seed_allocation(
             ledger,
             validated,
             seeds=seeds,
-            owner_issue=OWNER_ISSUE,
+            owner_issue=f"lisbun/lisjong-arena#{event}",
             protocol=PROTOCOL_ID,
             seed_domain=SEED_DOMAIN,
-            population=ALLOCATION_POPULATION,
+            population=f"heuristic-candidate-aabb-{event}",
             split=ALLOCATION_SPLIT,
         )
     except SeedRegistryError as exc:
@@ -161,6 +159,8 @@ def build_lock_document(
     max_workers: int,
     seed_ledger: object,
     allocation_binding: object,
+    event: int = 375,
+    wheel_path: str | Path | None = None,
 ) -> dict[str, object]:
     """result exposure前のlock documentを構築する。"""
     if type(max_workers) is not int or max_workers <= 0:
@@ -172,7 +172,19 @@ def build_lock_document(
         ordered = require_population(seeds)
     except HeuristicCandidateProtocolError as exc:
         raise HeuristicCandidateLockError(str(exc)) from exc
-    allocation = require_seed_allocation(seed_ledger, allocation_binding, ordered)
+    protocol = protocol_document(ordered, event=event)
+    allocation = require_seed_allocation(
+        seed_ledger, allocation_binding, ordered, event=event
+    )
+    if event == 423:
+        from .rust423 import execution_contract, require_pair, verify_process
+
+        require_pair(candidate_binding, incumbent_binding)
+        if wheel_path is None:
+            raise HeuristicCandidateLockError("event 423 requires wheel_path")
+        verify_process(str(wheel_path))
+    elif wheel_path is not None:
+        raise HeuristicCandidateLockError("wheel_path is only supported for event 423")
 
     try:
         _require_environment_consistent()
@@ -199,22 +211,24 @@ def build_lock_document(
             "revision": head,
             "target_type": EXECUTION_TARGET_TYPE,
         },
-        "lock_version": LOCK_VERSION,
+        "lock_version": 2 if event == 423 else LOCK_VERSION,
         "max_workers": max_workers,
         "no_rescue_boundary": list(NO_RESCUE_BOUNDARY),
         "participants": {
             CANDIDATE_ROLE: candidate_binding.to_document(),
             INCUMBENT_ROLE: incumbent_binding.to_document(),
         },
-        "protocol": protocol_document(ordered),
+        "protocol": protocol,
         "provenance": execution_provenance_to_dict(provenance),
         "result_exposed": False,
         "runtime": _runtime_document(),
         "seed_allocation_binding": allocation,
     }
+    if event == 423:
+        payload["rust_execution"] = execution_contract(str(Path(wheel_path).resolve()))
     document = dict(payload)
     document["lock_identity"] = document_identity(payload)
-    return document
+    return parse_lock_document(document)
 
 
 def save_lock_document(document: dict[str, object], path: str | Path) -> Path:
@@ -263,8 +277,15 @@ def parse_lock_document(value: object) -> dict[str, object]:
 
 
 def _parse_lock_document(value: object) -> dict[str, object]:
-    raw = expect_object(value, _LOCK_FIELDS, "lock")
-    if expect_int(raw["lock_version"], "lock.lock_version") != LOCK_VERSION:
+    fields = _LOCK_FIELDS | (
+        {"rust_execution"}
+        if isinstance(value, dict) and "rust_execution" in value
+        else set()
+    )
+    raw = expect_object(value, fields, "lock")
+    if expect_int(raw["lock_version"], "lock.lock_version") != (
+        2 if "rust_execution" in raw else LOCK_VERSION
+    ):
         raise HeuristicCandidateLockError("unsupported lock version")
     if expect_bool(raw["result_exposed"], "lock.result_exposed"):
         raise HeuristicCandidateLockError(
@@ -279,10 +300,19 @@ def _parse_lock_document(value: object) -> dict[str, object]:
     participants = expect_object(
         raw["participants"], {CANDIDATE_ROLE, INCUMBENT_ROLE}, "lock.participants"
     )
-    require_participants(
+    pair = require_participants(
         parse_participant(participants[CANDIDATE_ROLE], "lock.participants.candidate"),
         parse_participant(participants[INCUMBENT_ROLE], "lock.participants.incumbent"),
     )
+    if raw["protocol"]["seed_allocation"]["owner_issue"] == "lisbun/lisjong-arena#423":
+        from .rust423 import require_contract, require_pair
+
+        require_pair(*pair)
+        require_contract(raw.get("rust_execution"))
+    elif "rust_execution" in raw:
+        raise HeuristicCandidateLockError(
+            "historical event cannot declare rust_execution"
+        )
     if raw["no_rescue_boundary"] != list(NO_RESCUE_BOUNDARY):
         raise HeuristicCandidateLockError("lock no-rescue boundary drifted")
 
@@ -300,6 +330,12 @@ def _parse_lock_document(value: object) -> dict[str, object]:
         raise HeuristicCandidateLockError(
             "lock execution revision differs from recorded provenance"
         )
+
+    if "rust_execution" in raw:
+        from .rust423 import require_provenance
+
+        require_participant_sources(*pair, provenance)
+        require_provenance(raw["provenance"])
 
     destinations = expect_object(
         raw["artifact_destinations"],
@@ -390,7 +426,10 @@ def require_live_execution_target(
     candidate, incumbent = locked_participants(parsed)
     require_participant_sources(candidate, incumbent, live)
     require_seed_allocation(
-        seed_ledger, parsed["seed_allocation_binding"], locked_seeds(parsed)
+        seed_ledger,
+        parsed["seed_allocation_binding"],
+        locked_seeds(parsed),
+        event=423 if "rust_execution" in parsed else 375,
     )
     return live
 

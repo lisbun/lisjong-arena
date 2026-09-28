@@ -49,7 +49,6 @@ from .protocol import (
     CANDIDATE_ROLE,
     INCUMBENT_ROLE,
     HeuristicCandidateProtocolError,
-    protocol_document,
 )
 from .statistics import (
     HeuristicCandidateStatisticsError,
@@ -103,6 +102,7 @@ def build_candidate_result(
     lock_document: dict[str, object],
     comparison_artifact: ComparisonArtifact,
     comparison_artifact_path: str | Path,
+    rust_execution: object = None,
 ) -> dict[str, object]:
     """lockとraw comparison evidenceからresult documentを構築する。"""
     lock = parse_lock_document(lock_document)
@@ -131,10 +131,18 @@ def build_candidate_result(
             "seed_blocks": [block.to_document() for block in blocks],
             "summary": summary.to_document(),
         },
-        "protocol": protocol_document(seeds),
-        "result_version": RESULT_VERSION,
+        "protocol": lock["protocol"],
+        "result_version": 2 if "rust_execution" in lock else RESULT_VERSION,
         "secondary_diagnostics": diagnostics.to_document(),
     }
+    if "rust_execution" in lock:
+        from .rust423 import require_evidence
+
+        payload["rust_execution"] = require_evidence(
+            lock, rust_execution, comparison_artifact.seat_results
+        )
+    elif rust_execution is not None:
+        raise HeuristicCandidateResultError("unexpected Rust evidence")
     document = dict(payload)
     document["result_identity"] = document_identity(payload)
     return document
@@ -155,12 +163,15 @@ def save_candidate_result(document: dict[str, object], path: str | Path) -> Path
 def load_candidate_result(path: str | Path) -> dict[str, object]:
     """result artifactをstrict-readし、schemaとresult identityを検証する。"""
     try:
-        raw = expect_object(
-            read_json_document(Path(path)), _RESULT_FIELDS, "candidate_result"
+        value = read_json_document(Path(path))
+        fields = _RESULT_FIELDS | (
+            {"rust_execution"}
+            if isinstance(value, dict) and "rust_execution" in value
+            else set()
         )
-        if (
-            expect_int(raw["result_version"], "candidate_result.result_version")
-            != RESULT_VERSION
+        raw = expect_object(value, fields, "candidate_result")
+        if expect_int(raw["result_version"], "candidate_result.result_version") != (
+            2 if "rust_execution" in raw else RESULT_VERSION
         ):
             raise HeuristicCandidateResultError("unsupported result version")
         payload = {key: raw[key] for key in raw if key != "result_identity"}
@@ -200,6 +211,7 @@ def verify_candidate_bundle(
             lock_document=lock,
             comparison_artifact=comparison,
             comparison_artifact_path=comparison_path,
+            rust_execution=document.get("rust_execution"),
         )
     except (
         HeuristicCandidateLockError,

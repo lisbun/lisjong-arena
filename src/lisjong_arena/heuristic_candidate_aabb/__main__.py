@@ -24,6 +24,9 @@ from lisjong_arena.overall_champion_aabb.protocol import (
 )
 from lisjong_arena.progress import ProgressReporter
 from lisjong_arena.seed_registry import SeedRegistryError, load_ledger
+from lisjong_arena.shanten_backend_verification.backend import (
+    ShantenBackendVerificationError,
+)
 
 from .experiment import run_candidate_evaluation
 from .lock import (
@@ -43,6 +46,7 @@ from .result import HeuristicCandidateResultError, verify_candidate_bundle
 from .statistics import HeuristicCandidateStatisticsError
 
 _ERRORS = (
+    ShantenBackendVerificationError,
     HeuristicCandidateLockError,
     HeuristicCandidateProtocolError,
     HeuristicCandidateResultError,
@@ -105,6 +109,8 @@ def _lock(arguments: argparse.Namespace) -> int:
         max_workers=arguments.workers,
         seed_ledger=load_ledger(arguments.seed_ledger),
         allocation_binding=binding,
+        event=arguments.event,
+        wheel_path=arguments.wheel,
     )
     path = save_lock_document(document, arguments.out)
     print(f"lock_identity={document['lock_identity']}")
@@ -207,6 +213,8 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     lock = commands.add_parser("lock", help="build the pre-execution lock")
+    lock.add_argument("--event", type=int, choices=(375, 423), default=375)
+    lock.add_argument("--wheel", type=Path)
     lock.add_argument("--out", type=Path, required=True)
     lock.add_argument("--seeds", type=_parse_seeds, required=True)
     lock.add_argument("--workers", type=int, required=True)
