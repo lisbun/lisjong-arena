@@ -31,7 +31,7 @@ from lisjong_arena.shanten_backend_verification.backend import (
 from lisjong_arena.single_round_evaluation import SingleRoundEvaluationError
 
 _FOCAL = PolicySpec(identity="minimal", factory=MinimalPolicy)
-_REVISION = "8bdfd3f942ced49830bcee1894aefe3d2e0acc3a"
+_REVISION = "58ef82aeb10ac77cb66290d54e67a42426919d5b"
 _GAME = game_function(lambda seed, focal: OTHER_ARM[(seed, focal)])
 
 

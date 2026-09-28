@@ -215,6 +215,11 @@ python -m lisjong_arena.single_round_compare `
 import可能であることはcurated catalog promotionを意味しません。
 `mechanism-riichi-defense`は今後のABBB / `4p-red-single` heuristic比較向けのcurated baselineです。`yakuhai-call`もpredecessor / historical comparatorとして引き続き指定できます。
 
+#423の最新統合候補は`placement-aware-speed-call-kobalab-0004-belief-paijia`で解決できます。
+現Heuristic Championは`placement-aware-speed-call`のままです。
+対応pin・Rust wheel・participant bindingは[現行の組み合わせ](docs/lisjong-native-wheel-current.md)を参照してください。
+候補登録はChampion昇格やdefault更新を意味しません。
+
 恒久的なcomparison ruleは [Policy strength evaluation policy](docs/policy-strength-evaluation.md) を正本とします。[Automated Strength Evaluation](docs/automated-strength-evaluation.md) は既存comparisonを1つのmachine-readable locked runとしてcompositionする仕組みであり、自律的なcandidate生成・Champion promotion loopではありません。
 
 Mortal等のexternal competitorもArena evaluationがorchestrateできますが、そのmodel / protocol semanticsをstable `lisjong` Policy contractへ取り込みません。

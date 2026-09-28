@@ -4,7 +4,7 @@ Policyのbehaviorそのものは検証しない。catalogが``two-step`` /
 ``finite-horizon`` / ``combined`` / ``hand-value-aware`` /
 ``extended-combined`` / ``yakuhai-call`` / ``mechanism-riichi-defense`` /
 ``targeted-honor-release-terminal-progression`` / ``placement-aware-speed-call``の
-9つであること、catalog keyと
+最新Belief-paijia統合候補を含む10個であること、catalog keyと
 ``PolicySpec.identity``が一致すること、factoryがtop-levelでfresh instanceを生成し
 spawn-safeであること、CLIが登録名を既存serial / parallel evaluation pathへ解決する
 ことだけを固定する。
@@ -23,6 +23,7 @@ from lisjong.policies import (
     GenbutsuDefenseFiniteHorizonValueAwarePolicy,
     HandValueAwareTwoStepUkeirePolicy,
     MechanismRiichiDefenseYakuhaiCallPolicy,
+    PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy,
     PlacementAwareSpeedCallPolicy,
     TargetedHonorReleaseTerminalProgressionPolicy,
     TwoStepUkeirePolicy,
@@ -43,6 +44,7 @@ from lisjong_arena.policy_catalog import (
     create_hand_value_aware,
     create_mechanism_riichi_defense,
     create_placement_aware_speed_call,
+    create_placement_aware_speed_call_kobalab_0004_belief_paijia,
     create_targeted_honor_release_terminal_progression,
     create_two_step,
     create_yakuhai_call,
@@ -52,7 +54,7 @@ from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
 class CatalogContentsTest(unittest.TestCase):
-    def test_catalog_has_exactly_nine_registered_policies(self) -> None:
+    def test_catalog_has_exactly_ten_registered_policies(self) -> None:
         self.assertEqual(
             set(POLICY_CATALOG),
             {
@@ -65,6 +67,7 @@ class CatalogContentsTest(unittest.TestCase):
                 "mechanism-riichi-defense",
                 "targeted-honor-release-terminal-progression",
                 "placement-aware-speed-call",
+                "placement-aware-speed-call-kobalab-0004-belief-paijia",
             },
         )
 
@@ -150,16 +153,25 @@ import lisjong.policies
 del lisjong.policies.MechanismRiichiDefenseYakuhaiCallPolicy
 del lisjong.policies.TargetedHonorReleaseTerminalProgressionPolicy
 del lisjong.policies.PlacementAwareSpeedCallPolicy
+del lisjong.policies.PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy
 
 from lisjong_arena.learned_policy_offline_q.artifact import provenance_document
 from lisjong_arena.policy_catalog import (
     POLICY_CATALOG,
     create_mechanism_riichi_defense,
     create_placement_aware_speed_call,
+    create_placement_aware_speed_call_kobalab_0004_belief_paijia,
     create_targeted_honor_release_terminal_progression,
     create_yakuhai_call,
 )
 from lisjong_arena.stage_a0_tenpai_feasibility import __main__ as stage_a0_cli
+
+try:
+    create_placement_aware_speed_call_kobalab_0004_belief_paijia()
+except ImportError:
+    pass
+else:
+    raise AssertionError("latest candidate must require its symbol only when selected")
 
 assert callable(provenance_document)
 assert callable(stage_a0_cli.main)
@@ -207,6 +219,66 @@ else:
             0,
             msg=completed.stdout + completed.stderr,
         )
+
+
+class LatestCandidateTest(unittest.TestCase):
+    def test_latest_candidate_binding_is_fresh_and_spawn_safe(self) -> None:
+        alias = "placement-aware-speed-call-kobalab-0004-belief-paijia"
+        spec = POLICY_CATALOG[alias]
+        factory = create_placement_aware_speed_call_kobalab_0004_belief_paijia
+        self.assertIs(spec.factory, factory)
+        first, second = spec.factory(), spec.factory()
+        self.assertIs(
+            type(first), PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy
+        )
+        self.assertIsNot(first, second)
+        from lisjong.policies.kobalab_0004_discard import (
+            KOBALAB_0004_BELIEF_PAIJIA_ESTIMATOR,
+        )
+
+        self.assertEqual(first.belief_estimator, KOBALAB_0004_BELIEF_PAIJIA_ESTIMATOR)
+        check_policy_spec_serializable(spec)
+        binding = factory_binding_of(factory)
+        self.assertIs(resolve_binding_callable(binding), factory)
+        self.assertIs(
+            type(POLICY_CATALOG["placement-aware-speed-call"].factory()),
+            PlacementAwareSpeedCallPolicy,
+        )
+
+    def test_aabb_participants_resolve_to_latest_candidate_and_champion(self) -> None:
+        from lisjong_arena.heuristic_candidate_aabb.__main__ import _spec_from_binding
+        from lisjong_arena.heuristic_candidate_aabb.protocol import require_participants
+        from lisjong_arena.overall_champion_aabb.protocol import ParticipantBinding
+        from lisjong_arena.shanten_backend_verification.backend import (
+            EXPECTED_LISJONG_REVISION,
+        )
+
+        aliases = (
+            "placement-aware-speed-call-kobalab-0004-belief-paijia",
+            "placement-aware-speed-call",
+        )
+        bindings = tuple(
+            ParticipantBinding(
+                family="heuristic",
+                policy_identity=alias,
+                factory_binding=factory_binding_of(POLICY_CATALOG[alias].factory),
+                implementation_source="lisjong",
+                implementation_revision=EXPECTED_LISJONG_REVISION,
+            )
+            for alias in aliases
+        )
+        require_participants(*bindings)
+        for alias, binding in zip(aliases, bindings, strict=True):
+            resolved = _spec_from_binding(binding)
+            self.assertEqual(resolved.identity, alias)
+            self.assertIs(resolved.factory, POLICY_CATALOG[alias].factory)
+            check_policy_spec_serializable(resolved)
+
+    def test_catalog_alias_resolves_latest_candidate(self) -> None:
+        from lisjong_arena.policy_reference import resolve_policy_reference
+
+        alias = "placement-aware-speed-call-kobalab-0004-belief-paijia"
+        self.assertIs(resolve_policy_reference(alias), POLICY_CATALOG[alias])
 
 
 class FactoryTest(unittest.TestCase):

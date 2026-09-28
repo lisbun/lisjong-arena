@@ -399,8 +399,8 @@ LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.pure_offense_benchmark run 
   backend, the revisions, the per-worker game and native-call counts, and the
   minimum native calls per game.
 - Since #409 it also holds the native `API_VERSION` and the per-game
-  `discard_evaluation_call_count()` delta, summed per worker and overall. Only
-  the 0004 reference Policy uses that batched evaluation, so a zero delta does
+  `discard_evaluation_call_count()` delta, summed per worker and overall.
+  The 0004 reference and composite Policies use that batched evaluation, so a zero delta does
   not fail other Policies. See
   [the current combination](lisjong-native-wheel-current.md).
 - The arm directory and its schemas are unchanged.

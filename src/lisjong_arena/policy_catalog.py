@@ -3,7 +3,9 @@
 登録するPolicyは``two-step`` / ``finite-horizon`` / ``combined`` /
 ``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call`` /
 ``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression`` /
-``placement-aware-speed-call``の9つだけである。
+``placement-aware-speed-call``と#423のexperimental候補
+``placement-aware-speed-call-kobalab-0004-belief-paijia``の10個である。
+登録は名前解決のためであり、候補のChampion昇格・default変更を意味しない。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
 
@@ -35,6 +37,7 @@ from lisjong_arena.model import PolicySpec
 if TYPE_CHECKING:
     from lisjong.policies import (
         MechanismRiichiDefenseYakuhaiCallPolicy,
+        PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy,
         PlacementAwareSpeedCallPolicy,
         TargetedHonorReleaseTerminalProgressionPolicy,
     )
@@ -94,6 +97,18 @@ def create_placement_aware_speed_call() -> PlacementAwareSpeedCallPolicy:
     return PlacementAwareSpeedCallPolicy()
 
 
+def create_placement_aware_speed_call_kobalab_0004_belief_paijia() -> (
+    PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy
+):
+    # #423 latest candidate; lazy import preserves historical environments.
+    # The no-argument constructor binds the lisjong-owned uniform estimator.
+    from lisjong.policies import (
+        PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy,
+    )
+
+    return PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "two-step": PolicySpec(identity="two-step", factory=create_two_step),
     "finite-horizon": PolicySpec(
@@ -114,6 +129,10 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
         identity="targeted-honor-release-terminal-progression",
         factory=create_targeted_honor_release_terminal_progression,
     ),
+    "placement-aware-speed-call-kobalab-0004-belief-paijia": PolicySpec(
+        identity="placement-aware-speed-call-kobalab-0004-belief-paijia",
+        factory=create_placement_aware_speed_call_kobalab_0004_belief_paijia,
+    ),
     "placement-aware-speed-call": PolicySpec(
         identity="placement-aware-speed-call",
         factory=create_placement_aware_speed_call,
@@ -130,6 +149,7 @@ __all__ = [
     "create_hand_value_aware",
     "create_mechanism_riichi_defense",
     "create_placement_aware_speed_call",
+    "create_placement_aware_speed_call_kobalab_0004_belief_paijia",
     "create_targeted_honor_release_terminal_progression",
     "create_two_step",
     "create_yakuhai_call",

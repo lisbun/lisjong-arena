@@ -52,7 +52,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [L0.3 outcome-Q paired-strength protocol v1](l03-paired-strength-385.md) — Issue #385（parent lisjong-project#79 Step F）のoutcome-Q vs canonical-first paired focal-seat評価のpre-execution lock（Step G実行はlock後のoperator作業）
 - [Pure-offense benchmark v1](pure-offense-benchmark.md) — Issue #389のfocal vs passive tsumogiri x3 offense benchmark（局収支・形式聴牌速度・和了速度のdescriptive profile + paired comparison。calibration実行はmerge後のoperator作業）
 - [Rust向聴数backend：AWS workerへのopt-in導入と検証](rust-shanten-backend-400.md) — Issue #400（親lisjong#216）のwheel導入・fail-closed・worker検査・同値性/性能測定とAWS実行計画
-- [現行のlisjong pin・Rust wheelの組み合わせ](lisjong-native-wheel-current.md) — Issue #409：lisjong `8bdfd3f`（#225）と対応wheel（API_VERSION 2）の組、現行の実行入口、AL2023 container検証、組単位のrollback
+- [現行のlisjong pin・Rust wheelの組み合わせ](lisjong-native-wheel-current.md) — Issue #423準備：lisjong `58ef82a`（#231）と対応wheel（API_VERSION 2）、最新候補のbinding、現行の実行入口、組単位のrollback。#409の検証記録はリンク先から参照
 - [Stage A0 non-riichi Tenpai label path feasibility](stage-a0-tenpai-label-feasibility.md) — Issue #258のlabel path / corpus qualification（retained corpusに対する実測はmerge後のoperator作業）
 
 これらはconcreteなexecution / acquisition surfaceのcontractを記録する。**現在どの研究を優先するか**はactive GitHub Issueを正本とし、reusable contract自体が変わらない限りoperator文書へcurrent priorityを転記しない。
