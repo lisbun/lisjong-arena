@@ -463,6 +463,28 @@
       "state": "RETIRED"
     },
     {
+      "allocation_identity": "6b4791f832ef183f19fe129836ed4458f1b7b7d57242f030d13603c5c5a975ea",
+      "allocation_timestamp": "2026-09-28T22:21:42.250638Z",
+      "arena_revision": "43e468bcf1415955a7da05f5cdb183b3a57464db",
+      "owner_issue": "lisbun/lisjong-arena#423",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-423-calibration",
+      "protocol": "arena-heuristic-candidate-423-calibration-v1",
+      "protocol_revision": "arena-heuristic-candidate-423-calibration-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/423",
+      "purpose": "#423 DEVELOPMENT calibration after finalization fix",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 423008,
+        "kind": "range",
+        "last": 423015
+      },
+      "seed_membership_identity": "719c7fe100e2bbccb7114ad826123ba16021ccf8119936773d171010d20130ab",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
