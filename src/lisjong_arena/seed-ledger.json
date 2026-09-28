@@ -441,6 +441,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "2a4c7bc80d201eb9e096e9dc4ab8baa7836e9ad5aa73dbb52825b56658e146b6",
+      "allocation_timestamp": "2026-09-28T15:55:35.507939Z",
+      "arena_revision": "8ce669870bfa1f8627ab803cfce2dd61dbb3436a",
+      "owner_issue": "lisbun/lisjong-arena#423",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-423-calibration",
+      "protocol": "arena-heuristic-candidate-423-calibration-v1",
+      "protocol_revision": "arena-heuristic-candidate-423-calibration-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/423",
+      "purpose": "#423 DEVELOPMENT AABB Rust timing calibration",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 423000,
+        "kind": "range",
+        "last": 423007
+      },
+      "seed_membership_identity": "24e772f435d12d8f474975a40c22768f00fd25e7d8caa977729953b2092053ee",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
