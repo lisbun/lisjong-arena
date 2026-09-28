@@ -81,7 +81,7 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "8bdfd3f942ced49830bcee1894aefe3d2e0acc3a"
+PINNED_LISJONG_REVISION = "58ef82aeb10ac77cb66290d54e67a42426919d5b"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
 
 #193 / PR #194のmerge revision ``aed9c84`` から、Arena #375でlisjong #199
@@ -99,6 +99,11 @@ process数で行う``read_outcome_source(path, *, workers=1)``（lisjong #209）
 Arena #409でlisjong #225のmerge revision ``8bdfd3f`` へ追随した。
 ``2553c1b..8bdfd3f`` は0004参照Policy・belief・shanten backendの変更だけで、
 ``outcome_source.py``と``lisjong.learning``は変わらない。
+
+Arena #423でlisjong #231のmerge revision ``58ef82a`` へ追随した。
+``8bdfd3f..58ef82a`` の``lisjong.learning``とnative sourceは不変。
+最新0004＋Belief-paijia統合候補の追加とPolicy helper共有・計測の変更であり、
+既存のwire / exploration semanticsとfrozen実験のrevisionは変更しない。
 """
 
 GAME_MODE = "4p-red-half"

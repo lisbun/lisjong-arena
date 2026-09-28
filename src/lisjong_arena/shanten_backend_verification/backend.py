@@ -1,4 +1,4 @@
-"""Current wheel identity and per-process shanten backend checks (#400, #409).
+"""Current wheel identity and per-process shanten backend checks (#400, #409, #423).
 
 lisjong selects its numeric shanten core once per process from
 ``LISJONG_SHANTEN_BACKEND`` (``python`` / ``rust``) and already fails closed
@@ -20,7 +20,7 @@ adds the checks that lisjong cannot make on its own:
   on a public ``calculate_shanten()`` call; for ``python`` the extension is not
   even imported.
 
-The ``EXPECTED_*`` values are the *current* combination (#409).  The frozen
+The ``EXPECTED_*`` values are the *current* combination (#423).  The frozen
 #400 / #406 runs used the lisjong#217 combination, which ``plan`` keeps for
 judging that evidence; those runs are reproduced from their recorded Arena
 commits, not with these values.
@@ -47,14 +47,14 @@ PYTHON_BACKEND = "python"
 RUST_BACKEND = "rust"
 BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
 
-EXPECTED_LISJONG_REVISION = "8bdfd3f942ced49830bcee1894aefe3d2e0acc3a"
-"""lisjong#225 merge on ``main``; the project pin and the wheel build source."""
+EXPECTED_LISJONG_REVISION = "58ef82aeb10ac77cb66290d54e67a42426919d5b"
+"""lisjong#231 merge on ``main``; the project pin and the wheel build source."""
 
 EXPECTED_WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 EXPECTED_WHEEL_SHA256 = (
-    "22ce171059416ba8e25c8801ec2ef425afeacfda792ae67d837865610269e7f8"
+    "a4480991f04bc2686c6790857fdbf467cd576aa9a910e05e344232a0c4a8086c"
 )
-"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 36296356964
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 36359700012
 (push to ``main``)."""
 
 EXPECTED_NATIVE_API_VERSION = 2
@@ -270,8 +270,8 @@ def native_call_count() -> int | None:
 def native_discard_evaluation_count() -> int | None:
     """Batched discard evaluation counter (lisjong#224), or ``None`` without Rust.
 
-    Only the 0004 reference Policy's structural evaluation calls it, so a zero
-    delta is expected for other Policies.
+    0004 reference and composite Policies use this structural evaluation.
+    Policies without that path can have a zero delta.
     """
     native = sys.modules.get(NATIVE_MODULE)
     return None if native is None else native.discard_evaluation_call_count()

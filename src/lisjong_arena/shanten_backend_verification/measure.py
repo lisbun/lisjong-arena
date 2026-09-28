@@ -221,7 +221,7 @@ def _play(seed: int, game_mode: str) -> dict[str, object]:
         discard_evaluations = None
     else:
         native_calls = calls_after - calls_before
-        # #409: lisjong#224 batched structural evaluation (0004 reference only).
+        # #409: lisjong#224 batched structural evaluation (0004 reference and composites).
         discard_evaluations = evaluations_after - evaluations_before
         if native_calls < 1:
             raise ShantenBackendVerificationError(

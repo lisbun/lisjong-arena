@@ -6,6 +6,7 @@ checked with an injected stand-in module (identity / wiring failures) and the
 real extension is exercised on the target environment by the #400 bootstrap.
 """
 
+import importlib.util
 import io
 import json
 import os
@@ -125,11 +126,9 @@ class BackendSelectionTest(unittest.TestCase):
         self.assertIsNone(record["native"])
 
     def test_rust_without_the_extension_fails_before_any_game(self) -> None:
-        try:
-            import _lisjong_native  # noqa: F401
-        except ImportError:
-            pass
-        else:
+        # Checking availability must not import Rust into this Python process:
+        # later backend checks deliberately reject an already loaded extension.
+        if importlib.util.find_spec(backend.NATIVE_MODULE) is not None:
             self.skipTest("the native extension is installed here")
         process = subprocess.run(
             [sys.executable, "-m", "lisjong_arena.shanten_backend_verification"]
