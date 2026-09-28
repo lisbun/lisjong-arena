@@ -145,6 +145,20 @@ class CalibrationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cal.summarize(document, cal._identity(bad))
 
+    def test_fractional_wall_time_survives_summary_readback(self):
+        _, document = documents()
+        raw = receipts(document)
+        # Eight whole-second task durations with a sub-microsecond wall tail.
+        # The old builder used the full wall for throughput but stored 6 decimals.
+        raw["wall_seconds"] = 50.00000049
+        summary = cal.summarize(document, cal._identity(raw))
+        from lisjong_arena.aws_operational_calibration import (
+            validate_calibration_evidence,
+        )
+
+        evidence = summary["operational_calibration"]
+        self.assertEqual(evidence, validate_calibration_evidence(evidence))
+
     def test_lock_rejects_other_pair_machine_and_worker_overcommit(self):
         _, document = documents()
         for key, value in (
@@ -226,6 +240,56 @@ class CalibrationTest(unittest.TestCase):
             bad["wall_seconds"] = 1
             path.write_text(json.dumps(cal._identity(bad)))
             with self.assertRaises(ValueError):
+                cal.verify(tmp)
+
+    def test_summary_failure_preserves_receipts_without_success_result(self):
+        ledger, document = documents()
+        pool = mock.MagicMock()
+        pool.__enter__.return_value = pool
+
+        def submit(fn, seed, wheel, provenance):
+            f = Future()
+            f.set_result(block(seed))
+            return f
+
+        pool.submit.side_effect = submit
+        with (
+            TemporaryDirectory() as tmp,
+            mock.patch.object(cal, "_require_environment_consistent"),
+            mock.patch.object(
+                cal,
+                "require_clean_arena_head",
+                return_value=fixtures.provenance().lisjong_arena_revision,
+            ),
+            mock.patch.object(cal, "require_merged_arena_revision"),
+            mock.patch.object(cal, "verify_process", return_value=fixtures.process()),
+            mock.patch.object(cal.os, "cpu_count", return_value=8),
+            mock.patch.object(cal.platform, "system", return_value="Linux"),
+            mock.patch.object(cal.platform, "machine", return_value="x86_64"),
+            mock.patch.object(cal, "ProcessPoolExecutor", return_value=pool),
+            mock.patch.object(cal.time, "monotonic", side_effect=(0, 50)),
+        ):
+            args = dict(
+                seeds=SEEDS,
+                ledger=ledger,
+                binding=document["allocation_binding"],
+                wheel="/tmp/" + rust423.WHEEL_FILENAME,
+                workers=8,
+                run_id="fixture",
+                output=tmp,
+                instance_type="c7i.2xlarge",
+            )
+            with mock.patch.object(
+                cal, "summarize", side_effect=ValueError("summary failed")
+            ):
+                with self.assertRaisesRegex(ValueError, "summary failed"):
+                    cal.run(**args)
+            saved = cal._read(Path(tmp) / "calibration-receipts.json")
+            self.assertEqual(len(saved["blocks"]), 8)
+            self.assertEqual(saved["parent"], fixtures.process())
+            self.assertEqual(saved["wall_seconds"], 50)
+            self.assertFalse((Path(tmp) / "calibration-result.json").exists())
+            with self.assertRaises(FileNotFoundError):
                 cal.verify(tmp)
 
     def test_failed_worker_terminates_pool_without_result(self):
@@ -330,6 +394,38 @@ class AwsContractTest(unittest.TestCase):
         self.assertNotIn("heuristic_candidate_aabb run", text)
         self.assertIn("receipts.tar.gz", text)
         self.assertIn("merge-base --is-ancestor", text)
+
+    def test_failure_trap_preserves_stdout_and_original_exit_after_archive_failure(
+        self,
+    ):
+        text = (AWS / "bootstrap-heuristic-calibration-423.sh").read_text()
+        trap = text[text.index("on_exit() {") : text.index("REPO_DIR=")]
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "receipts").mkdir()
+            (root / "run-stdout.txt").write_text("STOP / INVALID: summary failed\n")
+            (root / "verify-stdout.txt").write_text("verify diagnostic\n")
+            (root / "bootstrap.log").write_text("setup succeeded\n")
+            script = "\n".join(
+                [
+                    "set -euo pipefail",
+                    'OUTPUT_DIR="$1"',
+                    'BOOTSTRAP_LOG="$OUTPUT_DIR/bootstrap.log"',
+                    'UPLOADER_PID=""',
+                    'upload() { echo "uploaded:$1"; }',
+                    "tar() { return 2; }",
+                    trap,
+                    "exit 7",
+                ]
+            )
+            result = subprocess.run(
+                ["bash", "-c", script, "test", tmp], text=True, capture_output=True
+            )
+        self.assertEqual(result.returncode, 7)
+        for name in ("run-stdout.txt", "verify-stdout.txt", "bootstrap.log"):
+            self.assertIn("uploaded:" + name, result.stdout)
+        self.assertIn("STOP / INVALID: summary failed", result.stdout)
+        self.assertIn("verify diagnostic", result.stdout)
 
     def test_powershell_parser(self):
         pwsh = shutil.which("pwsh")

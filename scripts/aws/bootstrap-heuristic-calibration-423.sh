@@ -91,14 +91,23 @@ upload() {
 # the log tail to the SSM output (the root disk is deleted on termination).
 on_exit() {
     local status=$?
+    # A failed diagnostic archive must not prevent the remaining uploads.
+    set +e
     if [[ -n "$UPLOADER_PID" ]]; then kill "$UPLOADER_PID" 2>/dev/null || true; fi
     if [[ "$status" -ne 0 ]]; then
         echo "LISJONG_423_FAILED_EXIT=$status"
         if [[ -d "$OUTPUT_DIR/receipts" ]]; then tar -czf "$OUTPUT_DIR/receipts.tar.gz" -C "$OUTPUT_DIR" receipts; fi
-        for name in calibration-lock.json calibration-receipts.json calibration-result.json progress.json receipts.tar.gz bootstrap.log; do upload "$name"; done
+        for name in calibration-lock.json calibration-receipts.json calibration-result.json progress.json receipts.tar.gz run-stdout.txt verify-stdout.txt bootstrap.log; do upload "$name"; done
+        for name in run-stdout.txt verify-stdout.txt; do
+            if [[ -s "$OUTPUT_DIR/$name" ]]; then
+                echo "--- $name tail"
+                tail -n 80 "$OUTPUT_DIR/$name"
+            fi
+        done
         echo "--- bootstrap log tail ($BOOTSTRAP_LOG)"
         tail -n 80 "$BOOTSTRAP_LOG" 2>/dev/null || true
     fi
+    exit "$status"
 }
 trap on_exit EXIT
 
