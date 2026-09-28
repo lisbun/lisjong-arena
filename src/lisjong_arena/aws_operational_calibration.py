@@ -713,8 +713,16 @@ def build_calibration_evidence(
 
     normalized = _normalized_tasks(list(tasks))
     durations = [float(task["duration_seconds"]) for task in normalized]
+    # Derived values must use exactly the precision retained in the document.
+    # Otherwise validation recomputes them from a rounded denominator.
     wall_clock = _positive_number(
-        batch_scientific_wall_clock_seconds, "batch_scientific_wall_clock_seconds"
+        _round(
+            _positive_number(
+                batch_scientific_wall_clock_seconds,
+                "batch_scientific_wall_clock_seconds",
+            )
+        ),
+        "batch_scientific_wall_clock_seconds",
     )
     epoch = datetime(1970, 1, 1, tzinfo=UTC)
     intervals = [

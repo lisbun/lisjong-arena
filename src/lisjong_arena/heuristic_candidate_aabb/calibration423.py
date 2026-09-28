@@ -427,8 +427,10 @@ def run(*, seeds, ledger, binding, wheel, workers, run_id, output, instance_type
             "wall_seconds": time.monotonic() - tick,
         }
     )
-    summary = summarize(document, receipts)
+    # Preserve the actual parent evidence and unrounded wall time even if
+    # summary construction fails. This file alone is not a successful result.
     _write(root / "calibration-receipts.json", receipts)
+    summary = summarize(document, receipts)
     _write(root / "calibration-result.json", summary)
     return verify(root)
 

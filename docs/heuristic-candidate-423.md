@@ -205,3 +205,21 @@ instance、worker数、Policy、wheel、revisionを変えた場合はそのま�
 加えてnumeric shantenのRust化がある。class名一致だけで挙動同値を断定せず、
 #214/#225のbackend回帰と#227のChampion回帰を根拠にし、本評価lock直前にも
 designationが変わっていないか確認する。過去のstrength evidenceのrevisionは改名しない。
+
+### 初回校正の失敗と再実行前の注意（2026-09-29 JST）
+
+`event-20260928T160206Z-2f82e5a2` は全8 blockのdurable receiptと
+32/32のprogressを回収したが、最終receipt bundle / resultを生成できず
+`STOP / INVALID`。EC2は終了し、診断用bucketだけを保持した。
+失敗時の`run-stdout.txt`転送漏れにより、直接の例外は確定できない。
+
+再現調査では、校正evidenceがwall timeを小数6桁へ保存しながら派生値を
+丸め前のwall timeから計算すると、strict readbackで自己不一致になることを確認した。
+派生値の分母も保存精度へ揃える。失敗時にもrun/verify stdoutを転送・SSM表示し、
+archive失敗で他の診断転送を打ち切らない。また、親process再検証後のraw receiptsは
+summary構築前に保存する。receipt保存だけでは校正成功としない。
+
+旧runには親processの証跡と正確なbatch wall timeがないため、worker記録や丸めた
+progressから補って成功bundleを作らない。今回の修正で旧runをPASSへ変更しない。
+再実行は修正のmerge、旧allocationの処理、新revisionに結び付くfresh DEVELOPMENT
+allocation、Preflightと費用計画の確認後に行う。旧seedを無断で再利用しない。
