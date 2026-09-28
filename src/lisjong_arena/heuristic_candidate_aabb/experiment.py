@@ -140,7 +140,18 @@ def run_candidate_evaluation(
         incumbent_spec=incumbent_spec,
         seeds=locked_seeds(lock),
     )
-    if progress_callback is None:
+    rust_evidence = None
+    if "rust_execution" in lock:
+        from .rust423 import execute_rust
+
+        if execute is not default_execute:
+            raise HeuristicCandidateLockError(
+                "event 423 requires the verified Rust executor"
+            )
+        result, rust_evidence = execute_rust(
+            plan, lock=lock, progress_callback=progress_callback
+        )
+    elif progress_callback is None:
         result = execute(plan, max_workers=worker_count)
     else:
         result = execute(
@@ -169,6 +180,7 @@ def run_candidate_evaluation(
         lock_document=lock,
         comparison_artifact=comparison,
         comparison_artifact_path=comparison_path,
+        rust_execution=rust_evidence,
     )
     result_path = destinations["candidate_result"]
     save_candidate_result(document, result_path)
