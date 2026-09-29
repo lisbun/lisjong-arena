@@ -6,18 +6,20 @@ allocationはCOMMITTED、EC2の非稼働とS3削除を確認済み。
 
 ## 固定計画と校正の適用範囲
 
-- 東京 / AL2023 x86_64 / c7i.2xlarge / 8 workers / On-Demand。
+- 東京 / AL2023 x86_64 / c7i.8xlarge / 32 workers / On-Demand。
 - fresh 100 seed blocks / 400半荘。A/B、Rust wheel、uma/oka、95% interval、判定は
   [#423契約](heuristic-candidate-423.md)と既存family-internal protocolを維持。
-- 起動時計10,800秒のboot/SSM fail-safe。予算gate既定$2、停止余裕120秒、
+- 起動時計3,600秒のboot/SSM fail-safe。予算gate既定$3、停止余裕120秒、
   S3等$0.10、safety margin $0.25を含む。Pricing APIを毎回読み直す。
-- workload予測5,710–5,928秒、1.5倍の余裕込み8,892秒。setup/collectionに1,800秒以上を残す。
-  8 blocksの小標本に基づく記述的予測であり、統計的上限や完走保証ではない。
+- ユーザー決定（2026-09-29 JST）：32 workersで試し、追加の校正は省略する。
+  8-worker校正は履歴参照に限定し、32-workerのmatched runtime予測は未取得と記録する。
+  planのworkload_seconds / predicted_lower_seconds / predicted_upper_secondsはnull。
+  1時間の期限は運用上の制限であり、完走予測ではない。
 - calibrationの実行Arenaは`43e468bcf1415955a7da05f5cdb183b3a57464db`。
   `533a584cad5dd5b432d75e916bd7062025ce7640` (#430) は保存済みwheel pathの
   Windows検証だけを修正したreview済み基準とする。Preflightは、この基準から
   `src`（新しい運用admission helperを除く）と`pyproject.toml`に差分があれば停止する。
-  新しいゲーム処理を黙って同じ校正へ適用しない。
+  新しいゲーム処理を黙って同じ実行条件として扱わない。
 - 校正bundleをraw receiptsから再計算し、成功result identity
   `75bfcbb02eb44e2650d716d6021edd802fe33a15f4a838f1a434dbaf36d7eefd`
   と一致するものだけを使う。校正とformalのrevisionをplanに別々に記録する。

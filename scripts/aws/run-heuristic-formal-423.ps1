@@ -18,11 +18,11 @@ param(
     [string]$Region = "ap-northeast-1",
     [string]$RoleName = "lisjong-riichilab-smoke-ec2",
     [string]$SecurityGroupName = "lisjong-riichilab-smoke-305",
-    [ValidateSet("c7i.2xlarge")][string]$InstanceType = "c7i.2xlarge",
-    [ValidateSet(8)][int]$MaxWorkers = 8,
-    [ValidateRange(0.25, 20.0)][double]$CostBudgetUsd = 2.0,
+    [ValidateSet("c7i.8xlarge")][string]$InstanceType = "c7i.8xlarge",
+    [ValidateSet(32)][int]$MaxWorkers = 32,
+    [ValidateRange(0.25, 20.0)][double]$CostBudgetUsd = 3.0,
     [ValidateRange(0.0, 20.0)][double]$SafetyMarginUsd = 0.25,
-    [ValidateSet(10800)][int]$FailSafeSeconds = 10800,
+    [ValidateSet(3600)][int]$FailSafeSeconds = 3600,
     [string]$WheelPath = "",
     [string]$CalibrationBundlePath = "",
     [ValidateRange(512, 65536)][int]$MinMemoryMiBPerWorker = 1536,
@@ -335,7 +335,7 @@ function Invoke-Collect {
     try {
         if (-not $remoteFailed) {
             $completion = Get-Content -Raw -LiteralPath $completionPath | ConvertFrom-Json
-            if ($completion.run_id -ne $Id -or $completion.arena_revision -ne $state.arena_revision -or [int]$completion.workers -ne 8) {
+            if ($completion.run_id -ne $Id -or $completion.arena_revision -ne $state.arena_revision -or [int]$completion.workers -ne 32) {
                 throw "STOP / INVALID: completion does not belong to this execution."
             }
             foreach ($name in @("candidate-lock.json", "comparison.json", "candidate-result.json")) {
@@ -352,7 +352,7 @@ function Invoke-Collect {
             $savedRange = Get-SeedRange -Spec ([string]$state.seeds)
             $expectedSeeds = @($savedRange[0]..$savedRange[1])
             if ($savedLock.execution_target.revision -ne $state.arena_revision -or
-                [int]$savedLock.max_workers -ne 8 -or
+                [int]$savedLock.max_workers -ne 32 -or
                 (@($savedLock.protocol.ordered_seeds) -join ',') -ne ($expectedSeeds -join ',')) {
                 throw "STOP / INVALID: saved lock differs from submitted revision/workers/seeds."
             }
@@ -474,7 +474,7 @@ $allocationB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($alloc
 # Recompute the frozen calibration and reject changes to the reviewed workload.
 $calibrationCheck = 'import json,sys; from lisjong_arena.heuristic_candidate_aabb.formal423 import calibration_plan; print(json.dumps(calibration_plan(sys.argv[1], sys.argv[2], sys.argv[3])))'
 $calibrationPlan = (Invoke-LocalPython -Arguments @("-c", $calibrationCheck, $CalibrationBundlePath, $repoRoot, $ArenaRevision)).Text | ConvertFrom-Json
-if ($FailSafeSeconds -lt ($calibrationPlan.workload_seconds + 1800)) { throw "Fail-safe leaves insufficient setup/collection allowance." }
+# 32-worker calibration was explicitly waived by the operator. No matched ETA is claimed.
 
 $runPrefix = if ($Action -eq "Preflight") { "preflight-" } else { "event-" }
 $runId = "$runPrefix$(Get-Date -AsUTC -Format 'yyyyMMddTHHmmssZ')-$([guid]::NewGuid().ToString('N').Substring(0,8))"

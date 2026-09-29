@@ -5,7 +5,7 @@
 set -euo pipefail
 
 FROZEN_LISJONG_REVISION="58ef82aeb10ac77cb66290d54e67a42426919d5b"
-MAX_ALLOWED_WORKERS=8
+MAX_ALLOWED_WORKERS=32
 WHEEL_FILENAME="lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 ARENA_REVISION=""
 SEEDS=""
@@ -40,8 +40,8 @@ if [[ ! "$ALLOCATION_BINDING_B64" =~ ^[A-Za-z0-9+/=]+$ ]]; then
     echo "--allocation-binding-b64 is required" >&2
     exit 2
 fi
-if [[ ! "$MAX_WORKERS" =~ ^[1-9][0-9]*$ || "$MAX_WORKERS" -gt "$MAX_ALLOWED_WORKERS" || "$MAX_WORKERS" -gt "$(nproc)" ]]; then
-    echo "--max-workers must be 1..$MAX_ALLOWED_WORKERS and at most the vCPU count" >&2
+if [[ ! "$MAX_WORKERS" =~ ^[1-9][0-9]*$ || "$MAX_WORKERS" -ne "$MAX_ALLOWED_WORKERS" || "$MAX_WORKERS" -gt "$(nproc)" ]]; then
+    echo "--max-workers must be $MAX_ALLOWED_WORKERS and at most the vCPU count" >&2
     exit 2
 fi
 if [[ ! "$RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
@@ -165,7 +165,7 @@ UPLOADER_PID=$!
 IMDS_TOKEN="$(curl -fsS --max-time 5 -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')"
 INSTANCE_TYPE="$(curl -fsS --max-time 5 -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-type)"
 unset IMDS_TOKEN
-[[ "$INSTANCE_TYPE" == "c7i.2xlarge" ]] || { echo "unexpected instance type" >&2; exit 1; }
+[[ "$INSTANCE_TYPE" == "c7i.8xlarge" ]] || { echo "unexpected instance type" >&2; exit 1; }
 START_EPOCH="$(date +%s)"
 "$PYTHON" -c 'import json,sys; from lisjong_arena.seed_registry import load_ledger; from lisjong_arena.heuristic_candidate_aabb.formal423 import require_allocation; a,b=map(int,sys.argv[3].split(":")); require_allocation(load_ledger(sys.argv[1]),json.load(open(sys.argv[2])),tuple(range(a,b+1)),arena_revision=sys.argv[4])' "$LEDGER" "$BINDING" "$SEEDS" "$ARENA_REVISION"
 "$PYTHON" -m lisjong_arena.heuristic_candidate_aabb lock \

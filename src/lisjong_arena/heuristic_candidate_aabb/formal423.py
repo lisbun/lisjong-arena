@@ -65,16 +65,21 @@ def calibration_plan(bundle, repository, revision):
         raise ValueError(f"workload differs from reviewed calibration path: {changed}")
     prediction = result["runtime_prediction"]
     return {
-        "basis": prediction["basis"],
+        "available": False,
+        "basis": "Operator selected 32 workers without additional calibration; 8-worker pilot is reference only.",
+        "instance_type": "c7i.8xlarge",
+        "workers": 32,
+        "matching_calibration": False,
+        "additional_calibration_waived": True,
+        "reference_8_worker_prediction": prediction,
         "calibration_result_identity": result["identity"],
         "calibration_execution_revision": result["operational_calibration"][
             "arena_revision"
         ],
         "reviewed_workload_revision": REVIEWED_BASE,
         "formal_execution_revision": revision,
-        "workload_seconds": prediction["headroom_adjusted_upper_seconds"],
-        "predicted_lower_seconds": prediction["predicted_lower_seconds"],
-        "predicted_upper_seconds": prediction["predicted_upper_seconds"],
-        "setup_collection_allowance_seconds": 1800,
+        "workload_seconds": None,
+        "predicted_lower_seconds": None,
+        "predicted_upper_seconds": None,
         "limitations": result["limitations"],
     }

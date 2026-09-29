@@ -76,8 +76,8 @@ class AdmissionTests(unittest.TestCase):
                 formal.subprocess, "check_output", return_value=""
             ) as git,
         ):
-            self.assertEqual(
-                formal.calibration_plan(tmp, ROOT, "b" * 40)["workload_seconds"], 8892
+            self.assertIsNone(
+                formal.calibration_plan(tmp, ROOT, "b" * 40)["workload_seconds"]
             )
             self.assertIn("pyproject.toml", git.call_args.args[0])
             git.return_value = "src/lisjong_arena/runner.py"
@@ -116,8 +116,8 @@ class AwsTests(unittest.TestCase):
             "exposure_plus_margin_usd -gt",
         ):
             self.assertLess(script.index(gate), launch)
-        self.assertIn("[ValidateSet(8)][int]$MaxWorkers = 8", script)
-        self.assertIn("[ValidateSet(10800)][int]$FailSafeSeconds = 10800", script)
+        self.assertIn("[ValidateSet(32)][int]$MaxWorkers = 32", script)
+        self.assertIn("[ValidateSet(3600)][int]$FailSafeSeconds = 3600", script)
         self.assertIn("$SeedBlockCount = 100", script)
 
     def test_bootstrap_failure_uploads_diagnostics_and_preserves_exit(self):
@@ -177,7 +177,7 @@ class AwsTests(unittest.TestCase):
                 lock_content = json.dumps(
                     {
                         "execution_target": {"revision": "a" * 40},
-                        "max_workers": 8,
+                        "max_workers": 32,
                         "protocol": {"ordered_seeds": list(range(500000, 500100))},
                     }
                 ).encode()
@@ -191,9 +191,9 @@ class AwsTests(unittest.TestCase):
                             "transfer_bucket": "fixture",
                             "region": "ap-northeast-1",
                             "launch_time_utc": "2026-09-29T00:00:00Z",
-                            "instance_type": "c7i.2xlarge",
-                            "vcpu": 8,
-                            "workers": 8,
+                            "instance_type": "c7i.8xlarge",
+                            "vcpu": 32,
+                            "workers": 32,
                             "arena_revision": "a" * 40,
                             "seeds": "500000:500099",
                             "fail_safe_deadline_utc": "2026-09-29T03:00:00Z",
@@ -207,11 +207,11 @@ class AwsTests(unittest.TestCase):
                         {
                             "run_id": "fixture",
                             "arena_revision": "a" * 40,
-                            "workers": 8,
+                            "workers": 32,
                             "lock_sha256": lock_digest,
                             "comparison_sha256": digest,
                             "candidate_result_sha256": digest,
-                            "nproc": 8,
+                            "nproc": 32,
                             "event_start_epoch": 1,
                             "event_end_epoch": 2,
                             "classification": "INCONCLUSIVE",
