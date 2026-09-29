@@ -485,6 +485,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "510d5a5ecd72651f26833fe10873f83d2bf91220c383d9c416cc9619757e12d4",
+      "allocation_timestamp": "2026-09-29T13:13:48.972289Z",
+      "arena_revision": "b279670f0ab42883fe4b2634b49f85c189604918",
+      "owner_issue": "lisbun/lisjong-arena#423",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-aabb-423",
+      "protocol": "arena-heuristic-candidate-aabb-half-v1",
+      "protocol_revision": "arena-heuristic-candidate-aabb-half-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/423",
+      "purpose": "#423 FORMAL AABB 400 hanchan 32 workers",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 423100,
+        "kind": "range",
+        "last": 423199
+      },
+      "seed_membership_identity": "335750a6efb60e0104d0d225f0d569dbf1bc70c7f67e5be7d308caff53ad1ab4",
+      "split": "FORMAL-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
