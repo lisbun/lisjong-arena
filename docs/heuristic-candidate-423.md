@@ -234,3 +234,9 @@ Linux bundleをWindowsで検証して`absolute frozen wheel path`で停止した
 この修正を含むverifierへ更新して、同じrun-idの`-Action Collect`を再実行する。
 新しいLaunchやseed予約は不要。lockの実行revision・wheel_pathは書き換えず、
 実行revisionと回収時のverifier revisionを区別して記録する。
+
+## 校正完了後の正式AWS入口
+
+成功したretry校正と正式400半荘のPreflight / Launch / Collect手順は
+[正式AWS実行](heuristic-candidate-423-formal-aws.md)を参照する。
+上記の初期校正手順・失敗履歴は当時の記録として保持する。
