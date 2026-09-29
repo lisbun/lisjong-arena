@@ -223,3 +223,14 @@ summary構築前に保存する。receipt保存だけでは校正成功としな
 progressから補って成功bundleを作らない。今回の修正で旧runをPASSへ変更しない。
 再実行は修正のmerge、旧allocationの処理、新revisionに結び付くfresh DEVELOPMENT
 allocation、Preflightと費用計画の確認後に行う。旧seedを無断で再利用しない。
+
+### Windowsでの保存済みLinux bundle検証
+
+`rust_execution.wheel_path`は実行host上の記録であり、検証hostのpathではない。
+readbackはPOSIX/Windowsの絶対path構文と固定wheel名を確認し、文字列を正規化・
+置換しない。実行時のwheel実在/hash/loaded module照合は従来どおり必須。
+
+Linux bundleをWindowsで検証して`absolute frozen wheel path`で停止した場合、
+この修正を含むverifierへ更新して、同じrun-idの`-Action Collect`を再実行する。
+新しいLaunchやseed予約は不要。lockの実行revision・wheel_pathは書き換えず、
+実行revisionと回収時のverifier revisionを区別して記録する。

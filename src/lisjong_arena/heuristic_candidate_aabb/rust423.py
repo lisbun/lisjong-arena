@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from pathlib import Path
+from pathlib import PurePosixPath, PureWindowsPath
 
 from lisjong_arena._artifact_io import expect_int, expect_object
 from lisjong_arena.comparison import aggregate_policy_metrics, run_comparison
@@ -70,11 +70,12 @@ def execution_contract(wheel_path: str) -> dict[str, object]:
 
 def require_contract(value: object) -> dict[str, object]:
     raw = expect_object(value, set(execution_contract("")), "rust_execution")
+    # This is a recorded execution path, not a path on the verifying host.
+    # Keep its bytes unchanged so the frozen contract/identity still matches.
     path = raw["wheel_path"]
-    if (
-        not isinstance(path, str)
-        or not Path(path).is_absolute()
-        or Path(path).name != WHEEL_FILENAME
+    if not isinstance(path, str) or not any(
+        parsed.is_absolute() and parsed.name == WHEEL_FILENAME
+        for parsed in (PurePosixPath(path), PureWindowsPath(path))
     ):
         raise HeuristicCandidateLockError(
             "event 423 requires an absolute frozen wheel path"
