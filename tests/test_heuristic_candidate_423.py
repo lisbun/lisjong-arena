@@ -8,7 +8,7 @@ import os
 import unittest
 from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import TemporaryDirectory
 from unittest import mock
 
@@ -122,6 +122,36 @@ def spawned_block_fixture(plan, wheel, provenance_value):
         mock.patch.object(rust423, "native_call_count", side_effect=(20, 30)),
     ):
         return rust423._run_block(plan, wheel, provenance_value)
+
+
+class RecordedPathTests(unittest.TestCase):
+    def test_linux_contract_on_windows_verifier_keeps_identity(self):
+        path = "/mnt/calibration/" + rust423.WHEEL_FILENAME
+        contract = rust423.execution_contract(path)
+        before = lock.document_identity(contract)
+        with mock.patch.object(rust423, "Path", PureWindowsPath, create=True):
+            self.assertEqual(rust423.require_contract(contract), contract)
+        self.assertEqual(lock.document_identity(contract), before)
+        self.assertEqual(contract["wheel_path"], path)
+
+    def test_recorded_path_flavors_and_rejections(self):
+        for path in (
+            "/mnt/calibration/" + rust423.WHEEL_FILENAME,
+            "C:/calibration/" + rust423.WHEEL_FILENAME,
+            "//server/share/" + rust423.WHEEL_FILENAME,
+        ):
+            with self.subTest(path=path):
+                contract = rust423.execution_contract(path)
+                self.assertEqual(rust423.require_contract(contract), contract)
+        for path in (
+            rust423.WHEEL_FILENAME,
+            "relative/" + rust423.WHEEL_FILENAME,
+            "C:" + rust423.WHEEL_FILENAME,
+            "/mnt/wrong.whl",
+            "C:/calibration/wrong.whl",
+        ):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                rust423.require_contract(rust423.execution_contract(path))
 
 
 class Event423Tests(unittest.TestCase):
