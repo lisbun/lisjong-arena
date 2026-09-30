@@ -1,18 +1,25 @@
 """Issue #432 局単位診断: 点数の正本、#364署名、聴牌、役牌ポン、重み付け、照合。"""
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from lisjong.policies import MinimalPolicy, ShantenPolicy
 from lisjong.policy_contract import Seat
 
+from lisjong_arena.aabb_kyoku_diagnostic import replay as replay_module
 from lisjong_arena.aabb_kyoku_diagnostic.accounting import (
     KyokuAccountingError,
     account_game,
     is_yakuhai,
 )
 from lisjong_arena.aabb_kyoku_diagnostic.replay import (
+    ReplayError,
+    load_records,
     replay_game,
+    run_replay,
     verify_against_comparison,
 )
 from lisjong_arena.aabb_kyoku_diagnostic.summary import SummaryError, summarize
@@ -413,6 +420,77 @@ class RealReplayTest(unittest.TestCase):
                 record["seat_identities"], [r.policy_identity for r in rows]
             )
             self.assertTrue(record["kyokus"])
+
+
+class ResumeTest(unittest.TestCase):
+    """中断後の再実行は``.partial``の完了分を再利用し、残りだけを再生する。"""
+
+    A = "placement-aware-speed-call-kobalab-0004-belief-paijia"
+    B = "placement-aware-speed-call"
+
+    def _fake(self, calls, fail_after=None):
+        def task(args):
+            seed, rotation = args[5], args[6]
+            if fail_after is not None and len(calls) >= fail_after:
+                raise RuntimeError("interrupted")
+            calls.append((seed, rotation))
+            return {
+                "schema": replay_module.RECORD_SCHEMA,
+                "seed": seed,
+                "rotation": rotation,
+                "game_mode": "4p-red-half",
+                "seat_identities": [self.A, self.A, self.B, self.B],
+                "runtime": {"backend": "test"},
+            }
+
+        return task
+
+    def _run(self, out):
+        return run_replay(
+            policy_a=self.A,
+            policy_b=self.B,
+            seeds=(5, 6),
+            game_mode="4p-red-half",
+            max_steps=10_000,
+            output=out,
+            workers=1,
+        )
+
+    def test_interrupted_replay_resumes_without_replaying_done_games(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            first = []
+            with mock.patch.object(
+                replay_module, "_replay_task", self._fake(first, fail_after=3)
+            ):
+                with self.assertRaises(RuntimeError):
+                    self._run(out)
+            self.assertFalse(out.exists())
+            self.assertEqual(len(load_records(out.with_name(out.name + ".partial"))), 3)
+            second = []
+            with mock.patch.object(replay_module, "_replay_task", self._fake(second)):
+                self._run(out)
+            self.assertEqual(len(second), 5)
+            self.assertFalse(set(first) & set(second))
+            records = load_records(out)
+            self.assertEqual(
+                [(r["seed"], r["rotation"]) for r in records],
+                [(s, r) for s in (5, 6) for r in range(4)],
+            )
+            self.assertFalse(out.with_name(out.name + ".partial").exists())
+
+    def test_foreign_partial_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            partial = out.with_name(out.name + ".partial")
+            partial.write_text(
+                '{"schema": "%s", "seed": 99, "rotation": 0, '
+                '"game_mode": "4p-red-half", "seat_identities": ["x", "x", "y", "y"]}\n'
+                % replay_module.RECORD_SCHEMA,
+                encoding="utf-8",
+            )
+            with self.assertRaises(ReplayError):
+                self._run(out)
 
 
 if __name__ == "__main__":

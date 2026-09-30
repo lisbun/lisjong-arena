@@ -19,7 +19,7 @@ import json
 import os
 import sys
 from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from lisjong.policy_contract import Seat
@@ -160,7 +160,13 @@ def run_replay(
     workers: int,
     progress: Callable[[int, int], None] | None = None,
 ) -> Path:
-    """全(seed, rotation)を再生し、``output``(新規)へJSON Linesで書く。"""
+    """全(seed, rotation)を再生し、``output``(新規)へJSON Linesで書く。
+
+    完了したgameは``<output>.partial``へ1行ずつ追記する。中断後に同じ引数で
+    再実行すると、``.partial``の完了分(条件が一致するもののみ)を再利用して
+    残りだけを再生する。全件がそろった時点で(seed, rotation)順に並べ替えて
+    ``output``へ書き、``.partial``を削除する。
+    """
     output = Path(output)
     if output.exists():
         raise ReplayError(f"refusing to overwrite {output}")
@@ -171,32 +177,58 @@ def run_replay(
         game_mode=game_mode,
         max_steps=max_steps,
     )
+    expected_identities = {policy_a, policy_b}
+    partial = output.with_name(output.name + ".partial")
+    done: dict[tuple[int, int], dict[str, object]] = {}
+    if partial.exists():
+        for record in load_records(partial):
+            key = (record["seed"], record["rotation"])
+            if (
+                record["game_mode"] != game_mode
+                or set(record["seat_identities"]) != expected_identities
+                or record["seed"] not in seeds
+                or key in done
+            ):
+                raise ReplayError(f"{partial} does not belong to this replay")
+            done[key] = record
     tasks = [
         (policy_a, policy_b, tuple(seeds), game_mode, max_steps, seed, rotation)
         for seed in seeds
         for rotation in range(ROTATIONS)
+        if (seed, rotation) not in done
     ]
-    records: list[dict[str, object]] = []
-    if workers == 1:
-        iterator: Iterable[dict[str, object]] = map(_replay_task, tasks)
-        for record in iterator:
-            records.append(record)
+    total = len(done) + len(tasks)
+    with partial.open("a", encoding="utf-8") as handle:
+
+        def keep(record: dict[str, object]) -> None:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            done[(record["seed"], record["rotation"])] = record
             if progress:
-                progress(len(records), len(tasks))
-    else:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            for record in pool.map(_replay_task, tasks):
-                records.append(record)
-                if progress:
-                    progress(len(records), len(tasks))
+                progress(len(done), total)
+
+        if workers == 1:
+            iterator: Iterable[dict[str, object]] = map(_replay_task, tasks)
+            for record in iterator:
+                keep(record)
+        else:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(_replay_task, task) for task in tasks]
+                for future in as_completed(futures):
+                    keep(future.result())
+    records = [done[key] for key in sorted(done)]
+    if len(records) != len(seeds) * ROTATIONS:
+        raise ReplayError("replay is incomplete")
     runtimes = {json.dumps(r["runtime"], sort_keys=True) for r in records}
     if len(runtimes) != 1:
-        raise ReplayError("workers ran under different runtime identities")
-    temporary = output.with_name(output.name + ".partial")
+        raise ReplayError("games ran under different runtime identities")
+    temporary = output.with_name(output.name + ".writing")
     with temporary.open("x", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
     temporary.rename(output)
+    partial.unlink()
     return output
 
 
