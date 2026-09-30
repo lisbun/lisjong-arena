@@ -49,6 +49,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [Progression development evaluation](progression-development-evaluation.md) — Issue #252のfeasibility gate + paired passive-x3 development screen（real executionはmerge後のoperator作業）
 - [Overall Champion AABB half-game formal protocol v1](overall-champion-aabb-half.md) — Issue #250のcross-family Overall determination protocol / lock / bundle verification（actual 400-hanchan formal runはmerge後のoperator作業）
 - [#423 最新候補対ChampionのRust実行入口](heuristic-candidate-423.md) — event固有のallocation・wheel/revision lock・親/worker証跡と操作手順
+- [AABB半荘比較の局単位診断（#432）](aabb-kyoku-diagnostic-432.md) — #423の400半荘を決定的に再生し、局単位の客観的結果と差の内訳を記述分析する診断ツール（正式評価・判定は変更しない）
 - [Heuristic candidate AABB half-game protocol v1](heuristic-candidate-aabb-half.md) — Issue #375のfamily-internal candidate評価（uma/oka final score primary）/ AWS executor（actual 400-hanchan runはmerge後のoperator作業）
 - [L0.3 outcome-Q paired-strength protocol v1](l03-paired-strength-385.md) — Issue #385（parent lisjong-project#79 Step F）のoutcome-Q vs canonical-first paired focal-seat評価のpre-execution lock（Step G実行はlock後のoperator作業）
 - [Pure-offense benchmark v1](pure-offense-benchmark.md) — Issue #389のfocal vs passive tsumogiri x3 offense benchmark（局収支・形式聴牌速度・和了速度のdescriptive profile + paired comparison。calibration実行はmerge後のoperator作業）
