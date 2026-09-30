@@ -43,6 +43,25 @@ class KyokuAccountingError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class CallRecord:
+    """1回の副露・槓。eventの値をそのまま保持する(順序はevent順)。
+
+    - ``kind``: ``chi`` / ``pon`` / ``daiminkan`` / ``kakan`` / ``ankan``
+    - ``pai``: 鳴いた牌(チー・ポン・大明槓)、加槓で加えた牌。暗槓はeventの値
+      (無ければ``None``)
+    - ``consumed``: 手牌から出した牌(加槓はポン済みの3枚)
+    - ``target``: 鳴いた相手のseat(加槓・暗槓は``None``)
+    - ``yakuhai``: 牌種がそのseatの役牌か(``is_yakuhai``)
+    """
+
+    kind: str
+    pai: str | None
+    consumed: tuple[str, ...]
+    target: int | None
+    yakuhai: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SeatKyoku:
     """1局・1seatの客観的結果と点数変化の内訳。
 
@@ -76,6 +95,7 @@ class SeatKyoku:
     open_call_count: int
     yakuhai_pon_count: int
     kan_count: int
+    calls: tuple[CallRecord, ...]
     tenpai_at_exhaustive_draw: bool | None
     start_points: int
     end_points: int
@@ -186,6 +206,7 @@ class _OpenKyoku:
         self.open_calls = [0] * 4
         self.yakuhai_pons = [0] * 4
         self.kans = [0] * 4
+        self.calls: list[list[CallRecord]] = [[], [], [], []]
         self.win_gain = [0] * 4
         self.win_count = [0] * 4
         self.tsumo_win = [False] * 4
@@ -218,10 +239,11 @@ class _OpenKyoku:
             self.open_calls[actor] += 1
             if kind == "daiminkan":
                 self.kans[actor] += 1
-            if kind == "pon" and is_yakuhai(
-                event.get("pai"), bakaze=self.bakaze, seat=actor, oya=self.oya
-            ):
+            pai = event.get("pai")
+            yakuhai = is_yakuhai(pai, bakaze=self.bakaze, seat=actor, oya=self.oya)
+            if kind == "pon" and yakuhai:
                 self.yakuhai_pons[actor] += 1
+            self._record_call(kind, actor, pai, consumed, _seat(event, "target"))
         elif kind in ("ankan", "kakan"):
             actor = _seat(event, "actor")
             consumed = event.get("consumed")
@@ -231,6 +253,7 @@ class _OpenKyoku:
             for pai in removed:
                 _remove(self.hands[actor], pai, kind)
             self.kans[actor] += 1
+            self._record_call(kind, actor, event.get("pai"), consumed, None)
         elif kind == "reach":
             actor = _seat(event, "actor")
             self.declared[actor] = True
@@ -277,6 +300,30 @@ class _OpenKyoku:
             return
         else:
             raise KyokuAccountingError(f"unknown event type {kind!r} inside a kyoku")
+
+    def _record_call(
+        self,
+        kind: str,
+        actor: int,
+        pai: object,
+        consumed: list,
+        target: int | None,
+    ) -> None:
+        if pai is not None and type(pai) is not str:
+            raise KyokuAccountingError(f"{kind}.pai must be a str")
+        if any(type(tile) is not str for tile in consumed):
+            raise KyokuAccountingError(f"{kind}.consumed must hold str tiles")
+        tile = pai if pai is not None else (consumed[0] if consumed else None)
+        self.calls[actor].append(
+            CallRecord(
+                kind=kind,
+                pai=pai,
+                consumed=tuple(consumed),
+                target=target,
+                yakuhai=tile is not None
+                and is_yakuhai(tile, bakaze=self.bakaze, seat=actor, oya=self.oya),
+            )
+        )
 
     # --- closing ----------------------------------------------------------
 
@@ -423,6 +470,7 @@ class _OpenKyoku:
                 open_call_count=self.open_calls[seat],
                 yakuhai_pon_count=self.yakuhai_pons[seat],
                 kan_count=self.kans[seat],
+                calls=tuple(self.calls[seat]),
                 tenpai_at_exhaustive_draw=tenpai[seat],
                 start_points=self.start[seat],
                 end_points=(final_scores[seat] if final_scores else after[seat]),
@@ -491,6 +539,7 @@ def account_game(
 
 
 __all__ = [
+    "CallRecord",
     "GameAccount",
     "KyokuAccountingError",
     "KyokuRecord",

@@ -1,5 +1,6 @@
 """Issue #432 局単位診断: 点数の正本、#364署名、聴牌、役牌ポン、重み付け、照合。"""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,13 +18,14 @@ from lisjong_arena.aabb_kyoku_diagnostic.accounting import (
 )
 from lisjong_arena.aabb_kyoku_diagnostic.replay import (
     ReplayError,
+    expected_seat_identities,
     load_records,
     replay_game,
     run_replay,
     verify_against_comparison,
 )
 from lisjong_arena.aabb_kyoku_diagnostic.summary import SummaryError, summarize
-from lisjong_arena.comparison import run_comparison
+from lisjong_arena.comparison import _seat_assignment, run_comparison
 from lisjong_arena.model import ComparisonPlan, PolicySpec
 
 # 各seatとも13枚で1p-4p待ちの聴牌形 / 明確なノーテン形。
@@ -240,6 +242,71 @@ class YakuhaiPonTest(unittest.TestCase):
         self.assertEqual(seat.kan_count, 1)
         self.assertEqual(seat.open_call_count, 1)
 
+    def test_each_call_keeps_kind_tile_consumed_and_target(self):
+        seat = self._calls(
+            {
+                "type": "pon",
+                "actor": 0,
+                "target": 3,
+                "pai": "E",
+                "consumed": ["E", "E"],
+            },
+            {"type": "tsumo", "actor": 0, "pai": "E"},
+            {"type": "kakan", "actor": 0, "pai": "E", "consumed": ["E", "E", "E"]},
+            {
+                "type": "pon",
+                "actor": 0,
+                "target": 2,
+                "pai": "1m",
+                "consumed": ["1m", "1m"],
+            },
+        )
+        self.assertEqual(
+            [(c.kind, c.pai, c.consumed, c.target, c.yakuhai) for c in seat.calls],
+            [
+                ("pon", "E", ("E", "E"), 3, True),
+                ("kakan", "E", ("E", "E", "E"), None, True),
+                ("pon", "1m", ("1m", "1m"), 2, False),
+            ],
+        )
+
+    def test_chi_is_recorded_separately_from_pon(self):
+        tehai = [
+            "2m",
+            "3m",
+            "P",
+            "P",
+            "P",
+            "1m",
+            "1m",
+            "5m",
+            "5m",
+            "9s",
+            "9s",
+            "9s",
+            "E",
+        ]
+        tehais = [list(tehai)] + [list(NOTEN) for _ in range(3)]
+        events = game(
+            start_kyoku(START, tehais=tehais),
+            {
+                "type": "chi",
+                "actor": 0,
+                "target": 3,
+                "pai": "1m",
+                "consumed": ["2m", "3m"],
+            },
+            ron(1, 2, [0, 1000, -1000, 0]),
+        )
+        seat = account_game(events, (25000, 26000, 24000, 25000)).kyokus[0].seats[0]
+        (call,) = seat.calls
+        self.assertEqual(
+            (call.kind, call.pai, call.consumed, call.target),
+            ("chi", "1m", ("2m", "3m"), 3),
+        )
+        self.assertEqual(seat.yakuhai_pon_count, 0)
+        self.assertEqual(seat.open_call_count, 1)
+
     def test_non_yakuhai_pon_is_not_counted(self):
         seat = self._calls(
             {
@@ -427,28 +494,35 @@ class ResumeTest(unittest.TestCase):
 
     A = "placement-aware-speed-call-kobalab-0004-belief-paijia"
     B = "placement-aware-speed-call"
+    KEYS = [(s, r) for s in (5, 6) for r in range(4)]
 
-    def _fake(self, calls, fail_after=None):
+    def _record(self, seed, rotation, *, policy_a=None, policy_b=None):
+        return {
+            "schema": replay_module.RECORD_SCHEMA,
+            "seed": seed,
+            "rotation": rotation,
+            "game_mode": "4p-red-half",
+            "max_steps": 10_000,
+            "seat_identities": expected_seat_identities(
+                policy_a or self.A, policy_b or self.B, rotation
+            ),
+            "runtime": {"backend": "test"},
+        }
+
+    def _fake(self, calls, fail_after=None, **identities):
         def task(args):
             seed, rotation = args[5], args[6]
             if fail_after is not None and len(calls) >= fail_after:
                 raise RuntimeError("interrupted")
             calls.append((seed, rotation))
-            return {
-                "schema": replay_module.RECORD_SCHEMA,
-                "seed": seed,
-                "rotation": rotation,
-                "game_mode": "4p-red-half",
-                "seat_identities": [self.A, self.A, self.B, self.B],
-                "runtime": {"backend": "test"},
-            }
+            return self._record(seed, rotation, **identities)
 
         return task
 
-    def _run(self, out):
+    def _run(self, out, *, policy_a=None, policy_b=None):
         return run_replay(
-            policy_a=self.A,
-            policy_b=self.B,
+            policy_a=policy_a or self.A,
+            policy_b=policy_b or self.B,
             seeds=(5, 6),
             game_mode="4p-red-half",
             max_steps=10_000,
@@ -456,38 +530,130 @@ class ResumeTest(unittest.TestCase):
             workers=1,
         )
 
+    def _interrupt_after(self, out, count):
+        first = []
+        with mock.patch.object(
+            replay_module, "_replay_task", self._fake(first, fail_after=count)
+        ):
+            with self.assertRaises(RuntimeError):
+                self._run(out)
+        return first
+
+    def _finish(self, out):
+        second = []
+        with mock.patch.object(replay_module, "_replay_task", self._fake(second)):
+            self._run(out)
+        records = load_records(out)
+        self.assertEqual([(r["seed"], r["rotation"]) for r in records], self.KEYS)
+        self.assertFalse(out.with_name(out.name + ".partial").exists())
+        self.assertFalse(out.with_name(out.name + ".writing").exists())
+        return second
+
+    def test_expected_layout_matches_the_comparison_seat_assignment(self):
+        plan = ComparisonPlan(
+            policy_a=PolicySpec(identity="a", factory=MinimalPolicy),
+            policy_b=PolicySpec(identity="b", factory=ShantenPolicy),
+            seeds=(1,),
+            game_mode="4p-red-half",
+            max_steps=10,
+        )
+        for rotation in range(4):
+            self.assertEqual(
+                expected_seat_identities("a", "b", rotation),
+                [spec.identity for spec in _seat_assignment(plan, rotation)],
+            )
+
     def test_interrupted_replay_resumes_without_replaying_done_games(self):
         with tempfile.TemporaryDirectory() as root:
             out = Path(root) / "records.jsonl"
-            first = []
-            with mock.patch.object(
-                replay_module, "_replay_task", self._fake(first, fail_after=3)
-            ):
-                with self.assertRaises(RuntimeError):
-                    self._run(out)
+            first = self._interrupt_after(out, 3)
             self.assertFalse(out.exists())
             self.assertEqual(len(load_records(out.with_name(out.name + ".partial"))), 3)
-            second = []
-            with mock.patch.object(replay_module, "_replay_task", self._fake(second)):
-                self._run(out)
+            second = self._finish(out)
             self.assertEqual(len(second), 5)
             self.assertFalse(set(first) & set(second))
-            records = load_records(out)
-            self.assertEqual(
-                [(r["seed"], r["rotation"]) for r in records],
-                [(s, r) for s in (5, 6) for r in range(4)],
-            )
-            self.assertFalse(out.with_name(out.name + ".partial").exists())
 
-    def test_foreign_partial_is_rejected(self):
+    def test_torn_last_partial_line_is_dropped_and_that_game_replayed(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            first = self._interrupt_after(out, 3)
+            partial = out.with_name(out.name + ".partial")
+            with partial.open("a", encoding="utf-8") as handle:
+                handle.write('{"schema": "%s", "seed": 6' % replay_module.RECORD_SCHEMA)
+            second = self._finish(out)
+            self.assertEqual(len(second), 5)
+            self.assertFalse(set(first) & set(second))
+
+    def test_corrupt_complete_line_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            self._interrupt_after(out, 2)
+            partial = out.with_name(out.name + ".partial")
+            lines = partial.read_text(encoding="utf-8").splitlines()
+            partial.write_text(lines[0] + "\n{broken\n" + lines[1] + "\n", "utf-8")
+            with self.assertRaises(ReplayError):
+                self._finish(out)
+
+    def test_leftover_writing_file_is_rebuilt_from_partial(self):
         with tempfile.TemporaryDirectory() as root:
             out = Path(root) / "records.jsonl"
             partial = out.with_name(out.name + ".partial")
             partial.write_text(
-                '{"schema": "%s", "seed": 99, "rotation": 0, '
-                '"game_mode": "4p-red-half", "seat_identities": ["x", "x", "y", "y"]}\n'
-                % replay_module.RECORD_SCHEMA,
+                "".join(
+                    json.dumps(self._record(s, r), sort_keys=True) + "\n"
+                    for s, r in self.KEYS
+                ),
                 encoding="utf-8",
+            )
+            out.with_name(out.name + ".writing").write_text('{"half', "utf-8")
+            second = self._finish(out)
+            self.assertEqual(second, [])
+
+    def test_output_with_matching_partial_completes_without_replay(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            lines = "".join(
+                json.dumps(self._record(s, r), sort_keys=True) + "\n"
+                for s, r in self.KEYS
+            )
+            out.write_text(lines, encoding="utf-8")
+            out.with_name(out.name + ".partial").write_text(lines, encoding="utf-8")
+            self.assertEqual(self._finish(out), [])
+
+    def test_output_with_different_partial_is_not_overwritten(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            records = [self._record(s, r) for s, r in self.KEYS]
+            out.write_text(
+                "".join(json.dumps(r, sort_keys=True) + "\n" for r in records), "utf-8"
+            )
+            out.with_name(out.name + ".partial").write_text(
+                json.dumps(records[0], sort_keys=True) + "\n", "utf-8"
+            )
+            with self.assertRaises(ReplayError):
+                self._run(out)
+
+    def test_partial_from_swapped_a_b_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            swapped = []
+            with mock.patch.object(
+                replay_module,
+                "_replay_task",
+                self._fake(swapped, fail_after=3, policy_a=self.B, policy_b=self.A),
+            ):
+                with self.assertRaises(RuntimeError):
+                    self._run(out, policy_a=self.B, policy_b=self.A)
+            with self.assertRaises(ReplayError):
+                self._run(out)
+
+    def test_partial_with_other_max_steps_is_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "records.jsonl"
+            record = self._record(5, 0)
+            record["max_steps"] = 1
+            out.with_name(out.name + ".partial").write_text(
+                json.dumps(record) + "\n", "utf-8"
             )
             with self.assertRaises(ReplayError):
                 self._run(out)

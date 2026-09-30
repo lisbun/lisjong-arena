@@ -32,7 +32,7 @@ from lisjong_arena.riichienv.local_game_runner import LocalGameRunner
 
 from .accounting import account_game
 
-RECORD_SCHEMA = "arena-aabb-kyoku-diagnostic-record-v1"
+RECORD_SCHEMA = "arena-aabb-kyoku-diagnostic-record-v2"
 VERIFICATION_SCHEMA = "arena-aabb-kyoku-diagnostic-verification-v1"
 ROTATIONS = 4
 
@@ -125,6 +125,7 @@ def replay_game(plan: ComparisonPlan, seed: int, rotation: int) -> dict[str, obj
         "seed": seed,
         "rotation": rotation,
         "game_mode": plan.game_mode,
+        "max_steps": plan.max_steps,
         "seat_identities": [assignment[seat].identity for seat in Seat],
         "scores": list(result.scores),
         "ranks": list(result.ranks),
@@ -149,6 +150,57 @@ def _replay_task(args: tuple) -> dict[str, object]:
     return replay_game(plan, seed, rotation)
 
 
+def expected_seat_identities(policy_a: str, policy_b: str, rotation: int) -> list[str]:
+    """``comparison._seat_assignment``と同じrotationのseat配置(identity列)。"""
+    base = (policy_a, policy_a, policy_b, policy_b)
+    return [base[(seat - rotation) % ROTATIONS] for seat in range(4)]
+
+
+def _read_partial(path: Path) -> list[dict[str, object]]:
+    """``.partial``を読み、書きかけの最終行だけを取り除く。
+
+    改行で終わっていない最終行は、追記中の中断による未完了行として捨て、fileを
+    最後の完全な行までtruncateする。途中の行の破損やschema不一致はfail closedする。
+    """
+    data = path.read_bytes()
+    complete_end = data.rfind(b"\n") + 1
+    if complete_end != len(data):
+        with path.open("r+b") as handle:
+            handle.truncate(complete_end)
+            handle.flush()
+            os.fsync(handle.fileno())
+    return _parse_lines(data[:complete_end].decode("utf-8"), path)
+
+
+def _check_resumable(
+    record: dict[str, object],
+    *,
+    policy_a: str,
+    policy_b: str,
+    seeds: Sequence[int],
+    game_mode: str,
+    max_steps: int,
+    source: Path,
+) -> tuple[int, int]:
+    rotation = record.get("rotation")
+    seed = record.get("seed")
+    if (
+        type(rotation) is not int
+        or type(seed) is not int
+        or record.get("game_mode") != game_mode
+        or record.get("max_steps") != max_steps
+        or record.get("seed") not in seeds
+        or rotation not in range(ROTATIONS)
+        or record.get("seat_identities")
+        != expected_seat_identities(policy_a, policy_b, rotation)
+    ):
+        raise ReplayError(
+            f"{source} holds a record for different replay conditions "
+            f"(seed={record.get('seed')!r}, rotation={rotation!r})"
+        )
+    return (record["seed"], rotation)
+
+
 def run_replay(
     *,
     policy_a: str,
@@ -162,14 +214,20 @@ def run_replay(
 ) -> Path:
     """全(seed, rotation)を再生し、``output``(新規)へJSON Linesで書く。
 
-    完了したgameは``<output>.partial``へ1行ずつ追記する。中断後に同じ引数で
-    再実行すると、``.partial``の完了分(条件が一致するもののみ)を再利用して
-    残りだけを再生する。全件がそろった時点で(seed, rotation)順に並べ替えて
-    ``output``へ書き、``.partial``を削除する。
+    完了したgameは``<output>.partial``へ1行ずつ追記・fsyncする。中断後に同じ
+    引数で再実行すると、``.partial``の完了分を再利用して残りだけを再生する。
+    再利用する記録は、各rotationの期待seat配置・game mode・max_steps・seedが
+    完全に一致しなければ拒否する。全件がそろった時点で(seed, rotation)順に
+    ``<output>.writing``へ書き、``output``へrenameしてから``.partial``を削除する。
+
+    中断箇所ごとの再開:
+
+    - ``.partial``の書きかけ最終行: 捨てて、そのgameを再生し直す
+    - ``.writing``の書きかけ: 捨てて、``.partial``から書き直す
+    - rename後・``.partial``削除前: ``output``と``.partial``の内容が一致すれば
+      ``.partial``を削除して完了とする
     """
     output = Path(output)
-    if output.exists():
-        raise ReplayError(f"refusing to overwrite {output}")
     build_plan(
         policy_a=policy_a,
         policy_b=policy_b,
@@ -177,22 +235,40 @@ def run_replay(
         game_mode=game_mode,
         max_steps=max_steps,
     )
-    expected_identities = {policy_a, policy_b}
+    seeds = tuple(seeds)
+    conditions = dict(
+        policy_a=policy_a,
+        policy_b=policy_b,
+        seeds=seeds,
+        game_mode=game_mode,
+        max_steps=max_steps,
+    )
     partial = output.with_name(output.name + ".partial")
+    writing = output.with_name(output.name + ".writing")
+    if output.exists():
+        if not partial.exists():
+            raise ReplayError(f"refusing to overwrite {output}")
+        finished = load_records(output)
+        pending = _read_partial(partial)
+        keys = {_check_resumable(r, source=output, **conditions) for r in finished}
+        expected = {(seed, rotation) for seed in seeds for rotation in range(ROTATIONS)}
+        if keys != expected or len(finished) != len(expected):
+            raise ReplayError(f"{output} is not a complete replay; not overwriting")
+        if sorted(map(json.dumps, finished)) != sorted(map(json.dumps, pending)):
+            raise ReplayError(f"{output} and {partial} disagree; not overwriting")
+        partial.unlink()
+        return output
+    if writing.exists():
+        writing.unlink()
     done: dict[tuple[int, int], dict[str, object]] = {}
     if partial.exists():
-        for record in load_records(partial):
-            key = (record["seed"], record["rotation"])
-            if (
-                record["game_mode"] != game_mode
-                or set(record["seat_identities"]) != expected_identities
-                or record["seed"] not in seeds
-                or key in done
-            ):
-                raise ReplayError(f"{partial} does not belong to this replay")
+        for record in _read_partial(partial):
+            key = _check_resumable(record, source=partial, **conditions)
+            if key in done:
+                raise ReplayError(f"{partial} holds duplicate game {key}")
             done[key] = record
     tasks = [
-        (policy_a, policy_b, tuple(seeds), game_mode, max_steps, seed, rotation)
+        (policy_a, policy_b, seeds, game_mode, max_steps, seed, rotation)
         for seed in seeds
         for rotation in range(ROTATIONS)
         if (seed, rotation) not in done
@@ -223,24 +299,32 @@ def run_replay(
     runtimes = {json.dumps(r["runtime"], sort_keys=True) for r in records}
     if len(runtimes) != 1:
         raise ReplayError("games ran under different runtime identities")
-    temporary = output.with_name(output.name + ".writing")
-    with temporary.open("x", encoding="utf-8") as handle:
+    with writing.open("x", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-    temporary.rename(output)
+        handle.flush()
+        os.fsync(handle.fileno())
+    writing.rename(output)
     partial.unlink()
     return output
 
 
-def load_records(path: Path) -> list[dict[str, object]]:
+def _parse_lines(text: str, source: Path) -> list[dict[str, object]]:
     records = []
-    with Path(path).open(encoding="utf-8") as handle:
-        for line in handle:
+    for number, line in enumerate(text.splitlines(), start=1):
+        try:
             record = json.loads(line)
-            if record.get("schema") != RECORD_SCHEMA:
-                raise ReplayError("unknown record schema")
-            records.append(record)
+        except json.JSONDecodeError as exc:
+            raise ReplayError(f"{source}:{number} is not a complete record") from exc
+        if not isinstance(record, dict) or record.get("schema") != RECORD_SCHEMA:
+            raise ReplayError(f"{source}:{number} has an unknown record schema")
+        records.append(record)
     return records
+
+
+def load_records(path: Path) -> list[dict[str, object]]:
+    path = Path(path)
+    return _parse_lines(path.read_text(encoding="utf-8"), path)
 
 
 def file_sha256(path: Path) -> str:
@@ -304,6 +388,7 @@ __all__ = [
     "VERIFICATION_SCHEMA",
     "ReplayError",
     "build_plan",
+    "expected_seat_identities",
     "file_sha256",
     "load_records",
     "replay_game",

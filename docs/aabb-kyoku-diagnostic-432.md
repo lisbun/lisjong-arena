@@ -43,6 +43,22 @@ seat assignmentとPolicy生成は既存`comparison._seat_assignment` / `_create_
 backend、nativeの`SOURCE_REVISION` / `API_VERSION`）を持ち、全workerで同一であることを要求する。
 raw event列そのものは保存せず、件数とSHA-256だけを残す。
 
+記録schemaは`arena-aabb-kyoku-diagnostic-record-v2`（1 game 1行のJSON Lines）で、seed、rotation、
+game mode、`max_steps`、seat 0..3のPolicy identity、最終点・順位、局単位記録を持つ。
+
+### 中断と再開
+
+完了したgameは`<out>.partial`へ1行ずつ追記・fsyncする。中断後に同じ引数で`run`を再実行すると、
+完了分を再利用して残りだけを再生する。
+
+- 再利用する記録は、各rotationの期待seat配置（`[A,A,B,B]`の巡回）、game mode、`max_steps`、seedが
+  完全一致しなければ拒否する（A/Bの入れ替えや別条件の途中結果を混ぜない）。重複gameも拒否する。
+- `.partial`の改行で終わっていない最終行は、書きかけとして捨てて（fileを最後の完全な行まで
+  truncateし）そのgameを再生し直す。途中の行の破損はfail closedする。
+- 全件がそろうと`<out>.writing`へ(seed, rotation)順に書き、`<out>`へrenameしてから`.partial`を削除する。
+  `.writing`が残っていれば捨てて`.partial`から書き直す。rename後・`.partial`削除前に止まった場合は、
+  `<out>`と`.partial`の内容が一致するときだけ`.partial`を削除して完了とする（一致しなければ拒否）。
+
 ## 点数の正本と#364
 
 局の点数は局境界を正本とする。
@@ -90,6 +106,7 @@ raw event列そのものは保存せず、件数とSHA-256だけを残す。
 | `open_call_count` | チー・ポン・大明槓の回数 |
 | `yakuhai_pon_count` | 成立した役牌ポンの回数（下記） |
 | `kan_count` | 大明槓・加槓・暗槓の回数 |
+| `calls` | 副露・槓ごとの`kind`（chi / pon / daiminkan / kakan / ankan）、`pai`、`consumed`、`target`（加槓・暗槓は`null`）、`yakuhai`（event順） |
 | `tenpai_at_exhaustive_draw` | 通常荒牌流局時の聴牌（下記。それ以外の局は`null`） |
 
 局としては終了種別（`hora` / `exhaustive_draw` / `abortive_draw`）、途中流局の理由、本場、供託、
