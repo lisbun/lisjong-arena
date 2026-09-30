@@ -1,5 +1,7 @@
 # 現行のlisjong pin・Rust wheel（#423準備）
 
+本書は#423時点の固定記録。「現行」は当時の意味。現在の組は[現行文書](lisjong-native-wheel-current.md)を参照する。
+
 #423で最新0004＋Belief-paijia統合候補を使うための組み合わせ。
 Pythonがdefault、Rustは明示的opt-in。候補の登録は強度評価・Champion昇格・稼働botの更新を意味しない。
 

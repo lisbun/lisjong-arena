@@ -21,7 +21,7 @@
 | backend / native API | 明示的 `rust` / `2` |
 | wheel SHA-256 | `a4480991f04bc2686c6790857fdbf467cd576aa9a910e05e344232a0c4a8086c` |
 
-wheel取得・force reinstallは [current wheel手順](lisjong-native-wheel-current.md) を使う。
+wheel取得・force reinstallは [#423の固定wheel手順](lisjong-native-wheel-423.md) を使う。
 A/Bのfactoryはcatalogの対応する引数なしfactoryに限定し、旧候補・別設定への
 差し替えは拒否する。過去比較の追加armは作らない。
 
