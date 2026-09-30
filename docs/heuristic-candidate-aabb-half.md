@@ -179,3 +179,5 @@ budget            USD 15 (worst-case exposure + margin)
 Preflightは現在のAWS Pricing APIでinstance / gp3を価格付けし、fail-safe window全体の
 worst-case exposure + marginがbudget以下であること、fail-safeが予測billable最大の
 1.5倍以上であること、worker当たりmemoryが1,536 MiB以上であることを要求する。
+
+#436の1向聴守備候補は、同じ統計protocolを使う[固定Rust実行入口](heuristic-candidate-436.md)を参照。

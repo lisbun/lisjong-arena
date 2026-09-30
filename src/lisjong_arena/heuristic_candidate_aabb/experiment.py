@@ -30,6 +30,7 @@ from .lock import (
     HeuristicCandidateLockError,
     load_lock_document,
     locked_destinations,
+    locked_event,
     locked_max_workers,
     locked_participants,
     locked_seeds,
@@ -142,13 +143,13 @@ def run_candidate_evaluation(
     )
     rust_evidence = None
     if "rust_execution" in lock:
-        from .rust423 import execute_rust
+        from .rust423 import event_module
 
         if execute is not default_execute:
             raise HeuristicCandidateLockError(
-                "event 423 requires the verified Rust executor"
+                "Rust event requires the verified Rust executor"
             )
-        result, rust_evidence = execute_rust(
+        result, rust_evidence = event_module(locked_event(lock)).execute_rust(
             plan, lock=lock, progress_callback=progress_callback
         )
     elif progress_callback is None:

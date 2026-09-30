@@ -213,7 +213,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     lock = commands.add_parser("lock", help="build the pre-execution lock")
-    lock.add_argument("--event", type=int, choices=(375, 423), default=375)
+    lock.add_argument("--event", type=int, choices=(375, 423, 436), default=375)
     lock.add_argument("--wheel", type=Path)
     lock.add_argument("--out", type=Path, required=True)
     lock.add_argument("--seeds", type=_parse_seeds, required=True)
