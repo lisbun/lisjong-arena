@@ -136,9 +136,10 @@ def build_candidate_result(
         "secondary_diagnostics": diagnostics.to_document(),
     }
     if "rust_execution" in lock:
-        from .rust423 import require_evidence
+        from .lock import locked_event
+        from .rust423 import event_module
 
-        payload["rust_execution"] = require_evidence(
+        payload["rust_execution"] = event_module(locked_event(lock)).require_evidence(
             lock, rust_execution, comparison_artifact.seat_results
         )
     elif rust_execution is not None:

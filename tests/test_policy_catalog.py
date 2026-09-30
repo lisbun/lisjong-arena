@@ -4,7 +4,7 @@ Policyのbehaviorそのものは検証しない。catalogが``two-step`` /
 ``finite-horizon`` / ``combined`` / ``hand-value-aware`` /
 ``extended-combined`` / ``yakuhai-call`` / ``mechanism-riichi-defense`` /
 ``targeted-honor-release-terminal-progression`` / ``placement-aware-speed-call``の
-最新Belief-paijia統合候補を含む10個であること、catalog keyと
+Belief-paijia統合候補と1向聴守備候補を含む11個であること、catalog keyと
 ``PolicySpec.identity``が一致すること、factoryがtop-levelでfresh instanceを生成し
 spawn-safeであること、CLIが登録名を既存serial / parallel evaluation pathへ解決する
 ことだけを固定する。
@@ -54,7 +54,7 @@ from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
 class CatalogContentsTest(unittest.TestCase):
-    def test_catalog_has_exactly_ten_registered_policies(self) -> None:
+    def test_catalog_has_exactly_eleven_registered_policies(self) -> None:
         self.assertEqual(
             set(POLICY_CATALOG),
             {
@@ -68,6 +68,7 @@ class CatalogContentsTest(unittest.TestCase):
                 "targeted-honor-release-terminal-progression",
                 "placement-aware-speed-call",
                 "placement-aware-speed-call-kobalab-0004-belief-paijia",
+                "one-shanten-defense-placement-aware-speed-call",
             },
         )
 
@@ -150,6 +151,7 @@ class HistoricalDependencyCompatibilityTest(unittest.TestCase):
         script = """
 import lisjong.policies
 
+del lisjong.policies.OneShantenDefensePlacementAwareSpeedCallPolicy
 del lisjong.policies.MechanismRiichiDefenseYakuhaiCallPolicy
 del lisjong.policies.TargetedHonorReleaseTerminalProgressionPolicy
 del lisjong.policies.PlacementAwareSpeedCallPolicy

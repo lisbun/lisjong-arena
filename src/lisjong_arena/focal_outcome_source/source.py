@@ -81,7 +81,7 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "51e832e50a0ee71eac65e4a017f46590e7438c04"
+PINNED_LISJONG_REVISION = "e6346ed2bb9e992138c05c4be367bd6a05ed00bc"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
 
 #193 / PR #194のmerge revision ``aed9c84`` から、Arena #375でlisjong #199
@@ -109,6 +109,10 @@ Arena #434でlisjong #233のmerge revision ``51e832e`` へ追随した。
 ``58ef82a..51e832e`` はR5 native実装・backend配線・計測の変更で、
 ``lisjong.learning``は不変。wire / exploration semanticsは変わらず、
 過去のfrozen実験は引き続き当時のArena checkoutを使う。
+
+Arena #436でlisjong #235のmerge revision ``e6346ed`` へ追随した。
+``51e832e..e6346ed`` は独立した1向聴守備候補の追加だけで、
+既存Policy、native source、``lisjong.learning``とwire semanticsは不変。
 """
 
 GAME_MODE = "4p-red-half"

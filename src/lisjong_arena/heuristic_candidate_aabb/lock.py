@@ -176,15 +176,18 @@ def build_lock_document(
     allocation = require_seed_allocation(
         seed_ledger, allocation_binding, ordered, event=event
     )
-    if event == 423:
-        from .rust423 import execution_contract, require_pair, verify_process
+    if event in (423, 436):
+        from .rust423 import event_module
 
-        require_pair(candidate_binding, incumbent_binding)
+        api = event_module(event)
+        api.require_pair(candidate_binding, incumbent_binding)
         if wheel_path is None:
-            raise HeuristicCandidateLockError("event 423 requires wheel_path")
-        verify_process(str(wheel_path))
+            raise HeuristicCandidateLockError("Rust event requires wheel_path")
+        api.verify_process(str(wheel_path))
     elif wheel_path is not None:
-        raise HeuristicCandidateLockError("wheel_path is only supported for event 423")
+        raise HeuristicCandidateLockError(
+            "wheel_path is only supported for Rust events"
+        )
 
     try:
         _require_environment_consistent()
@@ -211,7 +214,7 @@ def build_lock_document(
             "revision": head,
             "target_type": EXECUTION_TARGET_TYPE,
         },
-        "lock_version": 2 if event == 423 else LOCK_VERSION,
+        "lock_version": 2 if event in (423, 436) else LOCK_VERSION,
         "max_workers": max_workers,
         "no_rescue_boundary": list(NO_RESCUE_BOUNDARY),
         "participants": {
@@ -224,8 +227,10 @@ def build_lock_document(
         "runtime": _runtime_document(),
         "seed_allocation_binding": allocation,
     }
-    if event == 423:
-        payload["rust_execution"] = execution_contract(str(Path(wheel_path).resolve()))
+    if event in (423, 436):
+        payload["rust_execution"] = api.execution_contract(
+            str(Path(wheel_path).resolve())
+        )
     document = dict(payload)
     document["lock_identity"] = document_identity(payload)
     return parse_lock_document(document)
@@ -304,11 +309,13 @@ def _parse_lock_document(value: object) -> dict[str, object]:
         parse_participant(participants[CANDIDATE_ROLE], "lock.participants.candidate"),
         parse_participant(participants[INCUMBENT_ROLE], "lock.participants.incumbent"),
     )
-    if raw["protocol"]["seed_allocation"]["owner_issue"] == "lisbun/lisjong-arena#423":
-        from .rust423 import require_contract, require_pair
+    event = locked_event(raw)
+    if event in (423, 436):
+        from .rust423 import event_module
 
-        require_pair(*pair)
-        require_contract(raw.get("rust_execution"))
+        api = event_module(event)
+        api.require_pair(*pair)
+        api.require_contract(raw.get("rust_execution"))
     elif "rust_execution" in raw:
         raise HeuristicCandidateLockError(
             "historical event cannot declare rust_execution"
@@ -332,10 +339,8 @@ def _parse_lock_document(value: object) -> dict[str, object]:
         )
 
     if "rust_execution" in raw:
-        from .rust423 import require_provenance
-
         require_participant_sources(*pair, provenance)
-        require_provenance(raw["provenance"])
+        api.require_provenance(raw["provenance"])
 
     destinations = expect_object(
         raw["artifact_destinations"],
@@ -429,7 +434,7 @@ def require_live_execution_target(
         seed_ledger,
         parsed["seed_allocation_binding"],
         locked_seeds(parsed),
-        event=423 if "rust_execution" in parsed else 375,
+        event=locked_event(parsed),
     )
     return live
 
@@ -455,6 +460,13 @@ def require_comparison_provenance(
             )
 
 
+def locked_event(document) -> int:
+    """Read event only from a protocol document validated against fixed contracts."""
+    require_protocol_document(document["protocol"], "lock.protocol")
+    owner = document["protocol"]["seed_allocation"]["owner_issue"]
+    return int(owner.rsplit("#", 1)[1])
+
+
 __all__ = [
     "EXECUTION_TARGET_TYPE",
     "LOCK_VERSION",
@@ -465,6 +477,7 @@ __all__ = [
     "document_identity",
     "load_lock_document",
     "locked_destinations",
+    "locked_event",
     "locked_max_workers",
     "locked_participants",
     "locked_provenance",

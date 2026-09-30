@@ -224,7 +224,7 @@ def rotation_plan_document() -> list[list[str]]:
 
 def protocol_document(seeds: object, *, event: int = 375) -> dict[str, object]:
     ordered = require_population(seeds)
-    if type(event) is not int or event not in (375, 423):
+    if type(event) is not int or event not in (375, 423, 436):
         raise HeuristicCandidateProtocolError("unsupported evaluation event")
     return {
         "classification": classification_document(),
@@ -267,7 +267,7 @@ def require_protocol_document(value: object, context: str) -> tuple[int, ...]:
         raise HeuristicCandidateProtocolError(f"{context}.ordered_seeds must be a list")
     seeds = require_population(tuple(ordered_seeds))
     if not any(
-        dict(raw) == protocol_document(seeds, event=event) for event in (375, 423)
+        dict(raw) == protocol_document(seeds, event=event) for event in (375, 423, 436)
     ):
         raise HeuristicCandidateProtocolError(
             f"{context} differs from locked protocol v1"

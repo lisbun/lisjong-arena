@@ -8,6 +8,7 @@ no partial comparison is returned on any worker or identity failure.
 from __future__ import annotations
 
 import multiprocessing
+import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import PurePosixPath, PureWindowsPath
 
@@ -168,9 +169,22 @@ def _require_process(value: object) -> dict[str, object]:
     return dict(raw)
 
 
-def _run_block(plan: ComparisonPlan, wheel_path: str, provenance: object):
+def event_module(event):
+    """Resolve only the two reviewed, frozen event contracts."""
+    if type(event) is not int:
+        raise HeuristicCandidateLockError("unsupported Rust evaluation event")
+    if event == 423:
+        return sys.modules[__name__]
+    if event == 436:
+        from . import rust436
+
+        return rust436
+    raise HeuristicCandidateLockError("unsupported Rust evaluation event")
+
+
+def _run_block(plan: ComparisonPlan, wheel_path: str, provenance: object, event=423):
     try:
-        return _execute_block(plan, wheel_path, provenance)
+        return _execute_block(plan, wheel_path, provenance, event=event)
     except Exception as exc:
         # Policy/game exceptions need not be picklable across spawn.
         raise HeuristicCandidateLockError(
@@ -178,14 +192,17 @@ def _run_block(plan: ComparisonPlan, wheel_path: str, provenance: object):
         ) from None
 
 
-def _execute_block(plan: ComparisonPlan, wheel_path: str, provenance: object):
-    before = verify_process(wheel_path)
+def _execute_block(
+    plan: ComparisonPlan, wheel_path: str, provenance: object, *, event=423
+):
+    api = event_module(event)
+    before = api.verify_process(wheel_path)
     if before["provenance"] != provenance:
         raise HeuristicCandidateLockError("worker provenance differs from lock")
     calls = native_call_count()
     result = run_comparison(plan)
     game_calls = native_call_count() - calls
-    after = verify_process(wheel_path)
+    after = api.verify_process(wheel_path)
     if before != after:
         raise HeuristicCandidateLockError(
             "worker native identity changed during execution"
@@ -198,21 +215,24 @@ def _execute_block(plan: ComparisonPlan, wheel_path: str, provenance: object):
     }
 
 
-def require_evidence(lock: dict[str, object], value: object, rows) -> dict[str, object]:
+def require_evidence(
+    lock: dict[str, object], value: object, rows, *, event=423
+) -> dict[str, object]:
     try:
-        return _require_evidence(lock, value, rows)
+        return _require_evidence(lock, value, rows, event=event)
     except (ValueError, TypeError, KeyError) as exc:
         raise HeuristicCandidateLockError(str(exc)) from exc
 
 
 def _require_evidence(
-    lock: dict[str, object], value: object, rows
+    lock: dict[str, object], value: object, rows, *, event=423
 ) -> dict[str, object]:
-    contract = require_contract(lock["rust_execution"])
+    api = event_module(event)
+    contract = api.require_contract(lock["rust_execution"])
     raw = expect_object(value, {"contract", "parent", "blocks"}, "rust_evidence")
     if raw["contract"] != contract:
         raise HeuristicCandidateLockError("Rust evidence differs from the lock")
-    parent = _require_process(raw["parent"])
+    parent = api._require_process(raw["parent"])
     if parent["provenance"] != lock["provenance"]:
         raise HeuristicCandidateLockError("parent provenance differs from lock")
     blocks = raw["blocks"]
@@ -228,7 +248,7 @@ def _require_evidence(
         )
         if expect_int(block["seed"], "seed") != seed:
             raise HeuristicCandidateLockError("Rust evidence seed order mismatch")
-        process = _require_process(block["process"])
+        process = api._require_process(block["process"])
         if process["provenance"] != lock["provenance"]:
             raise HeuristicCandidateLockError("worker provenance differs from lock")
         if block["rows_identity"] != _rows_identity(
@@ -240,7 +260,7 @@ def _require_evidence(
         pid = process["backend"]["pid"]
         if pid == parent["backend"]["pid"]:
             raise HeuristicCandidateLockError(
-                "event 423 requires actual spawned worker evidence"
+                "Rust event requires actual spawned worker evidence"
             )
         pids.add(pid)
         if expect_int(block["game_native_calls"], "game_native_calls") <= 0:
@@ -253,10 +273,11 @@ def _require_evidence(
 
 
 def execute_rust(
-    plan: ComparisonPlan, *, lock: dict[str, object], progress_callback=None
+    plan: ComparisonPlan, *, lock: dict[str, object], progress_callback=None, event=423
 ):
-    contract = require_contract(lock["rust_execution"])
-    parent = verify_process(contract["wheel_path"])
+    api = event_module(event)
+    contract = api.require_contract(lock["rust_execution"])
+    parent = api.verify_process(contract["wheel_path"])
     if parent["provenance"] != lock["provenance"]:
         raise HeuristicCandidateLockError("parent provenance differs from lock")
     completed = {}
@@ -275,6 +296,7 @@ def execute_rust(
                 ),
                 contract["wheel_path"],
                 lock["provenance"],
+                *((event,) if event != 423 else ()),
             ): seed
             for seed in plan.seeds
         }
@@ -294,7 +316,7 @@ def execute_rust(
                 future.cancel()
             pool.terminate_workers()
             raise
-    if verify_process(contract["wheel_path"]) != parent:
+    if api.verify_process(contract["wheel_path"]) != parent:
         raise HeuristicCandidateLockError(
             "parent native identity changed during execution"
         )
@@ -307,6 +329,7 @@ def execute_rust(
             "blocks": [completed[seed][1] for seed in plan.seeds],
         },
         rows,
+        event=event,
     )
     return ComparisonResult(
         plan=plan,

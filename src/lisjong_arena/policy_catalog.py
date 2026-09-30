@@ -4,7 +4,8 @@
 ``hand-value-aware`` / ``extended-combined`` / ``yakuhai-call`` /
 ``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression`` /
 ``placement-aware-speed-call``と#423のexperimental候補
-``placement-aware-speed-call-kobalab-0004-belief-paijia``の10個である。
+``placement-aware-speed-call-kobalab-0004-belief-paijia``、#436の
+``one-shanten-defense-placement-aware-speed-call``の11個である。
 登録は名前解決のためであり、候補のChampion昇格・default変更を意味しない。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
@@ -37,6 +38,7 @@ from lisjong_arena.model import PolicySpec
 if TYPE_CHECKING:
     from lisjong.policies import (
         MechanismRiichiDefenseYakuhaiCallPolicy,
+        OneShantenDefensePlacementAwareSpeedCallPolicy,
         PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy,
         PlacementAwareSpeedCallPolicy,
         TargetedHonorReleaseTerminalProgressionPolicy,
@@ -109,7 +111,19 @@ def create_placement_aware_speed_call_kobalab_0004_belief_paijia() -> (
     return PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy()
 
 
+def create_one_shanten_defense_placement_aware_speed_call() -> (
+    OneShantenDefensePlacementAwareSpeedCallPolicy
+):
+    from lisjong.policies import OneShantenDefensePlacementAwareSpeedCallPolicy
+
+    return OneShantenDefensePlacementAwareSpeedCallPolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
+    "one-shanten-defense-placement-aware-speed-call": PolicySpec(
+        identity="one-shanten-defense-placement-aware-speed-call",
+        factory=create_one_shanten_defense_placement_aware_speed_call,
+    ),
     "two-step": PolicySpec(identity="two-step", factory=create_two_step),
     "finite-horizon": PolicySpec(
         identity="finite-horizon", factory=create_finite_horizon
@@ -149,6 +163,7 @@ __all__ = [
     "create_hand_value_aware",
     "create_mechanism_riichi_defense",
     "create_placement_aware_speed_call",
+    "create_one_shanten_defense_placement_aware_speed_call",
     "create_placement_aware_speed_call_kobalab_0004_belief_paijia",
     "create_targeted_honor_release_terminal_progression",
     "create_two_step",
