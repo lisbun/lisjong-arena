@@ -12,6 +12,8 @@ param(
     # Without -Bot the run is the single lisjong-dev bot reading -SecretId.
     [string[]]$Bot = @(),
     [string]$InstanceType = "t3.small",
+    [ValidateSet("python", "rust")][string]$ShantenBackend = "python",
+    [string]$NativeWheelS3Uri = "",
     [int]$DurationSeconds = 43200,
     [int]$FailSafeHours = 14,
     [string]$ArenaRevision = "",
@@ -27,6 +29,20 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# Safe shell interpolation and exact-object IAM preflight; no signed URL/token.
+$wheelBucket = ""
+$wheelKey = ""
+if ($ShantenBackend -ceq "rust") {
+    $wheelMatch = [regex]::Match($NativeWheelS3Uri, '^s3://([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])/([A-Za-z0-9/_+=.@-]+\.whl)$')
+    if (-not $wheelMatch.Success) {
+        throw "Rust requires -NativeWheelS3Uri naming one S3 wheel object."
+    }
+    $wheelBucket = $wheelMatch.Groups[1].Value
+    $wheelKey = $wheelMatch.Groups[2].Value
+} elseif ($ShantenBackend -cne "python" -or -not [string]::IsNullOrEmpty($NativeWheelS3Uri)) {
+    throw "Use lowercase python/rust; NativeWheelS3Uri is only valid with rust."
+}
 
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
     throw "AWS profile is required. Pass -AwsProfile or set AWS_PROFILE after short-lived AWS CLI authentication."
@@ -55,8 +71,8 @@ if ($UntilStopped) {
     if ($DurationSeconds -le 0) {
         throw "DurationSeconds must be positive."
     }
-    if ($FailSafeHours -le 12) {
-        throw "FailSafeHours must be greater than the normal 12-hour bound."
+    if ($FailSafeHours -lt 1 -or ([long]$FailSafeHours * 3600) -le $DurationSeconds) {
+        throw "FailSafeHours must be positive and exceed DurationSeconds to allow graceful drain."
     }
 }
 $spectate = ($SpectatePort -ne 0)
@@ -321,6 +337,22 @@ if (@($secretArns | Sort-Object -Unique -CaseSensitive).Count -ne $bots.Count) {
 $role = Invoke-AwsJson -Arguments @("iam", "get-role", "--role-name", $RoleName)
 $roleArn = [string]$role.Role.Arn
 
+if ($ShantenBackend -eq "rust") {
+    # The operator checks object existence. IAM simulation checks this instance
+    # role's identity policy; actual GetObject is checked again by the bootstrap.
+    $wheelHead = Invoke-AwsJson -Arguments @("s3api", "head-object", "--bucket", $wheelBucket, "--key", $wheelKey)
+    if ([long]$wheelHead.ContentLength -le 0) { throw "Native wheel object is empty." }
+    $wheelArn = "arn:aws:s3:::$wheelBucket/$wheelKey"
+    $wheelAccess = Invoke-AwsJson -Arguments @(
+        "iam", "simulate-principal-policy", "--policy-source-arn", $roleArn,
+        "--action-names", "s3:GetObject", "--resource-arns", $wheelArn
+    )
+    $wheelDecisions = @($wheelAccess.EvaluationResults)
+    if ($wheelDecisions.Count -ne 1 -or $wheelDecisions[0].EvalDecision -ne "allowed") {
+        throw "Instance role must be allowed s3:GetObject on the exact native wheel object $wheelArn."
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($InstanceProfileName)) {
     $profiles = Invoke-AwsJson -Arguments @("iam", "list-instance-profiles-for-role", "--role-name", $RoleName)
     $profileList = @($profiles.InstanceProfiles)
@@ -476,6 +508,8 @@ $preflightSummary = [ordered]@{
     security_group_egress_rule_count = @($sg.IpPermissionsEgress).Count
     subnet_id = $SubnetId
     ami_id = $amiId
+    shanten_backend = $ShantenBackend
+    native_wheel_s3_uri = $NativeWheelS3Uri
     instance_type = $InstanceType
     bots = @($bots | ForEach-Object {
         [ordered]@{
@@ -589,6 +623,8 @@ try {
         state = "launched"
         launch_time_utc = $launchTimeUtc.ToUniversalTime().ToString("o")
         ami_id = $amiId
+        shanten_backend = $ShantenBackend
+        native_wheel_s3_uri = $NativeWheelS3Uri
         instance_type = $InstanceType
         bots = @($bots | ForEach-Object {
             [ordered]@{ profile = $_.profile; secret_id = $_.secret_id; spectate_port = $_.spectate_port }
@@ -664,6 +700,10 @@ try {
     $executionTimeout = ($FailSafeHours * 3600) + 3600
     $bootstrapUrl = "https://raw.githubusercontent.com/lisbun/lisjong-arena/$ArenaRevision/scripts/aws/bootstrap-riichilab-12h.sh"
     $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-313.sh; chmod 700 /tmp/lisjong-bootstrap-313.sh; exec /tmp/lisjong-bootstrap-313.sh --arena-revision '$ArenaRevision' --region '$Region'"
+    $remoteCommand += " --shanten-backend '$ShantenBackend'"
+    if ($ShantenBackend -eq "rust") {
+        $remoteCommand += " --native-wheel-s3-uri '$NativeWheelS3Uri'"
+    }
     foreach ($botEntry in $bots) {
         $remoteCommand += " --bot '$($botEntry.profile)=$($botEntry.secret_id)'"
     }
@@ -688,6 +728,8 @@ try {
         state = $(if ($SubmitOnly) { "submitted" } else { "running" })
         launch_time_utc = $launchTimeUtc.ToUniversalTime().ToString("o")
         ami_id = $amiId
+        shanten_backend = $ShantenBackend
+        native_wheel_s3_uri = $NativeWheelS3Uri
         instance_type = $InstanceType
         bots = @($bots | ForEach-Object {
             [ordered]@{ profile = $_.profile; secret_id = $_.secret_id; spectate_port = $_.spectate_port }

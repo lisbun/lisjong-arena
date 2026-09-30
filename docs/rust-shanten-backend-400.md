@@ -6,7 +6,7 @@ lisbun/lisjong#217（merge `2553c1b`）で完了している。配布手順の�
 
 本書は、Arena側の導入・worker設定・実行記録と、AWS実行計画（§5、**実行前の承認用の案**）を扱う。
 
-> **#409以降**：現行のlisjong pinとwheelは[現行の組み合わせ](lisjong-native-wheel-current.md)（#423準備：lisjong `58ef82a`、wheel `a4480991…`、`API_VERSION` 2）である。
+> **#409以降**：現行のlisjong pinとwheelは[現行の組み合わせ](lisjong-native-wheel-current.md)（#434：lisjong `51e832e`、R5対応`API_VERSION` 3）である。
 > 本書の値（`2553c1b`、wheel `ff8aaa40…`）は#400 / #406の実行時の組で、`plan.py`とbootstrapに固定されている。
 > 過去の実行は記録された旧Arena commitで再現する。
 default backendはPythonのままで、向聴数定義・Rust化範囲は変更しない。強さ評価ではない。

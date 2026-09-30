@@ -216,7 +216,7 @@ class RustIdentityTest(unittest.TestCase):
 
     def test_extension_with_another_native_api_fails(self) -> None:
         # A pre-lisjong#224 wheel has no API_VERSION attribute (read as 1).
-        for api_version in (_NO_ATTRIBUTE, 1, 3):
+        for api_version in (_NO_ATTRIBUTE, 1, 2, 4):
             with self.subTest(api_version=api_version):
                 with self.assertRaisesRegex(
                     backend.ShantenBackendVerificationError, "API_VERSION"
@@ -237,7 +237,7 @@ class RustIdentityTest(unittest.TestCase):
         self.assertEqual(
             record["native"]["source_revision"], backend.EXPECTED_LISJONG_REVISION
         )
-        self.assertEqual(record["native"]["api_version"], 2)
+        self.assertEqual(record["native"]["api_version"], 3)
         self.assertEqual(record["native"]["probe_native_calls"], 1)
 
 

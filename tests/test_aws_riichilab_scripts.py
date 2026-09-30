@@ -283,14 +283,13 @@ class AwsRiichiLabSpectateScriptTest(unittest.TestCase):
         start_bot = text[text.index("start_bot() {") :]
         start_bot = start_bot[: start_bot.index("\n}\n")]
         self.assertIn(
-            'local args=(--profile "$profile" "${RUNNER_BOUND_ARGS[@]}" '
-            '--record-dir "$directory/records")',
+            'local args=("${RUNNER_BOUND_ARGS[@]}" --record-dir "$directory/records")',
             start_bot,
         )
         spectate_run = start_bot[: start_bot.index("    else")]
         for argument in (
             'args+=(--port "${BOT_PORTS[$profile]}")',
-            'exec "$PYTHON" -m lisjong_play.riichilab_html --continuous "${args[@]}"',
+            '--runner spectate -- --continuous "${args[@]}"',
             ') >"$directory/continuous.log" 2>&1 &',
         ):
             self.assertIn(argument, spectate_run)
@@ -368,7 +367,7 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
         self.assertIn('STOP_FILE="$WORK_ROOT/stop-requested"', text)
         self.assertIn('RUNNER_BOUND_ARGS+=(--stop-file "$STOP_FILE")', text)
         self.assertIn(
-            'VERIFY_BOUND_ARGS=("${BOT_CONFIG_ARGS[@]}" --stop-file "$STOP_FILE")',
+            'VERIFY_BOUND_ARGS=("${BOT_CONFIG_ARGS[@]}" --stop-file "$STOP_FILE" --expected-backend "$SHANTEN_BACKEND")',
             text,
         )
         self.assertIn("VERIFY_BOUND_ARGS+=(--until-stopped)", text)

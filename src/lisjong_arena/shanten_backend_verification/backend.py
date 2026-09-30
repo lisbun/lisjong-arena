@@ -20,7 +20,7 @@ adds the checks that lisjong cannot make on its own:
   on a public ``calculate_shanten()`` call; for ``python`` the extension is not
   even imported.
 
-The ``EXPECTED_*`` values are the *current* combination (#423).  The frozen
+The ``EXPECTED_*`` values are the *current* combination (#434).  The frozen
 #400 / #406 runs used the lisjong#217 combination, which ``plan`` keeps for
 judging that evidence; those runs are reproduced from their recorded Arena
 commits, not with these values.
@@ -47,18 +47,18 @@ PYTHON_BACKEND = "python"
 RUST_BACKEND = "rust"
 BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
 
-EXPECTED_LISJONG_REVISION = "58ef82aeb10ac77cb66290d54e67a42426919d5b"
-"""lisjong#231 merge on ``main``; the project pin and the wheel build source."""
+EXPECTED_LISJONG_REVISION = "51e832e50a0ee71eac65e4a017f46590e7438c04"
+"""lisjong#233 merge on ``main``; the project pin and the wheel build source."""
 
 EXPECTED_WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 EXPECTED_WHEEL_SHA256 = (
-    "a4480991f04bc2686c6790857fdbf467cd576aa9a910e05e344232a0c4a8086c"
+    "802d19e4c2f8cfb52f133e8b0666a9225a745e1a85da2600a6343433ab919c79"
 )
-"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 36359700012
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 36725918036
 (push to ``main``)."""
 
-EXPECTED_NATIVE_API_VERSION = 2
-"""``_lisjong_native.API_VERSION`` of the lisjong#225 extension; a wheel built
+EXPECTED_NATIVE_API_VERSION = 3
+"""``_lisjong_native.API_VERSION`` of the lisjong#233 extension; a wheel built
 before lisjong#224 has no such attribute (lisjong treats it as 1)."""
 
 NATIVE_MODULE = "_lisjong_native"
