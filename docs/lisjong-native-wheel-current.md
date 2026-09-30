@@ -1,105 +1,51 @@
-# 現行のlisjong pin・Rust wheel（#423準備）
+# 現行のlisjong pin・Rust wheel（#434）
 
-#423で最新0004＋Belief-paijia統合候補を使うための組み合わせ。
-Pythonがdefault、Rustは明示的opt-in。候補の登録は強度評価・Champion昇格・稼働botの更新を意味しない。
-
-## 固定する組
+RiichiLabでChampionのR5探索までRust化する組み合わせ。
+Pythonがdefault、Rustは明示的opt-in。過去の#423の実験条件は
+[#423時点の固定記録](lisjong-native-wheel-423.md)に保存し、変更しない。
 
 | 項目 | 値 |
 | --- | --- |
-| Arena | #423準備PRを含み、下記pinを持つrevision（実行時にfull SHAを記録） |
-| lisjong pin / native SOURCE_REVISION | `58ef82aeb10ac77cb66290d54e67a42426919d5b`（lisjong #231 merge） |
-| wheel | `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（234,334 bytes） |
-| wheel SHA-256 | `a4480991f04bc2686c6790857fdbf467cd576aa9a910e05e344232a0c4a8086c` |
-| native API_VERSION | `2` |
-| main push CI | [36359700012](https://github.com/lisbun/lisjong/actions/runs/36359700012) / attempt 1 / success |
-| artifact | `lisjong-native-wheel-58ef82aeb10ac77cb66290d54e67a42426919d5b` / id `10945396092` |
+| lisjong pin / native SOURCE_REVISION | `51e832e50a0ee71eac65e4a017f46590e7438c04`（lisjong #233 merge） |
+| wheel | `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（252,815 bytes） |
+| wheel SHA-256 | `802d19e4c2f8cfb52f133e8b0666a9225a745e1a85da2600a6343433ab919c79` |
+| native API_VERSION | `3` |
+| main push CI | [36725918036](https://github.com/lisbun/lisjong/actions/runs/36725918036) / attempt 1 / success |
+| artifact | `lisjong-native-wheel-51e832e50a0ee71eac65e4a017f46590e7438c04` / id `11102344881` |
 | build | manylinux_2_28_x86_64、CPython 3.14.7、rustc 1.98.1、maturin 1.15.0、release / `--locked` |
 
-対象はLinux x86_64 / 通常版CPython 3.14（AL2023対応タグ）。Windowsにはこのwheelを入れない。
-wheel・`SHA256SUMS`・`BUILD-INFO.txt`をrevision別directoryへ一緒に保持し、CI artifactの90日保持に依存しない。
-同名・同versionの旧wheelを上書きしない。保存・検証結果の正本は#423の準備PRに記録する。
+対象はLinux x86_64 / 通常版CPython 3.14（AL2023対応タグ）。Windowsへこのwheelをinstallしない。
+同名・同versionの旧wheelを上書きせず、revision別directoryで`SHA256SUMS`・`BUILD-INFO.txt`と一緒に保持する。
+GitHub artifactの保存期間は90日。取得後の長期保持先としてprivate S3のrevision別objectを利用できる。
 
 ```bash
-gh -R lisbun/lisjong run download 36359700012 \
-  --name lisjong-native-wheel-58ef82aeb10ac77cb66290d54e67a42426919d5b \
+gh -R lisbun/lisjong run download 36725918036 \
+  --name lisjong-native-wheel-51e832e50a0ee71eac65e4a017f46590e7438c04 \
   --dir <new-revision-specific-directory>
 # 取得先で sha256sum --strict -c SHA256SUMS
 ```
 
-## 導入・照合
-
-新規venvを基本とし、Arenaをinstallしたあと、`python -m lisjong_arena.environment_verify --project pyproject.toml`でVCS revisionを確認する。
-既存venvではlisjong自体も同versionのため通常installで旧revisionが残る場合がある。
-その場合は環境を作り直すか、対象full SHAのVCS requirementを`pip install --force-reinstall --no-deps`で再導入し、再検証する。
-その後、次を行う。
+新規venvへこのArena revisionをinstallし、`environment_verify --project pyproject.toml`で依存を確認する。
+既存環境では同versionの旧packageが残らないよう、明示的なVCS revisionで再導入して確認する。
 
 ```bash
 python -m lisjong_arena.shanten_backend_verification verify-wheel <wheel>
-python -m pip install --only-binary=:all: --no-index --no-deps <wheel>
-LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.shanten_backend_verification \
-  probe --backend rust --wheel <wheel>
+python -m pip install --only-binary=:all: --no-index --no-deps --force-reinstall <wheel>
+LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.riichilab.aws_backend \
+  --backend rust --wheel <wheel>
 ```
 
-既存venvで同versionのwheelを入れ替える場合は`--force-reinstall`を付ける。
-`probe`はinstalled lisjongのVCS revision、SOURCE_REVISION、API_VERSION、native呼出し、
-wheel内fileと実際にimportしたfileのbyte一致を検査する。不一致は拒否し、Pythonにfallbackしない。
-Pythonへ戻す場合は`LISJONG_SHANTEN_BACKEND=python`とする。
+最後のprobeは、installed lisjong revision / native SOURCE_REVISION / API_VERSION / wheelとimport済みfileの一致、
+向聴計算のnative呼出し、lisjongの本番factory経由のR5 native呼出しを確認する。
+R5の小入力probeは配線確認であり、Champion全体の速度や強さの評価ではない。
+出力の`r5_probe_calls >= 1`、`native_api_version == 3`を確認する。
+Pythonへ戻す場合は`LISJONG_SHANTEN_BACKEND=python`を明示する。
 
-## #423 participant
+AWSでの起動・停止・回収は [Champion 2bot Rust試運転](aws-riichilab-rust-434.md) を参照。
+既存のAABB candidate / incumbentのfactory bindingは維持するが、#423等のfrozen runを新pinで再現したことにはしない。
+過去runは当時のArena commitとwheelの組を使う。
 
-| 役割 | Arena identity | factory binding | lisjong class |
-| --- | --- | --- | --- |
-| candidate A | `placement-aware-speed-call-kobalab-0004-belief-paijia` | `lisjong_arena.policy_catalog:create_placement_aware_speed_call_kobalab_0004_belief_paijia` | `PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy` |
-| incumbent B | `placement-aware-speed-call` | `lisjong_arena.policy_catalog:create_placement_aware_speed_call` | `PlacementAwareSpeedCallPolicy` |
+## 導入確認（2026-09-30）
 
-両者のimplementation_sourceは`lisjong`、implementation_revisionは同じfull pinを使う。
-factoryの置き場所がArenaでも、Policy実装のrevisionにArena SHAを使わない。
-Aは引数なしで生成し、lisjong-ownedの既定`KOBALAB_0004_BELIEF_PAIJIA_ESTIMATOR`を使う。
-他家slotとfixed-point丸めもlisjongの実装を使い、Arenaで再定義しない。
-旧合成版・単独Belief版・参照版は追加armとして登録しない。
-
-既存`heuristic_candidate_aabb`はexplicit participant bindingを受け付ける。
-ただし#375のseed owner/population・固定bootstrapと、#423の実行lockは同一視しない。
-この準備変更ではseed予約・400半荘・AWS実行を行わない。後続で#423のallocation binding、
-Rustの親/実worker検証を含む実行入口、校正・停止期限を整合し、cleanなmerged revisionでlockする。
-既存AABB経路は`LocalGameRunner.run()`からcomparison artifactを保存し、
-#415のdurable typed-analysis serializerを使わない。現行経路を使う限り#415は直接のblockerではない。
-
-backend確認用の`shanten_backend_verification games`はcatalog aliasを受け付け、spawn workerごとに
-revision/API/backendとnative呼出し・一括打牌評価counterを記録する。
-これは自己対戦の導入smokeであり、#423のAABB強度評価や時間校正ではない。
-0004一括経路は参照版だけでなく最新統合候補でも使う。実workerごとのcounter増分を確認する。
-
-## 過去との境界・rollback
-
-- [#409の固定記録](lisjong-native-wheel-409.md)は当時の組・検証結果を保持する。
-- #400/#406等のhistorical plan・bootstrap・wheel hash・seed・artifactは変更しない。
-- #409へのrollbackはArena `eb7baae889de63b0a94e21bd8ca7d518083ed5d1`（今回のbase）、
-  lisjong `8bdfd3f942ced49830bcee1894aefe3d2e0acc3a`、wheel SHA-256
-  `22ce171059416ba8e25c8801ec2ef425afeacfda792ae67d837865610269e7f8`の組で行う。
-  そのArena commitと新規venv・対応wheelで`verify-wheel`/`probe`を実行する。最新候補はその組には存在しない。
-- native sourceが同じでもSOURCE_REVISIONが異なる旧wheelを流用しない。
-- `8bdfd3f..58ef82a`で`lisjong.learning`は不変。現行producerのconsumer pinは追随するが、
-  過去のfrozen source/experimentのrevisionを書き換えない。
-- 現Championの変更は候補制限helperの抽出。coreの#227/#231同値検証を参照し、
-  Arena側では候補解決・同じinstalled revision・smokeの実行境界を確認する。
-
-## 今回の導入検証（2026-09-28）
-
-Linux x86_64 / 通常版CPython 3.14.6 / RiichiEnv 0.4.10で検証した。
-wheelは上記main CI artifactをbinary限定で導入し、hash、SOURCE_REVISION、API_VERSION 2、
-導入file一致、native probe呼出しを確認。`environment_verify`で両内部依存pinと`pip check`が一致した。
-AL2023実機・Windows native buildは今回未実施。
-
-- 候補登録、historical lazy import、AABB participant解決、backend拒否、旧#400 report、
-  pure-offense backend、focal source、実comparisonのfocused 8 module：176 tests（wheel導入時1 skip）。
-- 導入smoke：既知のDEVELOPMENT seed 0/1、`4p-red-single`、候補2局×Python/Rust、
-  Champion seed 0の1局×Python/Rust。両者とも各backend間の全decision semantic digest・得点・順位・stepが一致。
-- 候補は要求2/観測2 worker（各1局）。Rustの一括打牌評価は各worker 35/50回、合計85回。
-  全workerのSOURCE_REVISION/API/backendを確認。Championの一括評価は0（想定どおり）。
-- wheel未導入時のRust拒否は、別途wheelを外してbackend testを実行して確認。
-- ruff 0.16.0のformat/checkと`git diff --check`が成功。full regressionの正本はArena PR CI。
-
-これは導入・互換性の確認であり、#423のfresh AABB評価や本番worker数の校正、性能向上の証明ではない。
-smoke seedを#423本評価のfresh allocationとして再利用しない。
+Linux x86_64 / 通常版CPython 3.14.7の作業環境で、上記CI wheelのSHA-256・SOURCE_REVISION・API_VERSION 3・
+installed file一致と、向聴 / R5の実native呼出しを確認した。AWS実機・RiichiLabでの時間適合は未確認。

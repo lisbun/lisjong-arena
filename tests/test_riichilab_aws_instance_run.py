@@ -201,6 +201,7 @@ class VerifyInstanceRunTest(unittest.TestCase):
         (directory / "records" / f"{profile}-game").mkdir(parents=True)
         self.records[f"{profile}-game"] = SimpleNamespace(
             record_identity=profile.ljust(64, "0"),
+            protocol_entries=(),
             provenance=_provenance(profile),
             result=SimpleNamespace(unanswered_requests={}),
         )
@@ -228,6 +229,33 @@ class VerifyInstanceRunTest(unittest.TestCase):
         ):
             return verify_instance_run(**kwargs)
 
+    def test_each_bot_backend_receipt_is_collected_and_required(self) -> None:
+        from test_riichilab_aws_backend import _record
+
+        self.stop_file.write_text("operator\n")
+        for bot in self.bots:
+            self._bot(bot.profile)
+            (bot_directory(self.root, bot.profile) / "backend.json").write_text(
+                json.dumps(_record())
+            )
+        summary = self._verify(expected_backend="rust")
+        self.assertEqual("PASS", summary["status"])
+        self.assertTrue(
+            all(row["backend"]["r5_probe_calls"] == 1 for row in summary["bots"])
+        )
+        path = bot_directory(self.root, "lisjong-baseline") / "backend.json"
+        for value in (
+            {**_record(), "wheel_sha256": "0" * 64},
+            {**_record(), "extra": _TOKENS["lisjong-dev"]},
+        ):
+            path.write_text(json.dumps(value))
+            summary = self._verify(expected_backend="rust")
+            self.assertEqual("FAIL", summary["status"])
+            self.assertEqual(1, summary["passed_bot_count"])
+            self.assertNotIn(_TOKENS["lisjong-dev"], json.dumps(summary))
+        path.unlink()
+        self.assertEqual("FAIL", self._verify(expected_backend="rust")["status"])
+
     def test_every_bot_passes_and_is_attributed(self) -> None:
         self.stop_file.write_text("operator\n", encoding="ascii")
         self._bot("lisjong-dev", stop_utc="2026-09-20T03:00:00Z")
@@ -236,7 +264,7 @@ class VerifyInstanceRunTest(unittest.TestCase):
         summary = self._verify()
 
         self.assertEqual(INSTANCE_SUMMARY_SCHEMA_ID, summary["schema_id"])
-        self.assertEqual(3, INSTANCE_SUMMARY_SCHEMA_VERSION)
+        self.assertEqual(4, INSTANCE_SUMMARY_SCHEMA_VERSION)
         self.assertEqual(INSTANCE_SUMMARY_SCHEMA_VERSION, summary["schema_version"])
         self.assertEqual("PASS", summary["status"])
         self.assertEqual(

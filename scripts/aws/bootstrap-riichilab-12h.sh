@@ -27,9 +27,19 @@ PLAY_REPOSITORY_URL="https://github.com/lisbun/lisjong-play.git"
 # Issue #383: run without a duration bound until the operator stop request.
 UNTIL_STOPPED=0
 DURATION_GIVEN=0
+SHANTEN_BACKEND="python"
+NATIVE_WHEEL_S3_URI=""
 
 while (($#)); do
     case "$1" in
+        --shanten-backend)
+            SHANTEN_BACKEND="$2"
+            shift 2
+            ;;
+        --native-wheel-s3-uri)
+            NATIVE_WHEEL_S3_URI="$2"
+            shift 2
+            ;;
         --arena-revision)
             ARENA_REVISION="$2"
             shift 2
@@ -74,6 +84,20 @@ while (($#)); do
             ;;
     esac
 done
+
+if [[ "$SHANTEN_BACKEND" != "python" && "$SHANTEN_BACKEND" != "rust" ]]; then
+    echo "--shanten-backend must be python or rust" >&2
+    exit 2
+fi
+if [[ "$SHANTEN_BACKEND" == "rust" ]]; then
+    if [[ ! "$NATIVE_WHEEL_S3_URI" =~ ^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9/_+=.@-]+\.whl$ ]]; then
+        echo "--native-wheel-s3-uri must name an S3 wheel object for rust" >&2
+        exit 2
+    fi
+elif [[ -n "$NATIVE_WHEEL_S3_URI" ]]; then
+    echo "--native-wheel-s3-uri is only valid with rust" >&2
+    exit 2
+fi
 
 if [[ ! "$ARENA_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
     echo "--arena-revision must be a full lowercase commit SHA" >&2
@@ -145,7 +169,7 @@ if [[ "$(id -u)" != "0" ]]; then
 fi
 
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
-unset RIICHILAB_TRACE_PATH
+unset RIICHILAB_TRACE_PATH LISJONG_SHANTEN_BACKEND
 
 source /etc/os-release
 if [[ "${ID:-}" != "amzn" || "${VERSION_ID:-}" != "2023" ]]; then
@@ -311,6 +335,21 @@ PY
     "$PYTHON" -m pip install --disable-pip-version-check --no-deps -e "$PLAY_DIR" >>"$BOOTSTRAP_LOG" 2>&1
 fi
 
+# Resolve the pinned native wheel before any bot credential is fetched.
+# Use the repository's frozen SHA-256, not a hash supplied by the downloader.
+BACKEND_ARGS=(--backend "$SHANTEN_BACKEND")
+if [[ "$SHANTEN_BACKEND" == "rust" ]]; then
+    WHEEL_NAME="$("$PYTHON" -c 'from lisjong_arena.shanten_backend_verification.backend import EXPECTED_WHEEL_FILENAME; print(EXPECTED_WHEEL_FILENAME)')"
+    mkdir -p "$WORK_ROOT/native"
+    WHEEL_PATH="$WORK_ROOT/native/$WHEEL_NAME"
+    aws s3 cp --only-show-errors --region "$REGION" "$NATIVE_WHEEL_S3_URI" "$WHEEL_PATH" >>"$BOOTSTRAP_LOG" 2>&1
+    "$PYTHON" -m lisjong_arena.shanten_backend_verification verify-wheel "$WHEEL_PATH" >>"$BOOTSTRAP_LOG" 2>&1
+    "$PYTHON" -m pip install --disable-pip-version-check --only-binary=:all: --no-index --no-deps --force-reinstall "$WHEEL_PATH" >>"$BOOTSTRAP_LOG" 2>&1
+    BACKEND_ARGS+=(--wheel "$WHEEL_PATH")
+fi
+env LISJONG_SHANTEN_BACKEND="$SHANTEN_BACKEND" "$PYTHON" -m lisjong_arena.riichilab.aws_backend "${BACKEND_ARGS[@]}" >>"$BOOTSTRAP_LOG" 2>&1
+echo "preflight: shanten_backend=$SHANTEN_BACKEND verified=PASS"
+
 cd "$REPO_DIR"
 "$PYTHON" -m lisjong_arena.environment_verify --project pyproject.toml     >>"$BOOTSTRAP_LOG" 2>&1
 echo "preflight: environment_verify=PASS arena_revision=$ARENA_REVISION"
@@ -385,7 +424,7 @@ if ! grep -q -- "--transport-evidence" <<<"$CONTINUOUS_HELP"; then
 fi
 
 RUNNER_BOUND_ARGS=()
-VERIFY_BOUND_ARGS=("${BOT_CONFIG_ARGS[@]}" --stop-file "$STOP_FILE")
+VERIFY_BOUND_ARGS=("${BOT_CONFIG_ARGS[@]}" --stop-file "$STOP_FILE" --expected-backend "$SHANTEN_BACKEND")
 if [[ "$UNTIL_STOPPED" == "1" ]]; then
     VERIFY_BOUND_ARGS+=(--until-stopped)
 else
@@ -468,7 +507,8 @@ declare -A BOT_NAMES=()
 start_bot() {
     local profile="$1"
     local directory="$BOTS_DIR/$profile"
-    local args=(--profile "$profile" "${RUNNER_BOUND_ARGS[@]}" --record-dir "$directory/records")
+    local args=("${RUNNER_BOUND_ARGS[@]}" --record-dir "$directory/records")
+    local backend_args=("${BACKEND_ARGS[@]}" --profile "$profile" --evidence "$directory/backend.json")
     if [[ "$SPECTATE" == "1" ]]; then
         # Same Arena continuous runner and summary output, plus the
         # loopback-only live viewer in the same process, on this bot's own
@@ -477,7 +517,7 @@ start_bot() {
         (
             export "${BOT_ENV_VARS[$profile]}=${BOT_TOKENS[$profile]}"
             unset BOT_TOKENS
-            exec "$PYTHON" -m lisjong_play.riichilab_html --continuous "${args[@]}"
+            exec env LISJONG_SHANTEN_BACKEND="$SHANTEN_BACKEND" "$PYTHON" -m lisjong_arena.riichilab.aws_backend "${backend_args[@]}" --runner spectate -- --continuous "${args[@]}"
         ) >"$directory/continuous.log" 2>&1 &
     else
         # Issue #416: bounded connection timing evidence per transport failure.
@@ -486,7 +526,7 @@ start_bot() {
         (
             export "${BOT_ENV_VARS[$profile]}=${BOT_TOKENS[$profile]}"
             unset BOT_TOKENS
-            exec "$PYTHON" -m lisjong_arena.riichilab.continuous_ranked "${args[@]}"
+            exec env LISJONG_SHANTEN_BACKEND="$SHANTEN_BACKEND" "$PYTHON" -m lisjong_arena.riichilab.aws_backend "${backend_args[@]}" --runner continuous -- "${args[@]}"
         ) >"$directory/continuous.log" 2>&1 &
     fi
     BOT_NAMES[$!]="$profile"

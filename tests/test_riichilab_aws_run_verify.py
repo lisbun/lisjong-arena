@@ -196,6 +196,7 @@ class RealRecordVerificationTest(unittest.TestCase):
 def _record(identity: str, provenance, unanswered=None) -> SimpleNamespace:
     return SimpleNamespace(
         record_identity=identity,
+        protocol_entries=(),
         provenance=provenance,
         result=SimpleNamespace(unanswered_requests=unanswered or {}),
     )
@@ -405,7 +406,7 @@ class AwsRunOperatorStopTest(unittest.TestCase):
                 log=_runner_log(stopped_reason="stop_requested", duration="unbounded"),
             )
         self.assertEqual("PASS", summary["status"])
-        self.assertEqual(2, summary["schema_version"])
+        self.assertEqual(3, summary["schema_version"])
         self.assertEqual("stop_requested", summary["stopped_reason"])
         self.assertTrue(summary["operator_stop_requested"])
         self.assertEqual("operator", summary["stop_request_source"])

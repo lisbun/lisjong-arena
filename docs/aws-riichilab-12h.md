@@ -627,3 +627,8 @@ This automation does not create:
 - inbound SSH
 
 Those remain separate design decisions.
+
+## R5 Rust版のChampion 2bot試運転
+
+明示的なRust導入と短時間の2bot起動は [#434手順](aws-riichilab-rust-434.md) を参照。
+既存の引数を省略した場合はPython backendのまま。

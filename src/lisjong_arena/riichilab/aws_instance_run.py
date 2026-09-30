@@ -37,6 +37,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
+from lisjong_arena.riichilab.aws_backend import (
+    EVIDENCE_FILENAME as BACKEND_EVIDENCE_FILENAME,
+)
+from lisjong_arena.riichilab.aws_backend import (
+    read_backend_evidence,
+)
 from lisjong_arena.riichilab.aws_run_verify import (
     AwsRunVerificationError,
     _parse_utc,
@@ -56,9 +62,12 @@ from lisjong_arena.riichilab.transport_diagnostics import (
     REASON_CLASSES,
     is_confirmed_secret_free,
 )
+from lisjong_arena.shanten_backend_verification.backend import (
+    ShantenBackendVerificationError,
+)
 
 INSTANCE_SUMMARY_SCHEMA_ID = "lisjong-arena-aws-riichilab-instance-run-summary"
-INSTANCE_SUMMARY_SCHEMA_VERSION = 3
+INSTANCE_SUMMARY_SCHEMA_VERSION = 4
 
 #: Upper bound of bots per instance.  The instance summary returns through the
 #: SSM stdout sentinel, whose output is truncated at 24,000 characters.
@@ -506,6 +515,7 @@ def _verify_bot(
     start_utc: str,
     cutoff_utc: str | None,
     stop_file: Path,
+    expected_backend: str | None = None,
 ) -> dict[str, Any]:
     directory = bot_directory(work_root, bot.profile)
     entry: dict[str, Any] = {
@@ -519,11 +529,27 @@ def _verify_bot(
         "status": "FAIL",
         "failure_reason": None,
         "verification": None,
+        "backend": None,
         "runner_facts": read_runner_facts(
             directory / "continuous.log", tokens_by_profile.values()
         ),
     }
     try:
+        if expected_backend is not None:
+            try:
+                backend_record = read_backend_evidence(
+                    directory / BACKEND_EVIDENCE_FILENAME, expected_backend
+                )
+                if any(
+                    token in json.dumps(backend_record)
+                    for token in tokens_by_profile.values()
+                ):
+                    raise ShantenBackendVerificationError("unsafe backend evidence")
+                entry["backend"] = backend_record
+            except ShantenBackendVerificationError:
+                raise AwsRunVerificationError(
+                    "missing or invalid bot backend evidence"
+                ) from None
         try:
             exit_code = int((directory / "exit_code").read_text("ascii").strip())
             stop_utc = (directory / "stop_utc").read_text("ascii").strip()
@@ -558,7 +584,10 @@ def _verify_bot(
             stop_file=stop_file,
             additional_scan_paths=tuple(
                 path
-                for path in (directory / TRANSPORT_EVIDENCE_FILENAME,)
+                for path in (
+                    directory / TRANSPORT_EVIDENCE_FILENAME,
+                    directory / BACKEND_EVIDENCE_FILENAME,
+                )
                 if path.is_file()
             ),
         )
@@ -579,6 +608,7 @@ def verify_instance_run(
     start_utc: str,
     cutoff_utc: str | None,
     stop_file: Path,
+    expected_backend: str | None = None,
 ) -> dict[str, Any]:
     """Verify every bot independently and aggregate a secret-safe summary.
 
@@ -613,6 +643,7 @@ def verify_instance_run(
             start_utc=start_utc,
             cutoff_utc=cutoff_utc,
             stop_file=stop_file,
+            expected_backend=expected_backend,
         )
         for bot in bots
     ]
@@ -678,6 +709,7 @@ def _parser() -> argparse.ArgumentParser:
     _add_bot_arguments(verify)
     verify.add_argument("--work-root", required=True, type=Path)
     verify.add_argument("--expected-arena-revision", required=True)
+    verify.add_argument("--expected-backend", choices=("python", "rust"))
     duration = verify.add_mutually_exclusive_group(required=True)
     duration.add_argument("--expected-duration-seconds", type=int)
     duration.add_argument("--until-stopped", action="store_true")
@@ -713,6 +745,7 @@ def _run_cli(argv: Sequence[str] | None = None) -> int:
             start_utc=args.start_utc,
             cutoff_utc=args.cutoff_utc,
             stop_file=args.stop_file,
+            expected_backend=args.expected_backend,
         )
     except (AwsInstanceRunConfigError, ProfileError) as error:
         print(f"AWS instance run configuration rejected: {error}", file=sys.stderr)

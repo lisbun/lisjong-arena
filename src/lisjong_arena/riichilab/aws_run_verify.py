@@ -40,6 +40,38 @@ class AwsRunVerificationError(RuntimeError):
     """The AWS bounded-run evidence does not satisfy the Issue #313 contract."""
 
 
+def _ack_timing(records) -> dict[str, Any]:
+    """Observed server ACKs in completed strict-read records only, not inference time.
+
+    Optional numeric fields are counted separately. Missing measurements never
+    become zero; ACK events (including late stale ACKs) are not unique requests.
+    """
+    statuses = {"accepted": 0, "defaulted": 0, "stale": 0}
+    samples = {"elapsed_ms": [], "bank_ms": [], "bank_consumed_ms": []}
+    ack_count = 0
+    for record in records:
+        for entry in record.protocol_entries:
+            if entry.direction != "recv" or entry.payload.get("type") != "action_ack":
+                continue
+            ack_count += 1
+            status = entry.payload.get("status")
+            if status in statuses:
+                statuses[status] += 1
+            for field, values in samples.items():
+                value = entry.payload.get(field)
+                if type(value) is int and 0 <= value < 2**63:
+                    values.append(value)
+    return {
+        "scope": "completed_records_only",
+        "ack_count": ack_count,
+        "status_counts": statuses,
+        "measured_ack_counts": {key: len(values) for key, values in samples.items()},
+        "max_elapsed_ms": max(samples["elapsed_ms"], default=None),
+        "min_bank_ms": min(samples["bank_ms"], default=None),
+        "max_bank_consumed_ms": max(samples["bank_consumed_ms"], default=None),
+    }
+
+
 def _parse_utc(value: str, field_name: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -326,7 +358,7 @@ def verify_run(
 
     return {
         "schema_id": "lisjong-arena-aws-riichilab-bounded-run-summary",
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "PASS",
         "start_utc": start_utc,
         "cutoff_utc": cutoff_utc,
@@ -350,6 +382,7 @@ def verify_run(
         "unanswered_request_count": sum(
             len(record.result.unanswered_requests) for record in records
         ),
+        "ack_timing": _ack_timing(records),
         "provenance": first_provenance,
         "credential_scan": credential_scan,
     }
