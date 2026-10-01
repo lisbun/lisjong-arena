@@ -18,11 +18,15 @@ lisjong #235で追加した候補を、現Championとfresh 100 seed blocks / 400
 | RiichiEnv | `0.4.10` |
 | native API / backend | `3` / 明示的 `rust` |
 | wheel SHA-256 | `b14e53fea4161cb81c7912ead2c9d1206c2b95a1b19eb4999c6c2b7a056fdbe6` |
-| 実行案 | local Linux x86_64 / 通常版CPython 3.14 / 8 workers |
+| 実行案 | AWS東京 / AL2023 x86_64 / 通常版CPython 3.14 / c7i.8xlarge / 32 workers |
 
 wheelは [現行wheel手順](lisjong-native-wheel-current.md)で取得する。
 #423のwheel・participant lock・allocationを流用しない。
 #375 / #423の保存済みbundleは当時の固定契約で検証し、今回の条件へ改名しない。
+
+2026-10-01のユーザー指示でAWS 32 workersへ変更。ローカルPowerShellからのseed予約・
+事前確認・起動・回収は [AWS実行手順](heuristic-candidate-436-aws.md) を使う。
+以下は評価本体の低レベル手順であり、AWS runnerが同じlock/run/verifyを行う。
 
 ## 実行前
 
@@ -64,12 +68,12 @@ workflow完了後のlive ledgerと、`show`が返すbindingをそれぞれ`$LEDG
 ## Lock・run・verify
 
 `$BUNDLE`は空の新規出力directory、`$WHEEL`は絶対path。lock保存後はwheelの
-位置・実行revision・worker数を変更しない。runは全400半荘が成功しない限り不成立とする。
+位置・実行revision・worker数を変更しない。AWS実行では32 workersを固定する。runは全400半荘が成功しない限り不成立とする。
 
 ```bash
 python -m lisjong_arena.heuristic_candidate_aabb lock \
   --event 436 --wheel "$WHEEL" --out "$BUNDLE/candidate-lock.json" \
-  --seeds "$EVAL_SEEDS" --workers 8 \
+  --seeds "$EVAL_SEEDS" --workers 32 \
   --seed-ledger "$LEDGER" --allocation-binding "$ALLOCATION_BINDING" \
   --comparison-artifact "$BUNDLE/comparison.json" \
   --candidate-result "$BUNDLE/candidate-result.json" \
@@ -105,4 +109,5 @@ gh -R lisbun/lisjong-arena workflow run seed-registry.yml --ref main \
 
 開発用80半荘は同じ8 workersで771.8秒だったため、400半荘の単純外挿は約65分。
 seed別の時間差・環境再構築で変わる参考値であり、完了時刻の保証ではない。
-正式結果を見てから候補・判定条件を変えない。AWS実行・課金はこのlocal計画に含まれない。
+この65分は当初local 8-worker案の参考値で、AWS 32-workerの予測ではない。
+正式結果を見てから候補・判定条件を変えない。AWSの費用・停止条件は上記AWS手順で確認する。
