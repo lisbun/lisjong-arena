@@ -237,7 +237,7 @@ function Get-RunInstance {
 
 function Assert-RunEvent {
     param([Parameter(Mandatory = $true)]$State)
-    if ($State.PSObject.Properties.Name -contains "issue") {
+    if ($null -ne $State.PSObject.Properties['issue']) {
         if ([string]$State.issue -ne [string]$EvaluationEvent) { throw "Saved state belongs to another event; pass the matching -Event." }
     } elseif ($EvaluationEvent -ne 423) { throw "Event 436 state is missing its issue identity." }
 }
