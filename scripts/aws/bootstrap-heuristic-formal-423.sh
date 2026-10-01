@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Issue #423 — formal evaluation of the exact Rust AABB pair.
+# Issues #423 / #436 — formal evaluation of the exact Rust AABB pair.
 #
 # Runs 100 seed blocks / 400 hanchan with the existing formal protocol. The launch-clock fail-safe is owned by the AWS wrapper.
 set -euo pipefail
 
-FROZEN_LISJONG_REVISION="58ef82aeb10ac77cb66290d54e67a42426919d5b"
+EVENT="423"
 MAX_ALLOWED_WORKERS=32
 WHEEL_FILENAME="lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 ARENA_REVISION=""
@@ -14,10 +14,10 @@ MAX_WORKERS=""
 RUN_ID=""
 TRANSFER_BUCKET=""
 REGION=""
-WORK_ROOT="/mnt/lisjong-heuristic-formal-423"
 REPOSITORY_URL="https://github.com/lisbun/lisjong-arena.git"
 while (($#)); do
     case "$1" in
+        --event) EVENT="$2"; shift 2 ;;
         --arena-revision) ARENA_REVISION="$2"; shift 2 ;;
         --seeds) SEEDS="$2"; shift 2 ;;
         --allocation-binding-b64) ALLOCATION_BINDING_B64="$2"; shift 2 ;;
@@ -28,6 +28,20 @@ while (($#)); do
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+case "$EVENT" in
+    423)
+        FROZEN_LISJONG_REVISION="58ef82aeb10ac77cb66290d54e67a42426919d5b"
+        CANDIDATE_IDENTITY="placement-aware-speed-call-kobalab-0004-belief-paijia"
+        CANDIDATE_FACTORY="create_placement_aware_speed_call_kobalab_0004_belief_paijia"
+        ;;
+    436)
+        FROZEN_LISJONG_REVISION="e6346ed2bb9e992138c05c4be367bd6a05ed00bc"
+        CANDIDATE_IDENTITY="one-shanten-defense-placement-aware-speed-call"
+        CANDIDATE_FACTORY="create_one_shanten_defense_placement_aware_speed_call"
+        ;;
+    *) echo "unsupported event" >&2; exit 2 ;;
+esac
+WORK_ROOT="/mnt/lisjong-heuristic-formal-$EVENT"
 if [[ ! "$ARENA_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
     echo "--arena-revision must be a full commit id" >&2
     exit 2
@@ -48,7 +62,7 @@ if [[ ! "$RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
     echo "--run-id is required" >&2
     exit 2
 fi
-if [[ ! "$TRANSFER_BUCKET" =~ ^lisjong-423-[a-z0-9-]+$ || -z "$REGION" ]]; then
+if [[ ! "$TRANSFER_BUCKET" =~ ^lisjong-${EVENT}-[a-z0-9-]+$ || -z "$REGION" ]]; then
     echo "transfer bucket and region are required" >&2
     exit 2
 fi
@@ -94,7 +108,7 @@ on_exit() {
     set +e
     if [[ -n "$UPLOADER_PID" ]]; then kill "$UPLOADER_PID" 2>/dev/null || true; fi
     if [[ "$status" -ne 0 ]]; then
-        echo "LISJONG_423_FAILED_EXIT=$status"
+        echo "LISJONG_${EVENT}_FAILED_EXIT=$status"
         for name in candidate-lock.json comparison.json candidate-result.json progress.json lock-stdout.txt run-stdout.txt verify-stdout.txt bootstrap.log; do upload "$name"; done
         for name in lock-stdout.txt run-stdout.txt verify-stdout.txt; do
             if [[ -s "$OUTPUT_DIR/$name" ]]; then
@@ -123,7 +137,7 @@ if ! git -C "$REPO_DIR" merge-base --is-ancestor "$ARENA_REVISION" origin/main; 
     exit 1
 fi
 if ! grep -q "lisjong.git@$FROZEN_LISJONG_REVISION" "$REPO_DIR/pyproject.toml"; then
-    echo "Arena revision does not pin the #423 lisjong revision" >&2
+    echo "Arena revision does not pin the selected event lisjong revision" >&2
     exit 1
 fi
 
@@ -151,6 +165,9 @@ aws s3api get-object --region "$REGION" --bucket "$TRANSFER_BUCKET" \
 "$PYTHON" -c 'import sys; from lisjong_arena.shanten_backend_verification.backend import verify_wheel_file; verify_wheel_file(sys.argv[1])' "$WHEEL" >>"$BOOTSTRAP_LOG" 2>&1
 "$PYTHON" -m pip install --no-deps --force-reinstall "$WHEEL" >>"$BOOTSTRAP_LOG" 2>&1
 export LISJONG_SHANTEN_BACKEND=rust
+if [[ "$EVENT" == "436" ]]; then
+    "$PYTHON" -m lisjong_arena.riichilab.aws_backend --backend rust --wheel "$WHEEL" >>"$BOOTSTRAP_LOG" 2>&1
+fi
 
 # Stream operational progress (counts / timing only) once a minute.
 (
@@ -167,15 +184,15 @@ INSTANCE_TYPE="$(curl -fsS --max-time 5 -H "X-aws-ec2-metadata-token: $IMDS_TOKE
 unset IMDS_TOKEN
 [[ "$INSTANCE_TYPE" == "c7i.8xlarge" ]] || { echo "unexpected instance type" >&2; exit 1; }
 START_EPOCH="$(date +%s)"
-"$PYTHON" -c 'import json,sys; from lisjong_arena.seed_registry import load_ledger; from lisjong_arena.heuristic_candidate_aabb.formal423 import require_allocation; a,b=map(int,sys.argv[3].split(":")); require_allocation(load_ledger(sys.argv[1]),json.load(open(sys.argv[2])),tuple(range(a,b+1)),arena_revision=sys.argv[4])' "$LEDGER" "$BINDING" "$SEEDS" "$ARENA_REVISION"
+"$PYTHON" -c 'import json,sys; from lisjong_arena.seed_registry import load_ledger; from importlib import import_module; require_allocation=import_module("lisjong_arena.heuristic_candidate_aabb.formal"+sys.argv[5]).require_allocation; a,b=map(int,sys.argv[3].split(":")); require_allocation(load_ledger(sys.argv[1]),json.load(open(sys.argv[2])),tuple(range(a,b+1)),arena_revision=sys.argv[4])' "$LEDGER" "$BINDING" "$SEEDS" "$ARENA_REVISION" "$EVENT"
 "$PYTHON" -m lisjong_arena.heuristic_candidate_aabb lock \
-    --event 423 --wheel "$WHEEL" --out "$OUTPUT_DIR/candidate-lock.json" \
+    --event "$EVENT" --wheel "$WHEEL" --out "$OUTPUT_DIR/candidate-lock.json" \
     --seeds "$SEEDS" --workers "$MAX_WORKERS" \
     --seed-ledger "$LEDGER" --allocation-binding "$BINDING" \
     --comparison-artifact "$OUTPUT_DIR/comparison.json" \
     --candidate-result "$OUTPUT_DIR/candidate-result.json" \
-    --candidate-identity placement-aware-speed-call-kobalab-0004-belief-paijia \
-    --candidate-factory lisjong_arena.policy_catalog:create_placement_aware_speed_call_kobalab_0004_belief_paijia \
+    --candidate-identity "$CANDIDATE_IDENTITY" \
+    --candidate-factory "lisjong_arena.policy_catalog:$CANDIDATE_FACTORY" \
     --candidate-source lisjong --candidate-revision "$FROZEN_LISJONG_REVISION" \
     --incumbent-identity placement-aware-speed-call \
     --incumbent-factory lisjong_arena.policy_catalog:create_placement_aware_speed_call \
@@ -201,11 +218,11 @@ for name in candidate-lock.json comparison.json candidate-result.json progress.j
 done
 UPLOAD_EPOCH="$(date +%s)"
 
-COMPLETION="$("$PYTHON" - "$OUTPUT_DIR" "$START_EPOCH" "$END_EPOCH" "$UPLOAD_EPOCH" "$RUN_ID" "$ARENA_REVISION" "$MAX_WORKERS" <<'PY'
+COMPLETION="$("$PYTHON" - "$OUTPUT_DIR" "$START_EPOCH" "$END_EPOCH" "$UPLOAD_EPOCH" "$RUN_ID" "$ARENA_REVISION" "$MAX_WORKERS" "$EVENT" <<'PY'
 import hashlib, json, os, sys
 from pathlib import Path
 
-out, start, end, upload, run_id, arena, workers = sys.argv[1:]
+out, start, end, upload, run_id, arena, workers, event = sys.argv[1:]
 result = json.loads((Path(out) / "candidate-result.json").read_text())
 
 
@@ -215,6 +232,7 @@ def digest(name):
 
 print(json.dumps({
     "arena_revision": arena,
+    "event": int(event),
     "candidate_result_sha256": digest("candidate-result.json"),
     "classification": result["classification"]["label"],
     "comparison_sha256": digest("comparison.json"),
@@ -229,4 +247,4 @@ print(json.dumps({
 }, sort_keys=True))
 PY
 )"
-echo "LISJONG_423_COMPLETION_JSON_B64=$(printf '%s' "$COMPLETION" | base64 -w0)"
+echo "LISJONG_${EVENT}_COMPLETION_JSON_B64=$(printf '%s' "$COMPLETION" | base64 -w0)"

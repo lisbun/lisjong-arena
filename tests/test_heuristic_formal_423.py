@@ -93,8 +93,9 @@ class AwsTests(unittest.TestCase):
         path = AWS / "bootstrap-heuristic-formal-423.sh"
         subprocess.run(["bash", "-n", str(path)], check=True)
         script = path.read_text()
-        self.assertIn("--event 423", script)
-        self.assertIn("formal423 import require_allocation", script)
+        self.assertIn('--event "$EVENT"', script)
+        self.assertIn('EVENT="423"', script)
+        self.assertIn('formal"+sys.argv[5]', script)
         self.assertNotIn("calibration423 run", script)
         self.assertLess(
             script.index("heuristic_candidate_aabb lock"),
@@ -138,6 +139,7 @@ class AwsTests(unittest.TestCase):
                     'OUTPUT_DIR="$1"',
                     'BOOTSTRAP_LOG="$OUTPUT_DIR/bootstrap.log"',
                     'UPLOADER_PID=""',
+                    "EVENT=423",
                     'upload() { echo "uploaded:$1"; }',
                     trap,
                     "exit 7",
@@ -160,8 +162,11 @@ class AwsTests(unittest.TestCase):
         if pwsh is None:
             self.skipTest("PowerShell is unavailable")
         path = AWS / "run-heuristic-formal-423.ps1"
-        for verify_ok in (True, False):
-            with self.subTest(verify_ok=verify_ok), TemporaryDirectory() as tmp:
+        for event, verify_ok in ((423, True), (423, False), (436, True), (436, False)):
+            with (
+                self.subTest(event=event, verify_ok=verify_ok),
+                TemporaryDirectory() as tmp,
+            ):
                 root = Path(tmp)
                 evidence = root / "evidence"
                 evidence.mkdir()
@@ -186,6 +191,7 @@ class AwsTests(unittest.TestCase):
                 (root / "state.json").write_text(
                     json.dumps(
                         {
+                            "issue": str(event),
                             "instance_id": "i-fixture",
                             "command_id": "c-fixture",
                             "transfer_bucket": "fixture",
@@ -206,6 +212,7 @@ class AwsTests(unittest.TestCase):
                     json.dumps(
                         {
                             "run_id": "fixture",
+                            "event": event,
                             "arena_revision": "a" * 40,
                             "workers": 32,
                             "lock_sha256": lock_digest,
@@ -220,7 +227,7 @@ class AwsTests(unittest.TestCase):
                     )
                 )
                 harness = r"""
-param($ScriptPath, $Root, $VerifyOk)
+param($ScriptPath, $Root, $VerifyOk, [int]$EvaluationEvent)
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $errors=$null
@@ -234,7 +241,16 @@ $Objects=@('candidate-lock.json','comparison.json','candidate-result.json')
 function Get-RunDirectory { return $Root }
 function Get-RunInstance { return $null }
 function Invoke-AwsTextAllowFailure { return [pscustomobject]@{ExitCode=1;Text='404 Not Found'} }
-function Invoke-LocalPython { return [pscustomobject]@{ExitCode=$(if ($VerifyOk -eq 'True') {0} else {1});Text="result_identity=$('f'*64)`nclassification=INCONCLUSIVE"} }
+$script:eventChecked=$false
+function Invoke-LocalPython {
+param([string[]]$Arguments)
+if ($Arguments[0] -eq '-c') {
+    if ($Arguments[1] -notmatch 'formal436 import require_aws_lock') { throw 'Wrong event checker' }
+    $script:eventChecked=$true
+    return [pscustomobject]@{ExitCode=0;Text=''}
+}
+if ($EvaluationEvent -eq 436 -and -not $script:eventChecked) { throw 'Missing event check' }
+return [pscustomobject]@{ExitCode=$(if ($VerifyOk -eq 'True') {0} else {1});Text="result_identity=$('f'*64)`nclassification=INCONCLUSIVE"} }
 function Remove-TransferBucket { Set-Content (Join-Path $Root 'deleted') 'yes' }
 function Get-ResidualResources { return [pscustomobject]@{instances_not_terminated=@();volumes=@();snapshots=@();network_interfaces=@();elastic_ips=@();buckets=@()} }
 try { Invoke-Collect -Id 'fixture' } catch { if ($VerifyOk -eq 'True') { throw }; Write-Host $_ }
@@ -250,6 +266,7 @@ try { Invoke-Collect -Id 'fixture' } catch { if ($VerifyOk -eq 'True') { throw }
                         str(path),
                         tmp,
                         str(verify_ok),
+                        str(event),
                     ],
                     capture_output=True,
                     text=True,

@@ -1,6 +1,6 @@
 #Requires -Version 7.0
 <#
-Issue #423 formal evaluation (100 AABB seed blocks / 400 hanchan).
+Issues #423 / #436 formal evaluation (100 AABB seed blocks / 400 hanchan).
 Preflight: validate exact revision, allocation and wheel; read live AWS pricing,
 quota and permissions, write the hard cost/launch-clock stop plan. No paid launch.
 Launch: run the formal event under a boot + SSM fail-safe, then Collect.
@@ -8,6 +8,7 @@ Collect: terminate compute, download and strictly verify comparison/native evide
 retain failed-run diagnostics, and sweep residual resources.
 #>
 param(
+    [Alias("Event")][ValidateSet(423, 436)][int]$EvaluationEvent = 423,
     [ValidateSet("Preflight", "Launch", "Collect", "Cleanup")]
     [string]$Action = "Preflight",
     [string]$ArenaRevision = "",
@@ -35,12 +36,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$FrozenLisjongRevision = "58ef82aeb10ac77cb66290d54e67a42426919d5b"
+$FrozenLisjongRevision = if ($EvaluationEvent -eq 436) { "e6346ed2bb9e992138c05c4be367bd6a05ed00bc" } else { "58ef82aeb10ac77cb66290d54e67a42426919d5b" }
 $SeedBlockCount = 100
 $TotalHanchan = 400
 $WheelFilename = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 $BootstrapPath = "scripts/aws/bootstrap-heuristic-formal-423.sh"
-$RemoteOutput = "/mnt/lisjong-heuristic-formal-423/output"
+$RemoteOutput = "/mnt/lisjong-heuristic-formal-$EvaluationEvent/output"
 $Objects = @("candidate-lock.json", "comparison.json", "candidate-result.json", "progress.json",
     "lock-stdout.txt", "run-stdout.txt", "verify-stdout.txt", "bootstrap.log", "sha256sums.txt")
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot (Join-Path ".." "..")))
@@ -50,7 +51,7 @@ $invariant = [Globalization.CultureInfo]::InvariantCulture
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) { throw "Pass -AwsProfile or set AWS_PROFILE." }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $base = $(if ($IsWindows) { $env:LOCALAPPDATA } else { Join-Path $HOME ".local/share" })
-    $OutputRoot = Join-Path $base (Join-Path "lisjong" "aws-heuristic-formal-423")
+    $OutputRoot = Join-Path $base (Join-Path "lisjong" "aws-heuristic-formal-$EvaluationEvent")
 }
 
 function Invoke-AwsText {
@@ -234,10 +235,18 @@ function Get-RunInstance {
     return $instances[0]
 }
 
+function Assert-RunEvent {
+    param([Parameter(Mandatory = $true)]$State)
+    if ($null -ne $State.PSObject.Properties['issue']) {
+        if ([string]$State.issue -ne [string]$EvaluationEvent) { throw "Saved state belongs to another event; pass the matching -Event." }
+    } elseif ($EvaluationEvent -ne 423) { throw "Event 436 state is missing its issue identity." }
+}
+
 function Invoke-Collect {
     param([Parameter(Mandatory = $true)][string]$Id)
     $runDir = Get-RunDirectory $Id
     $state = Get-Content -Raw -LiteralPath (Join-Path $runDir "state.json") | ConvertFrom-Json
+    Assert-RunEvent -State $state
     $instanceId = [string]$state.instance_id
     $commandId = [string]$state.command_id
     $bucket = [string]$state.transfer_bucket
@@ -263,7 +272,7 @@ function Invoke-Collect {
             $invocation = Invoke-AwsJson -Arguments @("ssm", "get-command-invocation", "--command-id", $commandId, "--instance-id", $instanceId)
         }
         [IO.File]::WriteAllText((Join-Path $runDir "ssm-event-invocation.json"), ($invocation | ConvertTo-Json -Depth 10))
-        $match = [regex]::Match([string]$invocation.StandardOutputContent, "LISJONG_423_COMPLETION_JSON_B64=([A-Za-z0-9+/=]+)")
+        $match = [regex]::Match([string]$invocation.StandardOutputContent, "LISJONG_${EvaluationEvent}_COMPLETION_JSON_B64=([A-Za-z0-9+/=]+)")
         if ([string]$invocation.Status -ne "Success" -or -not $match.Success) {
             $remoteFailed = $true
             Write-Host "--- remote SSM stdout"
@@ -313,7 +322,7 @@ function Invoke-Collect {
     } else { throw "Cannot read transfer bucket: $($head.Text)" }
 
     $collection = [ordered]@{
-        issue = "423"; run_id = $Id; instance_id = $instanceId; instance_type = [string]$state.instance_type
+        issue = [string]$EvaluationEvent; run_id = $Id; instance_id = $instanceId; instance_type = [string]$state.instance_type
         vcpu = [int]$state.vcpu; workers = [int]$state.workers
         arena_revision = [string]$state.arena_revision; seeds = [string]$state.seeds
         launch_time_utc = $launchTime.ToString("o"); terminated_time_utc = $(if ($null -ne $endTime) { $endTime.ToString("o") } else { $null })
@@ -349,6 +358,13 @@ function Invoke-Collect {
                 if ($actual -ne $pair[1]) { throw "STOP / INVALID: $($pair[0]) SHA-256 differs from the remote completion record; bucket $bucket retained." }
             }
             $savedLock = Get-Content -Raw -LiteralPath (Join-Path $localRoot "candidate-lock.json") | ConvertFrom-Json
+            if ($EvaluationEvent -eq 436) {
+                if ($completion.PSObject.Properties.Name -notcontains "event" -or [int]$completion.event -ne 436) {
+                    throw "STOP / INVALID: completion event differs."
+                }
+                $eventCheck = 'import json,sys; from lisjong_arena.heuristic_candidate_aabb.formal436 import require_aws_lock; require_aws_lock(json.load(open(sys.argv[1], encoding="utf-8")))'
+                [void](Invoke-LocalPython -Arguments @("-c", $eventCheck, (Join-Path $localRoot "candidate-lock.json")))
+            }
             $savedRange = Get-SeedRange -Spec ([string]$state.seeds)
             $expectedSeeds = @($savedRange[0]..$savedRange[1])
             if ($savedLock.execution_target.revision -ne $state.arena_revision -or
@@ -413,6 +429,8 @@ if ($Action -eq "Cleanup") {
     if ([string]::IsNullOrWhiteSpace($RunId)) { throw "-RunId is required." }
     $runDir = Get-RunDirectory $RunId
     $state = Get-Content -Raw -LiteralPath (Join-Path $runDir "state.json") | ConvertFrom-Json
+    Assert-RunEvent -State $state
+    if ([string]$state.region -ne $Region) { throw "Pass -Region matching the saved state." }
     if (-not (Test-Path -LiteralPath (Join-Path $runDir "collection.json"))) { throw "Run -Action Collect first." }
     Remove-TransferBucket -Bucket ([string]$state.transfer_bucket)
     $residual = Get-ResidualResources -Id $RunId -InstanceId ([string]$state.instance_id) -Bucket ([string]$state.transfer_bucket)
@@ -425,7 +443,7 @@ if ($Action -eq "Cleanup") {
 # Preflight (no billable call)
 # ---------------------------------------------------------------------------
 
-if ($ArenaRevision -notmatch "^[0-9a-f]{40}$") { throw "-ArenaRevision must be the merged Arena main commit that contains #423." }
+if ($ArenaRevision -notmatch "^[0-9a-f]{40}$") { throw "-ArenaRevision must be the merged Arena main commit that contains #$EvaluationEvent." }
 if (-not (Test-Path -LiteralPath $localPython -PathType Leaf)) { throw "Local project virtualenv Python is required: $localPython" }
 $seedRange = Get-SeedRange -Spec $Seeds
 if ([string]::IsNullOrWhiteSpace($AllocationBindingPath) -or -not (Test-Path -LiteralPath $AllocationBindingPath -PathType Leaf)) {
@@ -439,7 +457,7 @@ $localHead = (& git -C $repoRoot rev-parse HEAD | Out-String).Trim()
 $localStatus = (& git -C $repoRoot status --porcelain | Out-String).Trim()
 if ($localHead -ne $ArenaRevision -or $localStatus) { throw "Use a clean checkout of the selected merged ArenaRevision." }
 
-# The execution target must be reviewed merged main that pins the #423 lisjong revision.
+# The execution target must be reviewed merged main that pins the selected event lisjong revision.
 & git -C $repoRoot fetch -q --no-tags origin main +refs/heads/seed-registry:refs/remotes/origin/seed-registry
 if ($LASTEXITCODE -ne 0) { throw "git fetch of main / seed-registry failed." }
 & git -C $repoRoot merge-base --is-ancestor $ArenaRevision origin/main
@@ -454,8 +472,8 @@ if ((Get-RemoteRawSha256 $ArenaRevision $BootstrapPath) -ne $bootstrapSha) {
 }
 
 # Seed allocation authority: the binding must resolve against the live ledger
-# with the exact #423 owner / protocol / domain / population / split.
-$ledgerPath = Join-Path ([System.IO.Path]::GetTempPath()) "lisjong-423-seed-ledger-$([guid]::NewGuid().ToString('N')).json"
+# with the exact selected event owner / protocol / domain / population / split.
+$ledgerPath = Join-Path ([System.IO.Path]::GetTempPath()) "lisjong-$EvaluationEvent-seed-ledger-$([guid]::NewGuid().ToString('N')).json"
 try {
     $ledgerText = (& git -C $repoRoot show "origin/seed-registry:src/lisjong_arena/seed-ledger.json" 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0) { throw "Could not read the live seed-registry ledger." }
@@ -464,6 +482,7 @@ try {
         'first, last = int(sys.argv[3]), int(sys.argv[4]); ' +
         'binding = json.loads(open(sys.argv[2], encoding="utf-8").read()); require_allocation(load_ledger(sys.argv[1]), binding, tuple(range(first, last + 1)), arena_revision=sys.argv[5]); ' +
         'print(json.dumps(binding, sort_keys=True))'
+    if ($EvaluationEvent -eq 436) { $allocationCheck = $allocationCheck.Replace('formal423', 'formal436') }
     $allocation = (Invoke-LocalPython -Arguments @("-c", $allocationCheck, $ledgerPath, $AllocationBindingPath,
             [string]$seedRange[0], [string]$seedRange[1], $ArenaRevision)).Text
 } finally {
@@ -473,8 +492,15 @@ $allocationB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($alloc
 
 # Recompute the frozen calibration and reject changes to the reviewed workload.
 $calibrationCheck = 'import json,sys; from lisjong_arena.heuristic_candidate_aabb.formal423 import calibration_plan; print(json.dumps(calibration_plan(sys.argv[1], sys.argv[2], sys.argv[3])))'
-$calibrationPlan = (Invoke-LocalPython -Arguments @("-c", $calibrationCheck, $CalibrationBundlePath, $repoRoot, $ArenaRevision)).Text | ConvertFrom-Json
-# 32-worker calibration was explicitly waived by the operator. No matched ETA is claimed.
+if ($EvaluationEvent -eq 436) {
+    if ($CalibrationBundlePath) { throw "Event 436 cannot use a #423 calibration bundle." }
+    [void](Invoke-LocalPython -Arguments @("-m", "lisjong_arena.environment_verify", "--project", (Join-Path $repoRoot "pyproject.toml")))
+    $runtimeCheck = 'import json,sys; from lisjong_arena.heuristic_candidate_aabb.formal436 import runtime_plan; print(json.dumps(runtime_plan(sys.argv[1], sys.argv[2])))'
+    $calibrationPlan = (Invoke-LocalPython -Arguments @("-c", $runtimeCheck, $repoRoot, $ArenaRevision)).Text | ConvertFrom-Json
+} else {
+    $calibrationPlan = (Invoke-LocalPython -Arguments @("-c", $calibrationCheck, $CalibrationBundlePath, $repoRoot, $ArenaRevision)).Text | ConvertFrom-Json
+}
+# No matched 32-worker ETA is claimed for either event.
 
 $runPrefix = if ($Action -eq "Preflight") { "preflight-" } else { "event-" }
 $runId = "$runPrefix$(Get-Date -AsUTC -Format 'yyyyMMddTHHmmssZ')-$([guid]::NewGuid().ToString('N').Substring(0,8))"
@@ -523,7 +549,7 @@ $amiId = [string](Invoke-AwsJson -Arguments @("ssm", "get-parameter", "--name", 
 if ($amiId -notmatch "^ami-[0-9a-f]+$") { throw "Could not resolve the Amazon Linux 2023 AMI." }
 $rootGiB = [int](@((Invoke-AwsJson -Arguments @("ec2", "describe-images", "--image-ids", $amiId)).Images)[0].BlockDeviceMappings |
         Where-Object { $null -ne $_.Ebs } | Select-Object -First 1).Ebs.VolumeSize
-$bucket = "lisjong-423-event-$accountId-$($runId.Substring($runId.Length - 8))"
+$bucket = "lisjong-$EvaluationEvent-event-$accountId-$($runId.Substring($runId.Length - 8))"
 $headBucket = Invoke-AwsTextAllowFailure -Arguments @("s3api", "head-bucket", "--bucket", $bucket)
 if ($headBucket.ExitCode -eq 0 -or $headBucket.Text -notmatch "404|Not Found") { throw "Transfer bucket name $bucket is not available." }
 
@@ -543,7 +569,7 @@ $perHour = $hourly + $PublicIpv4HourlyUsd + $rootHourly
 $shutdownAllowanceSeconds = 120
 $hardExposure = ($FailSafeSeconds + $shutdownAllowanceSeconds) / 3600.0 * $perHour + $S3AndTransferBoundUsd
 $plan = [ordered]@{
-    issue = "423"; run_id = $runId; action = $Action; scientific = $true; purpose = "FORMAL-EVAL"
+    issue = [string]$EvaluationEvent; run_id = $runId; action = $Action; scientific = $true; purpose = "FORMAL-EVAL"
     protocol = "arena-heuristic-candidate-aabb-half-v1"; wheel_sha256 = $wheelSha
     arena_revision = $ArenaRevision; lisjong_revision = $FrozenLisjongRevision; bootstrap_sha256 = $bootstrapSha
     population = [ordered]@{ seeds = @($seedRange[0], $seedRange[1]); seed_blocks = $SeedBlockCount; hanchan = $TotalHanchan
@@ -573,7 +599,7 @@ if ($plan.hard_bound.exposure_plus_margin_usd -gt $CostBudgetUsd) { throw "Worst
 $bootFailSafeUserData = (Invoke-LocalPython -Arguments @("-m", "lisjong_arena.aws_operational_calibration",
         "boot-fail-safe-user-data", "--window-seconds", [string]$FailSafeSeconds, "--base64")).Text
 $runTags = @(
-    @{ Key = "Project"; Value = "lisjong" }, @{ Key = "ManagedBy"; Value = "lisjong-arena" }, @{ Key = "Issue"; Value = "423" },
+    @{ Key = "Project"; Value = "lisjong" }, @{ Key = "ManagedBy"; Value = "lisjong-arena" }, @{ Key = "Issue"; Value = [string]$EvaluationEvent },
     @{ Key = "lisjong-run-id"; Value = $runId }
 )
 $launchRequest = [ordered]@{
@@ -585,7 +611,7 @@ $launchRequest = [ordered]@{
     NetworkInterfaces = @([ordered]@{ DeviceIndex = 0; SubnetId = [string]$subnet.SubnetId; Groups = @([string]$sg.GroupId); AssociatePublicIpAddress = $true; DeleteOnTermination = $true })
     TagSpecifications = @(
         [ordered]@{ ResourceType = "instance"; Tags = @($runTags + @(
-                    @{ Key = "Name"; Value = "lisjong-423-event-$runId" },
+                    @{ Key = "Name"; Value = "lisjong-$EvaluationEvent-event-$runId" },
                     @{ Key = "lisjong-progress-path"; Value = "$RemoteOutput/progress.json" },
                     @{ Key = "lisjong-worker-count"; Value = [string]$MaxWorkers },
                     @{ Key = "lisjong-instance-hourly-rate-usd"; Value = $hourly.ToString($invariant) },
@@ -604,13 +630,13 @@ $plan.dry_runs = [ordered]@{ run_instances = "DryRunOperation" }
 $plan.resources_to_create = @(
     "S3 bucket $bucket ($Region; Block Public Access x4; BucketOwnerEnforced; SSE-S3; policy: $roleArn PutObject on $runId/* and GetObject only on the frozen wheel input; deny non-TLS)",
     "EC2 On-Demand $InstanceType from $amiId in $([string]$subnet.SubnetId) (IMDSv2, terminate-on-shutdown, public IPv4, root $rootGiB GiB gp3 DeleteOnTermination, boot fail-safe $(Get-Minutes $FailSafeSeconds) min from launch)",
-    "SSM commands: fail-safe arm (same launch-clock deadline), #423 FORMAL-EVAL bootstrap"
+    "SSM commands: fail-safe arm (same launch-clock deadline), #$EvaluationEvent FORMAL-EVAL bootstrap"
 )
 Write-JsonFile -Path (Join-Path $runDir "plan.json") -Value $plan
 Write-Host ($plan | ConvertTo-Json -Depth 10)
 
 if ($Action -eq "Preflight") {
-    Write-Host "PASS: ISSUE #423 AWS PREFLIGHT ONLY. No bucket, instance or SSM command was created."
+    Write-Host "PASS: ISSUE #$EvaluationEvent AWS PREFLIGHT ONLY. No bucket, instance or SSM command was created."
     # The intentional --dry-run call leaves a non-zero native exit code behind.
     exit 0
 }
@@ -652,7 +678,7 @@ try {
         })
     [void](Invoke-AwsText -Arguments @("s3api", "put-bucket-policy", "--bucket", $bucket, "--policy", (Get-FileArgument $policyPath)))
     [void](Invoke-AwsText -Arguments @("s3api", "put-bucket-tagging", "--bucket", $bucket, "--tagging",
-            "TagSet=[{Key=Project,Value=lisjong},{Key=ManagedBy,Value=lisjong-arena},{Key=Issue,Value=423},{Key=lisjong-run-id,Value=$runId}]"))
+            "TagSet=[{Key=Project,Value=lisjong},{Key=ManagedBy,Value=lisjong-arena},{Key=Issue,Value=$EvaluationEvent},{Key=lisjong-run-id,Value=$runId}]"))
     $status = Invoke-AwsJson -Arguments @("s3api", "get-bucket-policy-status", "--bucket", $bucket)
     if ($status.PolicyStatus.IsPublic -ne $false) { throw "Transfer bucket policy is public." }
 
@@ -667,7 +693,7 @@ try {
     $launchTimeUtc = ([datetime]$instance.LaunchTime).ToUniversalTime()
     $deadlineEpoch = [long](($launchTimeUtc - [datetime]::UnixEpoch).TotalSeconds) + [long]$FailSafeSeconds
     Write-JsonFile -Path (Join-Path $runDir "state.json") -Value ([ordered]@{
-            run_id = $runId; issue = "423"; region = $Region; instance_id = $instanceId; command_id = ""
+            run_id = $runId; issue = [string]$EvaluationEvent; region = $Region; instance_id = $instanceId; command_id = ""
             launch_time_utc = $launchTimeUtc.ToString("o"); transfer_bucket = $bucket
             instance_type = $InstanceType; vcpu = $vcpu; workers = $MaxWorkers
             instance_hourly_rate_usd = $hourly; root_ebs_hourly_usd = $rootHourly
@@ -700,10 +726,10 @@ try {
         'for _ in $(seq 1 30); do systemctl is-active --quiet lisjong-boot-failsafe.timer && break; sleep 2; done',
         "systemctl is-active --quiet lisjong-boot-failsafe.timer",
         "test `$(nproc) -eq $vcpu",
-        "echo LISJONG_423_FAILSAFE_ARMED=$deadlineEpoch"
+        "echo LISJONG_${EvaluationEvent}_FAILSAFE_ARMED=$deadlineEpoch"
     )
     $failSafe = Wait-SsmInvocation -CommandId $failSafeCommand -InstanceId $instanceId
-    if ([string]$failSafe.Status -ne "Success" -or [string]$failSafe.StandardOutputContent -notmatch "LISJONG_423_FAILSAFE_ARMED=") {
+    if ([string]$failSafe.Status -ne "Success" -or [string]$failSafe.StandardOutputContent -notmatch "LISJONG_${EvaluationEvent}_FAILSAFE_ARMED=") {
         throw "Instance fail-safe could not be armed (or vCPU differs); no workload was submitted."
     }
     $failSafeDeadlineUtc = [DateTimeOffset]::FromUnixTimeSeconds($deadlineEpoch).UtcDateTime.ToString("o")
@@ -712,13 +738,13 @@ try {
     $remainingSeconds = [int]($deadlineEpoch - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
     $remoteCommand = "set -eu; curl -fsSL '$bootstrapUrl' -o /tmp/lisjong-bootstrap-423.sh; " +
         "echo '$bootstrapSha  /tmp/lisjong-bootstrap-423.sh' | sha256sum -c - >/dev/null; chmod 700 /tmp/lisjong-bootstrap-423.sh; " +
-        "exec /tmp/lisjong-bootstrap-423.sh --arena-revision '$ArenaRevision' --seeds '$($seedRange[0]):$($seedRange[1])' " +
+        "exec /tmp/lisjong-bootstrap-423.sh --event $EvaluationEvent --arena-revision '$ArenaRevision' --seeds '$($seedRange[0]):$($seedRange[1])' " +
         "--allocation-binding-b64 '$allocationB64' --max-workers '$MaxWorkers' --run-id '$runId' " +
         "--transfer-bucket '$bucket' --region '$Region'"
     $commandId = Send-SsmCommand -InstanceId $instanceId -ExecutionTimeoutSeconds $remainingSeconds -RequestFile (Join-Path $runDir "ssm-run.json") -Commands @($remoteCommand)
     $eventSubmitted = $true
     Write-JsonFile -Path (Join-Path $runDir "state.json") -Value ([ordered]@{
-            run_id = $runId; issue = "423"; region = $Region; instance_id = $instanceId; command_id = $commandId
+            run_id = $runId; issue = [string]$EvaluationEvent; region = $Region; instance_id = $instanceId; command_id = $commandId
             launch_time_utc = $launchTimeUtc.ToString("o"); transfer_bucket = $bucket
             instance_type = $InstanceType; vcpu = $vcpu; workers = $MaxWorkers
             instance_hourly_rate_usd = $hourly; root_ebs_hourly_usd = $rootHourly
@@ -729,7 +755,7 @@ try {
             "Key=lisjong-scientific-command-id,Value=$commandId", "Key=lisjong-failsafe-deadline,Value=$failSafeDeadlineUtc"))
     Write-Host "Submitted. Run id: $runId  Command id: $commandId  Fail-safe deadline: $failSafeDeadlineUtc"
     Write-Host "Progress: .\scripts\aws\status-run.ps1 -RunId '$runId' -AwsProfile '$AwsProfile'"
-    Write-Host "Reattach: .\scripts\aws\run-heuristic-formal-423.ps1 -Action Collect -RunId '$runId' -AwsProfile '$AwsProfile'"
+    Write-Host "Reattach: .\scripts\aws\run-heuristic-formal-423.ps1 -Event $EvaluationEvent -Action Collect -RunId '$runId' -AwsProfile '$AwsProfile'"
 } catch {
     if (-not $eventSubmitted) {
         if (-not [string]::IsNullOrWhiteSpace($instanceId)) {
