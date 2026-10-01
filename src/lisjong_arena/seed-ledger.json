@@ -507,6 +507,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "e9fa93a0ee228886f498b1c6498394625e3e110ba7fbbcf4eec1ca59b622e813",
+      "allocation_timestamp": "2026-10-01T10:05:28.426015Z",
+      "arena_revision": "2d593ae4aae3f6b284d7e0cc327e536a4a59bcda",
+      "owner_issue": "lisbun/lisjong-arena#436",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-aabb-436",
+      "protocol": "arena-heuristic-candidate-aabb-half-v1",
+      "protocol_revision": "arena-heuristic-candidate-aabb-half-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/436",
+      "purpose": "#436 AWS 32 workers formal AABB 400",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 436000,
+        "kind": "range",
+        "last": 436099
+      },
+      "seed_membership_identity": "453c611b9718b54ba8f0e92f7f77d28b435001dbdd4233a0250c099a187a8243",
+      "split": "FORMAL-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
