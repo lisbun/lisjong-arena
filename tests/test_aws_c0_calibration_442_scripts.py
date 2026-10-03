@@ -1,9 +1,13 @@
 """#442 AWS calibration contract tests (no AWS call, no game)."""
 
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -75,6 +79,59 @@ class DriverPlanTest(unittest.TestCase):
             (self.driver.BC_WIDTH, self.driver.CANDIDATE_WIDTH, self.driver.EPOCHS),
             (512, 256, 20),
         )
+
+
+class RunStepsTest(unittest.TestCase):
+    """The step runner records every step and stops the rest on a failure."""
+
+    def setUp(self) -> None:
+        self.driver = _driver()
+        self.driver.POLL_SECONDS = 0.05
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.logs = Path(temp.name)
+
+    def python(self, code):
+        return [sys.executable, "-c", code]
+
+    def test_successful_steps_are_measured(self) -> None:
+        rows = self.driver._run_steps(
+            [("a", self.python("print('ok')"), None), ("b", self.python(""), None)],
+            self.logs,
+        )
+        self.assertEqual(sorted(row["step"] for row in rows), ["a", "b"])
+        self.assertTrue(all(row["exit_status"] == 0 for row in rows))
+        self.assertTrue(all(row["maxrss_kb"] > 0 for row in rows))
+        self.assertIn(
+            "ok", next(row for row in rows if row["step"] == "a")["stdout_tail"]
+        )
+
+    def test_first_failure_kills_the_remaining_process_groups(self) -> None:
+        marker = self.logs / "grandchild.pid"
+        # The slow step starts a grandchild in its own process group; both must die.
+        slow = self.python(
+            "import subprocess, sys, time\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            f"open({str(marker)!r}, 'w').write(str(child.pid))\n"
+            "time.sleep(60)\n"
+        )
+        fail = self.python("import time, sys; time.sleep(0.5); sys.exit(3)")
+        started = time.perf_counter()
+        with self.assertRaisesRegex(RuntimeError, "step fail failed"):
+            self.driver._run_steps(
+                [("slow", slow, None), ("fail", fail, None)], self.logs
+            )
+        self.assertLess(time.perf_counter() - started, 20)
+        grandchild = int(marker.read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(grandchild, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("grandchild of the killed step is still running")
 
 
 class BootstrapTest(unittest.TestCase):

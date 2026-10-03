@@ -2,7 +2,8 @@
 
 Issue: lisbun/lisjong-arena#442。作業環境の最小計測（#442 comment 5971426416）の続きとして、
 C0教師のsource生成からLearningと評価までをAWS上で一度通し、実時間・メモリ・費用を測る。
-2026-10-03にlisbunが実施条件と打切り上限USD 1.40を決めた。
+2026-10-03にlisbunが実施条件を決めた（総額の見込みがUSD 1以内なら実施を推奨）。
+打切り上限USD 1.40はこの文書での提案であり、Launch前にlisbunが`plan.json`を見て承認する。
 
 - 開発用の校正であり、purposeはDEVELOPMENT。seedは予約せず、強さの判定には使わない
 - 結果は200半荘までの校正として扱う。10k半荘以上を実行できるかは、分割読込みなどのメモリ対策が別途必要
@@ -22,6 +23,7 @@ C0教師のsource生成からLearningと評価までをAWS上で一度通し、�
 | replay-verify | record200のみ（4 workers）、不一致0が必須。100・50は生成時のstrict readbackのみ |
 | Learning | 3 recordそれぞれでmaterialize-dataset、materialize-candidate-dataset、train（BC 幅512・20 epoch）、verify-artifact、train-candidate-scorer（幅256・20 epoch）、verify-candidate-artifact |
 | 並行実行 | replay-verifyと6本のmaterializeを同時に実行。trainとverifyは1本ずつ順に実行 |
+| 失敗時 | 1工程でも非0終了（replay不一致を含む）を検知した時点で、実行中の他の工程をprocess groupごと終了し、runを失敗にする。生成は失敗した時点で未着手の半荘を始めない |
 | 評価 | record200のBCを1席、C0を3席。seed 944600300..944600307、生徒の席は0,1,2,3,0,1,2,3、4 workers |
 
 seed 944600000..944600499はseed ledger（revision `b0ffad93…`）で未使用（`check`の`fresh: true`）。
@@ -39,9 +41,11 @@ Learningの依存はlisjong `f07ff9b`（#244 merge）、CPU版`torch==2.13.0`、
 
 作業環境の実測（生成81 s / 半荘、replay約84 s / 半荘、candidate materialize 22.7 s / 半荘）から見積もった。
 
-- `m7i.xlarge`（4 vCPU / 16 GiB）、東京、On-Demand。見込み稼働は約3.4時間で約USD 0.92
-- `FailSafeHours 5.11`、`CostBudgetUsd 1.40`。launcherは「fail-safe時間 × (EC2 + IPv4 + root EBS) + S3枠」が
-  予算以下でないと起動しない。m7i.xlargeでは約USD 1.40になる
+- **見込み**: `m7i.xlarge`（4 vCPU / 16 GiB）、東京、On-Demand。稼働は約3.4時間で約USD 0.92。これがlisbunの「USD 1以内」の判定対象
+- **打切り上限（提案、未承認）**: `FailSafeHours 5.11`、`CostBudgetUsd 1.40`。launcherは「fail-safe時間 × (EC2 + IPv4 + root EBS) + S3枠」が
+  予算以下でないと起動しない。m7i.xlargeでは約USD 1.40になる。実際の課金は稼働時間分で、上限まで使うのは処理が見込みより大幅に遅れた場合だけ
+- 上限を下げる場合は`FailSafeHours`と`CostBudgetUsd`を一緒に下げる。launcherは見込み最大の1.5倍未満のfail-safeを受け付けないため、
+  `EstimatedRuntimeHours`の上限も合わせて見直す
 - `S3AndTransferBoundUsd 0.02`。入力はwheel 2個（約0.5 MB）、出力はreportとartifact（約10 MB）
 - メモリは同時実行時に約8 GBの見込みのため、8 GiBの型は使わない
 
@@ -112,7 +116,7 @@ $run = @{ AwsProfile = $awsProfile; Label = 'lisjong-442-c0-calibration'; Instan
 .\scripts\aws\lisjong-ec2.ps1 -Action Preflight @run
 ```
 
-`plan.json`で時間単価、見積もり、fail-safeの最悪額（USD 1.40以下）を確認する。**次のLaunchは課金を伴う**。
+`plan.json`で時間単価、見込み額、fail-safeの最悪額を確認し、打切り上限を承認してからLaunchする。**次のLaunchは課金を伴う**。
 
 ```powershell
 .\scripts\aws\lisjong-ec2.ps1 -Action Launch @run -Plan <run dir>\plan.json
@@ -132,7 +136,8 @@ $run = @{ AwsProfile = $awsProfile; Label = 'lisjong-442-c0-calibration'; Instan
 ## 集計（結果を見る前に固定）
 
 - 費用は`Collect`の実稼働時間 × 時間単価で求める（EC2・IPv4・root EBS）。setupの時間は別に示す
-- 50・100・200のmaterialize（BC・candidate）とtrainの時間・最大RSSを並べ、1半荘あたりの増分と固定費に分ける
+- 50・100・200のmaterialize（BC・candidate）とtrainは、記録したuser + system CPU秒と最大RSSを主に並べ、1半荘あたりの増分と固定費に分ける。
+  materializeはreplayや他のmaterializeと同時に動くため、そのwall時間にはCPU競合が含まれる。wallは参考値として示す
 - 生成とreplayは、半荘あたりのCPU秒を作業環境の値（生成81 s、replay約84 s）と比べる
 - system使用メモリの工程ごとの最大値を示す
 - 月USD 20の中での配分案は、この結果をもとに#442へ記録する

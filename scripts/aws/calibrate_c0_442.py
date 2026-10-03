@@ -28,6 +28,7 @@ import os
 import platform
 import resource
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -201,112 +202,155 @@ def generate(work, project, workers, progress):
     return {"contract": contract, "wall": wall, "games": games, "records": records}
 
 
+POLL_SECONDS = 1.0
+REPLAY_MISMATCH_EXIT = 3
+
+
 def _tail(path):
     return path.read_bytes()[-1500:].decode(errors="replace")
 
 
-def _wait_step(name, proc, started, output, logs, sink):
-    _, status, usage = os.wait4(proc.pid, 0)
-    proc.returncode = status
-    sink.append(
-        {
-            "step": name,
-            "wall": time.perf_counter() - started,
-            "user": usage.ru_utime,
-            "sys": usage.ru_stime,
-            "maxrss_kb": usage.ru_maxrss,
-            "exit_status": status,
-            "output_bytes": None if output is None or status else _bytes(output),
-            "stdout_tail": _tail(logs[0]),
-            "stderr_tail": _tail(logs[1]),
-        }
-    )
+def _run_steps(specs, log_dir):
+    """Run ``(name, argv, output)`` steps concurrently; stop all on the first failure.
+
+    Each step runs in its own process group and is reaped with ``os.wait4`` so
+    its wall, user / system CPU and max RSS (children included) are recorded.
+    When one step exits non-zero, every step still running is killed with its
+    whole process group, so a failed run does not keep paying for the rest.
+    """
+    running, rows = {}, []
+    try:
+        for name, argv, output in specs:
+            logs = tuple(
+                log_dir / f"{name.replace('/', '-')}.{stream}"
+                for stream in ("stdout", "stderr")
+            )
+            with open(logs[0], "wb") as stdout, open(logs[1], "wb") as stderr:
+                proc = subprocess.Popen(
+                    argv, stdout=stdout, stderr=stderr, start_new_session=True
+                )
+            running[proc.pid] = (name, proc, time.perf_counter(), output, logs)
+        failed = None
+        while running:
+            for pid in list(running):
+                reaped, status, usage = os.wait4(pid, os.WNOHANG)
+                if reaped == 0:
+                    continue
+                name, proc, started, output, logs = running.pop(pid)
+                proc.returncode = status
+                rows.append(
+                    {
+                        "step": name,
+                        "wall": time.perf_counter() - started,
+                        "user": usage.ru_utime,
+                        "sys": usage.ru_stime,
+                        "maxrss_kb": usage.ru_maxrss,
+                        "exit_status": status,
+                        "output_bytes": None
+                        if output is None or status
+                        else _bytes(output),
+                        "stdout_tail": _tail(logs[0]),
+                        "stderr_tail": _tail(logs[1]),
+                    }
+                )
+                if status and failed is None:
+                    failed = name
+                    _kill_all(running)
+            if running:
+                time.sleep(POLL_SECONDS)
+    except BaseException:
+        _kill_all(running)
+        raise
+    finally:
+        for pid in list(running):
+            os.waitpid(pid, 0)
+    if failed is not None:
+        stopped = [
+            row["step"] for row in rows if row["exit_status"] and row["step"] != failed
+        ]
+        raise RuntimeError(f"step {failed} failed; stopped {stopped}: {rows}")
+    return rows
 
 
-def _start_step(learning_python, name, args, output, sink, log_dir):
-    # Output goes to files: a full pipe would block the step while wait4 waits.
-    logs = (
-        log_dir / f"{name.replace('/', '-')}.stdout",
-        log_dir / f"{name.replace('/', '-')}.stderr",
-    )
-    started = time.perf_counter()
-    with open(logs[0], "wb") as stdout, open(logs[1], "wb") as stderr:
-        proc = subprocess.Popen(
-            [learning_python, "-m", "lisjong.learning", *args],
-            stdout=stdout,
-            stderr=stderr,
-        )
-    thread = threading.Thread(
-        target=_wait_step, args=(name, proc, started, output, logs, sink)
-    )
-    thread.start()
-    return thread, proc
+def _kill_all(running):
+    for _, proc, *_ in running.values():
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
 
-def _check_steps(rows):
-    failed = [row["step"] for row in rows if row["exit_status"]]
-    if failed:
-        raise RuntimeError(f"Learning steps failed: {failed}")
+def _learning(learning_python, *args):
+    return [learning_python, "-m", "lisjong.learning", *args]
 
 
 def replay_and_materialize(work, project, workers, learning_python):
-    from lisjong_arena.policy_source_record import replay
-
-    steps, threads = [], []
+    specs = [
+        (
+            "record200/replay-verify",
+            [
+                sys.executable,
+                __file__,
+                "replay",
+                "--record",
+                str(work / "record200"),
+                "--project",
+                project,
+                "--workers",
+                str(workers),
+                "--summary",
+                str(work / "replay-summary.json"),
+            ],
+            None,
+        )
+    ]
     for name in POPULATIONS:
         out = work / "learn" / name
         out.mkdir(parents=True)
         source = str(work / name)
-        threads.append(
-            _start_step(
-                learning_python,
+        specs.append(
+            (
                 f"{name}/materialize-candidate-dataset",
-                [
+                _learning(
+                    learning_python,
                     "materialize-candidate-dataset",
                     "--source-record",
                     source,
                     "--output",
                     str(out / "cand-dataset"),
-                ],
+                ),
                 out / "cand-dataset",
-                steps,
-                work / "logs",
             )
         )
-        threads.append(
-            _start_step(
-                learning_python,
+        specs.append(
+            (
                 f"{name}/materialize-dataset",
-                [
+                _learning(
+                    learning_python,
                     "materialize-dataset",
                     "--source-record",
                     source,
                     "--output",
                     str(out / "bc-dataset"),
-                ],
+                ),
                 out / "bc-dataset",
-                steps,
-                work / "logs",
             )
         )
-    t0 = time.perf_counter()
-    try:
-        summary = replay.replay_verify(
-            work / "record200", project=project, workers=workers
-        )
-    except BaseException:
-        # Do not keep paying for materialize steps once the record is invalid.
-        for _, proc in threads:
-            proc.kill()
-        raise
-    finally:
-        replay_wall = time.perf_counter() - t0
-        for thread, _ in threads:
-            thread.join()
-    _check_steps(steps)
+    steps = _run_steps(specs, work / "logs")
+    summary = json.loads((work / "replay-summary.json").read_text())
+    return {"replay": {"summary": summary}, "steps": steps}
+
+
+def replay_main(args):
+    """Replay-verify one record; exit non-zero on any mismatch."""
+    from lisjong_arena.policy_source_record import replay
+
+    summary = replay.replay_verify(
+        Path(args.record), project=args.project, workers=args.workers
+    )
+    Path(args.summary).write_text(json.dumps(summary, indent=1, sort_keys=True))
     if summary["mismatches"]:
-        raise RuntimeError(f"replay mismatches: {summary['mismatches']}")
-    return {"replay": {"wall": replay_wall, "summary": summary}, "steps": steps}
+        sys.exit(REPLAY_MISMATCH_EXIT)
 
 
 def train(work, learning_python):
@@ -364,10 +408,10 @@ def train(work, learning_python):
             ),
         ]
         for step, args, output in plan:
-            _start_step(
-                learning_python, f"{name}/{step}", args, output, steps, work / "logs"
-            )[0].join()
-            _check_steps(steps)
+            steps += _run_steps(
+                [(f"{name}/{step}", _learning(learning_python, *args), output)],
+                work / "logs",
+            )
     return {"steps": steps}
 
 
@@ -546,15 +590,17 @@ def main(argv=None):
     run.add_argument("--work", required=True)
     run.add_argument("--output", required=True)
     run.add_argument("--progress", required=True)
+    replay = commands.add_parser("replay")
+    replay.add_argument("--record", required=True)
+    replay.add_argument("--project", required=True)
+    replay.add_argument("--workers", type=int, required=True)
+    replay.add_argument("--summary", required=True)
     evaluation = commands.add_parser("eval")
     evaluation.add_argument("--artifact", required=True)
     evaluation.add_argument("--workers", type=int, required=True)
     evaluation.add_argument("--seeds", required=True)
     args = parser.parse_args(argv)
-    if args.command == "run":
-        run_main(args)
-    else:
-        eval_main(args)
+    {"run": run_main, "replay": replay_main, "eval": eval_main}[args.command](args)
 
 
 if __name__ == "__main__":
