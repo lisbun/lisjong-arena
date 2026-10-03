@@ -109,6 +109,39 @@ candidate-result.json   purpose-specific result (write-once)
 
 ## 7. Operator runbook (AWS)
 
+### 新規評価の局単位記録チェック
+
+#436で和了率・放銃率を保存結果から集計できなかったことを受け、今後の新規評価は
+seed予約・lockの前に以下を実行計画へ含め、対局開始前に全項目を確認する（#439）。
+local / AWSのどちらも対象。以下は運用上の準備要件であり、過去のv1結果・lock・
+artifact schema・正式判定を遡及変更しない。
+
+- [ ] 選択したrunner / revision / backendで、**同じ対局実行中**に各局の客観的結果を
+  保存できる。別event向けの診断実装が存在するだけでは対応済みとしない。
+- [ ] 記録をseed・rotation・局・seat・Policy identityへ結び付け、和了者、放銃者、
+  局の終了種別、必要な精算内訳を保存する。最終点・順位だけの保存では不足する。
+- [ ] 和了率・放銃率の分子/分母、流局・途中流局・複数ロンの扱いを実行前に定義する。
+  平均和了打点・平均放銃失点について、本場・供託・立直支出等の扱いと対象件数を明示する。
+  必要な精算内訳を取得できない場合、総点数移動をこれらの指標へ読み替えない。
+- [ ] 集計時の重み付けを固定し、件数と母数も併記する。対比較の集計単位はseed blockを
+  維持し、局数やseat-result数を独立標本数として扱わない。#432等の定義を再利用する場合も
+  今回のbackend / record契約で成立することを確認する。
+- [ ] 既知development入力で取得→保存→回収→検証→集計を確認する。局記録の欠落・重複、
+  participant取り違えを検出し、記録と最終点・順位の整合を検証する。未使用formal seedsは使わない。
+- [ ] raw局記録・集計結果・schema / provenanceを回収対象へ含め、保存先と完全性の検証方法を
+  定める。AWSでは回収・検証前に転送用証跡を削除しない。
+- [ ] 以上の確認結果をowner Issueへ記録する。未対応なら記録経路の整備まで新規評価を開始しない。
+  既存AWS PreflightのPASSだけでは、このチェックを満たさない。
+
+和了率等は変更の効果を調べる診断副指標であり、主指標の95%区間・classification・
+Champion昇格条件を変更しない。実行後に記録欠落が判明した場合も、診断の可否と正式主指標の
+有効性は既存契約に沿って分けて判断し、結果を見ての追加seed・再評価による救済は行わない。
+
+このチェックリストは記録機能を実装するものではない。下記のhistorical #375実行例や
+#423 / #436 runnerを新規評価へ利用する場合も、実際の対応状況を確認する。
+
+### Historical #375実行手順
+
 前提: 本実装がmergeされたArena `main` のclean checkout、`.venv` にその
 revisionをinstall済み、AWS CLI v2 / PowerShell 7、既存の
 `lisjong-riichilab-smoke-ec2` role と `lisjong-riichilab-smoke-305` security group。

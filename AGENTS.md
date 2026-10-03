@@ -253,6 +253,24 @@ current physical placement、migration historyは`docs/architecture.md`を正本
 - 信頼区間、統計検定、Elo / rating、visualization、database、distributed execution、job schedulerは
   concrete requirementや実測上の必要性を確認してから別Issueで扱う
 
+### 対局評価の実行前確認
+
+- 今後のPolicy強さ比較・変更効果を調べる対局評価では、最終点・順位に加え、局単位の
+  客観的結果を同じ実行中に保存する。正式評価・development比較、local・AWSを問わない
+- 実行前に和了率・放銃率・平均和了打点・平均放銃失点を集計できることを確認し、
+  指標の定義・母数・集計単位・記録schema・保存先をowner Issue / 実行計画へ記載する
+- 選択したrunner・revision・backendで、局結果の取得から保存・回収・検証・集計までを
+  既知development入力で確認する。正式評価用の未使用seedsを動作確認に使わない
+- 未対応なら記録経路を整備してから新規評価を開始する。既存AWS PreflightのPASSだけで
+  局単位記録まで対応済みとみなさず、統計取得のための後日再生を標準手順にしない
+- 記録はobjective execution outcomeに限り、Policy内部推定や非公開情報を混ぜない。
+  診断副指標で事前固定した主指標・正式判定を上書きせず、局を独立標本と扱わない
+- 本規則は今後の実行準備へ適用する。過去の正式結果・lock・artifactの有効性を遡及変更しない
+
+AABB評価の具体的なチェック項目は
+[`docs/heuristic-candidate-aabb-half.md`](docs/heuristic-candidate-aabb-half.md) の
+「新規評価の局単位記録チェック」を参照する。
+
 ### Review重点
 
 - execution / observation vs evaluation ownership
