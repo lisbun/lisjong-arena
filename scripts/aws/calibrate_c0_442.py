@@ -343,11 +343,19 @@ def replay_and_materialize(work, project, workers, learning_python):
 
 def replay_main(args):
     """Replay-verify one record; exit non-zero on any mismatch."""
+    import multiprocessing
+
     from lisjong_arena.policy_source_record import replay
 
+    # Fork the replay workers from this process so that their CPU time and RSS
+    # are reaped here and reach the parent's wait4 record (a forkserver would
+    # own them instead).
+    multiprocessing.set_start_method("fork")
     summary = replay.replay_verify(
         Path(args.record), project=args.project, workers=args.workers
     )
+    children = resource.getrusage(resource.RUSAGE_CHILDREN)
+    summary["worker_cpu_seconds"] = children.ru_utime + children.ru_stime
     Path(args.summary).write_text(json.dumps(summary, indent=1, sort_keys=True))
     if summary["mismatches"]:
         sys.exit(REPLAY_MISMATCH_EXIT)
