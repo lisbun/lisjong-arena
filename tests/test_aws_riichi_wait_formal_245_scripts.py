@@ -264,6 +264,39 @@ class RunStepsTest(unittest.TestCase):
                 )
         self.assertLess(time.perf_counter() - started, 20)
 
+    def test_an_expired_deadline_never_starts_a_step(self) -> None:
+        with (
+            mock.patch.object(self.driver, "uptime_seconds", return_value=100.0),
+            mock.patch.object(self.driver.subprocess, "Popen") as popen,
+        ):
+            with self.assertRaisesRegex(
+                self.driver.RunError, "before starting step a"
+            ) as raised:
+                self.driver.run_steps(
+                    [("a", self.python(""), None), ("b", self.python(""), None)],
+                    self.logs,
+                    deadline_uptime=50.0,
+                )
+        popen.assert_not_called()
+        self.assertEqual(raised.exception.rows, [])
+
+    def test_no_step_is_started_once_the_deadline_passes_between_steps(self) -> None:
+        # uptime: check before "a", start record of "a", then past the deadline
+        clock = iter([1.0, 1.0] + [100.0] * 200)
+        with mock.patch.object(
+            self.driver, "uptime_seconds", side_effect=lambda: next(clock)
+        ):
+            with self.assertRaisesRegex(self.driver.RunError, "deadline") as raised:
+                self.driver.run_steps(
+                    [
+                        ("a", self.python("import time; time.sleep(60)"), None),
+                        ("b", self.python("open('b-started', 'w')"), None),
+                    ],
+                    self.logs,
+                    deadline_uptime=50.0,
+                )
+        self.assertEqual({row["step"] for row in raised.exception.rows}, {"a"})
+
 
 FAKE_GENERATOR = textwrap.dedent(
     """\
@@ -301,7 +334,7 @@ FAKE_CONSUMER = textwrap.dedent(
     elif "verify-source" in args:
         if "FAIL_VERIFY" in os.environ:
             raise SystemExit(6)
-        print(json.dumps({"hanchan": 100}))
+        print(json.dumps({"hanchan": 100, "files": {"manifest.json": {"sha256": "ab"}}}))
     """
 )
 
@@ -365,8 +398,11 @@ class RunTest(unittest.TestCase):
             sorted(row["step"] for row in report["steps"][:2])
             + ["verify-source", "test"],
         )
-        self.assertEqual(report["source_check"], {"hanchan": 100})
+        self.assertEqual(report["source_check"]["hanchan"], 100)
         out = self.root / "out"
+        pre_test = json.loads((out / "pre-test-evidence.json").read_text())
+        self.assertEqual(pre_test["selection"], report["selection"])
+        self.assertEqual(pre_test["source_files"], report["source_check"]["files"])
         for name in (
             "selection.json",
             "test-result.json",
@@ -432,6 +468,33 @@ class RunTest(unittest.TestCase):
         report = self.report()
         self.assertEqual(report["status"], "INCOMPLETE")
         self.assertIn("deadline", report["reason"])
+
+    def test_an_expired_deadline_starts_neither_generation_nor_select(self) -> None:
+        with mock.patch.object(self.driver, "uptime_seconds", return_value=9999.0):
+            code = self.driver.run(self.arguments(deadline_uptime_seconds=100))
+        self.assertEqual(code, 1)
+        report = self.report()
+        self.assertEqual(report["status"], "INCOMPLETE")
+        self.assertIn("before starting step", report["reason"])
+        self.assertEqual(report["steps"], [])
+        self.assertFalse(self.calls.exists())
+        self.assertFalse((self.root / "work" / "generated").exists())
+
+    def test_a_deadline_passing_after_verify_never_starts_test(self) -> None:
+        evidence = self.root / "out" / "pre-test-evidence.json"
+        with mock.patch.object(
+            self.driver,
+            "uptime_seconds",
+            side_effect=lambda: 9999.0 if evidence.exists() else 10.0,
+        ):
+            code = self.driver.run(self.arguments(deadline_uptime_seconds=100))
+        self.assertEqual(code, 1)
+        report = self.report()
+        self.assertEqual(report["status"], "INCOMPLETE")
+        self.assertIn("before starting step test", report["reason"])
+        self.assertFalse((self.root / "out" / "test-result.json").exists())
+        self.assertNotIn("test", " ".join(self.calls.read_text().split()).split())
+        self.assertTrue(evidence.exists())
 
     def test_formal_mode_requires_the_pinned_bundle(self) -> None:
         code = self.driver.run(self.arguments(mode="formal", smoke_seeds=None))
@@ -673,6 +736,91 @@ class BootstrapTest(unittest.TestCase):
         )
         self.assertIn("--mode formal", self.text)
         self.assertNotIn("--smoke", self.text)
+
+    def helpers(self, uptime: float, deadline: int = 2700) -> str:
+        """The deadline helpers from the bootstrap, reading a fake /proc/uptime."""
+        start = self.text.index("# >>> deadline helpers")
+        end = self.text.index("# <<< deadline helpers")
+        block = self.text[start:end]
+        self.assertIn("/proc/uptime", block)
+        uptime_file = self.tmp / "uptime"
+        uptime_file.write_text(f"{uptime} 0.0\n")
+        return f"DEADLINE_UPTIME_SECONDS={deadline}\n" + block.replace(
+            "/proc/uptime", str(uptime_file)
+        )
+
+    def run_bash(self, script: str, *, timeout: float = 30):
+        bash = shutil.which("bash")
+        if bash is None or shutil.which("timeout") is None:
+            self.skipTest("bash / timeout are unavailable")
+        return subprocess.run(
+            [bash, "-c", script], capture_output=True, text=True, timeout=timeout
+        )
+
+    @property
+    def tmp(self) -> Path:
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return Path(temp.name)
+
+    def test_setup_commands_never_start_after_the_deadline(self) -> None:
+        marker = self.tmp / "started"
+        script = self.helpers(uptime=2701.0) + f"bounded touch {marker}\n"
+        result = self.run_bash(script)
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("compute deadline passed before", result.stderr)
+        self.assertFalse(marker.exists())
+
+    def test_setup_commands_run_inside_the_deadline(self) -> None:
+        marker = self.tmp / "started"
+        result = self.run_bash(self.helpers(uptime=100.0) + f"bounded touch {marker}\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(marker.exists())
+
+    def test_the_deadline_stops_a_running_setup_command_and_its_children(self) -> None:
+        child = self.tmp / "child.pid"
+        script = self.helpers(uptime=2698.0) + (
+            f"bounded sh -c 'sleep 60 & echo $! >{child}; wait'\n"
+        )
+        started = time.monotonic()
+        result = self.run_bash(script)
+        self.assertEqual(result.returncode, 124)
+        self.assertLess(time.monotonic() - started, 20)
+        pid = int(child.read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("a child of the setup command survived the deadline")
+
+    def test_every_long_setup_command_is_bounded(self) -> None:
+        start = self.text.index("# ---- 0. environment")
+        end = self.text.index("# ---- 1. formal run")
+        heavy = re.compile(
+            r"\b(dnf|git (-C \S+ )?(clone|checkout)|python3\.14 -m venv|"
+            r"\S*PY\" -m (pip|lisjong_arena)|\"\$CPY\" -|pip freeze)"
+        )
+        checked = 0
+        for line in self.text[start:end].splitlines():
+            if heavy.search(line) and not line.lstrip().startswith(("#", '"$')):
+                self.assertIn("bounded ", line, line)
+                checked += 1
+        self.assertGreaterEqual(checked, 10)
+        for name in ("APY", "CPY"):
+            for line in self.text[start:end].splitlines():
+                if f'"${name}" -m' in line:
+                    self.assertIn("bounded ", line, line)
+
+    def test_formal_run_is_not_started_after_the_deadline(self) -> None:
+        check = self.text.index("remaining_seconds) <= 0")
+        driver = self.text.index('"$APY" "$DRIVER" run')
+        self.assertLess(check, driver)
+        self.assertIn("--deadline-uptime-seconds", self.text)
+        self.assertIn("bootstrap-status.json", self.text)
 
     def test_input_names_are_valid_runner_names(self) -> None:
         for name in ("WHEEL_FILE", "S1_BUNDLE", "LEDGER_FILE"):

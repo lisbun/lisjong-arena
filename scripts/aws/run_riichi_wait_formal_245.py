@@ -218,6 +218,8 @@ def run_steps(specs, log_dir: Path, *, deadline_uptime: float | None = None):
     wall, user / system CPU and max RSS (children included) are recorded.  The
     first non-zero exit, or ``/proc/uptime`` passing ``deadline_uptime``, kills
     every step still running (whole process groups) and raises ``RunError``.
+    The deadline is also checked before each step starts: once it has passed,
+    no further step is started.
     Returns the step rows (also when failed, as ``RunError.rows``).
     """
     running: dict[int, tuple] = {}
@@ -225,6 +227,13 @@ def run_steps(specs, log_dir: Path, *, deadline_uptime: float | None = None):
     failure: str | None = None
     try:
         for name, argv, env in specs:
+            if deadline_uptime is not None and uptime_seconds() > deadline_uptime:
+                failure = (
+                    f"compute deadline passed before starting step {name} "
+                    f"(uptime {uptime_seconds():.0f}s > {deadline_uptime:.0f}s)"
+                )
+                _kill_all(running)
+                break
             logs = tuple(
                 log_dir / f"{name.replace('/', '-')}.{stream}"
                 for stream in ("stdout", "stderr")
@@ -519,7 +528,20 @@ def run(arguments: argparse.Namespace) -> int:
         )
         report["source_check"] = json.loads((logs / "verify-source.stdout").read_text())
 
-        # 4. test, once, with the selection fixed
+        # 4. fix the hashes in local evidence, then run test once.  The hashes
+        # are posted to the Issue after the run (pre-registration addendum).
+        pre_test = {
+            "schema": "lisjong-riichi-wait-formal-pre-test-v1",
+            "written_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "mode": mode,
+            "selection": report["selection"],
+            "source_files": report["source_check"]["files"],
+            "allocation_identity": arguments.allocation_identity,
+        }
+        with open(output / "pre-test-evidence.json", "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(pre_test, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         sampler.phase = "test"
         result = output / "test-result.json"
         report["steps"] += run_steps(

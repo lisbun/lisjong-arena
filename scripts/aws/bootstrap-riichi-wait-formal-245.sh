@@ -30,6 +30,27 @@ DEADLINE_UPTIME_SECONDS=2700
 ARENA_URL="https://github.com/lisbun/lisjong-arena.git"
 LISJONG_URL="https://github.com/lisbun/lisjong.git"
 
+# >>> deadline helpers
+# The 45 minute compute cutoff is measured from instance start (/proc/uptime) and
+# covers setup as well as the driver.  Every long setup command goes through
+# `bounded`, which refuses to start after the cutoff and kills the whole process
+# group (timeout) when the cutoff arrives mid-command.  The 60 minute fail-safe
+# is a separate last-resort stop, not a substitute for this cutoff.
+remaining_seconds() {
+    awk -v deadline="$DEADLINE_UPTIME_SECONDS" -v uptime_now="$(cut -d' ' -f1 /proc/uptime)" \
+        'BEGIN { printf "%d", deadline - uptime_now }'
+}
+bounded() {
+    local remaining
+    remaining="$(remaining_seconds)"
+    if ((remaining <= 0)); then
+        echo "compute deadline passed before: $*" >&2
+        return 124
+    fi
+    timeout --kill-after=10 "${remaining}s" "$@"
+}
+# <<< deadline helpers
+
 ARENA_REVISION=""
 ALLOCATION_IDENTITY=""
 while (($#)); do
@@ -74,6 +95,16 @@ ARENA_VENV="$WORK_DIR/venv-arena"
 CONSUMER_VENV="$WORK_DIR/venv-consumer"
 if [[ -e "$WORK_DIR" ]]; then echo "work directory is not fresh" >&2; exit 1; fi
 mkdir -p "$WORK_DIR" "$OUT/environment"
+PHASE="setup"
+on_exit() {
+    local code=$?
+    if ((code != 0)); then
+        printf '{"status":"INCOMPLETE","phase":"%s","exit_code":%d,"uptime_seconds":%s,"deadline_uptime_seconds":%d}\n' \
+            "$PHASE" "$code" "$(cut -d' ' -f1 /proc/uptime)" "$DEADLINE_UPTIME_SECONDS" \
+            >"$OUT/bootstrap-status.json" || true
+    fi
+}
+trap on_exit EXIT
 progress() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$LISJONG_PROGRESS_FILE"; }
 phase_timing() { echo -e "$1\t$2\t$(date -u +%Y-%m-%dT%H:%M:%SZ)\t$(date +%s)\t$(cut -d' ' -f1 /proc/uptime)" >>"$OUT/phase-timings.tsv"; }
 
@@ -83,19 +114,19 @@ done
 
 # ---- 0. environment ---------------------------------------------------------
 progress "setup"; phase_timing setup start
-dnf -q install -y git python3.14 python3.14-pip
+bounded dnf -q install -y git python3.14 python3.14-pip
 {
     cat /etc/os-release; uname -a
-    python3.14 -c 'import sys; print(sys.version)'
+    bounded python3.14 -c 'import sys; print(sys.version)'
 } >"$OUT/environment/system.txt"
 lscpu >"$OUT/environment/lscpu.txt"
 cat /proc/meminfo >"$OUT/environment/meminfo.txt"
-TOKEN="$(curl -sS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' || true)"
-curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type \
+TOKEN="$(curl -sS --max-time 5 -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' || true)"
+curl -sS --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type \
     >"$OUT/environment/instance-type.txt" 2>/dev/null || true
 
-git clone -q "$ARENA_URL" "$ARENA_DIR"
-git -C "$ARENA_DIR" checkout -q --detach "$ARENA_REVISION"
+bounded git clone -q "$ARENA_URL" "$ARENA_DIR"
+bounded git -C "$ARENA_DIR" checkout -q --detach "$ARENA_REVISION"
 if [[ "$(git -C "$ARENA_DIR" rev-parse HEAD)" != "$ARENA_REVISION" || -n "$(git -C "$ARENA_DIR" status --porcelain)" ]]; then
     echo "Arena checkout identity/cleanliness mismatch" >&2
     exit 1
@@ -111,8 +142,8 @@ if ! grep -q "\"riichienv==$FROZEN_RIICHIENV_VERSION\"" "$ARENA_DIR/pyproject.to
     exit 1
 fi
 
-git clone -q "$LISJONG_URL" "$LISJONG_DIR"
-git -C "$LISJONG_DIR" checkout -q --detach "$FROZEN_CONSUMER_REVISION"
+bounded git clone -q "$LISJONG_URL" "$LISJONG_DIR"
+bounded git -C "$LISJONG_DIR" checkout -q --detach "$FROZEN_CONSUMER_REVISION"
 if [[ "$(git -C "$LISJONG_DIR" rev-parse HEAD)" != "$FROZEN_CONSUMER_REVISION" || -n "$(git -C "$LISJONG_DIR" status --porcelain)" ]]; then
     echo "lisjong checkout identity/cleanliness mismatch" >&2
     exit 1
@@ -123,25 +154,25 @@ if ! git -C "$LISJONG_DIR" merge-base --is-ancestor "$FROZEN_CONSUMER_REVISION" 
 fi
 
 # Arena venv: the producer at the Arena pin and the Arena-pinned rust wheel.
-python3.14 -m venv "$ARENA_VENV"
+bounded python3.14 -m venv "$ARENA_VENV"
 APY="$ARENA_VENV/bin/python"
-"$APY" -m pip install -q --disable-pip-version-check -e "$ARENA_DIR"
+bounded "$APY" -m pip install -q --disable-pip-version-check -e "$ARENA_DIR"
 cd "$ARENA_DIR"
-"$APY" -m lisjong_arena.environment_verify --project pyproject.toml >"$OUT/environment/environment-verify.txt"
-"$APY" -m lisjong_arena.shanten_backend_verification verify-wheel "$INPUT_DIR/$WHEEL_FILE" \
+bounded "$APY" -m lisjong_arena.environment_verify --project pyproject.toml >"$OUT/environment/environment-verify.txt"
+bounded "$APY" -m lisjong_arena.shanten_backend_verification verify-wheel "$INPUT_DIR/$WHEEL_FILE" \
     >"$OUT/environment/arena-wheel.json"
-"$APY" -m pip install -q --disable-pip-version-check --only-binary=:all: --no-index --no-deps \
+bounded "$APY" -m pip install -q --disable-pip-version-check --only-binary=:all: --no-index --no-deps \
     --force-reinstall "$INPUT_DIR/$WHEEL_FILE"
 export LISJONG_SHANTEN_BACKEND=rust
-"$APY" -m lisjong_arena.riichilab.aws_backend --backend rust --wheel "$INPUT_DIR/$WHEEL_FILE" \
+bounded "$APY" -m lisjong_arena.riichilab.aws_backend --backend rust --wheel "$INPUT_DIR/$WHEEL_FILE" \
     >"$OUT/environment/arena-backend.txt"
 unset LISJONG_SHANTEN_BACKEND
 
 # Consumer venv: lisjong at the #246 merge commit (select / test), default backend.
-python3.14 -m venv "$CONSUMER_VENV"
+bounded python3.14 -m venv "$CONSUMER_VENV"
 CPY="$CONSUMER_VENV/bin/python"
-"$CPY" -m pip install -q --disable-pip-version-check -e "$LISJONG_DIR"
-"$CPY" - "$LISJONG_DIR" >"$OUT/environment/consumer.json" <<'PY'
+bounded "$CPY" -m pip install -q --disable-pip-version-check -e "$LISJONG_DIR"
+bounded "$CPY" - "$LISJONG_DIR" >"$OUT/environment/consumer.json" <<'PY'
 import json, sys
 from pathlib import Path
 
@@ -156,11 +187,18 @@ if [[ -n "$(git -C "$ARENA_DIR" status --porcelain --untracked-files=no)" || -n 
     echo "a checkout changed during install" >&2
     exit 1
 fi
-{ echo "arena=$ARENA_REVISION"; "$APY" -m pip freeze; } >"$OUT/environment/arena-packages.txt"
-{ echo "lisjong=$FROZEN_CONSUMER_REVISION"; "$CPY" -m pip freeze; } >"$OUT/environment/consumer-packages.txt"
+{ echo "arena=$ARENA_REVISION"; bounded "$APY" -m pip freeze; } >"$OUT/environment/arena-packages.txt"
+{ echo "lisjong=$FROZEN_CONSUMER_REVISION"; bounded "$CPY" -m pip freeze; } >"$OUT/environment/consumer-packages.txt"
 phase_timing setup done
 
 # ---- 1. formal run ----------------------------------------------------------
+# Never begin the formal generation after the cutoff; the driver re-checks the
+# deadline before every step it starts.
+if (($(remaining_seconds) <= 0)); then
+    echo "compute deadline passed during setup; not starting the formal run" >&2
+    exit 1
+fi
+PHASE="formal-run"
 phase_timing formal-run start
 "$APY" "$DRIVER" run \
     --mode formal \

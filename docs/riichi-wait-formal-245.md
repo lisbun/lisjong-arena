@@ -46,9 +46,19 @@ setup（Arena venv + pin wheel、consumer venv = lisjong 1e8a2d7）
   判断記録とラベル事実の不一致は失敗として扱う
 - 完全性検査はlisjongのstrict readerを使い（ラベル事実は開かない）、`generation.json`（per-game件数・SHA-256・
   allocation・runtime identity）と突き合わせる
-- 計算は**instance起動から45分で打ち切る**（`/proc/uptime`）。失敗・打切り・割込みでは実行中の工程を
-  process groupごと終了し、report（`formal-run-report.json`）を`INCOMPLETE`で書き、非0で終了する。
-  一部の半荘だけでtestを実行しない。driverは`test`の合否を解釈しない（`test-result.json`の`comparison.passed`を読む）
+- 計算は**instance起動から45分で打ち切る**（`/proc/uptime`）。打切りはsetupにも適用する：bootstrapの
+  長いsetup命令（dnf、clone、venv、pip、検証）は全て`bounded`（残り時間の`timeout`）を通り、期限後は新しい
+  命令を始めず、期限が来たら実行中の命令をprocess groupごと終了する。setup中に期限が来たら正式生成を始めない。
+  driverも各工程（generate / select、verify-source、test）の**開始前**に期限を確認し、期限後は`Popen`を
+  呼ばない。verify後に期限を過ぎていれば`test`を開始しない。失敗・打切り・割込みでは実行中の工程を
+  process groupごと終了し、report（`formal-run-report.json`）を`INCOMPLETE`で書き、非0で終了する
+  （setup中の失敗は`bootstrap-status.json`）。一部の半荘だけでtestを実行しない。
+  driverは`test`の合否を解釈しない（`test-result.json`の`comparison.passed`を読む）。
+  60分のfail-safeは別の最終停止手段で、この45分cutoffの代わりではない
+- 事前登録は「生成manifestのSHA-256をIssueへ追記してから`test`」とするが、driverはverify後に自動で`test`へ進む。
+  そのため`test`の**前**に、manifest / decisions / label_factsとselectionのSHA-256を
+  `pre-test-evidence.json`としてlocal evidenceへfsync付きで固定し（`test`の結果より前に書かれる）、
+  実行後にこのファイルのhashを#245へ追記する。この運用は正式実行前に#245の事前登録へ追記して整合させる
 - `select`・`test`の出力にはlisjong側のschema（`lisjong-riichi-wait-selection-v1` /
   `lisjong-riichi-wait-test-result-v1`）がある。selectionのSHA-256はreportに記録する
 
@@ -136,7 +146,9 @@ $run = @{ AwsProfile = $awsProfile; Label = 'lisjong-245-formal-test'; InstanceT
 .\scripts\aws\lisjong-ec2.ps1 -Action Preflight @run
 ```
 
-`plan.json`で時間単価、見込み額、fail-safeの最悪額（$2以内）とvCPU quota（32 vCPU）を確認する。**次のLaunchは課金を伴う。**
+`plan.json`で最新の時間単価、見込み額、fail-safeの最悪額（$2以内）、**同時稼働中のinstance分を引いた空きvCPU quota**
+（32 vCPU必要）、回収・終了の余裕を確認する。fail-safeの最悪額はPreflightの見積りで、請求額の絶対保証ではない。
+**次のLaunchは課金を伴う。**
 
 ```powershell
 .\scripts\aws\lisjong-ec2.ps1 -Action Launch @run -Plan <run dir>\plan.json
@@ -146,12 +158,14 @@ $run = @{ AwsProfile = $awsProfile; Label = 'lisjong-245-formal-test'; InstanceT
 
 - `-FailSafeHours`の下限は1時間（launcherの制約）。`-EstimatedRuntimeHours`の上限0.5は、fail-safeの1/1.5（0.667）以下で、45分打切り（0.75）より短い見込みを表す
 - 成功時は証跡upload後にrunnerがinstanceを終了する（#396）。失敗・打切りではinstanceは自動終了しないため、
-  `Collect`（必要なら`-ForceTerminate`）で終了させる。`Collect`はdownload、SHA-256照合、SG / bucket削除、residual sweepを行う
+  `Collect`（必要なら`-ForceTerminate`）で終了させる。`Collect`はdownload、SHA-256照合、SG / bucket削除、residual sweepを行う。
+  成果物の恒久保存は別作業だが、Collect完了時点で回収先（ローカルのrun directory）に成果物が残っていることを確認する
 - 停止条件: 工程の失敗、起動から45分の計算打切り、launchから60分のfail-safe、手動の`Collect -ForceTerminate`
 
 ### 4. 実行後
 
-- 証跡: `formal-run/formal-run-report.json`（`status`が`COMPLETE`か）、`formal-run/selection.json`、
+- 証跡: `formal-run/formal-run-report.json`（`status`が`COMPLETE`か）、`formal-run/pre-test-evidence.json`、
+  setup中に失敗した場合は`bootstrap-status.json`、`formal-run/selection.json`、
   `formal-run/test-result.json`、`formal-run/generation.json`、`formal-run/source/`（`manifest.json`と
   xz圧縮した`decisions.jsonl.xz`・`label_facts.jsonl.xz`）、`formal-run/logs/`、`phase-timings.tsv`、`environment/`、`runner.log`
 - `COMPLETE`なら、seed allocationを`RESERVED -> COMMITTED`にする（Seed Registry workflowの`commit`）。
@@ -163,16 +177,16 @@ $run = @{ AwsProfile = $awsProfile; Label = 'lisjong-245-formal-test'; InstanceT
 
 ## 時間・費用の見込み
 
-見込みは実測値からの推定で、保証値ではない。最も近い実績は、同じ`c7i.8xlarge`東京・32 workersで
-Champion系の400半荘を回した#436（lisbun/lisjong-arena#436 comment 5930362795）である：対局24分2秒、
-EC2 26分8秒、compute USD 0.783（時間単価 約USD 1.797）。これは32 workersで1半荘あたり約115 worker秒
-（400半荘 × 約3.6秒/半荘 × 32）に当たる。
+以下は**推定**で、保証値ではない。参照した#436（lisbun/lisjong-arena#436 comment 5930362795）は、同じ
+`c7i.8xlarge`東京・32 workersで400半荘を回した実績だが、RiichiEnv系の比較であり、今回のengine self-play /
+source記録と**同一のworkloadではない**：対局24分2秒、EC2 26分8秒、compute USD 0.783（時間単価 約USD 1.797）。
+これは32 workersで1半荘あたり約115 worker秒に当たる。今回の所要時間は初回の実行で初めて実測される。
 
 | 工程 | 見込み | 根拠 |
 | --- | --- | --- |
 | 起動・setup（dnf、clone、venv 2個、wheel） | 2〜5分 | #436はEC2全体と対局の差が約2分。本workloadはvenvが1個多い。`phase-timings.tsv`に記録 |
 | 生成（32 workers、100半荘） | 6〜10分 | 100半荘 × 約115 worker秒 ÷ 32 = 約6分。100件を32 workersへ割り当てると最後の巡は32件に満たず、1半荘約2分の端数が出る。記録処理は#436より軽い想定 |
-| `select`（生成と並行） | 約2分 | 作業環境の実測（S1と同規模の代替データ、約27,000判断、Python版backend、4 vCPU）：wall 125秒、CPU 124秒、最大RSS 1.4 GB。生成と並行するため追加の待ちは出ない |
+| `select`（生成と並行） | 約2分（推定） | 作業環境で、**実S1ではない**S1と同規模の合成データ（約27,000判断、Python版backend、4 vCPU）を使った測定：wall 125秒、CPU 124秒、最大RSS 1.4 GB。実S1での所要時間・メモリの保証ではない。生成と並行する |
 | 完全性検査 | 1分未満 | |
 | `test` | 約1分 | 同、100半荘規模：wall 38秒、最大RSS 0.6 GB |
 | 証跡（xz圧縮）・upload・終了 | 1〜3分 | |
@@ -193,6 +207,9 @@ EC2 26分8秒、compute USD 0.783（時間単価 約USD 1.797）。これは32 w
 
 次のいずれかなら、起動前に代案を示してから実行する。
 
-- Preflightで時間単価が約USD 1.93を超える（fail-safeの最悪額がUSD 2を超える）→ `c7i.4xlarge`（16 workers、約2倍の時間）へ
-  切り替える。打切り45分に収まらない場合は、時間を延ばすのではなく実行条件を見直す
+- Preflightで時間単価が約USD 1.93を超える（fail-safeの最悪額がUSD 2を超える）→ 起動しない。代案
+  （例：`c7i.4xlarge` / 16 workers、約2倍の時間）は、この実装では**使えない**：bootstrapが
+  `REQUIRED_WORKERS=32`と`nproc==32`を検査して拒否する。代案を採る場合は、workers・検査・時間見込み・
+  45分cutoffへの適合を変更・再確認する別のPRとして扱う。45分に収まらない場合は、時間を延ばすのではなく
+  実行条件を見直す
 - vCPU quotaが32に足りない → quota引き上げの申請（無課金）を先に行う
