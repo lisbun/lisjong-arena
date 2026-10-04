@@ -56,6 +56,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [Rust向聴数backend：AWS workerへのopt-in導入と検証](rust-shanten-backend-400.md) — Issue #400（親lisjong#216）のwheel導入・fail-closed・worker検査・同値性/性能測定とAWS実行計画
 - [Champion 2botのR5 Rust版でのAWS試運転](aws-riichilab-rust-434.md) — 30分試運転、wheel転送・権限、停止・回収、時間評価の限界
 - [現行のlisjong pin・Rust wheelの組み合わせ](lisjong-native-wheel-current.md) — Issue #434：lisjong `51e832e`（#233）とR5対応wheel（API_VERSION 3）。過去の#423 / #409の固定記録は別文書に保持
+- [#245 待ち確率推定器の正式test](riichi-wait-formal-245.md) — Issue #447（owner lisjong#245）の予約済み新規seed 932000..932099の生成・`select`・`test`をAWS 1台で実行する経路（actual runはmerge後のoperator作業）
 - [Stage A0 non-riichi Tenpai label path feasibility](stage-a0-tenpai-label-feasibility.md) — Issue #258のlabel path / corpus qualification（retained corpusに対する実測はmerge後のoperator作業）
 
 これらはconcreteなexecution / acquisition surfaceのcontractを記録する。**現在どの研究を優先するか**はactive GitHub Issueを正本とし、reusable contract自体が変わらない限りoperator文書へcurrent priorityを転記しない。
