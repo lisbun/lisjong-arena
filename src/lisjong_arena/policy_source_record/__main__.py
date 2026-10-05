@@ -1,4 +1,7 @@
-"""CLI: population / generate / readback / replay-verify. No AWS resources."""
+"""CLI: population / generate / readback / replay-verify / archive / restore.
+
+No AWS resources.
+"""
 
 import argparse
 import json
@@ -8,7 +11,7 @@ from pathlib import Path
 from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_file
 from lisjong_arena.seed_registry import SeedRegistryError, load_ledger, parse_seed_spec
 
-from . import record
+from . import archive, record
 from .errors import PolicySourceRecordError
 from .generation import generate
 from .replay import replay_verify
@@ -44,6 +47,23 @@ def _parser() -> argparse.ArgumentParser:
     replay.add_argument("--source", required=True)
     replay.add_argument("--workers", type=int, default=1)
     replay.add_argument("--project", default="pyproject.toml")
+    replay.add_argument("--summary", help="also write the summary to this new file")
+
+    pack = commands.add_parser(
+        "archive", help="pack a replay-verified record with its evidence (#449)"
+    )
+    pack.add_argument("--source", required=True)
+    pack.add_argument(
+        "--replay-summary", required=True, help="replay-verify --summary output"
+    )
+    pack.add_argument("--output", required=True)
+
+    restore = commands.add_parser(
+        "restore", help="restore a retained record after identity/hash/replay checks"
+    )
+    restore.add_argument("--archive", required=True)
+    restore.add_argument("--expected-identity", required=True)
+    restore.add_argument("--output", required=True)
     return parser
 
 
@@ -86,10 +106,33 @@ def main(argv=None) -> int:
                 "games": len(manifest["games"]),
                 "decisions": sum(g["decision_count"] for g in manifest["games"]),
             }
-        else:
+        elif args.command == "replay-verify":
             output = replay_verify(
                 args.source, project=args.project, workers=args.workers
             )
+            if args.summary is not None:
+                write_new_artifact_file(Path(args.summary), canonical_json_text(output))
+        elif args.command == "archive":
+            summary = json.loads(Path(args.replay_summary).read_text(encoding="utf-8"))
+            evidence = archive.archive_source_record(
+                args.source, args.output, replay=summary
+            )
+            output = {
+                "source_identity": evidence["source"]["identity"],
+                "archive_sha256": evidence["archive"]["sha256"],
+                "archive_bytes": evidence["archive"]["bytes"],
+                "evidence_identity": evidence["identity"],
+            }
+        else:
+            manifest = archive.restore_source_record(
+                args.archive, args.output, expected_identity=args.expected_identity
+            )
+            output = {
+                "identity": manifest["identity"],
+                "games": len(manifest["games"]),
+                "decisions": sum(g["decision_count"] for g in manifest["games"]),
+                "output": args.output,
+            }
     except (PolicySourceRecordError, SeedRegistryError, FileExistsError) as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 1
