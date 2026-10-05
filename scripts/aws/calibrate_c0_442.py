@@ -15,6 +15,12 @@ instance; see ``docs/aws-c0-calibration-442.md``.
 3. BC / candidate scorer training and artifact verification per record.
 4. 8 evaluation hanchan: the record-200 BC model in one seat, C0 in three.
 
+After replay-verify, the record-200 source is packed with its replay evidence
+into ``<output>/source/record200`` (lisbun/lisjong-arena#449), so it can be
+reused without regeneration. ``convert`` (Arena venv) restores such an archive
+after matching the source identity, archive SHA-256 and replay evidence, and
+runs only the two Learning materialize steps, measured the same way.
+
 Every Learning step runs as ``python -m lisjong.learning`` in the Learning venv
 and is measured with ``os.wait4`` (wall, user / system CPU, max RSS, output
 bytes). System memory in use (MemTotal - MemAvailable) is sampled every two
@@ -307,38 +313,86 @@ def replay_and_materialize(work, project, workers, learning_python):
     for name in POPULATIONS:
         out = work / "learn" / name
         out.mkdir(parents=True)
-        source = str(work / name)
-        specs.append(
-            (
-                f"{name}/materialize-candidate-dataset",
-                _learning(
-                    learning_python,
-                    "materialize-candidate-dataset",
-                    "--source-record",
-                    source,
-                    "--output",
-                    str(out / "cand-dataset"),
-                ),
-                out / "cand-dataset",
-            )
-        )
-        specs.append(
-            (
-                f"{name}/materialize-dataset",
-                _learning(
-                    learning_python,
-                    "materialize-dataset",
-                    "--source-record",
-                    source,
-                    "--output",
-                    str(out / "bc-dataset"),
-                ),
-                out / "bc-dataset",
-            )
-        )
+        specs += materialize_specs(work / name, out, learning_python, prefix=f"{name}/")
     steps = _run_steps(specs, work / "logs")
     summary = json.loads((work / "replay-summary.json").read_text())
     return {"replay": {"summary": summary}, "steps": steps}
+
+
+def retain_source(work, output):
+    """Pack the replay-verified record200 with its replay evidence (#449)."""
+    from lisjong_arena.policy_source_record import archive
+
+    summary = json.loads((work / "replay-summary.json").read_text())
+    destination = output / "source" / "record200"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    evidence = archive.archive_source_record(
+        work / "record200", destination, replay=summary
+    )
+    return {
+        "wall": time.perf_counter() - started,
+        "source_identity": evidence["source"]["identity"],
+        "archive": evidence["archive"],
+        "evidence_identity": evidence["identity"],
+    }
+
+
+def materialize_specs(source, out, learning_python, *, prefix=""):
+    """The candidate and BC materialize steps of one source record."""
+    return [
+        (
+            f"{prefix}{command}",
+            _learning(
+                learning_python,
+                command,
+                "--source-record",
+                str(source),
+                "--output",
+                str(out / dataset),
+            ),
+            out / dataset,
+        )
+        for command, dataset in (
+            ("materialize-candidate-dataset", "cand-dataset"),
+            ("materialize-dataset", "bc-dataset"),
+        )
+    ]
+
+
+def convert_main(args):
+    """Restore a retained source and run only the Learning materialize steps.
+
+    Restoration matches the expected source identity, the archive SHA-256 and
+    the replay evidence first; on any mismatch no conversion starts.
+    """
+    from lisjong_arena.policy_source_record import archive
+
+    work, output = Path(args.work), Path(args.output)
+    (work / "logs").mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    manifest = archive.restore_source_record(
+        args.archive, work / "source", expected_identity=args.expected_identity
+    )
+    restore_wall = time.perf_counter() - started
+    out = work / "learn"
+    out.mkdir()
+    steps = _run_steps(
+        materialize_specs(work / "source", out, args.learning_python), work / "logs"
+    )
+    report = {
+        "source_identity": manifest["identity"],
+        "games": len(manifest["games"]),
+        "decisions": sum(game["decision_count"] for game in manifest["games"]),
+        "restore_wall": restore_wall,
+        "host": host_facts(),
+        "steps": steps,
+    }
+    (output / "convert-report.json").write_text(
+        json.dumps(report, indent=1, sort_keys=True)
+    )
+    return report
 
 
 def replay_main(args):
@@ -563,6 +617,7 @@ def run_main(args):
                 work, args.project, args.workers, args.learning_python
             ),
         ),
+        ("retain_source", lambda: retain_source(work, output)),
         ("train", lambda: train(work, args.learning_python)),
         ("evaluation", lambda: evaluate(work, args.learning_python, args.workers)),
     ]
@@ -603,12 +658,23 @@ def main(argv=None):
     replay.add_argument("--project", required=True)
     replay.add_argument("--workers", type=int, required=True)
     replay.add_argument("--summary", required=True)
+    convert = commands.add_parser("convert")
+    convert.add_argument("--archive", required=True)
+    convert.add_argument("--expected-identity", required=True)
+    convert.add_argument("--learning-python", required=True)
+    convert.add_argument("--work", required=True)
+    convert.add_argument("--output", required=True)
     evaluation = commands.add_parser("eval")
     evaluation.add_argument("--artifact", required=True)
     evaluation.add_argument("--workers", type=int, required=True)
     evaluation.add_argument("--seeds", required=True)
     args = parser.parse_args(argv)
-    {"run": run_main, "replay": replay_main, "eval": eval_main}[args.command](args)
+    {
+        "run": run_main,
+        "replay": replay_main,
+        "convert": convert_main,
+        "eval": eval_main,
+    }[args.command](args)
 
 
 if __name__ == "__main__":

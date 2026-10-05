@@ -90,6 +90,38 @@ the runtime `dependencies`, `lisjong_source_digest`, `shanten_backend`,
 differ. Legal actions are passed in their stored canonical order, so a teacher
 whose tie-break depends on legal-action order is reported as a mismatch.
 
+## Retention and reuse (#449)
+
+A record that passed full `replay-verify` can be kept and converted again
+without regeneration or replay. `archive` packs it into a deterministic
+`tar` + `gzip` file (fixed member order, mtime 0, root ownership) next to a
+sealed `evidence.json`:
+
+```text
+<archive>/
+  evidence.json          arena-policy-source-archive-v1
+  source-record.tar.gz   manifest.json + game-NNN/source-record.jsonl
+```
+
+The evidence binds the source identity, purpose, teacher, hanchan and decision
+counts, the archive bytes and SHA-256, and the replay-verify result for that
+same source identity (decisions equal to the record's, mismatches 0). Packing
+refuses a replay summary for another source or teacher, one that does not cover
+every decision, or one with mismatches, and reads the written archive back
+against the record's files before publishing.
+
+`restore` requires the expected source identity. It fails closed, before the
+destination exists, when the evidence names another identity, the archive
+bytes or SHA-256 differ from the evidence, the replay evidence is missing or not
+mismatch-free, an archive member is not `manifest.json` or
+`game-NNN/source-record.jsonl` (links, directories and other paths included),
+or the extracted record does not strict-read to the evidence's identity and
+counts. The restored directory is an ordinary source record that
+`python -m lisjong.learning materialize-*` consumes.
+
+The archive is the retained canonical source. Learning datasets made from it
+stay lisjong-owned derived products and are not stored by default.
+
 ## Commands
 
 ```text
@@ -104,7 +136,14 @@ LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.policy_source_record genera
 python -m lisjong_arena.policy_source_record readback --source <directory>
 
 LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.policy_source_record replay-verify \
-  --source <directory> --workers 4
+  --source <directory> --workers 4 --summary replay-summary.json
+
+python -m lisjong_arena.policy_source_record archive \
+  --source <directory> --replay-summary replay-summary.json --output <new directory>
+
+python -m lisjong_arena.policy_source_record restore \
+  --archive <archive directory> --expected-identity <source identity> \
+  --output <new directory>
 ```
 
 The `population` command writes `DEVELOPMENT` populations only. A

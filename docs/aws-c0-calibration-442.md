@@ -141,3 +141,14 @@ $run = @{ AwsProfile = $awsProfile; Label = 'lisjong-442-c0-calibration'; Instan
 - 生成とreplayは、半荘あたりのCPU秒を作業環境の値（生成81 s、replay約84 s）と比べる
 - system使用メモリの工程ごとの最大値を示す
 - 月USD 20の中での配分案は、この結果をもとに#442へ記録する
+
+## source recordの保持と再変換（#449で追加）
+
+#449以降のrevisionのdriverは、replay-verify後にrecord200を`output/calibration/source/record200/`へ
+圧縮して残す（`evidence.json`と`source-record.tar.gz`、`docs/policy-source-record.md`の
+「Retention and reuse」）。上の「実行内容」の計測条件は変えない。
+
+`calibrate_c0_442.py convert --archive <dir> --expected-identity <identity> --learning-python <python>
+--work <dir> --output <dir>`は、source identity・archiveのSHA-256・replay証跡を照合して復元し、
+生成とreplayを省いてBC・candidateのmaterializeだけを同じ方法で計測する（`convert-report.json`）。
+照合が1つでも合わなければ変換を始めない。AWSでこの入口を使うbootstrapは、規模拡大の計画と一緒に別に用意する。
