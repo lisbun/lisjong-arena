@@ -13,6 +13,7 @@ from lisjong_arena.riichilab_coplayer.__main__ import (
     prepare_output_root,
     run_fetch,
 )
+from lisjong_arena.riichilab_coplayer.selection import SELECTION_SCHEMA_ID
 from lisjong_arena.riichilab_coplayer.window import (
     CoplayerWindowError,
     fetch_coplayer_window,
@@ -71,7 +72,7 @@ def _fetch(transport: RecordingTransport, **kwargs: object):
         "pacer": RequestPacer(interval_seconds=0.5, sleeper=collect_sleeps([])),
     }
     options.update(kwargs)
-    return fetch_coplayer_window(transport, BOT, **options)
+    return fetch_coplayer_window(transport, BOT, bot_label="Mortal-v4b", **options)
 
 
 class WindowSelectionTest(unittest.TestCase):
@@ -130,12 +131,13 @@ class WindowSelectionTest(unittest.TestCase):
 
 
 class FailClosedTest(unittest.TestCase):
-    def test_non_target_bot_is_rejected_without_request(self) -> None:
+    def test_invalid_bot_id_is_rejected_without_request(self) -> None:
         transport = RecordingTransport()
         with self.assertRaises(CoplayerWindowError):
             fetch_coplayer_window(
                 transport,
-                313,
+                0,
+                bot_label="x",
                 played_from=FROM,
                 played_to=TO,
                 max_pages=1,
@@ -183,34 +185,77 @@ class FailClosedTest(unittest.TestCase):
         self.assertEqual(len(transport.calls), 2)
 
 
+def _selection(path: Path, selected: list[tuple[int, str]]) -> Path:
+    value = {
+        "candidates": [
+            {"bot_id": bot_id, "bot_name": name, "selected": True}
+            for bot_id, name in selected
+        ],
+        "schema": SELECTION_SCHEMA_ID,
+        "schema_version": 1,
+        "selected_bot_ids": [bot_id for bot_id, _ in selected],
+    }
+    path.write_text(json.dumps(value), "utf-8")
+    return path
+
+
 class CliPersistenceTest(unittest.TestCase):
-    def test_writes_pages_and_window_and_refuses_non_empty_output(self) -> None:
+    def test_fetch_writes_each_selected_bot_and_refuses_non_empty_output(
+        self,
+    ) -> None:
         page = [
             _game("in-a", "2026-10-01T00:00:00", seat=2),
             _game("old", "2026-09-29T00:00:00"),
         ]
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "bot-120"
+            base = Path(temporary)
+            output = base / "windows"
             arguments = argparse.Namespace(
-                bot_id=BOT,
+                selection=_selection(base / "selection.json", [(BOT, "Mortal-v4b")]),
                 played_from=FROM,
                 played_to=TO,
                 max_pages=5,
                 output_dir=output,
                 timeout=15.0,
             )
-            value = run_fetch(
+            summaries = run_fetch(
                 _transport([(2, page, False)]),
                 arguments,
                 pacer=RequestPacer(interval_seconds=0),
             )
-            stored = json.loads((output / WINDOW_FILENAME).read_text("utf-8"))
-            self.assertEqual(stored["window_identity"], value["window_identity"])
+            stored = json.loads(
+                (output / f"bot-{BOT}" / WINDOW_FILENAME).read_text("utf-8")
+            )
+            self.assertEqual(stored["window_identity"], summaries[0]["window_identity"])
             self.assertEqual(stored["bot_label"], "Mortal-v4b")
             self.assertEqual([game["seat"] for game in stored["games"]], [2])
-            self.assertTrue((output / "pages" / "page-00000.json").is_file())
+            self.assertTrue(
+                (output / f"bot-{BOT}" / "pages" / "page-00000.json").is_file()
+            )
             with self.assertRaises(CoplayerWindowError):
                 prepare_output_root(output)
+
+    def test_fetch_rejects_tampered_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            path = _selection(base / "selection.json", [(BOT, "Mortal-v4b")])
+            value = json.loads(path.read_text("utf-8"))
+            value["selected_bot_ids"] = [BOT, 999]
+            path.write_text(json.dumps(value), "utf-8")
+            arguments = argparse.Namespace(
+                selection=path,
+                played_from=FROM,
+                played_to=TO,
+                max_pages=5,
+                output_dir=base / "windows",
+                timeout=15.0,
+            )
+            with self.assertRaises(CoplayerWindowError):
+                run_fetch(
+                    RecordingTransport(),
+                    arguments,
+                    pacer=RequestPacer(interval_seconds=0),
+                )
 
 
 if __name__ == "__main__":

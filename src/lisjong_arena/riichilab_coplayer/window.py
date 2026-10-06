@@ -1,11 +1,11 @@
-"""Bounded played_at-window metadata acquisition for the fixed Issue #170 top bots.
+"""Bounded played_at-window metadata acquisition for rule-selected top bots.
 
 Issue #441の上位bot別比較では、自bot履歴にない同卓者identityを、上位bot側の
-公開`/api/v1/bots/{bot_id}/games`から逆引きする。上位botは対局数が多く、Issue
+公開`/api/v1/bots/{bot_id}/games`から逆引きする。対象botは`selection`の固定規則で
+選んだbotに限る（CLIが選定結果と照合する）。上位botは対局数が多く、Issue
 #269の全履歴syncは`--max-games`と「取得中total不変」の前提に合わないため、
 ここでは新しい順にpageを読み、指定windowより古い対局へ到達した時点で止める。
 
-- 対象botは#170で固定した`TARGET_BOTS`だけに限る（bot一覧の総当たりをしない）
 - metadataだけを取得し、MJAI logは取得しない
 - 取得中に新しい対局が先頭へ追加されると、offset pagingでは同じ行がpage境界で
   重複し得る。完全に同じ内容の重複だけを許容し、内容の異なる重複はfail closed
@@ -21,10 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from lisjong_arena.riichilab_corpus.http import HttpTransport, get_with_bounded_retry
-from lisjong_arena.riichilab_corpus.models import (
-    TARGET_BOTS,
-    canonical_json_bytes,
-)
+from lisjong_arena.riichilab_corpus.models import canonical_json_bytes
 from lisjong_arena.riichilab_self_history.errors import SelfHistoryError
 from lisjong_arena.riichilab_self_history.models import (
     SelfHistoryGame,
@@ -40,7 +37,6 @@ from lisjong_arena.riichilab_self_history.pagination import (
 
 WINDOW_SCHEMA_ID = "lisjong-arena-riichilab-coplayer-window"
 WINDOW_SCHEMA_VERSION = 1
-TARGET_BOT_IDS = tuple(bot_id for bot_id, _ in TARGET_BOTS)
 
 
 class CoplayerWindowError(SelfHistoryError):
@@ -73,6 +69,7 @@ def _played_at(game: SelfHistoryGame) -> datetime:
 @dataclass(frozen=True, slots=True)
 class CoplayerWindow:
     bot_id: int
+    bot_label: str
     played_from: str
     played_to: str
     games: tuple[SelfHistoryGame, ...]
@@ -97,7 +94,7 @@ class CoplayerWindow:
     def to_value(self, *, retrieved_at: str) -> dict[str, object]:
         return {
             "bot_id": self.bot_id,
-            "bot_label": dict(TARGET_BOTS)[self.bot_id],
+            "bot_label": self.bot_label,
             "duplicate_rows": self.duplicate_rows,
             "first_total": self.first_total,
             "game_count": len(self.games),
@@ -119,6 +116,7 @@ def fetch_coplayer_window(
     transport: HttpTransport,
     bot_id: int,
     *,
+    bot_label: str,
     played_from: str,
     played_to: str,
     max_pages: int,
@@ -131,10 +129,8 @@ def fetch_coplayer_window(
     The page that crosses the window start is read completely; nothing earlier
     is requested. Exceeding `max_pages` before that point fails closed.
     """
-    if bot_id not in TARGET_BOT_IDS:
-        raise CoplayerWindowError(
-            f"bot {bot_id} is not one of the fixed Issue #170 target bots"
-        )
+    if type(bot_id) is not int or bot_id <= 0:
+        raise CoplayerWindowError("bot_id must be a positive integer")
     if type(max_pages) is not int or max_pages < 1:
         raise CoplayerWindowError("max_pages must be a positive integer")
     start = parse_window_bound(played_from, "played_from")
@@ -227,6 +223,7 @@ def fetch_coplayer_window(
     assert first_total is not None
     return CoplayerWindow(
         bot_id=bot_id,
+        bot_label=bot_label,
         played_from=start.isoformat(),
         played_to=end.isoformat(),
         games=canonical_order(tuple(selected)),
@@ -242,7 +239,6 @@ def fetch_coplayer_window(
 __all__ = [
     "CoplayerWindow",
     "CoplayerWindowError",
-    "TARGET_BOT_IDS",
     "WINDOW_SCHEMA_ID",
     "fetch_coplayer_window",
     "parse_window_bound",
