@@ -13,10 +13,16 @@ game IDで自botの対局と照合する。
 - `last_played_at`が取得時刻（UTC wall clock）から30日以内。`last_played_at`は
   timezone-naiveなので変換しない。境界から24時間以内のbotは`borderline_idle`として報告に残す
 
-rating 1800を下回るentryが出るまでoffsetを進めて読み、最後に先頭pageを再取得する。
-同じbotは最後に観測した値で判定する。閾値の下まで届かない、順序が崩れている、bot_idが
-重複している等はfail closed。raw page（`leaderboard-pages.json`）と、全候補の判定理由・
-選定結果（`selection.json`）を保存する。
+rating 1800を下回るentryが出るまでoffsetを進めて読む（1 pass）。page間でbot_idが重複する、
+ratingや順位が逆転している場合は不整合として停止する。続けてもう1 pass読み、両passの
+bot_idの並び（閾値を下回る最初のentryまで）と各botの判定が一致したときだけ、2 pass目の値を
+採用する。取得中の変動で一致しない場合は3回まで2 passをやり直し、それでも一致しなければ停止する。
+閾値の下まで届かない場合も停止する。raw page（`leaderboard-pages.json`、attempt / pass付き）と、
+全候補の判定理由・閾値を下回った最初のentry・選定結果（`selection.json`）を保存する。
+
+`fetch`は`selection.json`を読む際に、規則が現行と同じこと、候補が必要なfieldをすべて持つこと、
+並びが正しく閾値の下まで届いていることを確認し、候補情報と基準日時から判定を再計算する。
+保存された判定・選定IDと一致しなければ停止する。
 
 ## 期間限定取得（`fetch`）
 

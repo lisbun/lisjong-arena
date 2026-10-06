@@ -6,6 +6,7 @@ import argparse
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from lisjong_arena.riichilab_coplayer.__main__ import (
@@ -13,7 +14,10 @@ from lisjong_arena.riichilab_coplayer.__main__ import (
     prepare_output_root,
     run_fetch,
 )
-from lisjong_arena.riichilab_coplayer.selection import SELECTION_SCHEMA_ID
+from lisjong_arena.riichilab_coplayer.selection import (
+    LeaderboardEntry,
+    selection_value,
+)
 from lisjong_arena.riichilab_coplayer.window import (
     CoplayerWindowError,
     fetch_coplayer_window,
@@ -186,15 +190,15 @@ class FailClosedTest(unittest.TestCase):
 
 
 def _selection(path: Path, selected: list[tuple[int, str]]) -> Path:
-    value = {
-        "candidates": [
-            {"bot_id": bot_id, "bot_name": name, "selected": True}
-            for bot_id, name in selected
-        ],
-        "schema": SELECTION_SCHEMA_ID,
-        "schema_version": 1,
-        "selected_bot_ids": [bot_id for bot_id, _ in selected],
-    }
+    entries = tuple(
+        LeaderboardEntry(bot_id, name, 1900.0, 5000, "2026-10-06T10:00:00", rank)
+        for rank, (bot_id, name) in enumerate(selected, start=1)
+    ) + (LeaderboardEntry(9999, "low", 1500.0, 5000, None, len(selected) + 1),)
+    value = selection_value(
+        entries,
+        retrieved_at="2026-10-06T14:00:00Z",
+        reference_utc=datetime(2026, 10, 6, 14, 0, 0),
+    )
     path.write_text(json.dumps(value), "utf-8")
     return path
 
@@ -235,7 +239,7 @@ class CliPersistenceTest(unittest.TestCase):
             with self.assertRaises(CoplayerWindowError):
                 prepare_output_root(output)
 
-    def test_fetch_rejects_tampered_selection(self) -> None:
+    def test_fetch_rejects_inconsistent_selection(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
             path = _selection(base / "selection.json", [(BOT, "Mortal-v4b")])

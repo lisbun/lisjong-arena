@@ -26,7 +26,6 @@ from pathlib import Path
 
 from lisjong_arena.riichilab_coplayer.selection import (
     fetch_leaderboard,
-    select_top_bots,
     selected_bots_from_value,
     selection_value,
 )
@@ -90,14 +89,18 @@ def run_select(
 ) -> dict[str, object]:
     root = prepare_output_root(arguments.output_dir)
     moment = (now or datetime.now(UTC)).astimezone(UTC)
-    raws, entries = fetch_leaderboard(transport, pacer=pacer, timeout=arguments.timeout)
-    write_new_json(root / LEADERBOARD_FILENAME, raws)
     reference = moment.replace(tzinfo=None)
+    raws, entries = fetch_leaderboard(
+        transport, pacer=pacer, reference_utc=reference, timeout=arguments.timeout
+    )
+    write_new_json(root / LEADERBOARD_FILENAME, raws)
     value = selection_value(
-        select_top_bots(entries, reference_utc=reference),
+        entries,
         retrieved_at=moment.isoformat().replace("+00:00", "Z"),
         reference_utc=reference,
     )
+    # The stored document must pass the same re-derivation `fetch` applies.
+    selected_bots_from_value(value)
     write_new_json(root / SELECTION_FILENAME, value)
     return value
 
