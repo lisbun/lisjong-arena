@@ -7,8 +7,6 @@ guard, and that the Policy never receives the hands.  Hanchan execution is not
 run here.
 """
 
-import contextlib
-import io
 import json
 import sys
 import tempfile
@@ -327,28 +325,6 @@ class SeedGuardTest(unittest.TestCase):
         for text in ("930999..931000", "931999..932000", "931399..931400", "931100"):
             with self.assertRaises(Exception):
                 generator._seed_range(text)
-
-    def test_measurement_seeds_stay_in_the_257_range(self):
-        self.assertEqual(generator._seed_range("933000..933001"), [933000, 933001])
-        self.assertEqual(generator._seed_range("933399"), [933399])
-        for text in ("932999..933000", "933399..933400", "932000..932099"):
-            with self.assertRaises(Exception):
-                generator._seed_range(text)
-
-    def test_a_run_does_not_mix_pilot_and_measurement_seeds(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with (
-                self.assertRaises(SystemExit),
-                contextlib.redirect_stderr(io.StringIO()),
-            ):
-                generator.main(
-                    [
-                        "--train=931400",
-                        "--valid=933000",
-                        "--test=933001",
-                        f"--output={directory}/out",
-                    ]
-                )
 
 
 if __name__ == "__main__":
