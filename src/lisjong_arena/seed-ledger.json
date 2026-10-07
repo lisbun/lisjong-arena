@@ -199,6 +199,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "0de5ee154fc1566854bebc0c0ff1d8c8efc8151b38299a82a916a5e2c1c51be7",
+      "allocation_timestamp": "2026-10-07T11:26:24.814726Z",
+      "arena_revision": "07554c24bfcabb2ded6cf81991b9ea58a20bc74d",
+      "owner_issue": "lisbun/lisjong#257",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "hand-belief-accuracy-baseline-measurement",
+      "protocol": "hand-belief-accuracy-baseline-measurement-v1",
+      "protocol_revision": "hand-belief-accuracy-baseline-measurement-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/257#issuecomment-6034792131",
+      "purpose": "#257 HandBelief accuracy baseline measurement (development, descriptive)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 933000,
+        "kind": "range",
+        "last": 933399
+      },
+      "seed_membership_identity": "ac9e53b9c8e6946fbcf5f0199f4cb664a8876eb203c1f9c4de3b686e965f3a4e",
+      "split": "TRAIN-VALID-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
