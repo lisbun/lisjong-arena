@@ -40,10 +40,45 @@ python scripts/generate_hand_belief_source_255.py verify-coverage <source>
 | 段階 | 目的 | seed |
 |---|---|---|
 | producer確認用pilot | 生成・読み込み・coverageの動作、費用、層別support（リーチ者・門前非リーチ者・副露者）の確認。**lisjong#257の測定には使わない** | RETIRED 931000..931999のうち未使用の931400..931409（10半荘）。931100..931399（lisjong#236 / #237 / #245の開発）はscriptが拒否する |
-| 測定用population | lisjong#257の測定 | lisjong#257で半荘数・分割を固定した後、seed registryで予約する（このscriptはまだ受け付けない） |
+| 測定用population | lisjong#257の測定 | 933000..933399（400半荘）。pilot用scriptは受け付けず、下の測定用scriptだけが、seed registryの予約と一致する場合に生成する |
 
 生成前に記録する値: Policy identity（`PlacementAwareSpeedCallPolicy`）とlisjong revision、
 lisjong-engine / Arena revision（manifestの`producer`にも入る）、RuleSet、seed範囲。
+
+## 測定用population（lisjong#257）
+
+条件はlisjong#257の事前登録（comment 6034792131）で固定したもので、引数では変えられない。
+
+| 項目 | 値 |
+|---|---|
+| seed | 933000..933399（engine domain `lisjong-engine-project-standard-v1-hanchan-v1`）。1 seed = 1半荘、座席rotationなし |
+| 分割 | train 933000..933159 / valid 933160..933239 / eval 933240..933399。manifestの分割名ではevalは`test` |
+| 生成単位 | 100半荘ずつ4個のv1 source。`unit-k`（k = 0〜3）は train 933000+40k〜+39、valid 933160+20k〜+19、eval 933240+40k〜+39 |
+| seed予約 | owner issue `lisbun/lisjong#257`、protocol `hand-belief-accuracy-baseline-measurement-v1`、population `hand-belief-accuracy-baseline-measurement`、split `TRAIN-VALID-EVAL`。`arena_revision`は実行するmerge commit |
+| backend | `LISJONG_SHANTEN_BACKEND=rust`（Arena pinのwheel）。Pythonでは生成しない |
+
+`scripts/generate_hand_belief_measurement_257.py`は、pilot用scriptの`_play` / `write_source` /
+`verify_source_coverage`をそのまま使う。pilot用scriptのseed制限は変更しない。生成前にlive ledgerの
+allocationを照合し、owner issue・protocol・domain・population・split・seed membership・state
+（RESERVED / COMMITTED）・`arena_revision`のどれかが違えば、対局を始めずに止まる。
+
+```sh
+python scripts/generate_hand_belief_measurement_257.py check-allocation \
+  --seed-ledger <live ledger> --allocation-identity <sha256> --arena-revision <full sha>
+LISJONG_SHANTEN_BACKEND=rust python scripts/generate_hand_belief_measurement_257.py run \
+  --seed-ledger <live ledger> --allocation-identity <sha256> --workers 32 --output <new directory>
+```
+
+出力は`unit-0`〜`unit-3`（各v1 source）と`generation.json`（allocation、実行環境、単位別・半荘別の
+wall time / CPU時間、fileのSHA-256）。半荘別のCPU時間はworker process内で測る。
+
+AWSでは汎用launcher `scripts/aws/lisjong-ec2.ps1`に`scripts/aws/bootstrap-hand-belief-measurement-257.sh`
+を渡す（`c7i.8xlarge` 1台、`-Workers 32`、入力はwheel、引数は`--arena-revision`と`--allocation-identity`）。
+bootstrapはwheelの照合、live ledgerの取得、allocationの照合、生成、単位ごとの`verify-coverage`を行い、
+各単位を`unit-k.tar.xz`として回収対象に置く。seedの予約・commit・retireはしない。
+
+評価では4個の単位をすべて読み、seedの重複・欠落・producer identityの不一致を失敗にする（lisjong側）。
+生成データはcommitしない。
 
 ## 完全性検査
 
