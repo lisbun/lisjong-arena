@@ -40,7 +40,9 @@ python scripts/generate_hand_belief_source_255.py verify-coverage <source>
 | 段階 | 目的 | seed |
 |---|---|---|
 | producer確認用pilot | 生成・読み込み・coverageの動作、費用、層別support（リーチ者・門前非リーチ者・副露者）の確認。**lisjong#257の測定には使わない** | RETIRED 931000..931999のうち未使用の931400..931409（10半荘）。931100..931399（lisjong#236 / #237 / #245の開発）はscriptが拒否する |
-| 測定用population | lisjong#257の測定 | lisjong#257で半荘数・分割を固定した後、seed registryで予約する（このscriptはまだ受け付けない） |
+| 測定用population | lisjong#257の測定 | 933000..933399（400半荘）。lisjong#257の事前登録で分割・実行方法を固定し、生成前にseed registryで予約する |
+
+1回の実行でpilotのseedと測定用のseedを混ぜない（scriptが拒否する）。
 
 生成前に記録する値: Policy identity（`PlacementAwareSpeedCallPolicy`）とlisjong revision、
 lisjong-engine / Arena revision（manifestの`producer`にも入る）、RuleSet、seed範囲。

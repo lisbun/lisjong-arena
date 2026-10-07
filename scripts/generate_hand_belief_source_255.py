@@ -29,11 +29,12 @@ Output directory (all new; existing paths are refused)::
   exactly once.  The strict lisjong reader cannot detect a decision dropped
   from both files together with a matching manifest; this check can.
 
-Development pilot only for now: seeds must be inside the RETIRED
-lisjong-arena#385 engine-domain population (931000..931999) and outside the
-ranges already used by lisjong#236 / #237 / #245 development (931100..931399).
-The measurement population for lisjong#257 is reserved through the seed
-registry once its plan is fixed.  Generated data is not committed.
+Seeds: a run uses either the producer pilot (inside the RETIRED
+lisjong-arena#385 engine-domain population 931000..931999 and outside the
+ranges already used by lisjong#236 / #237 / #245 development, 931100..931399)
+or the lisjong#257 measurement population 933000..933399, which is reserved
+through the seed registry before generation.  A run never mixes the two.
+Generated data is not committed.
 
 Usage::
 
@@ -58,6 +59,8 @@ RETIRED_SEED_FIRST = 931000
 RETIRED_SEED_LAST = 931999
 USED_DEVELOPMENT_FIRST = 931100
 USED_DEVELOPMENT_LAST = 931399
+MEASUREMENT_257_FIRST = 933000
+MEASUREMENT_257_LAST = 933399
 SPLITS = ("train", "valid", "test")
 SEAT_COUNT = 4
 
@@ -338,15 +341,24 @@ def _play(seed: int) -> tuple[int, list[dict], list[dict], list[tuple[int, int]]
 def _seed_range(text: str) -> list[int]:
     first, _, last = text.partition("..")
     seeds = list(range(int(first), int(last or first) + 1))
-    if not seeds or seeds[0] < RETIRED_SEED_FIRST or seeds[-1] > RETIRED_SEED_LAST:
+    if not seeds:
+        raise argparse.ArgumentTypeError("empty seed range")
+    if MEASUREMENT_257_FIRST <= seeds[0] and seeds[-1] <= MEASUREMENT_257_LAST:
+        return seeds
+    if seeds[0] < RETIRED_SEED_FIRST or seeds[-1] > RETIRED_SEED_LAST:
         raise argparse.ArgumentTypeError(
-            "pilot seeds must stay inside the RETIRED #385 range 931000..931999"
+            "seeds must stay inside the RETIRED #385 range 931000..931999 (pilot)"
+            " or the lisjong#257 measurement range 933000..933399"
         )
     if seeds[0] <= USED_DEVELOPMENT_LAST and seeds[-1] >= USED_DEVELOPMENT_FIRST:
         raise argparse.ArgumentTypeError(
             "931100..931399 were already used by lisjong#236 / #237 / #245"
         )
     return seeds
+
+
+def _is_measurement(seed: int) -> bool:
+    return MEASUREMENT_257_FIRST <= seed <= MEASUREMENT_257_LAST
 
 
 def _revision(name: str) -> str:
@@ -491,6 +503,8 @@ def main(argv=None) -> int:
     seeds = [seed for name in SPLITS for seed in splits[name]]
     if len(set(seeds)) != len(seeds):
         parser.error("splits must not share a seed")
+    if len({_is_measurement(seed) for seed in seeds}) != 1:
+        parser.error("a run must not mix pilot and measurement seeds")
     if arguments.output.exists():
         parser.error(f"refusing to overwrite {arguments.output}")
     producer = {
