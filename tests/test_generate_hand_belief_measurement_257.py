@@ -11,6 +11,7 @@ by fakes.
 import contextlib
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -359,6 +360,32 @@ class RunTest(unittest.TestCase):
                         self.root / f"refused-{index}" / "generated" / "generation.json"
                     ).exists()
                 )
+
+    def test_a_bad_later_unit_stops_before_an_earlier_missing_unit_is_played(
+        self,
+    ) -> None:
+        self.run_with()
+        complete = self.root / "first" / "archive"
+        cases = {
+            "unit 0 absent, unit 1 bad": {"absent": (0,), "bad": 1},
+            "unit 0 good, unit 1 absent, unit 2 bad": {"absent": (1,), "bad": 2},
+        }
+        for index, (name, case) in enumerate(cases.items()):
+            with self.subTest(name=name):
+                reuse = self.root / f"partial-{index}" / "archive"
+                shutil.copytree(complete, reuse)
+                for unit in case["absent"]:
+                    for suffix in ("tar.zst", "complete.json"):
+                        (reuse / f"progress-unit-{unit}.{suffix}").unlink()
+                bad = reuse / f"progress-unit-{case['bad']}.tar.zst"
+                bad.write_bytes(bad.read_bytes()[:-1] + b"\0")
+                error, played = self.run_with(
+                    f"two-phase-{index}", reuse=f"partial-{index}"
+                )
+                self.assertIsInstance(error, measurement.MeasurementSourceError)
+                self.assertEqual(played, [])
+                generated = self.root / f"two-phase-{index}" / "generated"
+                self.assertFalse((generated / "generation.json").exists())
 
 
 if __name__ == "__main__":

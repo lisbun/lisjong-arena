@@ -9,17 +9,26 @@
 # once. It never reserves, commits or retires seeds, never reads a label and
 # never interprets the data.
 #
-# Each unit is durable on its own: as soon as a unit is complete the generator
-# puts progress-unit-<k>.tar.zst and then progress-unit-<k>.complete.json at the
-# top of the output directory, and the runner copies every progress* file there
-# to S3 once a minute (as well as on exit). A unit that completed less than
-# about a minute before a forced termination (fail-safe poweroff, instance loss)
-# and the unit being generated at that time are not recoverable.
+# Completed units: as soon as a unit is complete the generator puts
+# progress-unit-<k>.tar.zst and then progress-unit-<k>.complete.json at the top
+# of the output directory. The runner uploads every progress* file there to S3
+# on exit, and also starts an upload pass every 60 seconds while the workload
+# runs. That pass is best effort: 60 seconds is only the wait between passes,
+# the transfer itself takes more time, and a failed upload is just logged.
+# After a forced termination (fail-safe poweroff, instance loss) the exit
+# upload does not run, so nothing is guaranteed for a unit: both of its files
+# may be missing from S3, or only one of them may be there.
 #
-# Re-run after a failed unit: pass the recovered progress-unit-<k>.tar.zst /
-# .complete.json pairs as additional inputs, with the same revision and
-# allocation. Completed units are re-checked and restored; only the missing
-# units are generated. generation.json exists only when all four units do.
+# A recovered unit is usable only if both files were recovered and the
+# archive's SHA-256 and size equal the values in its .complete.json. Check this
+# before a re-run and pass only such pairs; leave any other file out of the
+# inputs. (The generator checks again and stops, before any game, on a lone
+# file or a mismatch.)
+#
+# Re-run after a failed unit: pass the checked pairs as additional inputs, with
+# the same revision and allocation. All of them are re-checked and restored
+# first; only then are the missing units generated. generation.json exists only
+# when all four units do.
 #
 # Inputs: the lisjong_native wheel; on a re-run also the completed units' pairs.
 # Args: --arena-revision <full merged main sha> --allocation-identity <sha256>

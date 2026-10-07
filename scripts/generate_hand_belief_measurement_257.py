@@ -30,10 +30,11 @@ Archive directory (``--archive-dir``; files are added as each unit completes)::
 
 A unit is complete only when both of its archive files exist and agree.  If a
 later unit fails, the completed units stay in the archive directory.  A second
-run with ``--reuse-dir <directory holding those files>`` re-checks each
-completed unit (archive SHA-256, file digests, coverage, and that allocation,
-producer revisions, backend and worker count are the current ones), restores it
-and generates only the units that are missing.  A unit record is not a
+run with ``--reuse-dir <directory holding those files>`` first re-checks and
+restores every completed unit (archive SHA-256, file digests, coverage, and that
+allocation, producer revisions, backend and worker count are the current ones)
+and only then generates the units that are missing; a unit that fails the check
+stops the run before any game is played.  A unit record is not a
 statement about the population: only ``generation.json`` says that all 400
 hanchan exist, and nothing may be evaluated without it.
 
@@ -397,20 +398,26 @@ def run(arguments: argparse.Namespace, *, play=_play_one) -> dict[str, object]:
     output.mkdir(parents=True)
     archive_dir.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
-    units = []
-    for unit in range(UNIT_COUNT):
-        directory = output / f"unit-{unit}"
-        unit_record = None
-        if reuse_dir is not None:
+    # Every completed unit of the earlier run is checked and restored before any
+    # game is played: one bad unit stops the run without generating the others.
+    restored: dict[int, dict[str, object]] = {}
+    if reuse_dir is not None:
+        for unit in range(UNIT_COUNT):
             unit_record = restore_unit(
                 unit,
-                directory,
+                output / f"unit-{unit}",
                 reuse_dir=reuse_dir,
                 prefix=prefix,
                 conditions=conditions,
             )
-        reused = unit_record is not None
+            if unit_record is not None:
+                restored[unit] = unit_record
+    units = []
+    for unit in range(UNIT_COUNT):
+        directory = output / f"unit-{unit}"
+        reused = unit in restored
         if reused:
+            unit_record = restored[unit]
             for name in _archive_names(prefix, unit):
                 shutil.copyfile(reuse_dir / name, archive_dir / f".partial-{name}")
                 os.replace(archive_dir / f".partial-{name}", archive_dir / name)

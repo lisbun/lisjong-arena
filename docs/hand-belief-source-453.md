@@ -82,7 +82,8 @@ LISJONG_SHANTEN_BACKEND=rust python scripts/generate_hand_belief_measurement_257
 - 再実行は、同じ予約・同じrevision・同じ条件で、完成単位のあるdirectoryを`--reuse-dir`に渡す。
   完成単位は、archiveのSHA-256、展開したfileのSHA-256、coverage、manifestの分割とproducer、
   記録のallocation・producer revision・backend・worker数が今回の実行と同じことを検査してから復元する。
-  どれかが違えば対局を始めずに止まる。未完成の単位（固定の0〜3のうち記録がないもの）だけを生成する
+  検査は2段階で行う。まず固定の0〜3のうち記録がある単位をすべて検査・復元し、全部通った後で、
+  記録がない単位だけを生成する。1つでも違えば、どの単位の対局も始めずに止まる
 - **`generation.json`は4単位すべてがそろったときだけ書く。** 単位の記録は母集団の完成を意味しない。
   `generation.json`がない状態では評価しない
 - 任意のseed指定や、単位内の途中からの再開はできない
@@ -93,14 +94,28 @@ LISJONG_SHANTEN_BACKEND=rust python scripts/generate_hand_belief_measurement_257
 を渡す（`c7i.8xlarge` 1台、`-Workers 32`、入力はwheel、引数は`--arena-revision`と`--allocation-identity`）。
 bootstrapはwheelの照合、live ledgerの取得、allocationの照合、生成を行う。seedの予約・commit・retireはしない。
 
-- 完成単位は、出力directory直下の`progress-unit-k.tar.zst`と`progress-unit-k.complete.json`になる。
-  runnerは直下の`progress*`を約1分ごとにS3へ送り、終了時にも全出力を送る
-- 単位の生成が失敗して終了した場合は、通常の終了処理が走り、完成単位はすべて回収できる
-- 強制終了（fail-safeによる電源断、instanceの障害）では終了処理が走らない。この場合に回収できない
-  可能性があるのは、**強制終了の直前およそ1分以内に完成した単位**と、**その時点で生成中だった単位**。
-  それより前に完成した単位はS3に残り、`-Action Collect`で回収できる
-- 再実行では、回収した`progress-unit-k.tar.zst`と`progress-unit-k.complete.json`の組を、wheelと一緒に
-  `-InputFile`へ渡す。bootstrapは入力にそれらがあれば`--reuse-dir`として使う
+- 完成単位は、出力directory直下の`progress-unit-k.tar.zst`と`progress-unit-k.complete.json`になる
+- 単位の生成が失敗して終了した場合は、runnerの通常の終了処理が走り、全出力をS3へ送る。
+  この送信が成功すれば、完成単位はすべて回収できる
+- runnerは実行中にも、直下の`progress*`を送る処理を60秒ごとに始める。これはbest effortである。
+  60秒は処理と処理の間の待ち時間であり、archiveの転送にはさらに時間がかかる。送信の失敗はlogに
+  残るだけで、再送は次の回になる
+- 強制終了（fail-safeによる電源断、instanceの障害）では終了処理が走らない。この場合、
+  **どの単位についても回収は保証されない**。完成済みの単位でも、2つのfileが両方S3にない、
+  片方だけある、のどちらもあり得る。回収時のdownloadが途中で切れることもある。
+  生成中だった単位は回収できない
+
+再実行の手順：
+
+1. `-Action Collect`で回収したfileのうち、単位ごとに`progress-unit-k.tar.zst`と
+   `progress-unit-k.complete.json`の**両方がある**ことを確認する
+2. archiveのSHA-256とbyte数が、完成記録の`archive.sha256` / `archive.bytes`と一致することを確認する
+   （`sha256sum progress-unit-k.tar.zst`）
+3. 1と2を満たした組だけを、wheelと一緒に`-InputFile`へ渡す。片方だけの組、hashが一致しない組は
+   **入力へ入れない**（その単位は再生成になる）
+4. 同じrevision・同じallocation identityで起動する。bootstrapは入力に組があれば`--reuse-dir`として使う
+
+生成scriptは渡された組をもう一度検査する。片方だけのfileや不一致があれば、どの単位も生成せずに止まる。
 
 評価では4個の単位をすべて読み、seedの重複・欠落・producer identityの不一致を失敗にする（lisjong側）。
 生成データはcommitしない。
