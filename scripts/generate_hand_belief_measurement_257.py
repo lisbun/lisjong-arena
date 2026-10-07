@@ -18,14 +18,31 @@ Output directory (all new; an existing path is refused)::
 
     unit-0 .. unit-3/         one v1 source each (manifest / decisions /
                               hand_facts / coverage)
-    generation.json           allocation binding, runtime identity, per-unit and
-                              per-game timings, file digests
+    generation.json           written only when all four units are complete:
+                              allocation binding, runtime identity, unit records
+
+Archive directory (``--archive-dir``; files are added as each unit completes)::
+
+    <prefix>unit-k.tar.zst        the unit's source directory
+    <prefix>unit-k.complete.json  written last: the unit record (file digests,
+                                  per-game timings, producer, allocation,
+                                  backend, workers) and the archive's SHA-256
+
+A unit is complete only when both of its archive files exist and agree.  If a
+later unit fails, the completed units stay in the archive directory.  A second
+run with ``--reuse-dir <directory holding those files>`` re-checks each
+completed unit (archive SHA-256, file digests, coverage, and that allocation,
+producer revisions, backend and worker count are the current ones), restores it
+and generates only the units that are missing.  A unit record is not a
+statement about the population: only ``generation.json`` says that all 400
+hanchan exist, and nothing may be evaluated without it.
 
 Usage::
 
     LISJONG_SHANTEN_BACKEND=rust python scripts/generate_hand_belief_measurement_257.py \\
         run --seed-ledger <live ledger> --allocation-identity <sha256> \\
-        --workers 32 --output <new directory>
+        --workers 32 --output <new directory> --archive-dir <directory> \\
+        [--archive-prefix <text>] [--reuse-dir <directory>]
     python scripts/generate_hand_belief_measurement_257.py check-allocation \\
         --seed-ledger <live ledger> --allocation-identity <sha256> \\
         --arena-revision <full sha>
@@ -38,8 +55,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import sys
+import tarfile
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -62,6 +82,8 @@ the RETIRED lisjong-arena#385 population incl. every pilot, lisjong#245)."""
 
 GENERATION_SCHEMA = "lisjong-arena-hand-belief-measurement-generation-v1"
 GENERATION_FILENAME = "generation.json"
+UNIT_SCHEMA = "lisjong-arena-hand-belief-measurement-unit-v1"
+ARCHIVE_LEVEL = 10
 SOURCE_FILES = ("manifest.json", "decisions.jsonl", "hand_facts.jsonl", "coverage.json")
 _SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 
@@ -177,6 +199,24 @@ def _file_digest(path: Path) -> dict[str, object]:
     return {"bytes": path.stat().st_size, "sha256": digest.hexdigest()}
 
 
+def _split_bounds(splits: dict[str, list[int]]) -> dict[str, list[int]]:
+    return {name: [seeds[0], seeds[-1]] for name, seeds in splits.items()}
+
+
+def _write_new(path: Path, text: str) -> None:
+    """Write ``path`` so that it never exists with partial content."""
+    partial = path.with_name(f".partial-{path.name}")
+    with open(partial, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(partial, path)
+
+
+def _archive_names(prefix: str, unit: int) -> tuple[str, str]:
+    return f"{prefix}unit-{unit}.tar.zst", f"{prefix}unit-{unit}.complete.json"
+
+
 def generate_unit(
     unit: int, directory: Path, *, workers: int, producer: dict[str, str], play
 ) -> dict[str, object]:
@@ -199,8 +239,9 @@ def generate_unit(
     if manifest["splits"] != splits or total != manifest["files"]["decisions"]["rows"]:
         raise MeasurementSourceError(f"unit {unit}: written source is inconsistent")
     return {
+        "schema": UNIT_SCHEMA,
         "unit": unit,
-        "splits": {name: [seeds_[0], seeds_[-1]] for name, seeds_ in splits.items()},
+        "splits": _split_bounds(splits),
         "hanchan": len(seeds),
         "in_scope_decisions": total,
         "wall_seconds": round(time.perf_counter() - started, 3),
@@ -215,6 +256,102 @@ def generate_unit(
             for game, stats in results
         ],
     }
+
+
+def publish_unit(
+    record: dict[str, object], directory: Path, archive_dir: Path, prefix: str
+) -> dict[str, object]:
+    """Put one complete unit into the archive directory; the record goes last."""
+    unit = record["unit"]
+    archive_name, record_name = _archive_names(prefix, unit)
+    for name in (archive_name, record_name):
+        if (archive_dir / name).exists():
+            raise MeasurementSourceError(f"refusing to overwrite {archive_dir / name}")
+    partial = archive_dir / f".partial-{archive_name}"
+    with tarfile.open(partial, "w:zst", level=ARCHIVE_LEVEL) as archive:
+        for name in SOURCE_FILES:
+            archive.add(directory / name, arcname=f"unit-{unit}/{name}")
+    os.replace(partial, archive_dir / archive_name)
+    record = {
+        **record,
+        "archive": {"name": archive_name, **_file_digest(archive_dir / archive_name)},
+    }
+    _write_new(
+        archive_dir / record_name,
+        json.dumps(record, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+    )
+    return record
+
+
+def restore_unit(
+    unit: int,
+    directory: Path,
+    *,
+    reuse_dir: Path,
+    prefix: str,
+    conditions: dict[str, object],
+) -> dict[str, object] | None:
+    """Re-check a completed unit of an earlier run and restore its source.
+
+    Returns ``None`` when the unit was not completed.  Anything else that is not
+    exactly the unit this run would generate stops the run.
+    """
+    archive_name, record_name = _archive_names(prefix, unit)
+    archive_path, record_path = reuse_dir / archive_name, reuse_dir / record_name
+    if not record_path.exists():
+        if archive_path.exists():
+            raise MeasurementSourceError(f"unit {unit}: archive without a unit record")
+        return None
+    if not archive_path.exists():
+        raise MeasurementSourceError(f"unit {unit}: unit record without its archive")
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise MeasurementSourceError(f"unit {unit}: unreadable unit record") from error
+    if type(record) is not dict:
+        raise MeasurementSourceError(f"unit {unit}: unit record is not an object")
+    splits = unit_splits(unit)
+    seeds = [seed for name in dev.SPLITS for seed in splits[name]]
+    expected = {
+        "schema": UNIT_SCHEMA,
+        "unit": unit,
+        "splits": _split_bounds(splits),
+        "hanchan": len(seeds),
+        **conditions,
+    }
+    for field, value in expected.items():
+        if record.get(field) != value:
+            raise MeasurementSourceError(
+                f"unit {unit}: unit record {field} differs from this run"
+            )
+    try:
+        archive_digest = dict(record["archive"])
+        files = {name: record["files"][name] for name in SOURCE_FILES}
+        game_seeds = [game["seed"] for game in record["games"]]
+        decisions = record["in_scope_decisions"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise MeasurementSourceError(f"unit {unit}: malformed unit record") from error
+    if archive_digest != {"name": archive_name, **_file_digest(archive_path)}:
+        raise MeasurementSourceError(f"unit {unit}: archive differs from its record")
+    if game_seeds != seeds:
+        raise MeasurementSourceError(f"unit {unit}: unit record games differ")
+    members = [f"unit-{unit}/{name}" for name in SOURCE_FILES]
+    with tarfile.open(archive_path, "r:zst") as archive:
+        entries = archive.getmembers()
+        if [entry.name for entry in entries] != members or not all(
+            entry.isfile() for entry in entries
+        ):
+            raise MeasurementSourceError(f"unit {unit}: unexpected archive members")
+        archive.extractall(directory.parent, filter="data")
+    for name in SOURCE_FILES:
+        if _file_digest(directory / name) != files[name]:
+            raise MeasurementSourceError(f"unit {unit}: {name} differs from its record")
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    if manifest["splits"] != splits or manifest["producer"] != conditions["producer"]:
+        raise MeasurementSourceError(f"unit {unit}: manifest differs from this run")
+    if dev.verify_source_coverage(directory) != decisions:
+        raise MeasurementSourceError(f"unit {unit}: coverage differs from its record")
+    return record
 
 
 def run(arguments: argparse.Namespace, *, play=_play_one) -> dict[str, object]:
@@ -233,10 +370,12 @@ def run(arguments: argparse.Namespace, *, play=_play_one) -> dict[str, object]:
         arguments.allocation_identity,
         arena_revision=str(runtime["arena_revision"]),
     )
-    output = arguments.output
+    output, archive_dir = arguments.output, arguments.archive_dir
+    reuse_dir, prefix = arguments.reuse_dir, arguments.archive_prefix
     if output.exists():
         raise MeasurementSourceError(f"refusing to overwrite {output}")
-    output.mkdir(parents=True)
+    if reuse_dir is not None and reuse_dir.resolve() == archive_dir.resolve():
+        raise MeasurementSourceError("--reuse-dir must not be the archive directory")
     producer = {
         "arena_revision": dev._arena_revision(),
         "lisjong_engine_revision": dev._revision("lisjong-engine"),
@@ -245,21 +384,51 @@ def run(arguments: argparse.Namespace, *, play=_play_one) -> dict[str, object]:
     }
     if producer["arena_revision"] != record["arena_revision"]:
         raise MeasurementSourceError("the executing checkout is not clean")
+    # What a unit of an earlier run must share with this run to be reused.
+    conditions = {
+        "owner_issue": OWNER_ISSUE,
+        "protocol": PROTOCOL,
+        "population": POPULATION,
+        "allocation_identity": binding["allocation_identity"],
+        "producer": producer,
+        "shanten_backend": runtime["shanten_backend"],
+        "workers": arguments.workers,
+    }
+    output.mkdir(parents=True)
+    archive_dir.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     units = []
     for unit in range(UNIT_COUNT):
-        units.append(
-            generate_unit(
+        directory = output / f"unit-{unit}"
+        unit_record = None
+        if reuse_dir is not None:
+            unit_record = restore_unit(
                 unit,
-                output / f"unit-{unit}",
+                directory,
+                reuse_dir=reuse_dir,
+                prefix=prefix,
+                conditions=conditions,
+            )
+        reused = unit_record is not None
+        if reused:
+            for name in _archive_names(prefix, unit):
+                shutil.copyfile(reuse_dir / name, archive_dir / f".partial-{name}")
+                os.replace(archive_dir / f".partial-{name}", archive_dir / name)
+        else:
+            unit_record = generate_unit(
+                unit,
+                directory,
                 workers=arguments.workers,
                 producer=producer,
                 play=play,
             )
-        )
+            unit_record = publish_unit(
+                {**unit_record, **conditions}, directory, archive_dir, prefix
+            )
+        units.append({**unit_record, "reused": reused})
         print(
-            f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} unit {unit} done "
-            f"({units[-1]['wall_seconds']}s)",
+            f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} unit {unit} "
+            f"{'reused' if reused else 'generated'} ({unit_record['wall_seconds']}s)",
             file=sys.stderr,
             flush=True,
         )
@@ -283,9 +452,9 @@ def run(arguments: argparse.Namespace, *, play=_play_one) -> dict[str, object]:
         "ledger_revision": seed_registry.ledger_revision(ledger),
         "units": units,
     }
-    (output / GENERATION_FILENAME).write_text(
+    _write_new(
+        output / GENERATION_FILENAME,
         json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
-        encoding="utf-8",
     )
     return document
 
@@ -310,6 +479,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--workers", type=int, required=True)
     run_parser.add_argument("--output", type=Path, required=True)
+    run_parser.add_argument("--archive-dir", type=Path, required=True)
+    run_parser.add_argument("--archive-prefix", default="")
+    run_parser.add_argument("--reuse-dir", type=Path)
     check = commands.add_parser(
         "check-allocation", help="no-game authorization check of an allocation"
     )

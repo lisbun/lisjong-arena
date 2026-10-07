@@ -66,16 +66,41 @@ allocationを照合し、owner issue・protocol・domain・population・split・
 python scripts/generate_hand_belief_measurement_257.py check-allocation \
   --seed-ledger <live ledger> --allocation-identity <sha256> --arena-revision <full sha>
 LISJONG_SHANTEN_BACKEND=rust python scripts/generate_hand_belief_measurement_257.py run \
-  --seed-ledger <live ledger> --allocation-identity <sha256> --workers 32 --output <new directory>
+  --seed-ledger <live ledger> --allocation-identity <sha256> --workers 32 \
+  --output <new directory> --archive-dir <directory> [--reuse-dir <完成単位のあるdirectory>]
 ```
 
-出力は`unit-0`〜`unit-3`（各v1 source）と`generation.json`（allocation、実行環境、単位別・半荘別の
-wall time / CPU時間、fileのSHA-256）。半荘別のCPU時間はworker process内で測る。
+出力は`unit-0`〜`unit-3`（各v1 source）と`generation.json`（allocation、実行環境、単位の記録）。
+半荘別のCPU時間はworker process内で測る。
 
-AWSでは汎用launcher `scripts/aws/lisjong-ec2.ps1`に`scripts/aws/bootstrap-hand-belief-measurement-257.sh`
+### 単位ごとの確定と、失敗後の再実行
+
+- 単位が完成するたびに、`--archive-dir`へ`unit-k.tar.zst`（その単位のsource）を置き、最後に
+  `unit-k.complete.json`（fileのSHA-256、半荘別の時間、producer、allocation、backend、worker数、
+  archiveのSHA-256）を置く。両方がそろい、互いに一致する単位だけを完成とみなす
+- 後の単位が失敗しても、完成した単位は`--archive-dir`に残る。`generation.json`は書かれない
+- 再実行は、同じ予約・同じrevision・同じ条件で、完成単位のあるdirectoryを`--reuse-dir`に渡す。
+  完成単位は、archiveのSHA-256、展開したfileのSHA-256、coverage、manifestの分割とproducer、
+  記録のallocation・producer revision・backend・worker数が今回の実行と同じことを検査してから復元する。
+  どれかが違えば対局を始めずに止まる。未完成の単位（固定の0〜3のうち記録がないもの）だけを生成する
+- **`generation.json`は4単位すべてがそろったときだけ書く。** 単位の記録は母集団の完成を意味しない。
+  `generation.json`がない状態では評価しない
+- 任意のseed指定や、単位内の途中からの再開はできない
+
+### AWSでの実行
+
+汎用launcher `scripts/aws/lisjong-ec2.ps1`に`scripts/aws/bootstrap-hand-belief-measurement-257.sh`
 を渡す（`c7i.8xlarge` 1台、`-Workers 32`、入力はwheel、引数は`--arena-revision`と`--allocation-identity`）。
-bootstrapはwheelの照合、live ledgerの取得、allocationの照合、生成、単位ごとの`verify-coverage`を行い、
-各単位を`unit-k.tar.xz`として回収対象に置く。seedの予約・commit・retireはしない。
+bootstrapはwheelの照合、live ledgerの取得、allocationの照合、生成を行う。seedの予約・commit・retireはしない。
+
+- 完成単位は、出力directory直下の`progress-unit-k.tar.zst`と`progress-unit-k.complete.json`になる。
+  runnerは直下の`progress*`を約1分ごとにS3へ送り、終了時にも全出力を送る
+- 単位の生成が失敗して終了した場合は、通常の終了処理が走り、完成単位はすべて回収できる
+- 強制終了（fail-safeによる電源断、instanceの障害）では終了処理が走らない。この場合に回収できない
+  可能性があるのは、**強制終了の直前およそ1分以内に完成した単位**と、**その時点で生成中だった単位**。
+  それより前に完成した単位はS3に残り、`-Action Collect`で回収できる
+- 再実行では、回収した`progress-unit-k.tar.zst`と`progress-unit-k.complete.json`の組を、wheelと一緒に
+  `-InputFile`へ渡す。bootstrapは入力にそれらがあれば`--reuse-dir`として使う
 
 評価では4個の単位をすべて読み、seedの重複・欠落・producer identityの不一致を失敗にする（lisjong側）。
 生成データはcommitしない。

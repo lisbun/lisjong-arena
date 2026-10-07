@@ -2,10 +2,14 @@
 
 Pins the pre-registered seed population, split and units, the Seed Registry
 authorization (every mismatch fails closed before a game is played), the rust
-backend requirement and the generation record.  Hanchan execution and the v1
-writer (covered by test_generate_hand_belief_source_255) are replaced by fakes.
+backend requirement, the per-unit archive, the re-run that reuses completed
+units after a later unit failed, and the generation record.  Hanchan execution
+and the v1 writer (covered by test_generate_hand_belief_source_255) are replaced
+by fakes.
 """
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -22,6 +26,7 @@ sys.path.insert(0, str(_SCRIPTS))
 import generate_hand_belief_measurement_257 as measurement  # noqa: E402
 
 ARENA = "a" * 40
+UNIT_2_SEED = 933085
 
 
 def fake_play(seed: int):
@@ -31,9 +36,15 @@ def fake_play(seed: int):
 
 def fake_write_source(output, *, splits, games, producer):
     output.mkdir(parents=False, exist_ok=False)
+    manifest = {
+        "splits": splits,
+        "producer": producer,
+        "files": {"decisions": {"rows": len(games)}},
+    }
     for name in measurement.SOURCE_FILES:
-        (output / name).write_text(name, encoding="utf-8")
-    return {"splits": splits, "files": {"decisions": {"rows": len(games)}}}
+        text = json.dumps(manifest) if name == "manifest.json" else f"{name} {splits}"
+        (output / name).write_text(text, encoding="utf-8")
+    return manifest
 
 
 def reserved_ledger(**overrides):
@@ -131,25 +142,52 @@ class AuthorizeTest(unittest.TestCase):
 
 
 class RunTest(unittest.TestCase):
-    def run_with(self, directory, *, backend="rust", ledger=None, identity=None):
-        if ledger is None:
-            ledger, record = reserved_ledger()
-            identity = record["allocation_identity"]
-        ledger_path = Path(directory) / "ledger.json"
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.ledger, record = reserved_ledger()
+        self.identity = record["allocation_identity"]
+
+    def run_with(
+        self,
+        name="first",
+        *,
+        backend="rust",
+        ledger=None,
+        identity=None,
+        reuse=None,
+        fail_at=None,
+        workers=1,
+        revision=ARENA,
+        prefix="progress-",
+    ):
+        """Run into ``<root>/<name>``; returns (document or error, played seeds)."""
+        ledger = ledger or self.ledger
+        ledger_path = self.root / f"{name}-ledger.json"
         ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
-        runtime = {"arena_revision": ARENA, "shanten_backend": {"name": backend}}
+        runtime = {"arena_revision": revision, "shanten_backend": {"name": backend}}
         played = []
 
         def play(seed):
+            if seed == fail_at:
+                raise RuntimeError("engine failure")
             played.append(seed)
             return fake_play(seed)
 
         arguments = Namespace(
             seed_ledger=ledger_path,
-            allocation_identity=identity,
-            workers=1,
-            output=Path(directory) / "out",
+            allocation_identity=identity or self.identity,
+            workers=workers,
+            output=self.root / name / "generated",
+            archive_dir=self.root / name / "archive",
+            archive_prefix=prefix,
+            reuse_dir=None if reuse is None else self.root / reuse / "archive",
         )
+        pool = mock.MagicMock()
+        pool.return_value.__enter__.return_value.map = lambda function, seeds: [
+            function(seed) for seed in seeds
+        ]
         with (
             mock.patch.object(
                 runtime_identity, "runtime_binding", return_value=runtime
@@ -158,58 +196,169 @@ class RunTest(unittest.TestCase):
             mock.patch.object(
                 measurement.dev, "verify_source_coverage", return_value=100
             ),
-            mock.patch.object(measurement.dev, "_arena_revision", return_value=ARENA),
+            mock.patch.object(
+                measurement.dev, "_arena_revision", return_value=revision
+            ),
             mock.patch.object(measurement.dev, "_revision", return_value="b" * 40),
+            mock.patch.object(measurement, "ProcessPoolExecutor", pool),
+            contextlib.redirect_stderr(io.StringIO()),
         ):
             try:
                 return measurement.run(arguments, play=play), played
-            except measurement.MeasurementSourceError as error:
+            except (measurement.MeasurementSourceError, RuntimeError) as error:
                 return error, played
 
+    def archive(self, name="first"):
+        return sorted(path.name for path in (self.root / name / "archive").iterdir())
+
     def test_run_generates_four_units_over_every_seed_once(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            document, played = self.run_with(directory)
-            self.assertEqual(sorted(played), list(measurement.MEASUREMENT_SEEDS))
-            self.assertEqual([unit["hanchan"] for unit in document["units"]], [100] * 4)
-            self.assertEqual(
-                document["units"][1]["splits"],
-                {
-                    "train": [933040, 933079],
-                    "valid": [933180, 933199],
-                    "test": [933280, 933319],
-                },
-            )
-            self.assertEqual(document["units"][0]["games"][0]["cpu_seconds"], 1.25)
-            self.assertEqual(document["allocation"]["state"], seed_registry.RESERVED)
-            written = json.loads(
-                (Path(directory) / "out" / "generation.json").read_text("utf-8")
-            )
-            self.assertEqual(written, document)
-            for unit in range(4):
-                self.assertTrue(
-                    (
-                        Path(directory) / "out" / f"unit-{unit}" / "manifest.json"
-                    ).exists()
-                )
+        document, played = self.run_with()
+        self.assertEqual(sorted(played), list(measurement.MEASUREMENT_SEEDS))
+        self.assertEqual([unit["hanchan"] for unit in document["units"]], [100] * 4)
+        self.assertEqual([unit["reused"] for unit in document["units"]], [False] * 4)
+        self.assertEqual(
+            document["units"][1]["splits"],
+            {
+                "train": [933040, 933079],
+                "valid": [933180, 933199],
+                "test": [933280, 933319],
+            },
+        )
+        self.assertEqual(document["units"][0]["games"][0]["cpu_seconds"], 1.25)
+        self.assertEqual(document["allocation"]["state"], seed_registry.RESERVED)
+        generated = self.root / "first" / "generated"
+        written = json.loads((generated / "generation.json").read_text("utf-8"))
+        self.assertEqual(written, document)
+        self.assertEqual(
+            self.archive(),
+            sorted(
+                f"progress-unit-{unit}.{suffix}"
+                for unit in range(4)
+                for suffix in ("tar.zst", "complete.json")
+            ),
+        )
 
     def test_python_backend_and_bad_allocation_stop_before_any_game(self) -> None:
         other, record = reserved_ledger(population="another-population")
-        for options in (
-            {"backend": "python"},
-            {"ledger": other, "identity": record["allocation_identity"]},
+        for index, options in enumerate(
+            (
+                {"backend": "python"},
+                {"ledger": other, "identity": record["allocation_identity"]},
+            )
         ):
-            with self.subTest(options=options), tempfile.TemporaryDirectory() as d:
-                error, played = self.run_with(d, **options)
+            with self.subTest(options=options):
+                error, played = self.run_with(f"stop-{index}", **options)
                 self.assertIsInstance(error, measurement.MeasurementSourceError)
                 self.assertEqual(played, [])
-                self.assertFalse((Path(d) / "out").exists())
+                self.assertFalse((self.root / f"stop-{index}").exists())
 
     def test_existing_output_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "out").mkdir()
-            error, played = self.run_with(directory)
-            self.assertIsInstance(error, measurement.MeasurementSourceError)
-            self.assertEqual(played, [])
+        (self.root / "first" / "generated").mkdir(parents=True)
+        error, played = self.run_with()
+        self.assertIsInstance(error, measurement.MeasurementSourceError)
+        self.assertEqual(played, [])
+
+    def test_a_failed_later_unit_keeps_the_completed_units_only(self) -> None:
+        error, played = self.run_with(fail_at=UNIT_2_SEED)
+        self.assertIsInstance(error, RuntimeError)
+        self.assertEqual(
+            self.archive(),
+            [
+                "progress-unit-0.complete.json",
+                "progress-unit-0.tar.zst",
+                "progress-unit-1.complete.json",
+                "progress-unit-1.tar.zst",
+            ],
+        )
+        # No statement that the population exists.
+        self.assertFalse(
+            (self.root / "first" / "generated" / "generation.json").exists()
+        )
+        record = json.loads(
+            (
+                self.root / "first" / "archive" / "progress-unit-1.complete.json"
+            ).read_text("utf-8")
+        )
+        self.assertEqual(record["allocation_identity"], self.identity)
+        self.assertEqual(record["producer"]["arena_revision"], ARENA)
+        self.assertEqual(record["workers"], 1)
+
+    def test_a_second_run_generates_only_the_missing_units(self) -> None:
+        self.run_with(fail_at=UNIT_2_SEED)
+        document, played = self.run_with("second", reuse="first")
+        missing = [
+            seed
+            for unit in (2, 3)
+            for seeds in measurement.unit_splits(unit).values()
+            for seed in seeds
+        ]
+        self.assertEqual(played, missing)
+        self.assertEqual(
+            [unit["reused"] for unit in document["units"]], [True, True, False, False]
+        )
+        self.assertEqual(len(self.archive("second")), 8)
+        generated = self.root / "second" / "generated"
+        self.assertTrue((generated / "generation.json").exists())
+        for unit in range(4):
+            first = self.root / "first" / "generated" / f"unit-{unit}" / "manifest.json"
+            restored = generated / f"unit-{unit}" / "manifest.json"
+            if unit < 2:
+                self.assertEqual(restored.read_bytes(), first.read_bytes())
+            self.assertTrue(restored.exists())
+
+    def test_a_changed_or_foreign_completed_unit_is_refused(self) -> None:
+        self.run_with(fail_at=UNIT_2_SEED)
+        archive = self.root / "first" / "archive"
+        record_path = archive / "progress-unit-0.complete.json"
+        archive_path = archive / "progress-unit-0.tar.zst"
+        original_record = record_path.read_bytes()
+        original_archive = archive_path.read_bytes()
+
+        def edited(**changes):
+            record = json.loads(original_record)
+            record.update(changes)
+            return json.dumps(record).encode("utf-8")
+
+        other_ledger, other = reserved_ledger(arena_revision="d" * 40)
+        cases = {
+            "archive bytes": {"archive": original_archive[:-1] + b"\0"},
+            "record digest": {"record": edited(archive={"name": "x"})},
+            "file digest": {"record": edited(files={})},
+            "another unit": {"record": edited(unit=1)},
+            "another allocation": {"record": edited(allocation_identity="0" * 64)},
+            "missing archive": {"archive": None},
+            "missing record": {"record": None},
+            "not json": {"record": b"{"},
+            "another worker count": {"options": {"workers": 2}},
+            "another revision": {
+                "options": {
+                    "revision": "d" * 40,
+                    "ledger": other_ledger,
+                    "identity": other["allocation_identity"],
+                }
+            },
+        }
+        for index, (name, case) in enumerate(cases.items()):
+            with self.subTest(name=name):
+                for path, original, key in (
+                    (record_path, original_record, "record"),
+                    (archive_path, original_archive, "archive"),
+                ):
+                    content = case.get(key, original)
+                    if content is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        path.write_bytes(content)
+                error, played = self.run_with(
+                    f"refused-{index}", reuse="first", **case.get("options", {})
+                )
+                self.assertIsInstance(error, measurement.MeasurementSourceError)
+                self.assertEqual(played, [])
+                self.assertFalse(
+                    (
+                        self.root / f"refused-{index}" / "generated" / "generation.json"
+                    ).exists()
+                )
 
 
 if __name__ == "__main__":

@@ -9,7 +9,19 @@
 # once. It never reserves, commits or retires seeds, never reads a label and
 # never interprets the data.
 #
-# Inputs: the lisjong_native wheel.
+# Each unit is durable on its own: as soon as a unit is complete the generator
+# puts progress-unit-<k>.tar.zst and then progress-unit-<k>.complete.json at the
+# top of the output directory, and the runner copies every progress* file there
+# to S3 once a minute (as well as on exit). A unit that completed less than
+# about a minute before a forced termination (fail-safe poweroff, instance loss)
+# and the unit being generated at that time are not recoverable.
+#
+# Re-run after a failed unit: pass the recovered progress-unit-<k>.tar.zst /
+# .complete.json pairs as additional inputs, with the same revision and
+# allocation. Completed units are re-checked and restored; only the missing
+# units are generated. generation.json exists only when all four units do.
+#
+# Inputs: the lisjong_native wheel; on a re-run also the completed units' pairs.
 # Args: --arena-revision <full merged main sha> --allocation-identity <sha256>
 set -euo pipefail
 
@@ -19,6 +31,8 @@ FROZEN_LISJONG_REVISION="e6346ed2bb9e992138c05c4be367bd6a05ed00bc"
 FROZEN_ENGINE_REVISION="8735e89e1aea000ab59368d0368d476787827741"
 REQUIRED_WORKERS=32
 UNIT_COUNT=4
+# The runner syncs top-level progress* files of the output directory to S3.
+ARCHIVE_PREFIX="progress-"
 REPOSITORY_URL="https://github.com/lisbun/lisjong-arena.git"
 
 ARENA_REVISION=""
@@ -66,7 +80,7 @@ GENERATED="$WORK_DIR/generated"
 WHEEL="$LISJONG_INPUT_DIR/$WHEEL_FILE"
 LEDGER="$OUT/environment/seed-ledger.json"
 if [[ -e "$WORK_DIR" ]]; then echo "work directory is not fresh" >&2; exit 1; fi
-mkdir -p "$WORK_DIR" "$OUT/environment" "$OUT/sources"
+mkdir -p "$WORK_DIR" "$OUT/environment"
 progress() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*" >>"$LISJONG_PROGRESS_FILE"; }
 
 echo "$WHEEL_SHA256  $WHEEL" | sha256sum --strict -c - >"$OUT/environment/wheel-sha256.txt"
@@ -117,11 +131,19 @@ fi
     >"$OUT/environment/used-memory-kib.txt" &
 SAMPLER=$!
 
+# Completed units of an earlier run, if any were passed as inputs.
+REUSE=()
+if compgen -G "$LISJONG_INPUT_DIR/${ARCHIVE_PREFIX}unit-*" >/dev/null; then
+    REUSE=(--reuse-dir "$LISJONG_INPUT_DIR")
+    progress "re-run: reusing completed units from the inputs"
+fi
+
 progress "generation start"
 set +e
 "$PY" scripts/generate_hand_belief_measurement_257.py run \
     --seed-ledger "$LEDGER" --allocation-identity "$ALLOCATION_IDENTITY" \
     --workers "$LISJONG_WORKERS" --output "$GENERATED" \
+    --archive-dir "$OUT" --archive-prefix "$ARCHIVE_PREFIX" "${REUSE[@]}" \
     >"$OUT/generation.stdout.json" 2>>"$LISJONG_PROGRESS_FILE"
 RC=$?
 set -e
@@ -129,15 +151,10 @@ kill "$SAMPLER" 2>/dev/null || true
 progress "generation exit=$RC"
 if [[ "$RC" != "0" ]]; then exit 1; fi
 
-# Evidence: the generation record, each unit's manifest / coverage, and each
-# unit as one compressed archive. All four units or nothing.
-cp "$GENERATED/generation.json" "$OUT/generation.json"
+# Only now does the population exist: all four units are complete.
 for ((unit = 0; unit < UNIT_COUNT; unit++)); do
-    "$PY" scripts/generate_hand_belief_source_255.py verify-coverage "$GENERATED/unit-$unit" \
-        >"$OUT/sources/unit-$unit.verify-coverage.json"
-    cp "$GENERATED/unit-$unit/manifest.json" "$OUT/sources/unit-$unit.manifest.json"
-    cp "$GENERATED/unit-$unit/coverage.json" "$OUT/sources/unit-$unit.coverage.json"
-    tar -C "$GENERATED" -cf - "unit-$unit" | xz -T0 -6 >"$OUT/sources/unit-$unit.tar.xz"
-    progress "unit $unit archived"
+    test -f "$OUT/${ARCHIVE_PREFIX}unit-$unit.tar.zst"
+    test -f "$OUT/${ARCHIVE_PREFIX}unit-$unit.complete.json"
 done
+cp "$GENERATED/generation.json" "$OUT/generation.json"
 progress "done"
