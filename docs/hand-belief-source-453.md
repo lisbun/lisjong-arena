@@ -40,10 +40,85 @@ python scripts/generate_hand_belief_source_255.py verify-coverage <source>
 | 段階 | 目的 | seed |
 |---|---|---|
 | producer確認用pilot | 生成・読み込み・coverageの動作、費用、層別support（リーチ者・門前非リーチ者・副露者）の確認。**lisjong#257の測定には使わない** | RETIRED 931000..931999のうち未使用の931400..931409（10半荘）。931100..931399（lisjong#236 / #237 / #245の開発）はscriptが拒否する |
-| 測定用population | lisjong#257の測定 | lisjong#257で半荘数・分割を固定した後、seed registryで予約する（このscriptはまだ受け付けない） |
+| 測定用population | lisjong#257の測定 | 933000..933399（400半荘）。pilot用scriptは受け付けず、下の測定用scriptだけが、seed registryの予約と一致する場合に生成する |
 
 生成前に記録する値: Policy identity（`PlacementAwareSpeedCallPolicy`）とlisjong revision、
 lisjong-engine / Arena revision（manifestの`producer`にも入る）、RuleSet、seed範囲。
+
+## 測定用population（lisjong#257）
+
+条件はlisjong#257の事前登録（comment 6034792131）で固定したもので、引数では変えられない。
+
+| 項目 | 値 |
+|---|---|
+| seed | 933000..933399（engine domain `lisjong-engine-project-standard-v1-hanchan-v1`）。1 seed = 1半荘、座席rotationなし |
+| 分割 | train 933000..933159 / valid 933160..933239 / eval 933240..933399。manifestの分割名ではevalは`test` |
+| 生成単位 | 100半荘ずつ4個のv1 source。`unit-k`（k = 0〜3）は train 933000+40k〜+39、valid 933160+20k〜+19、eval 933240+40k〜+39 |
+| seed予約 | owner issue `lisbun/lisjong#257`、protocol `hand-belief-accuracy-baseline-measurement-v1`、population `hand-belief-accuracy-baseline-measurement`、split `TRAIN-VALID-EVAL`。`arena_revision`は実行するmerge commit |
+| backend | `LISJONG_SHANTEN_BACKEND=rust`（Arena pinのwheel）。Pythonでは生成しない |
+
+`scripts/generate_hand_belief_measurement_257.py`は、pilot用scriptの`_play` / `write_source` /
+`verify_source_coverage`をそのまま使う。pilot用scriptのseed制限は変更しない。生成前にlive ledgerの
+allocationを照合し、owner issue・protocol・domain・population・split・seed membership・state
+（RESERVED / COMMITTED）・`arena_revision`のどれかが違えば、対局を始めずに止まる。
+
+```sh
+python scripts/generate_hand_belief_measurement_257.py check-allocation \
+  --seed-ledger <live ledger> --allocation-identity <sha256> --arena-revision <full sha>
+LISJONG_SHANTEN_BACKEND=rust python scripts/generate_hand_belief_measurement_257.py run \
+  --seed-ledger <live ledger> --allocation-identity <sha256> --workers 32 \
+  --output <new directory> --archive-dir <directory> [--reuse-dir <完成単位のあるdirectory>]
+```
+
+出力は`unit-0`〜`unit-3`（各v1 source）と`generation.json`（allocation、実行環境、単位の記録）。
+半荘別のCPU時間はworker process内で測る。
+
+### 単位ごとの確定と、失敗後の再実行
+
+- 単位が完成するたびに、`--archive-dir`へ`unit-k.tar.zst`（その単位のsource）を置き、最後に
+  `unit-k.complete.json`（fileのSHA-256、半荘別の時間、producer、allocation、backend、worker数、
+  archiveのSHA-256）を置く。両方がそろい、互いに一致する単位だけを完成とみなす
+- 後の単位が失敗しても、完成した単位は`--archive-dir`に残る。`generation.json`は書かれない
+- 再実行は、同じ予約・同じrevision・同じ条件で、完成単位のあるdirectoryを`--reuse-dir`に渡す。
+  完成単位は、archiveのSHA-256、展開したfileのSHA-256、coverage、manifestの分割とproducer、
+  記録のallocation・producer revision・backend・worker数が今回の実行と同じことを検査してから復元する。
+  検査は2段階で行う。まず固定の0〜3のうち記録がある単位をすべて検査・復元し、全部通った後で、
+  記録がない単位だけを生成する。1つでも違えば、どの単位の対局も始めずに止まる
+- **`generation.json`は4単位すべてがそろったときだけ書く。** 単位の記録は母集団の完成を意味しない。
+  `generation.json`がない状態では評価しない
+- 任意のseed指定や、単位内の途中からの再開はできない
+
+### AWSでの実行
+
+汎用launcher `scripts/aws/lisjong-ec2.ps1`に`scripts/aws/bootstrap-hand-belief-measurement-257.sh`
+を渡す（`c7i.8xlarge` 1台、`-Workers 32`、入力はwheel、引数は`--arena-revision`と`--allocation-identity`）。
+bootstrapはwheelの照合、live ledgerの取得、allocationの照合、生成を行う。seedの予約・commit・retireはしない。
+
+- 完成単位は、出力directory直下の`progress-unit-k.tar.zst`と`progress-unit-k.complete.json`になる
+- 単位の生成が失敗して終了した場合は、runnerの通常の終了処理が走り、全出力をS3へ送る。
+  この送信が成功すれば、完成単位はすべて回収できる
+- runnerは実行中にも、直下の`progress*`を送る処理を60秒ごとに始める。これはbest effortである。
+  60秒は処理と処理の間の待ち時間であり、archiveの転送にはさらに時間がかかる。送信の失敗はlogに
+  残るだけで、再送は次の回になる
+- 強制終了（fail-safeによる電源断、instanceの障害）では終了処理が走らない。この場合、
+  **どの単位についても回収は保証されない**。完成済みの単位でも、2つのfileが両方S3にない、
+  片方だけある、のどちらもあり得る。回収時のdownloadが途中で切れることもある。
+  生成中だった単位は回収できない
+
+再実行の手順：
+
+1. `-Action Collect`で回収したfileのうち、単位ごとに`progress-unit-k.tar.zst`と
+   `progress-unit-k.complete.json`の**両方がある**ことを確認する
+2. archiveのSHA-256とbyte数が、完成記録の`archive.sha256` / `archive.bytes`と一致することを確認する
+   （`sha256sum progress-unit-k.tar.zst`）
+3. 1と2を満たした組だけを、wheelと一緒に`-InputFile`へ渡す。片方だけの組、hashが一致しない組は
+   **入力へ入れない**（その単位は再生成になる）
+4. 同じrevision・同じallocation identityで起動する。bootstrapは入力に組があれば`--reuse-dir`として使う
+
+生成scriptは渡された組をもう一度検査する。片方だけのfileや不一致があれば、どの単位も生成せずに止まる。
+
+評価では4個の単位をすべて読み、seedの重複・欠落・producer identityの不一致を失敗にする（lisjong側）。
+生成データはcommitしない。
 
 ## 完全性検査
 
