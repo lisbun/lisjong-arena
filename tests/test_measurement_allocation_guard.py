@@ -235,6 +235,7 @@ class BootstrapSyntaxTest(unittest.TestCase):
         for name in (
             "measurement-source-prologue.sh",
             "bootstrap-ron-legal-baseline-460.sh",
+            "bootstrap-hand-belief-formal-test-464.sh",
         ):
             with self.subTest(name=name):
                 checked = subprocess.run(
