@@ -12,6 +12,11 @@ baselineのfit・集約・評価・推論semanticsはlisjong#262が所有する�
 そのまま使い、2半荘pilot CLIと#257/#258/#259のpopulation・guardは変更しない。1 seed = 1半荘を、
 independentな1個のsource（`base/` + `ron/`）として生成する。400半荘を1つのsourceに結合しない。
 
+live ledgerの読込、allocation照合、population骨格検査（分割・長さ・使用済み範囲との非重複）は、共通の
+`lisjong_arena.measurement_allocation_guard`を使う（#463）。seed・分割・owner・protocol・populationは
+このscriptの固定presetとして渡し、共通module側に既定値はない。判定とplan / receipt / `generation.json`の
+形式は#460の実行時から変えていない。
+
 | 項目 | 値（引数では変えられない） |
 |---|---|
 | seed | 936000..936399（engine domain `lisjong-engine-project-standard-v1-hanchan-v1`）。rotationなし |
@@ -80,6 +85,11 @@ SHA-256 `170ef3489ef5ae843dfadd727628f66ebbd5f30c667b8fce8621685dffae2afc`、
 pin一致、live ledger取得、`check-allocation`、生成、`verify-collected`を行う。
 seedの予約・commit・retireはしない。
 
+引数検査から`check-allocation`までの前半は、共通prologue `scripts/aws/measurement-source-prologue.sh`へ
+切り出した（#463）。bootstrapは入力directoryのprologueを`source`するので、**prologueも`-InputFile`で渡す**。
+渡さなければ、installの前に停止する。この共通形は`bash -n`と起動直後の拒否だけを確認しており、
+**AWS上では未実行**である（#460の本実行は分割前のbootstrapで行った）。次の実AWS実行までは未確認として扱う。
+
 ### 手順
 
 1. 本PRをmergeする（ユーザー承認）。
@@ -104,7 +114,8 @@ seedの予約・commit・retireはしない。
      -MinMemoryMiBPerWorker 2048 `
      -Bootstrap .\scripts\aws\bootstrap-ron-legal-baseline-460.sh `
      -BootstrapArgs @('--arena-revision','<merge-sha>','--allocation-identity','<identity>') `
-     -InputFile @('<wheel directory>\lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl') `
+     -InputFile @('<wheel directory>\lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl',
+                  '.\scripts\aws\measurement-source-prologue.sh') `
      -EstimatedRuntimeHours @(0.5, 2) -FailSafeHours 6 -CostBudgetUsd 10
    ```
 

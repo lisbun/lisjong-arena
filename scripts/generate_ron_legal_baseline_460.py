@@ -53,11 +53,11 @@ Generated data is not committed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
 import platform
-import re
 import sys
 import sysconfig
 import tarfile
@@ -65,6 +65,9 @@ import time
 from collections import namedtuple
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+
+from lisjong_arena import measurement_allocation_guard as guard
+from lisjong_arena import seed_registry
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate_ron_legal_source_457 as ron  # noqa: E402
@@ -107,7 +110,6 @@ SOURCE_FILES = (
     "ron/ron_facts.jsonl",
     "ron/ron_history.jsonl",
 )
-_SHA256 = re.compile(r"\A[0-9a-f]{64}\Z")
 
 
 class BaselineSourceError(RuntimeError):
@@ -134,23 +136,39 @@ def seed_splits(seed: int) -> dict[str, list[int]]:
     return {key: [seed] if key == name else [] for key in base.SPLITS}
 
 
+def allocation_preset() -> guard.AllocationPreset:
+    """This population's fixed allocation preset; no argument changes it."""
+    return guard.AllocationPreset(
+        owner_issue=OWNER_ISSUE,
+        protocol=PROTOCOL,
+        seed_domain=seed_registry.LISJONG_ENGINE_HANCHAN_SEED_DOMAIN,
+        population=POPULATION,
+        split=SPLIT,
+        seeds=MEASUREMENT_SEEDS,
+        splits=(("train", TRAIN_SEEDS), ("valid", VALID_SEEDS), ("test", EVAL_SEEDS)),
+        split_sizes=(160, 80, 160),
+        used_ranges=USED_RANGES,
+    )
+
+
+@contextlib.contextmanager
+def _guarded():
+    """Report a shared allocation guard failure as this script's STOP."""
+    try:
+        yield
+    except guard.AllocationGuardError as error:
+        raise BaselineSourceError(str(error)) from error
+
+
 def check_population() -> None:
     """The protocol's own seed population must be internally consistent."""
-    if TRAIN_SEEDS + VALID_SEEDS + EVAL_SEEDS != MEASUREMENT_SEEDS:
-        raise BaselineSourceError("splits must partition 936000..936399 in order")
-    if (len(TRAIN_SEEDS), len(VALID_SEEDS), len(EVAL_SEEDS)) != (160, 80, 160):
-        raise BaselineSourceError("splits must be train 160 / valid 80 / eval 160")
-    if any(seed in used for seed in MEASUREMENT_SEEDS for used in USED_RANGES):
-        raise BaselineSourceError("measurement seeds overlap already used seeds")
+    with _guarded():
+        guard.check_population(allocation_preset())
 
 
 def load_live_ledger(path: Path) -> dict[str, object]:
-    from lisjong_arena import seed_registry
-
-    try:
-        return seed_registry.load_ledger(path, strict_serialization=False)
-    except seed_registry.SeedRegistryError as error:
-        raise BaselineSourceError(f"invalid live ledger: {error}") from error
+    with _guarded():
+        return guard.load_live_ledger(path)
 
 
 def authorize(
@@ -161,35 +179,13 @@ def authorize(
     Only a fresh RESERVED allocation of the clean executing revision is accepted.
     Returns ``(binding, allocation record)``.
     """
-    from lisjong_arena import seed_registry
-
-    check_population()
-    if type(allocation_identity) is not str or not _SHA256.fullmatch(
-        allocation_identity
-    ):
-        raise BaselineSourceError("allocation identity must be SHA-256 hex")
-    try:
-        binding = seed_registry.allocation_binding(ledger, allocation_identity)
-        record = seed_registry.require_allocation_binding(
+    with _guarded():
+        return guard.authorize(
             ledger,
-            binding,
-            seeds=MEASUREMENT_SEEDS,
-            owner_issue=OWNER_ISSUE,
-            protocol=PROTOCOL,
-            seed_domain=seed_registry.LISJONG_ENGINE_HANCHAN_SEED_DOMAIN,
-            population=POPULATION,
-            split=SPLIT,
+            allocation_identity,
+            allocation_preset(),
+            arena_revision=arena_revision,
         )
-    except seed_registry.SeedRegistryError as error:
-        raise BaselineSourceError(f"allocation is not authorized: {error}") from error
-    if record["state"] != seed_registry.RESERVED:
-        raise BaselineSourceError("generation requires a fresh RESERVED allocation")
-    if "-dirty" in arena_revision or record["arena_revision"] != arena_revision:
-        raise BaselineSourceError(
-            f"allocation arena_revision {record['arena_revision']} is not the "
-            f"clean executing checkout {arena_revision}"
-        )
-    return binding, record
 
 
 def check_runtime() -> dict[str, object]:
@@ -218,22 +214,8 @@ def check_runtime() -> dict[str, object]:
     }
 
 
-def _file_digest(path: Path) -> dict[str, object]:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return {"bytes": path.stat().st_size, "sha256": digest.hexdigest()}
-
-
-def _write_new(path: Path, text: str) -> None:
-    """Write ``path`` so that it never exists with partial content."""
-    partial = path.with_name(f".partial-{path.name}")
-    with open(partial, "w", encoding="utf-8") as handle:
-        handle.write(text)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(partial, path)
+_file_digest = guard.file_digest
+_write_new = guard.write_new
 
 
 def _json(value: object) -> str:
@@ -491,8 +473,6 @@ def run(
     archive_dir: Path,
     stages: Stages = REAL_STAGES,
 ) -> dict[str, object]:
-    from lisjong_arena import seed_registry
-
     producer = stages.producer()
     runtime = stages.runtime()
     ledger = load_live_ledger(seed_ledger)
@@ -605,8 +585,6 @@ def verify_collected(directory: Path) -> dict[str, object]:
 def check_allocation(
     seed_ledger: Path, allocation_identity: str, arena_revision: str
 ) -> dict[str, object]:
-    from lisjong_arena import seed_registry
-
     ledger = load_live_ledger(seed_ledger)
     binding, record = authorize(
         ledger, allocation_identity, arena_revision=arena_revision
