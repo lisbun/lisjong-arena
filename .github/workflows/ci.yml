@@ -188,4 +188,6 @@ jobs:
           python -m pip install --disable-pip-version-check "git+https://github.com/lisbun/lisjong.git@994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97#subdirectory=native"
           python -c 'import _lisjong_native; assert _lisjong_native.SOURCE_REVISION == "994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97"'
       - name: Validate synthetic engine source with the real lisjong reader
-        run: python -m unittest discover -s tests -p test_ron_legal_source_producer.py -v
+        run: |
+          python -m unittest discover -s tests -p test_ron_legal_source_producer.py -v
+          python -m unittest discover -s tests -p test_generate_ron_legal_baseline_460.py -v
