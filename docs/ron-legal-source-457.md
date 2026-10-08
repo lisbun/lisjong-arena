@@ -12,10 +12,15 @@ base v1は変更せず、同じselector連番から`base/`と`ron/`を生成す�
 
 ## 検証とpilotの状態
 
-producer PRは実装と合成fixtureの接続検証を担当する。実対局pilotは未実施。
+producer PR #458は実装と合成fixtureの接続検証を担当した。
+2026-10-08に、マージrevisionで2半荘pilotを完了した（下記）。
 固定山fixtureは新規seed populationを実行したものではなく、実測の代替にしない。
 通常CIではnative scorerがない場合のみreader接続testをskipし、専用
 `ron-source-native` jobでは固定revisionのscorerを実際にbuildしてskipを禁止する。
+
+reaction coverageはengineの打牌eventと加槓宣言eventから独立に数える。
+暗槓宣言は含めず、大明槓は起点の打牌reactionで数える。reaction IDの連番は
+出力側で別に保持し、coverageを出力件数から作らない。
 
 pilotはproducerのマージ後に、seed registryで当該merge revisionへ予約する。
 現在のregistry workflowは`arena_revision`がマージ済みcommitであることを確認するため、
@@ -72,3 +77,32 @@ source hashes/bytes/rows、reader/labelled判断数、リーチ/門前非リー�
 
 #259 select、#260学習、#262段階Cの正式baseline測定はこの実行に含めない。
 #457はpilot報告までopen、lisjong #262も本producer PRではcloseしない。
+
+## 2026-10-08 pilot結果
+
+[事前固定](https://github.com/lisbun/lisjong-arena/issues/457#issuecomment-6053341151)と
+[詳細結果](https://github.com/lisbun/lisjong-arena/issues/457#issuecomment-6053403500)を正本とする。
+seed 935000（train）・935001（valid）、2半荘・27局で、3,095 history rows、
+1,332 reactions、1,378対象判断、2,347 selectorsを記録した。全1,378判断を
+base coverage・ron reader・固定native scorerによるlabel builderが受理した。
+reaction解決はpass 1,310・鳴き14・ロン8、立直成立28・不成立4。
+passは合法ロン見逃しの件数ではなく、ron_passedは0だった。
+
+他家snapshotはリーチ426（ロン正例426）、門前非リーチ3,386（正例0）、
+副露322（正例126）。槓・嶺上ツモ・搶槓・同巡/リーチ後見逃しは未観測。
+少数pilotのsource接続成功に限る結果で、希少ケースの網羅や精度改善ではない。
+
+実測producerはArena `02434f900e501199cdee57e6c3463af2f3911cf2`、
+lisjong `994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97`、
+engine `91af75e3aa11520c3b0543719dc74bb4c517ee06`。
+WSL Ubuntu 24.04、通常CPython 3.14.7、Rust shanten、同じlisjong revisionの
+CI wheel（SCORING_API_VERSION=1）を使用した。後続の独立reaction counter修正を
+この実測revisionへ遡及適用したとは扱わない。
+
+source・plan・log・authority snapshot・全ファイルhash inventoryとZIPを
+repository外の `C:\Dev\lisjong-artifacts\ron-source-457-pilot\` に保持した。
+ZIPは1,125,371 bytes、SHA-256
+`acc1e5a653ad4e9c2a2805d2744891a374373688839140bbed9f4f51975b4dd4`。
+保存とhash照合後、allocation
+`ca2e52e1a3a7a549b292edc917d9b6608776f725394c46c11c9382bb224eab88`
+はCOMMITTEDへ遷移した。planの実行時絶対pathは移動後も改変していない。

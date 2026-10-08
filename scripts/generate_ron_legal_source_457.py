@@ -28,10 +28,12 @@ from lisjong.policy_contract import (  # noqa: E402
     RoundState,
 )
 from lisjong.policy_contract.tile import tile_sort_key  # noqa: E402
+from lisjong_engine.meld import Kakan  # noqa: E402
 from lisjong_engine.public_state import public_meld, public_tile  # noqa: E402
 from lisjong_engine.round_event import (  # noqa: E402
     DrawSource,
     KanConfirmedEvent,
+    KanDeclaredEvent,
     ReactionsResolvedEvent,
     RiichiFinalizedEvent,
     TileDiscardedEvent,
@@ -141,6 +143,7 @@ class Recorder:
         self.orders = {}
         self.pending_riichi = None
         self.reaction_id = None
+        self.next_reaction_id = 0
         self.expected_revision = 1
         self.consumed = 0
         self.terminal = False
@@ -296,8 +299,8 @@ class Recorder:
                 raise RonProducerError(
                     "reaction target does not match engine checkpoint"
                 )
-        self.reaction_id = f"{self.round_id}:{self.coverage[-1]['reactions']}"
-        self.coverage[-1]["reactions"] += 1
+        self.reaction_id = f"{self.round_id}:{self.next_reaction_id}"
+        self.next_reaction_id += 1
         candidates = []
         for other in range(4):
             if other == source:
@@ -373,6 +376,7 @@ class Recorder:
             self.orders = {}
             self.pending_riichi = None
             self.reaction_id = None
+            self.next_reaction_id = 0
             self.expected_revision = transaction.revision
             self.terminal = False
             self.coverage.append(
@@ -414,6 +418,16 @@ class Recorder:
                     )
                 decisions[seat(engine_decision.seat)] = (sequence, record)
                 self.consumed += 1
+        # Count engine events independently of reaction projection/emission.
+        # Every discard and kakan declaration has a reaction under fixed rules;
+        # ankan has none, and daiminkan uses its originating discard reaction.
+        self.coverage[-1]["reactions"] += sum(
+            isinstance(event, TileDiscardedEvent)
+            or isinstance(event, KanDeclaredEvent)
+            and isinstance(event.kan, Kakan)
+            for raw in transaction.steps
+            for event in raw.events
+        )
         steps = []
         for raw in transaction.steps:
             for e in raw.events:
