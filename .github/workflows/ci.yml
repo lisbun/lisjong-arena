@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: quality
+  static-checks:
+    name: static-checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -55,8 +55,115 @@ jobs:
       - name: Run lint
         run: python -m ruff check .
 
-      - name: Run tests
-        run: python -m unittest discover -s tests -v --durations 30
+  # The full suite without the ML dependency, split so that a slow runner stays
+  # inside the job limit (#467). Every test module is in exactly one shard.
+  test-shards:
+    name: tests-shard-${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install package and development tools
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Verify internal VCS dependency identity
+        run: python -m lisjong_arena.environment_verify --project pyproject.toml
+
+      - name: Run assigned test modules
+        shell: bash
+        env:
+          TEST_SHARD: "${{ matrix.shard }}"
+          TEST_SHARD_COUNT: "3"
+        run: |
+          mapfile -d '' -t test_files < <(
+            find tests -type f -name 'test*.py' -print0 | sort -z
+          )
+          ((${#test_files[@]} > 0))
+
+          declare -A seen_patterns=()
+          selected_patterns=()
+          for index in "${!test_files[@]}"; do
+            test_file="${test_files[$index]}"
+            pattern="$(basename "$test_file")"
+            if [[ -n "${seen_patterns[$pattern]:-}" ]]; then
+              echo "Duplicate test filename cannot be selected safely: $pattern" >&2
+              echo "  ${seen_patterns[$pattern]}" >&2
+              echo "  $test_file" >&2
+              exit 1
+            fi
+            seen_patterns[$pattern]="$test_file"
+            if (( index % TEST_SHARD_COUNT == TEST_SHARD )); then
+              selected_patterns+=("$pattern")
+            fi
+          done
+          ((${#selected_patterns[@]} > 0))
+
+          echo "Test shard ${TEST_SHARD}/${TEST_SHARD_COUNT}: ${#selected_patterns[@]} of ${#test_files[@]} modules"
+
+          # The runner lives under RUNNER_TEMP, so explicitly keep the repository
+          # root importable for namespace-package imports such as `from tests import ...`.
+          export PYTHONPATH="$GITHUB_WORKSPACE${PYTHONPATH:+:$PYTHONPATH}"
+
+          test_runner="$RUNNER_TEMP/run_unittest_modules.py"
+          cat > "$test_runner" <<'PY'
+          import sys
+          import unittest
+
+
+          def main() -> int:
+              suite = unittest.TestSuite()
+              for pattern in sys.argv[1:]:
+                  found = unittest.defaultTestLoader.discover("tests", pattern=pattern)
+                  if found.countTestCases() == 0:
+                      print(f"No unittest cases discovered: {pattern}", file=sys.stderr)
+                      return 1
+                  suite.addTests(found)
+
+              # One interpreter for the whole shard, as the unsplit suite ran.
+              runner = unittest.TextTestRunner(verbosity=2, durations=30)
+              result = runner.run(suite)
+              return 0 if result.wasSuccessful() else 1
+
+
+          if __name__ == "__main__":
+              raise SystemExit(main())
+          PY
+
+          python "$test_runner" "${selected_patterns[@]}"
+
+  # The required check: formatting, lint and the full suite. It fails unless the
+  # static checks and every test shard succeeded.
+  quality:
+    name: quality
+    needs: [static-checks, test-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require the static checks and all test shards to pass
+        shell: bash
+        env:
+          STATIC_CHECKS_RESULT: "${{ needs.static-checks.result }}"
+          TEST_SHARDS_RESULT: "${{ needs.test-shards.result }}"
+        run: |
+          if [[ "$STATIC_CHECKS_RESULT" != "success" || "$TEST_SHARDS_RESULT" != "success" ]]; then
+            echo "static-checks: $STATIC_CHECKS_RESULT / test shards: $TEST_SHARDS_RESULT" >&2
+            exit 1
+          fi
 
   ml-test-shards:
     name: ml-tests-shard-${{ matrix.shard }}
