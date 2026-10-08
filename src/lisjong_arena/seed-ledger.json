@@ -221,6 +221,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "ca2e52e1a3a7a549b292edc917d9b6608776f725394c46c11c9382bb224eab88",
+      "allocation_timestamp": "2026-10-08T05:51:42.958794Z",
+      "arena_revision": "02434f900e501199cdee57e6c3463af2f3911cf2",
+      "owner_issue": "lisbun/lisjong-arena#457",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "ron-legal-source-pilot-2-hanchan",
+      "protocol": "ron-legal-source-pilot-v1",
+      "protocol_revision": "ron-legal-source-pilot-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/457",
+      "purpose": "ron-source-pilot",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 935000,
+        "kind": "range",
+        "last": 935001
+      },
+      "seed_membership_identity": "7046c1e561d62a35d7627e311bb144802dcfeed557cfcbe762540b28763d6852",
+      "split": "TRAIN1-VALID1-TEST0",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
