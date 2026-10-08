@@ -222,6 +222,39 @@ class ProjectionTests(unittest.TestCase):
         self.assertEqual(events[position + 1]["evidence"]["origin"], "kakan")
         self.assertEqual(events[position + 2]["kind"], "kan_confirmed")
 
+    def test_reaction_coverage_counts_engine_events_before_projection(self):
+        original = producer.Recorder.reaction
+        observed = []
+
+        def project(recorder, *args, **kwargs):
+            event = original(recorder, *args, **kwargs)
+            if event is not None:
+                observed.append(
+                    (recorder.coverage[-1]["reactions"], recorder.next_reaction_id)
+                )
+            return event
+
+        for options in ({}, {"ankan": True}, {"kakan": True}):
+            observed.clear()
+            with patch.object(producer.Recorder, "reaction", project):
+                recorder, _ = fixture(**options)
+            self.assertTrue(observed)
+            self.assertEqual(observed, [(i, i) for i in range(1, len(observed) + 1)])
+            self.assertEqual(recorder.coverage[0]["reactions"], len(observed))
+
+        # A projection that fails before emitting a reaction cannot erase the
+        # independently counted engine event.
+        counted = []
+
+        def broken_projection(recorder, *args, **kwargs):
+            counted.append(recorder.coverage[-1]["reactions"])
+            raise producer.RonProducerError("fixture projection failed")
+
+        with patch.object(producer.Recorder, "reaction", broken_projection):
+            with self.assertRaisesRegex(producer.RonProducerError, "projection failed"):
+                fixture()
+        self.assertEqual(counted, [1])
+
     def test_context_projection_preserves_temporary_and_riichi_missingness(self):
         recorder, _ = fixture()
         value = recorder.raw_checkpoint.seats[0]
