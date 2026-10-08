@@ -47,14 +47,14 @@ PYTHON_BACKEND = "python"
 RUST_BACKEND = "rust"
 BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
 
-EXPECTED_LISJONG_REVISION = "e6346ed2bb9e992138c05c4be367bd6a05ed00bc"
-"""lisjong#235 merge on ``main``; the project pin and the wheel build source."""
+EXPECTED_LISJONG_REVISION = "994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97"
+"""lisjong#272 merge on ``main``; the project pin and the wheel build source."""
 
 EXPECTED_WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 EXPECTED_WHEEL_SHA256 = (
-    "b14e53fea4161cb81c7912ead2c9d1206c2b95a1b19eb4999c6c2b7a056fdbe6"
+    "170ef3489ef5ae843dfadd727628f66ebbd5f30c667b8fce8621685dffae2afc"
 )
-"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 36761631989
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 37717912082
 (push to ``main``)."""
 
 EXPECTED_NATIVE_API_VERSION = 3

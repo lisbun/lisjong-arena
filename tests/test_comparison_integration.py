@@ -114,7 +114,7 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "e6346ed2bb9e992138c05c4be367bd6a05ed00bc",
+            "994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97",
         )
 
 
