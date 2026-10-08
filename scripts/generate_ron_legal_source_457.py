@@ -579,6 +579,8 @@ def authorize(ledger, identity, seeds, revision):
         population=POPULATION,
         split=SPLIT,
     )
+    if record["state"] != seed_registry.RESERVED:
+        raise RonProducerError("pilot requires a fresh RESERVED allocation")
     if record["arena_revision"] != revision or "-dirty" in revision:
         raise RonProducerError("allocation must match the clean executing revision")
     return binding
@@ -643,8 +645,9 @@ def main(argv=None):
 
     from lisjong_arena.environment_verify import verify_environment
 
-    if args.output.exists():
-        raise RonProducerError("refusing to overwrite output")
+    plan_path = args.output.with_name(args.output.name + ".plan.json")
+    if args.output.exists() or plan_path.exists():
+        raise RonProducerError("refusing to overwrite output or execution plan")
     # Verify the exact installed Git dependencies against the pinned project.
     checked = verify_environment(Path(__file__).resolve().parents[1] / "pyproject.toml")
     if not checked.ok:
@@ -669,6 +672,22 @@ def main(argv=None):
         "policy": base.POLICY,
     }
     splits = {"train": [args.seeds[0]], "valid": [args.seeds[1]], "test": []}
+    plan = {
+        "schema": "lisjong-arena-ron-source-pilot-plan-v1",
+        "allocation": binding,
+        "producer": producer,
+        "seeds": args.seeds,
+        "splits": splits,
+        "rules": rules,
+        "runtime": sys.version,
+        "shanten_backend": "rust",
+        "native_source_revision": _lisjong_native.SOURCE_REVISION,
+        "output": str(args.output.resolve()),
+    }
+    plan_bytes = (json.dumps(plan, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    with plan_path.open("xb") as stream:
+        stream.write(plan_bytes)
+    print(json.dumps(plan, sort_keys=True), flush=True)
     games = [play(seed) for seed in args.seeds]
     manifest = write_population(args.output, games, splits, producer, rules)
     base.verify_source_coverage(args.output / "base")
@@ -711,6 +730,7 @@ def main(argv=None):
     report = {
         "schema": "lisjong-arena-ron-source-pilot-completion-v1",
         "allocation": binding,
+        "execution_plan_sha256": hashlib.sha256(plan_bytes).hexdigest(),
         "producer": producer,
         "runtime": sys.version,
         "native_source_revision": _lisjong_native.SOURCE_REVISION,

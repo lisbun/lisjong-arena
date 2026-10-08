@@ -12,7 +12,9 @@ from unittest.mock import patch
 from lisjong.policy_contract import (
     AnkanAction,
     DiscardAction,
+    KakanAction,
     PassAction,
+    PonAction,
     RiichiAction,
     TsumoAction,
 )
@@ -37,15 +39,28 @@ spec.loader.exec_module(producer)
 
 
 class FixturePolicy:
-    def __init__(self, riichi=False, ankan=False):
+    def __init__(self, riichi=False, ankan=False, kakan=False):
         self.riichi = riichi
         self.ankan = ankan
+        self.kakan = kakan
         self.inputs = []
 
     def choose_action(self, decision):
         self.inputs.append(decision)
-        kinds = [AnkanAction] if self.ankan else []
-        kinds += [TsumoAction, RiichiAction] if self.riichi else [TsumoAction]
+        kinds = (
+            [AnkanAction]
+            if self.ankan
+            else [KakanAction, PonAction]
+            if self.kakan
+            else []
+        )
+        kinds += (
+            []
+            if self.kakan
+            else [TsumoAction, RiichiAction]
+            if self.riichi
+            else [TsumoAction]
+        )
         for kind in kinds:
             for action in decision.legal_actions:
                 if isinstance(action, kind):
@@ -76,11 +91,16 @@ def fixed_wall(layout=None):
         if layout == "ankan":
             east = [0] * 3 + [11] * 3 + [22] * 3 + [31] * 3 + [27]
             first = 0
+        if layout == "kakan":
+            east = [0] * 2 + [3, 6, 9, 12, 15, 18, 21, 24, 27, 28, 29]
         hands = [[take(kind) for kind in east]]
-        draw = take(first)
+        draws = [
+            take(kind)
+            for kind in ([31, 0, 32, 33, 0] if layout == "kakan" else [first])
+        ]
         for _ in range(3):
             hands.append([pool.pop(0) for _ in range(13)])
-        pool.insert(0, draw)
+        pool[0:0] = draws
     used = {t.id for hand in hands for t in hand}
     dealt = []
     for block in range(3):
@@ -93,17 +113,19 @@ def fixed_wall(layout=None):
     return Wall(dealt + remainder[:-14], remainder[-14:])
 
 
-def fixture(riichi=False, ankan=False):
+def fixture(riichi=False, ankan=False, kakan=False):
     match = MatchState(seed=0)
     with patch(
         "lisjong_engine.match_state.create_round_wall",
-        return_value=fixed_wall("ankan" if ankan else "riichi" if riichi else None),
+        return_value=fixed_wall(
+            "ankan" if ankan else "kakan" if kakan else "riichi" if riichi else None
+        ),
     ):
         state = match.start_round()
     state.enable_transaction_observation()
     recorder = producer.Recorder(0, match)
     recorder.observe(_round_start_observation(match, state))
-    policies = [FixturePolicy(riichi, ankan) for _ in Seat]
+    policies = [FixturePolicy(riichi, ankan, kakan) for _ in Seat]
     selectors = build_seat_selectors(
         {s: recorder.wrap(policies[i]) for i, s in enumerate(Seat)}
     )
@@ -189,6 +211,45 @@ class ProjectionTests(unittest.TestCase):
             any(e.get("evidence", {}).get("origin") == "ankan" for e in events)
         )
 
+    def test_kakan_has_exactly_one_reaction_before_confirmation(self):
+        recorder, _ = fixture(kakan=True)
+        events = [step["event"] for row in recorder.history for step in row["steps"]]
+        position = next(
+            i
+            for i, e in enumerate(events)
+            if e["kind"] == "progress" and e["action"]["kind"] == "kakan"
+        )
+        self.assertEqual(events[position + 1]["evidence"]["origin"], "kakan")
+        self.assertEqual(events[position + 2]["kind"], "kan_confirmed")
+
+    def test_context_projection_preserves_temporary_and_riichi_missingness(self):
+        recorder, _ = fixture()
+        value = recorder.raw_checkpoint.seats[0]
+        from lisjong_engine.furiten import FuritenReason
+        from lisjong_engine.win_context import RiichiStatus
+
+        for reason, status, ippatsu in (
+            (None, RiichiStatus.NONE, False),
+            (FuritenReason.TEMPORARY, RiichiStatus.NONE, False),
+            (FuritenReason.RIICHI, RiichiStatus.RIICHI, True),
+        ):
+            actual = producer.context(
+                replace(
+                    value,
+                    missed_ron_furiten=reason,
+                    riichi_status=status,
+                    is_ippatsu=ippatsu,
+                )
+            )
+            self.assertEqual(
+                actual,
+                {
+                    "missed_ron_state": "none" if reason is None else reason.value,
+                    "riichi_status": status.value,
+                    "is_ippatsu": ippatsu,
+                },
+            )
+
     def test_rules_are_fixed(self):
         from lisjong.learning.ron_legal_source import RULES
 
@@ -213,6 +274,20 @@ class ProjectionTests(unittest.TestCase):
             self.skipTest(f"native scoring unavailable: {error}")
         recorder, _ = fixture(riichi=True)
         game = recorder.finish()
+        others = [fixture(ankan=True)[0].finish(), fixture(kakan=True)[0].finish()]
+        for seed, item in enumerate(others, 1):
+            item[0][1][:] = [
+                {**row, "key": {**row["key"], "seed": seed}} for row in item[0][1]
+            ]
+            item[0][2][:] = [
+                {**row, "key": {**row["key"], "seed": seed}} for row in item[0][2]
+            ]
+            item[1][:] = [
+                {**row, "key": {**row["key"], "seed": seed}} for row in item[1]
+            ]
+            item[2][:] = [{**row, "seed": seed} for row in item[2]]
+            item[3][:] = [{**row, "seed": seed} for row in item[3]]
+            others[seed - 1] = ((seed, *item[0][1:]), *item[1:])
         kinds = [step["event"]["kind"] for row in game[2] for step in row["steps"]]
         self.assertIn("riichi_established", kinds)
         self.assertIn("reaction", kinds)
@@ -220,8 +295,8 @@ class ProjectionTests(unittest.TestCase):
             output = Path(directory) / "new"
             manifest = producer.write_population(
                 output,
-                [game],
-                {"train": [0], "valid": [], "test": []},
+                [game, *others],
+                {"train": [0], "valid": [1], "test": [2]},
                 {
                     "arena_revision": "a" * 40,
                     "lisjong_revision": "b" * 40,
@@ -234,9 +309,13 @@ class ProjectionTests(unittest.TestCase):
             _, labelled = read_labelled_ron_source(
                 output / "ron", base_directory=output / "base"
             )
-            self.assertEqual(len(source.decisions), len(game[0][1]))
+            self.assertEqual(
+                len(source.decisions), sum(len(g[0][1]) for g in [game, *others])
+            )
             self.assertEqual(len(labelled), len(source.decisions))
-            self.assertEqual(manifest["coverage"], game[3])
+            self.assertEqual(
+                manifest["coverage"], [row for g in [game, *others] for row in g[3]]
+            )
             (output / "ron" / "ron_facts.jsonl").write_bytes(b"")
             with self.assertRaises(ValueError):
                 read_ron_source(output / "ron", base_directory=output / "base")
@@ -279,6 +358,11 @@ class AllocationTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 producer.authorize(ledger, identity, seeds, revision)
+        committed = seed_registry.transition_allocation(
+            ledger, identity, state=seed_registry.COMMITTED
+        )
+        with self.assertRaises(ValueError):
+            producer.authorize(committed, identity, [9000000, 9000001], "a" * 40)
         ledger, identity = self.allocation(owner="lisbun/lisjong#259")
         with self.assertRaises(ValueError):
             producer.authorize(ledger, identity, [9000000, 9000001], "a" * 40)

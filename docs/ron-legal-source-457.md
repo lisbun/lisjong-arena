@@ -1,40 +1,40 @@
-# ãƒ­ãƒ³åˆæ³•source producerï¼ˆ#457ï¼‰
+# ƒƒ“‡–@source produceri#457j
 
-lisjong #262ã®å›ºå®šæ¸ˆã¿è¿½åŠ sourceå¥‘ç´„ã‚’engine #61ã®privileged transaction
-observationã‹ã‚‰è¨˜éŒ²ã™ã‚‹ã€‚`scripts/generate_ron_legal_source_457.py`ã‚’å…¥å£ã¨ã—ã€
-é€šå¸¸ã®Policy selectorã¨ã¯åˆ¥ã®offlineè¨˜éŒ²çµŒè·¯ã‚’ä½¿ç”¨ã™ã‚‹ã€‚
+lisjong #262‚ÌŒÅ’èÏ‚İ’Ç‰ÁsourceŒ_–ñ‚ğengine #61‚Ìprivileged transaction
+observation‚©‚ç‹L˜^‚·‚éB`scripts/generate_ron_legal_source_457.py`‚ğ“üŒû‚Æ‚µA
+’Êí‚ÌPolicy selector‚Æ‚Í•Ê‚Ìoffline‹L˜^Œo˜H‚ğg—p‚·‚éB
 
-base v1ã¯å¤‰æ›´ã›ãšã€åŒã˜selectoré€£ç•ªã‹ã‚‰`base/`ã¨`ron/`ã‚’ç”Ÿæˆã™ã‚‹ã€‚
-å…¨commitã¨ãã®å†…éƒ¨stepã‚’è¨˜éŒ²ã—ã€factsã®snapshotå¢ƒç•Œã¯è¡Œå‹•é©ç”¨å‰ã®åŠé–‹prefixã€‚
-æš—æ§“ã®æ©Ÿä¼šãªã—stepã¯å›ºå®šRuleSetã§reactionã¸å¤‰æ›ã›ãšã€å®£è¨€ã¨æˆç«‹ã‚’åŒã˜å¤–å´è¡Œã«æ®‹ã™ã€‚
-å…¬é–‹æ²³ã®orderã¯engineã®æ‰“ç‰Œeventã‹ã‚‰å–å¾—ã™ã‚‹ã€‚æ‰‹ç‰Œã¯ãƒ„ãƒ¢ç‰Œã‚’å«ã‚“ã checkpointã‚’
-ãã®ã¾ã¾ä½¿ã„ã€è¦‹é€ƒã—çŠ¶æ…‹ãƒ»åˆæ³•å€™è£œãƒ»è§£æ±ºçµæœã¯engineã®è¦³æ¸¬factã ã‘ã‚’æŠ•å½±ã™ã‚‹ã€‚
+base v1‚Í•ÏX‚¹‚¸A“¯‚¶selector˜A”Ô‚©‚ç`base/`‚Æ`ron/`‚ğ¶¬‚·‚éB
+‘Scommit‚Æ‚»‚Ì“à•”step‚ğ‹L˜^‚µAfacts‚Ìsnapshot‹«ŠE‚Ís“®“K—p‘O‚Ì”¼ŠJprefixB
+ˆÃÈ‚Ì‹@‰ï‚È‚µstep‚ÍŒÅ’èRuleSet‚Åreaction‚Ö•ÏŠ·‚¹‚¸AéŒ¾‚Æ¬—§‚ğ“¯‚¶ŠO‘¤s‚Éc‚·B
+ŒöŠJ‰Í‚Ìorder‚Íengine‚Ì‘Å”vevent‚©‚çæ“¾‚·‚éBè”v‚Íƒcƒ‚”v‚ğŠÜ‚ñ‚¾checkpoint‚ğ
+‚»‚Ì‚Ü‚Üg‚¢AŒ©“¦‚µó‘ÔE‡–@Œó•âE‰ğŒˆŒ‹‰Ê‚Íengine‚ÌŠÏ‘ªfact‚¾‚¯‚ğ“Š‰e‚·‚éB
 
-## æ¤œè¨¼ã¨pilotã®çŠ¶æ…‹
+## ŒŸØ‚Æpilot‚Ìó‘Ô
 
-producer PRã¯å®Ÿè£…ã¨åˆæˆfixtureã®æ¥ç¶šæ¤œè¨¼ã‚’æ‹…å½“ã™ã‚‹ã€‚å®Ÿå¯¾å±€pilotã¯æœªå®Ÿæ–½ã€‚
-å›ºå®šå±±fixtureã¯æ–°è¦seed populationã‚’å®Ÿè¡Œã—ãŸã‚‚ã®ã§ã¯ãªãã€å®Ÿæ¸¬ã®ä»£æ›¿ã«ã—ãªã„ã€‚
-é€šå¸¸CIã§ã¯native scorerãŒãªã„å ´åˆã®ã¿readeræ¥ç¶štestã‚’skipã—ã€å°‚ç”¨
-`ron-source-native` jobã§ã¯å›ºå®šrevisionã®scorerã‚’å®Ÿéš›ã«buildã—ã¦skipã‚’ç¦æ­¢ã™ã‚‹ã€‚
+producer PR‚ÍÀ‘•‚Æ‡¬fixture‚ÌÚ‘±ŒŸØ‚ğ’S“–‚·‚éBÀ‘Î‹Çpilot‚Í–¢À{B
+ŒÅ’èRfixture‚ÍV‹Kseed population‚ğÀs‚µ‚½‚à‚Ì‚Å‚Í‚È‚­AÀ‘ª‚Ì‘ã‘Ö‚É‚µ‚È‚¢B
+’ÊíCI‚Å‚Ínative scorer‚ª‚È‚¢ê‡‚Ì‚İreaderÚ‘±test‚ğskip‚µAê—p
+`ron-source-native` job‚Å‚ÍŒÅ’èrevision‚Ìscorer‚ğÀÛ‚Ébuild‚µ‚Äskip‚ğ‹Ö~‚·‚éB
 
-pilotã¯producerã®ãƒãƒ¼ã‚¸å¾Œã«ã€seed registryã§å½“è©²merge revisionã¸äºˆç´„ã™ã‚‹ã€‚
-ç¾åœ¨ã®registry workflowã¯`arena_revision`ãŒãƒãƒ¼ã‚¸æ¸ˆã¿commitã§ã‚ã‚‹ã“ã¨ã‚’ç¢ºèªã™ã‚‹ãŸã‚ã€
-PR headã®å®Ÿè¡Œã‚’äºˆç´„æ¸ˆã¿pilotã¨ã—ã¦æ‰±ã‚ãªã„ã€‚
+pilot‚Íproducer‚Ìƒ}[ƒWŒã‚ÉAseed registry‚Å“–ŠYmerge revision‚Ö—\–ñ‚·‚éB
+Œ»İ‚Ìregistry workflow‚Í`arena_revision`‚ªƒ}[ƒWÏ‚İcommit‚Å‚ ‚é‚±‚Æ‚ğŠm”F‚·‚é‚½‚ßA
+PR head‚ÌÀs‚ğ—\–ñÏ‚İpilot‚Æ‚µ‚Äˆµ‚í‚È‚¢B
 
-## å®Ÿè¡Œå‰ã«å›ºå®šã™ã‚‹æ¡ä»¶
+## Às‘O‚ÉŒÅ’è‚·‚éğŒ
 
-- 2åŠè˜ã€PlacementAwareSpeedCallPolicyã‚’å„å¸­ãƒ»å„åŠè˜ã§æ–°è¦ç”Ÿæˆã€‚
-- `RuleSet.default()`ï¼ˆproject-standard-v1ï¼‰å…¨ä½“ã‚’å›ºå®šã€‚
-- `ron-legal-source-pilot-v1`ã€`ron-legal-source-pilot-2-hanchan`ã€
-  split `TRAIN1-VALID1-TEST0`ã€‚æ˜‡é †2seedã®å…ˆé ­ã‚’trainã€å¾Œã‚ã‚’validã€testã¯ç©ºã€‚
-- domain `lisjong-engine-project-standard-v1-hanchan-v1`ï¼ˆæ—¢å­˜registryã§åˆ©ç”¨å¯èƒ½ï¼‰ã€‚
-- cleanãªArena merge revisionã€pinæ¸ˆã¿lisjong/engineã€é€šå¸¸CPython 3.14ã€
-  Rust shantenã€åŒã˜lisjong revisionã‹ã‚‰buildã—ãŸnative scorerã€‚
+- 2”¼‘‘APlacementAwareSpeedCallPolicy‚ğŠeÈEŠe”¼‘‘‚ÅV‹K¶¬B
+- `RuleSet.default()`iproject-standard-v1j‘S‘Ì‚ğŒÅ’èB
+- `ron-legal-source-pilot-v1`A`ron-legal-source-pilot-2-hanchan`A
+  split `TRAIN1-VALID1-TEST0`B¸‡2seed‚Ìæ“ª‚ğtrainAŒã‚ë‚ğvalidAtest‚Í‹óB
+- domain `lisjong-engine-project-standard-v1-hanchan-v1`iŠù‘¶registry‚Å—˜—p‰Â”\jB
+- clean‚ÈArena merge revisionApinÏ‚İlisjong/engineA’ÊíCPython 3.14A
+  Rust shantenA“¯‚¶lisjong revision‚©‚çbuild‚µ‚½native scorerB
 
-ã¾ãšlive `seed-registry` branchã®ledgerã‚’å–å¾—ã—ã€æ—¢å­˜#259/#260ãƒ»æ­£å¼è©•ä¾¡ãƒ»
-éå»pilot/RETIREDã‚’å«ã‚€ä½¿ç”¨æ¸ˆã¿seedã¨ã®è¡çªãŒãªã„æ–°è¦2seedã‚’é¸ã¶ã€‚
-`main`ã®bootstrap ledgerã‚„æ‰‹ç·¨é›†ã—ãŸledgerã¯äºˆç´„ã®ä»£æ›¿ã§ã¯ãªã„ã€‚
-ä»¥ä¸‹ã®workflowã¸owner/protocol/population/splitã¨æ­£ç¢ºãªmerge revisionã‚’æ¸¡ã—ã¦äºˆç´„ã™ã‚‹ã€‚
+‚Ü‚¸live `seed-registry` branch‚Ìledger‚ğæ“¾‚µAŠù‘¶#259/#260E³®•]‰¿E
+‰ß‹pilot/RETIRED‚ğŠÜ‚Şg—pÏ‚İseed‚Æ‚ÌÕ“Ë‚ª‚È‚¢V‹K2seed‚ğ‘I‚ÔB
+`main`‚Ìbootstrap ledger‚âè•ÒW‚µ‚½ledger‚Í—\–ñ‚Ì‘ã‘Ö‚Å‚Í‚È‚¢B
+ˆÈ‰º‚Ìworkflow‚Öowner/protocol/population/split‚Æ³Šm‚Èmerge revision‚ğ“n‚µ‚Ä—\–ñ‚·‚éB
 
 ```text
 gh workflow run seed-registry.yml --repo lisbun/lisjong-arena \
@@ -47,9 +47,9 @@ gh workflow run seed-registry.yml --repo lisbun/lisjong-arena \
   -f provenance_reference=https://github.com/lisbun/lisjong-arena/issues/457
 ```
 
-workflowæˆåŠŸå¾Œã€live ledgerã‚’å†å–å¾—ã—ã€allocation identityã‚’æŒ‡å®šã—ã¦å®Ÿè¡Œã™ã‚‹ã€‚
-`--seed-ledger`ã«ã¯ãã®authority snapshotã‚’æ¸¡ã™ã€‚å®Ÿè¡Œå‰ã«Issueã¸ledger revisionã€
-allocation bindingã€3 repository revisionã€runtime/backendã€ä¿å­˜å…ˆã‚’è¨˜éŒ²ã™ã‚‹ã€‚
+workflow¬Œ÷ŒãAlive ledger‚ğÄæ“¾‚µAallocation identity‚ğw’è‚µ‚ÄÀs‚·‚éB
+`--seed-ledger`‚É‚Í‚»‚Ìauthority snapshot‚ğ“n‚·BÀs‘O‚ÉIssue‚Öledger revisionA
+allocation bindingA3 repository revisionAruntime/backendA•Û‘¶æ‚ğ‹L˜^‚·‚éB
 
 ```text
 LISJONG_SHANTEN_BACKEND=rust python scripts/generate_ron_legal_source_457.py \
@@ -57,16 +57,18 @@ LISJONG_SHANTEN_BACKEND=rust python scripts/generate_ron_legal_source_457.py \
   --seeds <first> <second> --output <new-directory>
 ```
 
-æ—¢å­˜outputã¯ä¸Šæ›¸ãã—ãªã„ã€‚å…¨2åŠè˜ã‚’å®Œäº†ã—ãŸå¾Œã«sourceã‚’æ›¸ãã€base coverageã€
-`read_ron_source()`ã€`read_labelled_ron_source()`ã‚’å…¨ä»¶é€šã—ã¦ã‹ã‚‰æœ€å¾Œã«
-`complete.json`ã‚’ä½œã‚‹ã€‚ä¾‹å¤–æ™‚ã¯å®Œäº†recordã‚’ä½œã‚‰ãšã€partial sourceã‚’æ¡ç”¨ã—ãªã„ã€‚
-å†å®Ÿè¡Œã™ã‚‹å ´åˆã¯å¤±æ•—seedã‚’å†åˆ©ç”¨ã›ãšã€å…ˆã«RETIREDã¸é·ç§»ã™ã‚‹ã€‚
+Šù‘¶outputEplan‚Íã‘‚«‚µ‚È‚¢B–‘OŠm”FŒãAÅ‰‚Ì‘Î‹Ç‚æ‚è‘O‚Éoutput‚Ì—×‚Ö
+`<output-name>.plan.json`‚ğ”r‘¼“I‚Éì‚èA“¯‚¶ğŒ‚ğstdout‚Öflush‚·‚éBplan‚à•Û‚·‚éB
+‘S2”¼‘‘‚ğŠ®—¹‚µ‚½Œã‚Ésource‚ğ‘‚«Abase coverageA
+`read_ron_source()`A`read_labelled_ron_source()`‚ğ‘SŒ’Ê‚µ‚Ä‚©‚çÅŒã‚É
+`complete.json`‚ğì‚éB—áŠO‚ÍŠ®—¹record‚ğì‚ç‚¸Apartial source‚ğÌ—p‚µ‚È‚¢B
+ÄÀs‚·‚éê‡‚Í¸”sseed‚ğÄ—˜—p‚¹‚¸Aæ‚ÉRETIRED‚Ö‘JˆÚ‚·‚éB
 
-å®Œäº†recordã«ã¯allocation/provenanceã€Python/native/backend identityã€å…¨å±€counterã€
-source hashes/bytes/rowsã€reader/labelledåˆ¤æ–­æ•°ã€ãƒªãƒ¼ãƒ/é–€å‰éãƒªãƒ¼ãƒ/å‰¯éœ²ã®
-ãƒ­ãƒ³æ­£ä¾‹snapshotãƒ»ç‰Œæ•°ã€è¦³æ¸¬eventæ•°ã‚’ä¿æŒã™ã‚‹ã€‚å¾—ã‚‰ã‚Œãªã‹ã£ãŸå±¥æ­´ã‚±ãƒ¼ã‚¹ã¯
-å ±å‘Šæ™‚ã«æ˜ç¤ºã™ã‚‹ã€‚å¸Œå°‘ã‚±ãƒ¼ã‚¹ã®ç¶²ç¾…ã‚„ç²¾åº¦æ”¹å–„ãƒ»Policyå¼·ã•ã¯ä¸»å¼µã—ãªã„ã€‚
-æˆåŠŸartifactã‚’ä¿æŒãƒ»hashç¢ºèªã—ã¦ã‹ã‚‰allocationã‚’COMMITTEDã«ã—ã€ç”Ÿæˆç‰©ã¯Gitã¸å…¥ã‚Œãªã„ã€‚
+Š®—¹record‚É‚Íallocation/provenanceAPython/native/backend identityA‘S‹ÇcounterA
+source hashes/bytes/rowsAreader/labelled”»’f”AƒŠ[ƒ`/–å‘O”ñƒŠ[ƒ`/•›˜I‚Ì
+ƒƒ“³—ásnapshotE”v”AŠÏ‘ªevent”‚ğ•Û‚·‚éB“¾‚ç‚ê‚È‚©‚Á‚½—š—ğƒP[ƒX‚Í
+•ñ‚É–¾¦‚·‚éBŠó­ƒP[ƒX‚Ì–Ô—…‚â¸“x‰ü‘PEPolicy‹­‚³‚Íå’£‚µ‚È‚¢B
+¬Œ÷artifact‚ğ•ÛEhashŠm”F‚µ‚Ä‚©‚çallocation‚ğCOMMITTED‚É‚µA¶¬•¨‚ÍGit‚Ö“ü‚ê‚È‚¢B
 
-#259 selectã€#260å­¦ç¿’ã€#262æ®µéšCã®æ­£å¼baselineæ¸¬å®šã¯ã“ã®å®Ÿè¡Œã«å«ã‚ãªã„ã€‚
-#457ã¯pilotå ±å‘Šã¾ã§openã€lisjong #262ã‚‚æœ¬producer PRã§ã¯closeã—ãªã„ã€‚
+#259 selectA#260ŠwKA#262’iŠKC‚Ì³®baseline‘ª’è‚Í‚±‚ÌÀs‚ÉŠÜ‚ß‚È‚¢B
+#457‚Ípilot•ñ‚Ü‚ÅopenAlisjong #262‚à–{producer PR‚Å‚Íclose‚µ‚È‚¢B
