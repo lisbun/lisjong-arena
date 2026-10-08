@@ -243,6 +243,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "0b8d97e7542d0137731318c90e6022b30079ad04713b5a5591b83e31dc245983",
+      "allocation_timestamp": "2026-10-08T09:41:24.610450Z",
+      "arena_revision": "43319ba9a63cf8fb6d6e8bfa658ae5463342d2ec",
+      "owner_issue": "lisbun/lisjong#262",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "ron-legal-baseline-measurement-400-hanchan",
+      "protocol": "ron-legal-baseline-measurement-v1",
+      "protocol_revision": "ron-legal-baseline-measurement-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/460",
+      "purpose": "ron-legal-baseline-measurement",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 936000,
+        "kind": "range",
+        "last": 936399
+      },
+      "seed_membership_identity": "a545ace6f455accd2b0e8e6fb40ce9b1cbca1148936927b45f2def4f2d89b957",
+      "split": "TRAIN160-VALID80-EVAL160",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
