@@ -81,8 +81,12 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "e6346ed2bb9e992138c05c4be367bd6a05ed00bc"
+PINNED_LISJONG_REVISION = "994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #457でロン合法source readerを含む``994f529``へ追随した。
+``e6346ed..994f529``の``outcome_source.py``は不変。historical protocolの
+frozenなArena revision、engine producerの別途固定したrevisionは変更しない。
 
 #193 / PR #194のmerge revision ``aed9c84`` から、Arena #375でlisjong #199
 （PR #202）を含む ``2a9debe`` へ追随した。``aed9c84..2a9debe`` の
