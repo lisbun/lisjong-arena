@@ -31,7 +31,7 @@ Arenaはゲートの条件を実装せず、合法手を直接差し替えない
 局の結果はengineの`RoundCompletionFact`から取る。Arenaは点数を計算しない。
 
 | field | 取り方 |
-|---|---|
+| --- | --- |
 | `round_delta` | `point_deltas`の判断者の値（リーチ棒の供出、本場、供託の受け取りを含む。半荘終了時の精算は含まない） |
 | `win` | 判断者が`winners`にいる場合。`points`は判断者が受け取った`settlement_transfers`のうち`HONBA`以外の合計 |
 | `deal_in` | ロンで`source_seat`が判断者の場合。`points`は判断者が支払った`settlement_transfers`のうち`HONBA`以外の合計 |
@@ -63,7 +63,7 @@ Arenaはゲートの条件を実装せず、合法手を直接差し替えない
 
 `generation.json`は、(A)(B)(C)別のゲート判断の件数と降りる候補のある件数、(A)の宣言牌と`a_push`の
 一致・不一致の件数、ダブロンの放銃の件数、降りる側の実行回数、半荘ごとの対照・降りる側の実行時間、
-3 fileのbytes・行数・SHA-256、producer、runtime（Python、native moduleのSHA-256と`SOURCE_REVISION`）、
+3 fileのbytes・行数・SHA-256、producer、runtime（Python、nativeの`SOURCE_REVISION`。wheelのSHA-256は実行者が`SHA256SUMS`から記録する）、
 allocationを持つ。既存のoutputは上書きしない。失敗した実行は`generation.json`を持たない。
 
 ## pilotの固定値
@@ -71,7 +71,7 @@ allocationを持つ。既存のoutputは上書きしない。失敗した実行�
 `run`コマンドの値で、引数では変えられない。
 
 | 項目 | 値 |
-|---|---|
+| --- | --- |
 | seed | 938000..938015（engine domain `lisjong-engine-project-standard-v1-hanchan-v1`）。1 seed = 1半荘、rotationなし |
 | 分割 | train 938000..938011（12半荘）、valid 938012..938015（4半荘） |
 | 予約 | owner `lisbun/lisjong-arena#476`、protocol `tenpai-push-fold-source-pilot-v1`、population `tenpai-push-fold-source-pilot-16-hanchan`、split `TRAIN12-VALID4`。`arena_revision`は実行するmerge commit |
@@ -140,6 +140,18 @@ LISJONG_SHANTEN_BACKEND=rust python scripts/generate_tenpai_push_fold_source_476
   --train 931400..931400 --valid 931401..931401 \
   --selection <selection.json> --workers 2 --output <new directory>
 ```
+
+2026-10-09に、Arena `d4ef57b`（PR head）、lisjong `6be9b90`、lisjong-engine `91af75e`、wheel `0c0e3dc4…6833e`、
+CPython 3.14.7、WSL（8 core、2 workers）で上のコマンドを2回実行した。
+
+- 2回とも最後まで完了し、`manifest.json`・`decisions.jsonl`・`outcomes.jsonl`のSHA-256が一致した
+- 降りる側の実行20回すべてで、指定した判断までの全判断が対照と一致し、指定した判断で`a_fold`が選ばれた
+- 書いたsourceを`read_source()`が読み、lisjongの`report`コマンドが終了コード0で終わった
+- ゲート判断は2半荘で28件（(A) 8、(B) 0、(C) 20）、うち降りる候補あり20件（(A) 8、(C) 12）。
+  (A)の宣言牌は8件とも`a_push`と一致した。ダブロンの放銃は0件
+- 1半荘あたり約349秒（対照54〜70秒、降りる側155〜418秒。降りる側は1回あたり約29秒）
+
+この件数と時間は経路の確認と、pilotの所要時間の見積りにだけ使う。
 
 ## testの範囲
 

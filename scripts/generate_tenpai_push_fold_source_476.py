@@ -597,7 +597,6 @@ def native_runtime(selection: Path) -> dict[str, object]:
         "python": ".".join(map(str, sys.version_info[:3])),
         "shanten_backend": "rust",
         "native_source_revision": _lisjong_native.SOURCE_REVISION,
-        "native_module": guard.file_digest(Path(_lisjong_native.__file__)),
     }
 
 
