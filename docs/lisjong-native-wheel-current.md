@@ -1,17 +1,18 @@
-# 現行のlisjong pin・Rust wheel（#457）
+# 現行のlisjong pin・Rust wheel（#476）
 
-ロン合法source reader（lisjong #272）と役判定APIを含む組み合わせ。
+聴牌PUSH/FOLDの対比較source契約（lisjong #288）、ロン合法source reader（lisjong #272）、
+役判定APIを含む組み合わせ。`994f529..6be9b90`でnative（`native/`）のsourceは変わっていない。
 Pythonがdefault、Rustは明示的opt-in。過去の#423の実験条件は
 [#423時点の固定記録](lisjong-native-wheel-423.md)に保存し、変更しない。
 
 | 項目 | 値 |
 | --- | --- |
-| lisjong pin / native SOURCE_REVISION | `994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97`（lisjong #272 merge） |
-| wheel | `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（301,135 bytes） |
-| wheel SHA-256 | `170ef3489ef5ae843dfadd727628f66ebbd5f30c667b8fce8621685dffae2afc` |
+| lisjong pin / native SOURCE_REVISION | `6be9b906bcde7b1de8b572fd052464e57421469f`（lisjong #288 merge） |
+| wheel | `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（301,136 bytes） |
+| wheel SHA-256 | `0c0e3dc475807806b0692336c31dff69da1e095741f7f3ce154f0f496cf6833e` |
 | native API_VERSION / SCORING_API_VERSION | `3` / `1` |
-| main push CI | [37717912082](https://github.com/lisbun/lisjong/actions/runs/37717912082) / attempt 1 / success |
-| artifact | `lisjong-native-wheel-994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97` |
+| main push CI | [37920564298](https://github.com/lisbun/lisjong/actions/runs/37920564298) / attempt 1 / success |
+| artifact | `lisjong-native-wheel-6be9b906bcde7b1de8b572fd052464e57421469f` |
 | build | manylinux_2_28_x86_64、CPython 3.14.8、rustc 1.98.1、maturin 1.15.0、release / `--locked` |
 
 対象はLinux x86_64 / 通常版CPython 3.14（AL2023対応タグ）。Windowsへこのwheelをinstallしない。
@@ -19,8 +20,8 @@ Pythonがdefault、Rustは明示的opt-in。過去の#423の実験条件は
 GitHub artifactの保存期間は90日。取得後の長期保持先としてprivate S3のrevision別objectを利用できる。
 
 ```bash
-gh -R lisbun/lisjong run download 37717912082 \
-  --name lisjong-native-wheel-994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97 \
+gh -R lisbun/lisjong run download 37920564298 \
+  --name lisjong-native-wheel-6be9b906bcde7b1de8b572fd052464e57421469f \
   --dir <new-revision-specific-directory>
 # 取得先で sha256sum --strict -c SHA256SUMS
 ```
@@ -47,7 +48,11 @@ AWSでの起動・停止・回収は [Champion 2bot Rust試運転](aws-riichilab
 
 ## 導入確認と正式評価
 
-2026-10-08 JSTにcurrent pinのmain push CI成功、取得artifactの実SHA-256とBUILD-INFOを確認した。
+2026-10-09 JSTにcurrent pin `6be9b90`のmain push CI成功、取得artifactの実SHA-256とBUILD-INFOを確認した。
+#476の開発seedでの通し確認は[聴牌PUSH/FOLD対比較source](tenpai-push-fold-source-476.md)に記録する。
+
+以下は2026-10-08 JSTの旧pin `994f529`・旧wheel `170ef348…`（#457）の導入確認記録。
+main push CI成功、取得artifactの実SHA-256とBUILD-INFOを確認した。
 #457の専用Linux CIで実engine合成fixture sourceのreader・正解builder全件受理を確認した。
 
 以下は2026-10-01 JSTの旧pin `e6346ed`・旧wheel `b14e53fe…`（#436）の導入確認記録。
