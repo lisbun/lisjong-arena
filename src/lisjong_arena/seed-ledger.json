@@ -331,6 +331,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "c6867ae0473c533d5faa0efe538cfe0594f37a88a1389837d5ca481c325a76b0",
+      "allocation_timestamp": "2026-10-09T13:10:02.017963Z",
+      "arena_revision": "caf76dc40abba14740c23880c87c11f5398dd002",
+      "owner_issue": "lisbun/lisjong-arena#475",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "tenpai-push-fold-source-400-hanchan",
+      "protocol": "tenpai-push-fold-source-v1",
+      "protocol_revision": "tenpai-push-fold-source-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/475",
+      "purpose": "tenpai-push-fold-source",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 939000,
+        "kind": "range",
+        "last": 939399
+      },
+      "seed_membership_identity": "6bff9058e38af6626276e750c0d5be1168a2e74381bbee2c078a7559be53d08c",
+      "split": "TRAIN200-VALID200",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
