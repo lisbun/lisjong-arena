@@ -57,6 +57,9 @@ $invariant = [Globalization.CultureInfo]::InvariantCulture
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) { throw "Pass -AwsProfile or set AWS_PROFILE." }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $env:LOCALAPPDATA "lisjong\aws-l03-c2-362"
+    # The artifacts root, when there is one, replaces this default (#469).
+    . (Join-Path $PSScriptRoot "artifacts-root.ps1")
+    $OutputRoot = Resolve-LisjongOutputRoot -Name "aws-l03-c2-362" -Legacy $OutputRoot
 }
 
 function Invoke-AwsText {

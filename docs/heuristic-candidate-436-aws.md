@@ -154,7 +154,7 @@ $runId = '<起動時に表示されたrun-id>'
   -RunId $runId -AwsProfile lisbun-admin -Region ap-northeast-1
 ```
 
-保存先: `$env:LOCALAPPDATA\lisjong\aws-heuristic-formal-436\<run-id>`。
+保存先: `$env:LOCALAPPDATA\lisjong\aws-heuristic-formal-436\<run-id>`（`LISJONG_ARTIFACTS_ROOT`があるか、checkoutの隣に`lisjong-artifacts`があれば、その配下の同名フォルダが既定になる。#469）。
 `state.json`、`plan.json`、`completion.json`、`collection.json`、`evidence`を保存する。
 回収時にEC2を終了してからdownloadし、SHA-256・event・revision・worker数・seed列・
 raw結果とnative証跡を検証する。成功時に転送bucketを削除、検証失敗時は診断を保持する。

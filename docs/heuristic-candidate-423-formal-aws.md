@@ -60,7 +60,7 @@ formalでは既存executorの全件完了時にcomparison/result/native evidence
   -RunId $runId -AwsProfile lisbun-admin
 ```
 
-state/evidenceの保存先は`$env:LOCALAPPDATA\lisjong\aws-heuristic-formal-423\<run-id>`。
+state/evidenceの保存先は`$env:LOCALAPPDATA\lisjong\aws-heuristic-formal-423\<run-id>`（`LISJONG_ARTIFACTS_ROOT`があるか、checkoutの隣に`lisjong-artifacts`があれば、その配下の同名フォルダが既定になる。#469）。
 校正の保存先とは分ける。Collectはcompute終了→download→completion checksum→
 lockとsubmitted revision/workers/seeds照合→raw strict readback→S3削除→残存確認。
 Windows側の検証ではmanylinux wheelをinstallしない。

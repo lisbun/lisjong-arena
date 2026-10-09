@@ -70,6 +70,9 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     } else {
         $OutputRoot = Join-Path $env:TEMP "lisjong-aws-operational-calibration-340"
     }
+    # The artifacts root, when there is one, replaces this default (#469).
+    . (Join-Path $PSScriptRoot "artifacts-root.ps1")
+    $OutputRoot = Resolve-LisjongOutputRoot -Name "aws-operational-calibration-340" -Legacy $OutputRoot
 }
 
 function Invoke-AwsText {
