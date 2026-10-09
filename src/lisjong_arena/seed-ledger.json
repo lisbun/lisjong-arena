@@ -287,6 +287,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "a03eb1fee7ea3a3b738e95b9eb9fcac5593547dbfe7bf1e8a89b580a96da6f44",
+      "allocation_timestamp": "2026-10-09T06:50:54.366484Z",
+      "arena_revision": "04fdbab6b81f10669c0f842eb444b69fbb69d519",
+      "owner_issue": "lisbun/lisjong#260",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "wait-shape-formal-test-260-200-hanchan",
+      "protocol": "wait-shape-formal-test-260-v1",
+      "protocol_revision": "wait-shape-formal-test-260-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/473",
+      "purpose": "wait-shape-formal-test",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 937000,
+        "kind": "range",
+        "last": 937199
+      },
+      "seed_membership_identity": "814e687ef437041ab2e00d3431956ee3bd0c81fb65bce17dcfa4481e0687c095",
+      "split": "TEST200",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
