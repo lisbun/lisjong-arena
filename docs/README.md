@@ -51,6 +51,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [#423 最新候補対ChampionのRust実行入口](heuristic-candidate-423.md) — event固有のallocation・wheel/revision lock・親/worker証跡と操作手順
 - [AABB半荘比較の局単位診断（#432）](aabb-kyoku-diagnostic-432.md) — #423の400半荘を決定的に再生し、局単位の客観的結果と差の内訳を記述分析する診断ツール（正式評価・判定は変更しない）
 - [Heuristic candidate AABB half-game protocol v1](heuristic-candidate-aabb-half.md) — Issue #375のfamily-internal candidate評価（uma/oka final score primary）/ AWS executor（actual 400-hanchan runはmerge後のoperator作業）
+- [Heuristic candidate engine AABB half-game protocol v1 — 仕様](heuristic-candidate-engine-aabb-half.md) — Issue #452（parent lisjong-project#83）のlisjong-engine版family-internal評価のprotocol・bridge検証・局単位記録の仕様固定（実装・校正・実行は未着手）
 - [L0.3 outcome-Q paired-strength protocol v1](l03-paired-strength-385.md) — Issue #385（parent lisjong-project#79 Step F）のoutcome-Q vs canonical-first paired focal-seat評価のpre-execution lock（Step G実行はlock後のoperator作業）
 - [Pure-offense benchmark v1](pure-offense-benchmark.md) — Issue #389のfocal vs passive tsumogiri x3 offense benchmark（局収支・形式聴牌速度・和了速度のdescriptive profile + paired comparison。calibration実行はmerge後のoperator作業）
 - [Rust向聴数backend：AWS workerへのopt-in導入と検証](rust-shanten-backend-400.md) — Issue #400（親lisjong#216）のwheel導入・fail-closed・worker検査・同値性/性能測定とAWS実行計画
