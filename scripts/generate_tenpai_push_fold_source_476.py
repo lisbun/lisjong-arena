@@ -500,6 +500,15 @@ def _total(stats: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def _played(seeds: list[int], play, workers: int):
+    """Each seed's game, in seed order, as it becomes available."""
+    if workers == 1:
+        yield from map(play, seeds)
+        return
+    with ProcessPoolExecutor(workers) as executor:
+        yield from executor.map(play, seeds)
+
+
 def generate(
     output: Path,
     *,
@@ -517,11 +526,15 @@ def generate(
         raise _E("splits must hold distinct seeds")
     started = time.perf_counter()
     play = functools.partial(play_seed, runtime=runtime)
-    if workers == 1:
-        games = [play(seed) for seed in seeds]
-    else:
-        with ProcessPoolExecutor(workers) as executor:
-            games = list(executor.map(play, seeds))
+    games = []
+    for game in _played(seeds, play, workers):
+        games.append(game)
+        print(
+            f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+            f"seed {game['seed']} played ({len(games)}/{len(seeds)})",
+            file=sys.stderr,
+            flush=True,
+        )
     files = write_source(output, splits=splits, games=games, producer=producer)
     stats = [game["stats"] for game in sorted(games, key=lambda game: game["seed"])]
     document = {
@@ -561,15 +574,19 @@ def allocation_preset() -> guard.AllocationPreset:
 
 
 def check_allocation(
-    seed_ledger: Path, allocation_identity: str, arena_revision: str
+    seed_ledger: Path,
+    allocation_identity: str,
+    arena_revision: str,
+    preset: guard.AllocationPreset | None = None,
 ) -> dict[str, object]:
-    """Resolve the pilot allocation against the live ledger (no game is played)."""
+    """Resolve the allocation of ``preset`` (default: the pilot) against the
+    live ledger; no game is played."""
     try:
         ledger = guard.load_live_ledger(seed_ledger)
         binding, record = guard.authorize(
             ledger,
             allocation_identity,
-            allocation_preset(),
+            preset or allocation_preset(),
             arena_revision=arena_revision,
         )
     except guard.AllocationGuardError as error:
@@ -612,6 +629,15 @@ def current_producer(selection: Path) -> dict[str, str]:
 
 
 def run_pilot(arguments) -> dict[str, object]:
+    return run_reserved(arguments, allocation_preset())
+
+
+def run_reserved(arguments, preset: guard.AllocationPreset) -> dict[str, object]:
+    """Generate ``preset``'s population under its RESERVED allocation.
+
+    Shared with the production population (lisjong-arena#475), which differs
+    from the pilot only in its preset.
+    """
     from lisjong_arena.policy_source_record import binding as runtime_identity
 
     native = native_runtime(arguments.selection)
@@ -620,6 +646,7 @@ def run_pilot(arguments) -> dict[str, object]:
         arguments.seed_ledger,
         arguments.allocation_identity,
         producer["arena_revision"],
+        preset,
     )
     pinned = runtime_identity.runtime_binding(
         Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -628,14 +655,14 @@ def run_pilot(arguments) -> dict[str, object]:
         raise _E("the executing checkout is not clean")
     return generate(
         arguments.output,
-        splits=PILOT_SPLITS,
+        splits=dict(preset.splits),
         producer=producer,
         runtime=LisjongRuntime(arguments.selection),
         workers=arguments.workers,
         evidence={
-            "owner_issue": OWNER_ISSUE,
-            "protocol": PROTOCOL,
-            "population": POPULATION,
+            "owner_issue": preset.owner_issue,
+            "protocol": preset.protocol,
+            "population": preset.population,
             "runtime": {**native, "dependencies": pinned["dependencies"]},
             **allocation,
         },
