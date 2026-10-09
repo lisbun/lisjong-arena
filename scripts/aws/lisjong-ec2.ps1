@@ -22,6 +22,13 @@ Actions
              -ForceTerminate stops a running workload deliberately.
   Cleanup    delete a retained bucket / SG after Collect, residual sweep
 
+Local state
+  plan.json, state and collected evidence go to <output root>\<run id>. The
+  root is -OutputRoot, else $env:LISJONG_ARTIFACTS_ROOT\aws-ec2, else
+  lisjong-artifacts\aws-ec2 beside the checkout when that lisjong-artifacts
+  directory exists, else the per-user data directory (scripts/aws/artifacts-root.ps1).
+  -RunId is looked up under the same root.
+
 Example
   $run = @{ AwsProfile = 'lisjong'; Label = 'lisjong-206'; InstanceType = 'c7i.2xlarge'
             Workers = 8; Bootstrap = '..\lisjong\scripts\aws\bootstrap-x.sh'
@@ -86,6 +93,9 @@ if ([string]::IsNullOrWhiteSpace($AwsProfile)) { throw "Pass -AwsProfile or set 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $base = $(if ($IsWindows) { $env:LOCALAPPDATA } else { Join-Path $HOME ".local/share" })
     $OutputRoot = Join-Path $base (Join-Path "lisjong" "aws-ec2")
+    # The artifacts root, when there is one, replaces this default (#469).
+    . (Join-Path $PSScriptRoot "artifacts-root.ps1")
+    $OutputRoot = Resolve-LisjongOutputRoot -Name "aws-ec2" -Legacy $OutputRoot
 }
 
 function Invoke-AwsText {

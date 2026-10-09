@@ -59,6 +59,9 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     } else {
         $OutputRoot = Join-Path $env:TEMP "lisjong-aws-offense-foundation-332"
     }
+    # The artifacts root, when there is one, replaces this default (#469).
+    . (Join-Path $PSScriptRoot "artifacts-root.ps1")
+    $OutputRoot = Resolve-LisjongOutputRoot -Name "aws-offense-foundation-332" -Legacy $OutputRoot
 }
 if (-not [string]::IsNullOrWhiteSpace($ReattachRunId)) {
     if ($PreflightOnly -or $SubmitOnly -or -not [string]::IsNullOrWhiteSpace($RequestPath)) {

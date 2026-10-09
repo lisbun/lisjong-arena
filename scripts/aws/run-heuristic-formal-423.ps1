@@ -52,6 +52,9 @@ if ([string]::IsNullOrWhiteSpace($AwsProfile)) { throw "Pass -AwsProfile or set 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $base = $(if ($IsWindows) { $env:LOCALAPPDATA } else { Join-Path $HOME ".local/share" })
     $OutputRoot = Join-Path $base (Join-Path "lisjong" "aws-heuristic-formal-$EvaluationEvent")
+    # The artifacts root, when there is one, replaces this default (#469).
+    . (Join-Path $PSScriptRoot "artifacts-root.ps1")
+    $OutputRoot = Resolve-LisjongOutputRoot -Name "aws-heuristic-formal-$EvaluationEvent" -Legacy $OutputRoot
 }
 
 function Invoke-AwsText {

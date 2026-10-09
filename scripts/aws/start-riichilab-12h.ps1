@@ -126,6 +126,9 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     } else {
         $OutputRoot = Join-Path $HOME ".lisjong\aws-riichilab-313"
     }
+    # The artifacts root, when there is one, replaces this default (#469).
+    . (Join-Path $PSScriptRoot "artifacts-root.ps1")
+    $OutputRoot = Resolve-LisjongOutputRoot -Name "aws-riichilab-313" -Legacy $OutputRoot
 }
 
 function Invoke-AwsText {

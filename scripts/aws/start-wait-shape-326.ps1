@@ -46,6 +46,9 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     } else {
         $OutputRoot = Join-Path $HOME ".lisjong\aws-wait-shape-326"
     }
+    # The artifacts root, when there is one, replaces this default (#469).
+    . (Join-Path $PSScriptRoot "artifacts-root.ps1")
+    $OutputRoot = Resolve-LisjongOutputRoot -Name "aws-wait-shape-326" -Legacy $OutputRoot
 }
 
 function Invoke-AwsText {

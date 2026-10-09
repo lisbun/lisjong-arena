@@ -568,6 +568,10 @@ A successful launcher invocation writes a run directory below:
 %LOCALAPPDATA%\lisjong\aws-riichilab-313\<run-id>\
 ```
 
+When `LISJONG_ARTIFACTS_ROOT` is set, or a `lisjong-artifacts` directory exists
+beside the checkout, the default is `aws-riichilab-313\<run-id>\` under that
+root instead (#469). `-OutputRoot` still overrides both.
+
 The important files are:
 
 - `preflight.json`: live-resource validation result; preflight-only creates no
