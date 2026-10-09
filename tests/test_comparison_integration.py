@@ -108,13 +108,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # 含むrevisionへ、Arena #400でlisjong #217 Rust shanten wheel build元の
         # revisionへ、Arena #409でlisjong #225（0004構造評価の一括native化）の
         # revisionへ、Arena #423でlisjong #231（最新Belief-paijia統合候補）の
+        # revisionへ、Arena #476でlisjong #288（聴牌PUSH/FOLDの対比較source契約）の
         # revisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97",
+            "6be9b906bcde7b1de8b572fd052464e57421469f",
         )
 
 

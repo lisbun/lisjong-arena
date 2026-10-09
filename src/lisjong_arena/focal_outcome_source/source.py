@@ -81,8 +81,11 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "994f529bd3a7d7d36a3ae0f6d1795d9413a3ce97"
+PINNED_LISJONG_REVISION = "6be9b906bcde7b1de8b572fd052464e57421469f"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #476で聴牌PUSH/FOLDの対比較source契約（lisjong #288）を含む``6be9b90``へ
+追随した。``994f529..6be9b90``の``outcome_source.py``は不変。
 
 Arena #457でロン合法source readerを含む``994f529``へ追随した。
 ``e6346ed..994f529``の``outcome_source.py``は不変。historical protocolの
