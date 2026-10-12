@@ -9,6 +9,28 @@ Issue #251の[strong-bot disagreement diagnostic](riichilab-disagreement-diagnos
 
 強さ評価・因果推定・改修の採否判断ではない。強豪botの選択を正解として扱わない。
 
+## 完了記録（2026-10-12）
+
+PR #482のmerge revision `d3448f438f3a740bb5bb4f6eee76a045a401b4a0` の
+clean checkoutからlocalで1回実行し、Issue #455は完了・closed。
+coverageは112対局 / 判断機会19,874 / 選択行18,992 / 強制行882で既知値と一致した。
+R1・R2・Fの対象は合計7,363行。全表・bot別の分子分母・限界の正本は
+[#455の結果コメント](https://github.com/lisbun/lisjong-arena/issues/455#issuecomment-6124719178)。
+
+R1の打牌同士の不一致1,063件では、Championだけ現物301件、強豪botだけ現物101件。
+打牌後向聴数が相手より大きいのはChampion340件、強豪bot165件だった。
+この相対比較だけでは、合法候補の最小向聴数から悪化したかは分からない。
+強豪botが到達した局面の記述であり、Champion実戦の到達局面分布や放銃率との
+単純比較、打牌の優劣・「降りすぎ／押しすぎ」の断定には使わない。
+
+追加診断は[#483](https://github.com/lisbun/lisjong-arena/issues/483)へ分離した。
+[R1追加診断の計画](riichilab-r1-choice-loss-diagnostic.md)を参照。
+lisjong #254は設計・後続評価まで完了し初版不通過。今回の結果だけでH2を再開せず、
+既存の再開条件も変更しない。#455の既存集計・locked inputsは維持する。
+
+集計JSONはlocalのrepository外に保管し、raw・判断行・第三者botの個別判断は
+local外へ出していない。AWS起動なし。以下は当該runの仕様と再現手順である。
+
 ## 固定した入力
 
 - corpus identity: 064b949733b13026bdbe951c9f69b90653c5977e894449d23f99ce830718b865
