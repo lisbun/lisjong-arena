@@ -1,7 +1,7 @@
 # R1の現物選択可否・向聴維持と実戦損失の追加診断
 
 作業範囲・完了条件の正本は[Arena #483](https://github.com/lisbun/lisjong-arena/issues/483)。
-本書は計画であり、追加実装・集計は未実施。
+集計は `lisjong_arena.riichilab_r1_choice_loss_diagnostic` に実装済み。実行結果は#483へ記録する。
 
 ## 目的
 
@@ -60,3 +60,39 @@ dev/baselineを併記し、共有卓を独立2対局として数えない。
 結果と限界は#441とproject #84へ引き渡す。H2（lisjong #254）は設計・後続評価まで
 完了し初版不通過であり、本診断を理由に再openしたり、既存の再開条件を変更したりしない。
 #297等の必須依存にも設定しない。F/R2の掘り下げ、Policy改修・昇格は本診断の対象外。
+
+## 実装と実行
+
+`lisjong_arena.riichilab_r1_choice_loss_diagnostic` は2つのcommandを持ち、分類codeを共有する。
+出力はどちらも集計値だけのJSONで、#455の出力とは別identityである。
+
+| command | 入力 | 内容 |
+|---|---|---|
+| `strong-bots` | exact #170 corpus | 強豪botの打牌とChampionの選択を分類する。#170 coverageと、#455に記録したbot別のR1件数が一致しなければ停止する |
+| `champion-play` | #441のdev / baseline self-history | Championの実打牌を分類し、公開`hora`のロンと放銃支出を結合する。Policyは実行しない |
+
+固定した入力（`champion-play`）:
+
+- dev: bot 313、history identity `49575871…5056`、209対局、2,161局、放銃局307
+- baseline: bot 394、history identity `72e4cab8…c095`、214対局、2,117局、放銃局251
+- 対象は`played_at >= 2026-09-30T15:00:50`（#441と同じくUTCとして読む推定を継承）。共有66対局
+- history identity、対象対局IDのSHA-256、局数、放銃局数が上と一致しなければ停止する
+
+定義の補足:
+
+- 分類する行は#455のR1と同じ（打牌の選択行、自席リーチ`NONE`、他家のリーチ成立者1人）。
+- 打牌前向聴数は、ツモ牌または鳴いた後の牌を含む打牌前のconcealed hand（3n+2枚）に
+  公開`calculate_shanten`を適用した値。和了形は`-1`。合法打牌後の最小向聴数とは別の軸で出す。
+- 選ばれた牌が現物かどうか（`selected_genbutsu`）も、現物選択可否ごとに別表で出す。
+- 放銃支出は、その打牌への全`hora`の`deltas`のうち自席分の符号を反転した合計。
+  複数ロンは1打牌として合算し、本場を含む。R1では自席がリーチしていないので供託の支出は含まれない。
+  槍槓は打牌ではないので打牌単位の表に入れず、放銃局数の照合にだけ数える。
+- 再現できない対局は途中までの行を捨てて別計上し、未解決の判断も件数を出す。
+  公開eventだけで数えたR1のロン件数・支出も出し、分類できた分との差を確認できるようにする。
+
+実行は実装PRのmerge後、merge revisionのclean checkoutから、#455と同じWSL環境
+（lisjong `51e832e`、rust backend、RiichiEnv 0.4.10）で行う。
+
+    export LISJONG_SHANTEN_BACKEND=rust
+    python -m lisjong_arena.riichilab_r1_choice_loss_diagnostic strong-bots         --snapshot <path-to-170-snapshot.json>         --output-dir <path-to-170-corpus-directory>         --arena-revision "$(git rev-parse HEAD)"
+    python -m lisjong_arena.riichilab_r1_choice_loss_diagnostic champion-play         --dev-history <path-to-lisjong-dev-history>         --baseline-history <path-to-baseline-history>         --arena-revision "$(git rev-parse HEAD)"
