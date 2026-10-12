@@ -1,7 +1,9 @@
 """Issue #483 Champion side: classify the Champion's own R1 discards and losses.
 
 Issue #441の既存対象（lisjong-dev 209対局、lisjong-baseline 214対局）を、強豪bot側と
-同じ分類codeで読む。Policyは実行せず、実戦で選ばれた打牌だけを分類する。
+同じ分類codeで読む。件数・放銃支出は実戦で選ばれた打牌から集計する。固定した
+ChampionはR1打牌選択行の再現・分岐確認のためにだけ実行し（Issue #489）、
+代替打牌の結果は評価しない。
 """
 
 import hashlib
@@ -605,12 +607,15 @@ def run_champion_play(
             "Exploratory follow-up chosen after seeing the Issue #455 result; "
             "not an independent verification, strength evaluation, or causal "
             "estimate.",
-            "Only the Champion's actual discards are classified; no policy is "
-            "executed and no alternative discard is evaluated.",
+            "Counts and deal-in payments are aggregated from the discards "
+            "actually played. The locked Champion is executed on R1 discard "
+            "choice rows only to replay them and observe its branch; no "
+            "alternative discard is evaluated.",
             "The ronned share per discard is not a per-round deal-in rate.",
             "The champion branch is the value lisjong returns with its decision; "
             "rows where the replayed action differs from the played discard do "
-            "not explain the played decision.",
+            "not explain the played decision, and a matching action does not "
+            "prove that the internal path in live play was identical.",
             "A ron by a seat other than the riichi player is not shown to be "
             "avoidable by a genbutsu discard; only deal-in payments are counted, "
             "not the winnings gained by pushing.",
