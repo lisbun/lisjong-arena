@@ -96,3 +96,21 @@ dev/baselineを併記し、共有卓を独立2対局として数えない。
     export LISJONG_SHANTEN_BACKEND=rust
     python -m lisjong_arena.riichilab_r1_choice_loss_diagnostic strong-bots         --snapshot <path-to-170-snapshot.json>         --output-dir <path-to-170-corpus-directory>         --arena-revision "$(git rev-parse HEAD)"
     python -m lisjong_arena.riichilab_r1_choice_loss_diagnostic champion-play         --dev-history <path-to-lisjong-dev-history>         --baseline-history <path-to-baseline-history>         --arena-revision "$(git rev-parse HEAD)"
+
+## 追加：向聴別・放銃先別の分解（Issue #487）
+
+[#487](https://github.com/lisbun/lisjong-arena/issues/487)は、#483の結果を見た後の探索的な
+追加で、`champion-play`だけを拡張する。強豪bot側は再実行しない。出力のschema versionは
+`arena-riichilab-r1-choice-loss-champion-play-v2`で、#483の出力（v1）とは別fileに置く。
+
+- 軸`genbutsu_availability|selected_genbutsu|minimum_post_discard_shanten`を追加した
+  （現物選択可否 × 選ばれた牌 × 合法打牌後の最小向聴数）。
+- すべての区分に、ロンした席の区別を付けた。打牌時点のリーチ成立者（R1なのでちょうど1人）
+  かどうかで、ロンされた打牌を「リーチ者だけ」「リーチ者以外だけ」「両方（複数ロン）」へ
+  排他的に分け、放銃支出を支払先ごとに「リーチ者へ」「リーチ者以外へ」へ分ける。
+  リーチ者以外を副露者・ダマへさらに分けることはしない。
+- dev / baselineのR1の打牌数・ロンされた打牌数・放銃支出が#483の記録
+  （3,724 / 82 / 496,200、4,154 / 63 / 373,100）と一致しなければ停止する。
+
+リーチ者以外へのロンは、リーチ者の現物を選んでも避けられたとは限らない。測るのは放銃支出
+だけで、押して得た和了収入は含まない。この結果だけで改修の良否は判断しない。

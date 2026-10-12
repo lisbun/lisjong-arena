@@ -47,7 +47,7 @@ from lisjong_arena.riichilab_source_pilot.materialization import (
 
 from .classification import SHANTEN_KEEP, SHANTEN_WORSE, UNAVAILABLE, classify_r1_choice
 
-SCHEMA_VERSION = "arena-riichilab-r1-choice-loss-champion-play-v1"
+SCHEMA_VERSION = "arena-riichilab-r1-choice-loss-champion-play-v2"
 OUTCOME_COMPLETE = "R1 CHOICE DIAGNOSTIC (CHAMPION PLAY) COMPLETE"
 
 # #441のChampion（lisjong 51e832e）対象期間。played_atはUTCとして読む（#441の推定を継承）。
@@ -66,6 +66,10 @@ class ChampionGroup:
     game_ids_sha256: str
     rounds: int
     deal_in_rounds: int
+    # Issue #483に記録したR1の打牌数・ロンされた打牌数・放銃支出。
+    r1_discards: int
+    r1_ronned_discards: int
+    r1_deal_in_loss: int
 
 
 CHAMPION_GROUPS = (
@@ -81,6 +85,9 @@ CHAMPION_GROUPS = (
         ),
         rounds=2161,
         deal_in_rounds=307,
+        r1_discards=3724,
+        r1_ronned_discards=82,
+        r1_deal_in_loss=496200,
     ),
     ChampionGroup(
         name="baseline",
@@ -94,10 +101,22 @@ CHAMPION_GROUPS = (
         ),
         rounds=2117,
         deal_in_rounds=251,
+        r1_discards=4154,
+        r1_ronned_discards=63,
+        r1_deal_in_loss=373100,
     ),
 )
 
 _STATES = (SHANTEN_KEEP, SHANTEN_WORSE, UNAVAILABLE)
+
+# Issue #487: ロンした席が、打牌時点のリーチ成立者かそれ以外か。
+WINNER_RIICHI_ONLY = "riichi_player_only"
+WINNER_OTHER_ONLY = "other_only"
+WINNER_BOTH = "both"
+_WINNERS = (WINNER_RIICHI_ONLY, WINNER_OTHER_ONLY, WINNER_BOTH)
+PAYEE_RIICHI = "riichi_player"
+PAYEE_OTHER = "other"
+_PAYEES = (PAYEE_RIICHI, PAYEE_OTHER)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +125,8 @@ class RonnedDiscard:
 
     loss: int
     r1_by_events: bool
+    # (ロンした席, その席への支払い)。複数ロンは`hora`ごとに1件。
+    loss_by_winner: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,10 +182,14 @@ def seat_event_summary(
                 continue
             key = (game_id, seat, *kyoku, discards)
             previous = ronned.get(key)
+            payment = -int(event["deltas"][seat])
             ronned[key] = RonnedDiscard(
-                loss=(0 if previous is None else previous.loss)
-                - int(event["deltas"][seat]),
+                loss=(0 if previous is None else previous.loss) + payment,
                 r1_by_events=last_discard_r1,
+                loss_by_winner=(
+                    *(() if previous is None else previous.loss_by_winner),
+                    (int(event["actor"]), payment),
+                ),
             )
         elif event_type in _ACTION_EVENT_TYPES:
             actor = event.get("actor")
@@ -190,6 +215,9 @@ class ChampionPlayAnalyzer:
         self._discards: Counter[tuple[str, str, str, str]] = Counter()
         self._ronned: Counter[tuple[str, str, str, str]] = Counter()
         self._loss: Counter[tuple[str, str, str, str]] = Counter()
+        # (group, axis, value, ロンした席の区分 / 支払先)
+        self._winners: Counter[tuple[str, str, str, str]] = Counter()
+        self._payee_loss: Counter[tuple[str, str, str, str]] = Counter()
 
     def analyze_game(
         self,
@@ -215,7 +243,7 @@ class ChampionPlayAnalyzer:
 
         tracker = _RiichiDeclarationTracker()
         counts: Counter[str] = Counter()
-        rows: dict[DiscardKey, tuple[tuple[str, str, str], ...]] = {}
+        rows: dict[DiscardKey, tuple[int, tuple[tuple[str, str, str], ...]]] = {}
 
         def observe(observation: MaterializationDecisionObservation) -> None:
             policy_input = observation.decision.input
@@ -250,15 +278,30 @@ class ChampionPlayAnalyzer:
                 raise DiagnosticBlockedError(
                     "replay exposed two discard choices at one discard position"
                 )
-            rows[key] = tuple(
-                (axis, value, state)
-                for axis, value in (
-                    *choice.axes(),
-                    (
-                        "genbutsu_availability|selected_genbutsu",
-                        f"{choice.genbutsu_availability}|{selected}",
-                    ),
-                )
+            availability_selected = f"{choice.genbutsu_availability}|{selected}"
+            minimum = dict(choice.axes())["minimum_post_discard_shanten"]
+            riichi_seat = next(
+                index
+                for index, player in enumerate(policy_input.players)
+                if index != seat and player.riichi is RiichiState.ACCEPTED
+            )
+            rows[key] = (
+                riichi_seat,
+                tuple(
+                    (axis, value, state)
+                    for axis, value in (
+                        *choice.axes(),
+                        (
+                            "genbutsu_availability|selected_genbutsu",
+                            availability_selected,
+                        ),
+                        (
+                            "genbutsu_availability|selected_genbutsu"
+                            "|minimum_post_discard_shanten",
+                            f"{availability_selected}|{minimum}",
+                        ),
+                    )
+                ),
             )
 
         result = materialize_game(
@@ -286,13 +329,31 @@ class ChampionPlayAnalyzer:
             self._unresolved[(group, reason)] += count
         for name, count in counts.items():
             self._counts[(group, name)] += count
-        for key, cells in rows.items():
+        for key, (riichi_seat, cells) in rows.items():
             hit = summary.ronned.get(key)
+            if hit is not None:
+                to_riichi = sum(
+                    loss for winner, loss in hit.loss_by_winner if winner == riichi_seat
+                )
+                winners = {
+                    winner == riichi_seat for winner, _loss in hit.loss_by_winner
+                }
+                if winners == {True}:
+                    winner_key = WINNER_RIICHI_ONLY
+                elif winners == {False}:
+                    winner_key = WINNER_OTHER_ONLY
+                else:
+                    winner_key = WINNER_BOTH
             for axis, value, state in cells:
                 self._discards[(group, axis, value, state)] += 1
                 if hit is not None:
                     self._ronned[(group, axis, value, state)] += 1
                     self._loss[(group, axis, value, state)] += hit.loss
+                    self._winners[(group, axis, value, winner_key)] += 1
+                    self._payee_loss[(group, axis, value, PAYEE_RIICHI)] += to_riichi
+                    self._payee_loss[(group, axis, value, PAYEE_OTHER)] += (
+                        hit.loss - to_riichi
+                    )
 
     def _group_document(self, groups: tuple[str, ...]) -> dict[str, object]:
         def collect(counter: Counter[tuple[str, str]]) -> dict[str, int]:
@@ -327,11 +388,23 @@ class ChampionPlayAnalyzer:
             ):
                 cell[name]["total"] += counter[key]
                 cell[name][state] += counter[key]
-        for values in axes.values():
-            for cell in values.values():
+        for axis, values in axes.items():
+            for value, cell in values.items():
                 cell["deal_in_loss_share_of_r1"] = (
                     None if r1_loss == 0 else cell["deal_in_loss"]["total"] / r1_loss
                 )
+                cell["ronned_discards_by_winner"] = {
+                    name: sum(
+                        self._winners[(group, axis, value, name)] for group in groups
+                    )
+                    for name in _WINNERS
+                }
+                cell["deal_in_loss_by_payee"] = {
+                    name: sum(
+                        self._payee_loss[(group, axis, value, name)] for group in groups
+                    )
+                    for name in _PAYEES
+                }
         return {
             "counts_only": collect(self._counts),
             "unreplayable_game_reasons": collect(self._unsupported),
@@ -342,6 +415,17 @@ class ChampionPlayAnalyzer:
 
     def group_count(self, group: str, name: str) -> int:
         return self._counts[(group, name)]
+
+    def r1_totals(self, group: str) -> tuple[int, int, int]:
+        """(R1の打牌数, ロンされた打牌数, 放銃支出)。"""
+        return tuple(
+            sum(
+                count
+                for (name, axis, _value, _state), count in counter.items()
+                if name == group and axis == "all"
+            )
+            for counter in (self._discards, self._ronned, self._loss)
+        )
 
     def aggregate_document(self) -> dict[str, object]:
         names = tuple(group.name for group in CHAMPION_GROUPS)
@@ -424,6 +508,14 @@ def run_champion_play(
             raise DiagnosticBlockedError(
                 f"{group.name} rounds or deal-in rounds differ from the #441 record"
             )
+        if analyzer.r1_totals(group.name) != (
+            group.r1_discards,
+            group.r1_ronned_discards,
+            group.r1_deal_in_loss,
+        ):
+            raise DiagnosticBlockedError(
+                f"{group.name} R1 totals differ from the recorded Issue #483 result"
+            )
         sources[group.name] = {
             "bot_id": group.bot_id,
             "history_identity": group.history_identity,
@@ -456,6 +548,9 @@ def run_champion_play(
             "Only the Champion's actual discards are classified; no policy is "
             "executed and no alternative discard is evaluated.",
             "The ronned share per discard is not a per-round deal-in rate.",
+            "A ron by a seat other than the riichi player is not shown to be "
+            "avoidable by a genbutsu discard; only deal-in payments are counted, "
+            "not the winnings gained by pushing.",
             "The seat total sums 423 seats over 357 unique games; the 66 shared "
             "games are not independent games.",
             "The strong-bot table and this table differ in reached positions, "
@@ -469,10 +564,15 @@ __all__ = [
     "ChampionGroup",
     "ChampionPlayAnalyzer",
     "OUTCOME_COMPLETE",
+    "PAYEE_OTHER",
+    "PAYEE_RIICHI",
     "PLAYED_AT_THRESHOLD",
     "RonnedDiscard",
     "SCHEMA_VERSION",
     "SeatEventSummary",
+    "WINNER_BOTH",
+    "WINNER_OTHER_ONLY",
+    "WINNER_RIICHI_ONLY",
     "seat_event_summary",
     "run_champion_play",
 ]
