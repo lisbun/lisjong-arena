@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD_PATH = ROOT / ".claude" / "hooks" / "workflow_guard.py"
+GLOBAL_OPTION_GUARD_PATH = ROOT / ".claude" / "hooks" / "git_global_option_guard.py"
 SPEC = importlib.util.spec_from_file_location("claude_workflow_guard", GUARD_PATH)
 assert SPEC is not None and SPEC.loader is not None
 guard = importlib.util.module_from_spec(SPEC)
@@ -177,6 +179,197 @@ class PrePrGateTests(unittest.TestCase):
         flattened = " ".join(" ".join(command) for command in commands)
         self.assertNotIn("unittest", flattened)
         self.assertNotIn("pytest", flattened)
+
+
+class LoopProtectedPathTests(unittest.TestCase):
+    def test_protects_evaluation_system_paths(self) -> None:
+        paths = [
+            "src/lisjong_arena/seed-ledger.json",
+            "src/lisjong_arena/seed_registry.py",
+            "src/lisjong_arena/measurement_allocation_guard.py",
+            "src/lisjong_arena/overall_champion_aabb/protocol.py",
+            "src/lisjong_arena/overall_champion_aabb/lock.py",
+            "src/lisjong_arena/learned_policy_offline_q/fh_curriculum_lock.py",
+            "src/lisjong_arena/learned_policy_offline_q/p1_gate_b_comparator.py",
+            "src/lisjong_arena/riichilab_downstream_qualification/classification.py",
+            "src/lisjong_arena/learned_policy_stage2/decision_rule.py",
+            "src/lisjong_arena/stage_a0_tenpai_execution/gate.py",
+            "src/lisjong_arena/stage_a0_tenpai_protocol_lock/materialize.py",
+            "src/lisjong_arena/new_loop_package/protocol.py",
+            "src\\lisjong_arena\\seed_registry.py",
+            ".github/workflows/seed-registry.yml",
+            ".github/workflows/ci.yml",
+            ".claude/hooks/workflow_guard.py",
+            ".claude/settings.json",
+        ]
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(guard.is_loop_protected_path(path))
+
+    def test_leaves_candidate_and_ordinary_paths_unprotected(self) -> None:
+        paths = [
+            "src/lisjong_arena/overall_champion_aabb/runner.py",
+            "src/lisjong_arena/policy_catalog.py",
+            "src/lisjong_arena/durable_seed_checkpoint.py",
+            "src/lisjong_arena/riichilab/protocol_bridge.py",
+            "src/lisjong_arena/pure_offense_benchmark/blocklist.py",
+            "tests/test_seed_registry.py",
+            "docs/seed-registry.md",
+            "scripts/protocol.py",
+            ".claude/skills/implement-issue/SKILL.md",
+        ]
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertFalse(guard.is_loop_protected_path(path))
+
+    def test_loop_session_is_identified_by_non_empty_environment_value(self) -> None:
+        self.assertFalse(guard.is_loop_session({}))
+        self.assertFalse(guard.is_loop_session({guard.LOOP_SESSION_ENV: ""}))
+        self.assertFalse(guard.is_loop_session({guard.LOOP_SESSION_ENV: "  "}))
+        self.assertTrue(guard.is_loop_session({guard.LOOP_SESSION_ENV: "1"}))
+        self.assertTrue(guard.is_loop_session({guard.LOOP_SESSION_ENV: "0"}))
+
+
+class LoopSessionGuardTests(unittest.TestCase):
+    PROTOCOL = "src/lisjong_arena/sample/protocol.py"
+    LEDGER = "src/lisjong_arena/seed-ledger.json"
+    CANDIDATE = "src/lisjong_arena/sample/candidate.py"
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name)
+        self._git("init", "-b", "main")
+        self._git("config", "user.email", "test@example.invalid")
+        self._git("config", "user.name", "Test User")
+        for path in (self.PROTOCOL, self.LEDGER, self.CANDIDATE):
+            self._write(path, "base\n")
+        self._git("add", ".")
+        self._git("commit", "-m", "base")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+
+    def _write(self, path: str, text: str) -> None:
+        target = self.repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+
+    def _decision(
+        self,
+        command: str,
+        *,
+        loop: bool,
+        guard_path: Path = GUARD_PATH,
+    ) -> str | None:
+        env = {k: v for k, v in os.environ.items() if k != guard.LOOP_SESSION_ENV}
+        if loop:
+            env[guard.LOOP_SESSION_ENV] = "1"
+        completed = subprocess.run(
+            [sys.executable, str(guard_path), "commit-artifacts"],
+            input=json.dumps(
+                {
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                    "cwd": str(self.repo),
+                }
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        if not completed.stdout.strip():
+            return None
+        output = json.loads(completed.stdout)["hookSpecificOutput"]
+        self.assertEqual("deny", output["permissionDecision"])
+        return output["permissionDecisionReason"]
+
+    def test_loop_session_denies_commit_of_staged_protected_change(self) -> None:
+        self._write(self.PROTOCOL, "changed\n")
+        self._git("add", self.PROTOCOL)
+
+        reason = self._decision("git commit -m test", loop=True)
+
+        self.assertIsNotNone(reason)
+        self.assertIn(self.PROTOCOL, reason)
+        self.assertIn(guard.LOOP_SESSION_ENV, reason)
+
+    def test_normal_session_allows_the_same_commit(self) -> None:
+        self._write(self.PROTOCOL, "changed\n")
+        self._write(self.LEDGER, "changed\n")
+        self._git("add", ".")
+
+        self.assertIsNone(self._decision("git commit -m test", loop=False))
+
+    def test_loop_session_allows_commit_without_protected_change(self) -> None:
+        self._write(self.CANDIDATE, "changed\n")
+        self._git("add", self.CANDIDATE)
+
+        self.assertIsNone(self._decision("git commit -m test", loop=True))
+
+    def test_loop_session_denies_deleted_and_renamed_protected_files(self) -> None:
+        self._git("rm", self.LEDGER)
+        self._git("mv", self.PROTOCOL, "src/lisjong_arena/sample/moved.py")
+
+        reason = self._decision("git commit -m test", loop=True)
+
+        self.assertIsNotNone(reason)
+        self.assertIn(self.LEDGER, reason)
+        self.assertIn(self.PROTOCOL, reason)
+
+    def test_loop_session_denies_new_protected_file(self) -> None:
+        added = "src/lisjong_arena/another/lock.py"
+        self._write(added, "new\n")
+        self._git("add", added)
+
+        reason = self._decision("git commit -m test", loop=True)
+
+        self.assertIsNotNone(reason)
+        self.assertIn(added, reason)
+
+    def test_loop_session_denies_unstaged_protected_change(self) -> None:
+        # A pathspec commit takes the worktree content without staging it.
+        self._write(self.LEDGER, "changed\n")
+        self._write(self.CANDIDATE, "changed\n")
+        self._git("add", self.CANDIDATE)
+
+        reason = self._decision(f"git commit -m test -- {self.LEDGER}", loop=True)
+
+        self.assertIsNotNone(reason)
+        self.assertIn(self.LEDGER, reason)
+
+    def test_loop_session_denies_commit_behind_git_global_option(self) -> None:
+        self._write(self.PROTOCOL, "changed\n")
+        self._git("add", self.PROTOCOL)
+        command = "git -c user.name=loop commit -m test"
+
+        denied = self._decision(command, loop=True, guard_path=GLOBAL_OPTION_GUARD_PATH)
+        allowed = self._decision(
+            command, loop=False, guard_path=GLOBAL_OPTION_GUARD_PATH
+        )
+
+        self.assertIsNotNone(denied)
+        self.assertIn(self.PROTOCOL, denied)
+        self.assertIsNone(allowed)
+
+    def test_loop_session_pre_pr_denies_branch_with_protected_change(self) -> None:
+        self._git("switch", "-c", "issue-branch")
+        self._write(self.PROTOCOL, "changed\n")
+        self._git("commit", "-am", "protected change")
+
+        with mock.patch.object(guard, "_run_check"):
+            with mock.patch.dict(os.environ, {guard.LOOP_SESSION_ENV: "1"}):
+                with self.assertRaises(guard.GuardError) as raised:
+                    guard._guard_pre_pr(self.repo)
+            with mock.patch.dict(os.environ):
+                os.environ.pop(guard.LOOP_SESSION_ENV, None)
+                guard._guard_pre_pr(self.repo)
+
+        self.assertIn(self.PROTOCOL, str(raised.exception))
 
 
 class HookInputTests(unittest.TestCase):
