@@ -6,10 +6,11 @@ Issue #441の既存対象（lisjong-dev 209対局、lisjong-baseline 214対局�
 
 import hashlib
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from lisjong.policy_contract import Policy
 from lisjong.policy_contract.action import DiscardAction
 from lisjong.policy_contract.riichi import RiichiState
 from lisjong.policy_contract.seat import Seat
@@ -26,6 +27,7 @@ from lisjong_arena.riichilab_deal_in_risk_disagreement.analysis import (
     REGION_R1,
     SHANTEN_BACKEND,
     DiscardKey,
+    _create_locked_comparator,
     _require_locked_runtime,
     _RiichiDeclarationTracker,
     classify_region,
@@ -45,9 +47,17 @@ from lisjong_arena.riichilab_source_pilot.materialization import (
     materialize_game,
 )
 
-from .classification import SHANTEN_KEEP, SHANTEN_WORSE, UNAVAILABLE, classify_r1_choice
+from .champion_view import observe_champion_view
+from .classification import (
+    GENBUTSU_AVAILABLE,
+    GENBUTSU_NONE,
+    SHANTEN_KEEP,
+    SHANTEN_WORSE,
+    UNAVAILABLE,
+    classify_r1_choice,
+)
 
-SCHEMA_VERSION = "arena-riichilab-r1-choice-loss-champion-play-v2"
+SCHEMA_VERSION = "arena-riichilab-r1-choice-loss-champion-play-v3"
 OUTCOME_COMPLETE = "R1 CHOICE DIAGNOSTIC (CHAMPION PLAY) COMPLETE"
 
 # #441のChampion（lisjong 51e832e）対象期間。played_atはUTCとして読む（#441の推定を継承）。
@@ -70,6 +80,8 @@ class ChampionGroup:
     r1_discards: int
     r1_ronned_discards: int
     r1_deal_in_loss: int
+    # Issue #487に記録した、現物あり・非現物選択・最小向聴数1以上の打牌数。
+    target_discards: int
 
 
 CHAMPION_GROUPS = (
@@ -88,6 +100,7 @@ CHAMPION_GROUPS = (
         r1_discards=3724,
         r1_ronned_discards=82,
         r1_deal_in_loss=496200,
+        target_discards=330,
     ),
     ChampionGroup(
         name="baseline",
@@ -104,6 +117,7 @@ CHAMPION_GROUPS = (
         r1_discards=4154,
         r1_ronned_discards=63,
         r1_deal_in_loss=373100,
+        target_discards=390,
     ),
 )
 
@@ -115,6 +129,19 @@ WINNER_OTHER_ONLY = "other_only"
 WINNER_BOTH = "both"
 _WINNERS = (WINNER_RIICHI_ONLY, WINNER_OTHER_ONLY, WINNER_BOTH)
 PAYEE_RIICHI = "riichi_player"
+
+# Issue #489: 合法打牌候補の現物の出所。
+SOURCE_RIVER = "river"
+SOURCE_PASSED_ONLY = "passed_only"
+SOURCE_AXIS = (
+    "genbutsu_availability|selected_genbutsu|minimum_post_discard_shanten"
+    "|genbutsu_source"
+)
+PATH_AXIS = f"{SOURCE_AXIS}|champion_view"
+_TARGET_PREFIXES = (
+    f"{GENBUTSU_AVAILABLE}|not_genbutsu|1|",
+    f"{GENBUTSU_AVAILABLE}|not_genbutsu|2+|",
+)
 PAYEE_OTHER = "other"
 _PAYEES = (PAYEE_RIICHI, PAYEE_OTHER)
 
@@ -206,7 +233,9 @@ def seat_event_summary(
 class ChampionPlayAnalyzer:
     """Aggregate over the Champion's own R1 discard choices, per bot."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, policy_factory: Callable[[], Policy] | None = None) -> None:
+        # Issue #489: 指定したときだけ、固定したChampionの分類をR1の行へ付ける。
+        self._policy_factory = policy_factory
         # (group, 件数だけ報告する項目)
         self._counts: Counter[tuple[str, str]] = Counter()
         self._unsupported: Counter[tuple[str, str]] = Counter()
@@ -242,6 +271,8 @@ class ChampionPlayAnalyzer:
         )
 
         tracker = _RiichiDeclarationTracker()
+        # Championのinstanceは対局 x 席ごとに作る。
+        policy = None if self._policy_factory is None else self._policy_factory()
         counts: Counter[str] = Counter()
         rows: dict[DiscardKey, tuple[int, tuple[tuple[str, str, str], ...]]] = {}
 
@@ -285,23 +316,37 @@ class ChampionPlayAnalyzer:
                 for index, player in enumerate(policy_input.players)
                 if index != seat and player.riichi is RiichiState.ACCEPTED
             )
+            river = frozenset(
+                discard.tile.tile_type
+                for discard in policy_input.players[riichi_seat].discards
+            )
+            if any(
+                isinstance(legal, DiscardAction) and legal.tile.tile_type in river
+                for legal in observation.decision.legal_actions
+            ):
+                source = SOURCE_RIVER
+            elif choice.genbutsu_availability == GENBUTSU_AVAILABLE:
+                source = SOURCE_PASSED_ONLY
+            elif choice.genbutsu_availability == GENBUTSU_NONE:
+                source = GENBUTSU_NONE
+            else:
+                source = UNAVAILABLE
+            source_value = f"{availability_selected}|{minimum}|{source}"
+            extra = [
+                ("genbutsu_availability|selected_genbutsu", availability_selected),
+                (
+                    "genbutsu_availability|selected_genbutsu"
+                    "|minimum_post_discard_shanten",
+                    f"{availability_selected}|{minimum}",
+                ),
+                (SOURCE_AXIS, source_value),
+            ]
+            if policy is not None:
+                view = observe_champion_view(policy, observation)
+                extra.append((PATH_AXIS, f"{source_value}|{view.label()}"))
             rows[key] = (
                 riichi_seat,
-                tuple(
-                    (axis, value, state)
-                    for axis, value in (
-                        *choice.axes(),
-                        (
-                            "genbutsu_availability|selected_genbutsu",
-                            availability_selected,
-                        ),
-                        (
-                            "genbutsu_availability|selected_genbutsu"
-                            "|minimum_post_discard_shanten",
-                            f"{availability_selected}|{minimum}",
-                        ),
-                    )
-                ),
+                tuple((axis, value, state) for axis, value in (*choice.axes(), *extra)),
             )
 
         result = materialize_game(
@@ -416,6 +461,16 @@ class ChampionPlayAnalyzer:
     def group_count(self, group: str, name: str) -> int:
         return self._counts[(group, name)]
 
+    def target_discards(self, group: str) -> int:
+        """現物あり・非現物選択・最小向聴数1以上の打牌数（Issue #487の対象）。"""
+        return sum(
+            count
+            for (name, axis, value, _state), count in self._discards.items()
+            if name == group
+            and axis == SOURCE_AXIS
+            and value.startswith(_TARGET_PREFIXES)
+        )
+
     def r1_totals(self, group: str) -> tuple[int, int, int]:
         """(R1の打牌数, ロンされた打牌数, 放銃支出)。"""
         return tuple(
@@ -478,7 +533,7 @@ def run_champion_play(
     if len(shared) != SHARED_GAMES:
         raise DiagnosticInvalidError("shared games differ from the locked #441 count")
 
-    analyzer = ChampionPlayAnalyzer()
+    analyzer = ChampionPlayAnalyzer(policy_factory=_create_locked_comparator)
     sources: dict[str, object] = {}
     for group in CHAMPION_GROUPS:
         root = Path(history_roots[group.name])
@@ -516,6 +571,11 @@ def run_champion_play(
             raise DiagnosticBlockedError(
                 f"{group.name} R1 totals differ from the recorded Issue #483 result"
             )
+        if analyzer.target_discards(group.name) != group.target_discards:
+            raise DiagnosticBlockedError(
+                f"{group.name} target discards differ from the recorded Issue #487 "
+                "result"
+            )
         sources[group.name] = {
             "bot_id": group.bot_id,
             "history_identity": group.history_identity,
@@ -548,6 +608,9 @@ def run_champion_play(
             "Only the Champion's actual discards are classified; no policy is "
             "executed and no alternative discard is evaluated.",
             "The ronned share per discard is not a per-round deal-in rate.",
+            "The champion branch is the value lisjong returns with its decision; "
+            "rows where the replayed action differs from the played discard do "
+            "not explain the played decision.",
             "A ron by a seat other than the riichi player is not shown to be "
             "avoidable by a genbutsu discard; only deal-in payments are counted, "
             "not the winnings gained by pushing.",
@@ -564,11 +627,15 @@ __all__ = [
     "ChampionGroup",
     "ChampionPlayAnalyzer",
     "OUTCOME_COMPLETE",
+    "PATH_AXIS",
     "PAYEE_OTHER",
     "PAYEE_RIICHI",
     "PLAYED_AT_THRESHOLD",
     "RonnedDiscard",
     "SCHEMA_VERSION",
+    "SOURCE_AXIS",
+    "SOURCE_PASSED_ONLY",
+    "SOURCE_RIVER",
     "SeatEventSummary",
     "WINNER_BOTH",
     "WINNER_OTHER_ONLY",

@@ -114,3 +114,23 @@ dev/baselineを併記し、共有卓を独立2対局として数えない。
 
 リーチ者以外へのロンは、リーチ者の現物を選んでも避けられたとは限らない。測るのは放銃支出
 だけで、押して得た和了収入は含まない。この結果だけで改修の良否は判断しない。
+
+## 追加：現物の出所とChampionの現行経路（Issue #489）
+
+[#489](https://github.com/lisbun/lisjong-arena/issues/489)は、lisbun/lisjong#299の設計の前提として
+`champion-play`をもう一度拡張する。出力のschema versionは
+`arena-riichilab-r1-choice-loss-champion-play-v3`で、#483 / #487の出力とは別fileに置く。
+
+- 軸`…|genbutsu_source`を追加した。合法打牌候補の現物の出所を、`river`（リーチ成立者の
+  捨て牌と同じ牌種の候補がある）、`passed_only`（現物の候補はあるが河の現物はない）、
+  `none`、`unavailable`（判定不能）に分ける。
+- 軸`…|genbutsu_source|champion_view`を追加した。固定したChampionを同じ`DecisionContext`で
+  実行し、lisjongが判断と一緒に返す分析の`branch`をそのまま数える。Arena側でPush / Foldや
+  守備filterを再実装しない。あわせて、Championが認識したリーチ者の数（宣言済み・成立前を
+  含む）、`StructuralShantenEvaluator`による合法打牌後の最小向聴数、オーラスのトップ目か
+  どうか、再現した行動が実戦の打牌と一致するかを付ける。
+- 対象打牌（現物あり・非現物選択・最小向聴数1以上）がdev 330・baseline 390でなければ停止する。
+
+Championの実行は現行経路の確認のためである。再現した行動が実戦の打牌と違う行は
+「再現不一致」として数え、実戦の判断の説明には使わない。分岐名の件数以外の分析値
+（候補評価、選択理由）は出力に含めない。
