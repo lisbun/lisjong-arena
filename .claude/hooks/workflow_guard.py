@@ -32,6 +32,24 @@ FORBIDDEN_BASENAMES = {
     "secrets.toml",
 }
 PROTECTED_ACTIONS = {"direct-main-push", "commit-artifacts", "pre-pr"}
+# lisbun/lisjong-arena#479: an autonomous loop session sets this variable to a
+# non-empty value. Such a session must not commit changes to the evaluation
+# system (protocol, classification / decision rule, lock, seed registry).
+LOOP_SESSION_ENV = "LISJONG_LOOP_SESSION"
+ARENA_PACKAGE_PREFIX = "src/lisjong_arena/"
+LOOP_PROTECTED_FILES = {
+    ".claude/settings.json",
+    "src/lisjong_arena/measurement_allocation_guard.py",
+    "src/lisjong_arena/seed-ledger.json",
+    "src/lisjong_arena/seed_registry.py",
+}
+# The hooks themselves are protected so that a loop session cannot commit the
+# guard away.
+LOOP_PROTECTED_PREFIXES = (".claude/hooks/", ".github/workflows/")
+LOOP_PROTECTED_MODULE = re.compile(
+    r"(?:protocol|classification|decision_rule|lock|gate"
+    r"|\w+_lock|\w*_gate(?:_\w+)?)\.py"
+)
 SHELL_SEPARATORS = re.compile(r"(?:&&|\|\||;|\n)")
 GIT_PUSH = re.compile(r"(?<![\w-])git\s+push(?:\s|$)", re.IGNORECASE)
 
@@ -187,6 +205,26 @@ def is_forbidden_path(path: str) -> bool:
     return Path(name).suffix.lower() in FORBIDDEN_SUFFIXES
 
 
+def is_loop_session(environ: dict[str, str] | None = None) -> bool:
+    env = os.environ if environ is None else environ
+    return bool(env.get(LOOP_SESSION_ENV, "").strip())
+
+
+def is_loop_protected_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    if normalized in LOOP_PROTECTED_FILES:
+        return True
+    if normalized.startswith(LOOP_PROTECTED_PREFIXES):
+        return True
+    if not normalized.startswith(ARENA_PACKAGE_PREFIX):
+        return False
+
+    *packages, name = normalized[len(ARENA_PACKAGE_PREFIX) :].split("/")
+    if any(package.endswith("_lock") for package in packages):
+        return True
+    return LOOP_PROTECTED_MODULE.fullmatch(name) is not None
+
+
 def _nul_paths(output: str) -> list[str]:
     return [item for item in output.split("\0") if item]
 
@@ -221,6 +259,25 @@ def _candidate_commit_paths(cwd: Path, command: str) -> list[str]:
         candidates.update(tracked_changes)
 
     return sorted(candidates)
+
+
+def _loop_session_commit_paths(cwd: Path) -> list[str]:
+    # Unlike the artifact check, deletions and both sides of a rename count,
+    # and tracked worktree changes are included even without --all so that a
+    # pathspec commit (git commit -- <path>) cannot slip past the staged view.
+    changed = ("diff", "--name-only", "--no-renames", "-z")
+    paths = set(_nul_paths(_git_output(cwd, *changed, "--cached")))
+    paths.update(_nul_paths(_git_output(cwd, *changed)))
+    return sorted(paths)
+
+
+def _deny_loop_protected(paths: list[str], operation: str) -> None:
+    protected = [path for path in paths if is_loop_protected_path(path)]
+    if protected:
+        raise GuardError(
+            f"{operation} changes evaluation-system files that a loop session "
+            f"({LOOP_SESSION_ENV}) must not modify: {', '.join(protected)}"
+        )
 
 
 def _find_base_ref(cwd: Path) -> str:
@@ -277,6 +334,8 @@ def _guard_commit_artifacts(command: str, cwd: Path) -> None:
         raise GuardError(
             f"Commit contains forbidden artifact/credential file class: {paths}"
         )
+    if is_loop_session():
+        _deny_loop_protected(_loop_session_commit_paths(cwd), "Commit")
 
 
 def _guard_pre_pr(cwd: Path) -> None:
@@ -294,6 +353,20 @@ def _guard_pre_pr(cwd: Path) -> None:
         paths = ", ".join(forbidden)
         raise GuardError(
             f"PR contains forbidden artifact/credential file class: {paths}"
+        )
+    if is_loop_session():
+        _deny_loop_protected(
+            _nul_paths(
+                _git_output(
+                    cwd,
+                    "diff",
+                    "--name-only",
+                    "--no-renames",
+                    "-z",
+                    f"{merge_base}..HEAD",
+                )
+            ),
+            "PR",
         )
 
     _run_check(cwd, ["git", "diff", "--check", f"{merge_base}..HEAD"])

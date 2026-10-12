@@ -52,6 +52,26 @@ guardのみである。
 
 通常のfeature branchへのpushはこのHooksの対象外であり、引き続き許可される。
 
+### 自律loop sessionの保護path（#479）
+
+環境変数`LISJONG_LOOP_SESSION`が空でない値のsessionを自律loopのsessionとして
+扱う。値の内容は見ないため、`0`を設定してもloop sessionになる。loop sessionでは
+次のpathを変更（追加・変更・削除・rename）するcommitを拒否し、`gh pr create`前の
+checkでもbranch差分に同じpathが含まれれば拒否する。
+
+- `src/lisjong_arena/`配下の`protocol.py`、`classification.py`、
+  `decision_rule.py`、`lock.py` / `*_lock.py`、`gate.py` / `*_gate*.py`、
+  および名前が`_lock`で終わるpackage配下の全file
+- `src/lisjong_arena/seed_registry.py`、
+  `src/lisjong_arena/measurement_allocation_guard.py`、
+  `src/lisjong_arena/seed-ledger.json`
+- `.github/workflows/`配下の全file
+- `.claude/hooks/`配下の全fileと`.claude/settings.json`（guard自体の無効化防止）
+
+commit時は`-a`やpathspec指定の有無によらず、stage済みの変更と追跡fileの
+未stage変更の両方を検査する。環境変数を設定しない通常のsessionの挙動は
+変わらない。保護pathの正本は`workflow_guard.py`の`LOOP_PROTECTED_*`である。
+
 ## Hooksが担わないこと
 
 - **merge判定はHooksで静的にblockされない。** merge可否は`AGENTS.md`が
@@ -60,7 +80,9 @@ guardのみである。
   評価protocolのseed固定・duplicate layout・one-shot制約等はapplication /
   protocol code側で強制するものであり、`/evaluation-preflight`が行う確認も
   read-onlyな事前確認にとどまる。Claude Hooksはあくまで追加のoperator-error
-  guardであり、research-integrity boundaryそのものではない。
+  guardであり、research-integrity boundaryそのものではない。loop sessionの
+  保護pathも同じ位置づけで、環境変数を設定しないsession、Hooksを経由しない
+  Git操作、名前の規則に合わない評価moduleは対象外になる。
 - **GitHub Actionsに代わるものではない。** `gh pr create`前のHooks checkは
   軽量なローカル確認であり、GitHub Actionsが実行するfull CIの代替ではない。
   full test suite等の正式なpre-merge判定は引き続きGitHub Actionsを正本とする。
