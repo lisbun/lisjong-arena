@@ -39,6 +39,7 @@ class PackageTest(unittest.TestCase):
                 "ComparisonPlan",
                 "ComparisonResult",
                 "CumulativeSingleRoundStrength",
+                "DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION",
                 "DurableLocalGameRecord",
                 "DurableLocalGameRecordError",
                 "ExecutionProvenance",
@@ -85,6 +86,8 @@ class PackageTest(unittest.TestCase):
                 "summarize_single_round_strength",
             ],
         )
+        self.assertEqual(lisjong_arena.DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION, 3)
+        self.assertEqual(lisjong_arena.LOCAL_GAME_RECORD_SCHEMA_VERSION, 2)
         for name in lisjong_arena.__all__:
             with self.subTest(name=name):
                 self.assertTrue(hasattr(lisjong_arena, name))
