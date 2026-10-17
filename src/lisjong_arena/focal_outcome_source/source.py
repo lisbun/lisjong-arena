@@ -81,8 +81,12 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "76844f51b4f3b5604fc48d717014458fd6958a39"
+PINNED_LISJONG_REVISION = "200566fd9a583bc70919feff5d94850545e32a83"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #493でpolicy source reader v2（lisjong #307）・派生source v2（lisjong #309）を
+含む``200566f``へ追随した。``76844f5..200566f``の``outcome_source.py``は不変。
+このproducerのschema・wire・明示的な拒否は変えない。
 
 Arena #493でリーチ宣言牌の位置（lisjong #301）・確定安全牌の基盤（lisjong #302）・
 ``PolicyInput``の保存形式v2（lisjong #305）を含む``76844f5``へ追随した。
