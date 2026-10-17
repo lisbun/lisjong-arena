@@ -49,12 +49,31 @@ v1
 
 v2
   + 完了した各局のauthoritative round-result facts
+
+v3
+  + 各playerのリーチ宣言牌の位置（`riichi_declaration_discard_order`、lisjong #301）
 ```
 
-v1 bundleのsemanticsは変更していません。loaderはversion 2だけを受理し、
+v1 bundleのsemanticsは変更していません。loaderはversion 2と3を受理し、
 version 1 bundleは「per-round result factを持たない」という明示的な理由で
 拒否します。version間のbest-effort補完はしません。既存のv1 bundleは書き換えず、
 必要な場合はv2として作り直してください。
+
+## リーチ宣言牌の位置（v3、#493）
+
+- **既定の保存はversion 2のままです。** version 2の出力は変えず、宣言牌の位置を持つ
+  入力は保存前に拒否します。値を落として保存しません。
+- version 3は、`save_local_game_record(..., schema_version=3)`で呼び出し側が明示的に
+  選んだときだけ保存します。入力の値の有無で形式を自動的に切り替えません。
+- version 3では、`decisions.json`の全playerに`riichi_declaration_discard_order`
+  （`int`または`null`）が必須です。fieldの欠落、未知のfield、整数でない値、契約に
+  反する値（リーチしていないのに値がある、値の指す打牌がない）を拒否します。
+- version 2の記録を読むと、宣言牌の位置は`None`になります（互換読み込み）。version 2の
+  記録にfieldがあれば拒否します。どちらの形式で読むかはmanifestのschema versionだけで
+  決まります。
+- 読み込んだ記録の`DurableLocalGameRecord.schema_version`で形式を確認できます。
+- version 3を既定にする切り替えは、この記録の現行の生成・読み込み経路の対応を確認した後の
+  別の変更として行います（#493の残作業。Adapterの供給開始までに完了させる）。
 
 ## Round result facts (v2)
 
