@@ -36,8 +36,8 @@ O0 producer自身は常に従来のversion 2を使う。historical artifactのid
 
 ## 後続の順序
 
-1. producer移行PRのmergeとCI結果を確認する。
-2. durable local game recordの保存の既定をv3へ変更する。旧versionのidentityと明示的な互換読込は維持する。
+1. producer移行PR #500はmerge済み（`9bbb96a`、merge前CI全10件成功）。
+2. durable local game recordの保存の既定をv3へ変更する。保存の既定定数をversion識別子から分け、旧v2の明示保存・identity・互換読込は維持する。
 3. その後にRiichiEnvとlisjong-engine両Adapterの供給・整合検証を有効にする。
    現在のengine offline checkpoint projectionも位置はNoneであり、最終供給段階では
    `generate_ron_legal_source_457.Recorder.project_checkpoint`も公開の宣言factから同じ位置を供給する。

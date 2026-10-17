@@ -24,6 +24,7 @@ from lisjong_arena.comparison import (
     run_comparison_parallel,
 )
 from lisjong_arena.durable_local_game_record import (
+    DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION,
     LOCAL_GAME_RECORD_SCHEMA_ID,
     LOCAL_GAME_RECORD_SCHEMA_VERSION,
     DurableLocalGameRecord,
@@ -97,6 +98,7 @@ __all__ = [
     "ComparisonResult",
     "DurableLocalGameRecord",
     "DurableLocalGameRecordError",
+    "DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION",
     "LOCAL_GAME_RECORD_SCHEMA_ID",
     "LOCAL_GAME_RECORD_SCHEMA_VERSION",
     "LocalGameRecordSummary",

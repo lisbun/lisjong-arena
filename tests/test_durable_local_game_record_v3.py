@@ -1,9 +1,10 @@
 """lisjong-arena #493: durable local game record schema version 3（リーチ宣言牌の位置）。
 
-version 3は呼び出し側が明示的に選んだときだけ保存する。既定のversion 2は出力を変えず、
-宣言牌の位置を持つ入力を拒否する。読み込みは記録のschema versionに応じて厳密に行う。
+新規保存の既定はversion 3。明示version 2のbyte列と位置の拒否を維持する。
+読み込みは記録のschema versionに応じて厳密に行う。
 """
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ from test_durable_local_game_record_declaration_order import _with_declaration
 
 from lisjong_arena.durable_local_game_record import (
     DECISIONS_FILENAME,
+    DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION,
     LOCAL_GAME_RECORD_SCHEMA_VERSION,
     LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION,
     MANIFEST_FILENAME,
@@ -81,9 +83,10 @@ class SchemaVersion3RoundTripTest(_RecordTest):
     def test_round_trip_keeps_declaration_orders(self) -> None:
         inspection = _inspection_with_declaration()
 
-        path, saved = self._save(inspection, schema_version=V3)
+        path, saved = self._save(inspection)
         loaded = load_local_game_record(path)
 
+        self.assertEqual(DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION, V3)
         self.assertEqual(saved.schema_version, V3)
         self.assertEqual(loaded.schema_version, V3)
         self.assertEqual(loaded.inspection, inspection)
@@ -95,6 +98,15 @@ class SchemaVersion3RoundTripTest(_RecordTest):
         self.assertEqual(players[3].riichi_declaration_discard_order, 0)
         manifest = json.loads((path / MANIFEST_FILENAME).read_text(encoding="utf-8"))
         self.assertEqual(manifest["schema_version"], V3)
+
+    def test_default_and_explicit_version_3_write_identical_bytes(self) -> None:
+        inspection = _inspection_with_declaration()
+        default_path, _ = self._save(inspection, name="default")
+        explicit_path, _ = self._save(inspection, name="explicit", schema_version=V3)
+        self.assertEqual(
+            {item.name: item.read_bytes() for item in default_path.iterdir()},
+            {item.name: item.read_bytes() for item in explicit_path.iterdir()},
+        )
 
     def test_every_player_carries_the_field_in_version_3(self) -> None:
         path, _ = self._save(_inspection_with_declaration(), schema_version=V3)
@@ -109,7 +121,7 @@ class SchemaVersion3RoundTripTest(_RecordTest):
         )
 
     def test_version_3_also_stores_inputs_without_orders(self) -> None:
-        path, _ = self._save(_inspection(), schema_version=V3)
+        path, _ = self._save(_inspection())
 
         loaded = load_local_game_record(path)
 
@@ -118,8 +130,8 @@ class SchemaVersion3RoundTripTest(_RecordTest):
 
 
 class SchemaVersion2Test(_RecordTest):
-    def test_default_is_version_2_and_its_output_is_unchanged(self) -> None:
-        path, saved = self._save(_inspection())
+    def test_explicit_version_2_keeps_the_old_output(self) -> None:
+        path, saved = self._save(_inspection(), schema_version=V2)
 
         manifest = json.loads((path / MANIFEST_FILENAME).read_text(encoding="utf-8"))
         self.assertEqual(manifest["schema_version"], V2)
@@ -127,17 +139,26 @@ class SchemaVersion2Test(_RecordTest):
         for player in _first_players(self._decisions(path)):
             self.assertEqual(set(player), {"discards", "melds", "riichi", "score"})
 
-    def test_version_2_and_explicit_version_2_write_identical_bytes(self) -> None:
-        default_path, _ = self._save(_inspection(), name="default")
-        explicit_path, _ = self._save(_inspection(), name="explicit", schema_version=V2)
-
-        for name in (DECISIONS_FILENAME, MANIFEST_FILENAME):
-            self.assertEqual(
-                (default_path / name).read_bytes(), (explicit_path / name).read_bytes()
-            )
+    def test_explicit_version_2_keeps_the_pre_switch_bundle_bytes(self) -> None:
+        # Captured from #500 main before changing the default; fixed provenance.
+        expected = {
+            "decisions.json": "4a633b288fd1b041d9395bcd7915e1e84313f8d8be11384b1fea40cbe14fb76e",
+            "manifest.json": "f4b523c72bdbca5100fe92f649f6209c5ca0050fe6d484155a17a72cc008e1ac",
+            "objective_trace.json": "31a63f547b9fb1b70906137c7b3183452cbd1044e76420dd2a4f92ecfb697df6",
+            "result.json": "f05a2e77810e7cf3988dcf31fd6aa331c7b67b4655579e56c0f771f3bee38f20",
+            "round_results.json": "dc76e4b2eff674c927b6212b3bf56eb510acefdc4316487a192bd38add931f58",
+        }
+        path, _ = self._save(_inspection(), schema_version=V2)
+        self.assertEqual(
+            {
+                item.name: hashlib.sha256(item.read_bytes()).hexdigest()
+                for item in path.iterdir()
+            },
+            expected,
+        )
 
     def test_version_2_load_restores_none(self) -> None:
-        path, _ = self._save(_inspection())
+        path, _ = self._save(_inspection(), schema_version=V2)
 
         loaded = load_local_game_record(path)
 
@@ -156,6 +177,7 @@ class SchemaVersion2Test(_RecordTest):
                 policy_identities=_identities(),
                 max_steps=10,
                 provenance=_provenance(),
+                schema_version=V2,
             )
 
         self.assertFalse(path.exists())
@@ -170,7 +192,7 @@ class StrictReadTest(_RecordTest):
             load_local_game_record(path)
 
     def test_version_2_rejects_a_player_with_the_field(self) -> None:
-        path, _ = self._save(_inspection())
+        path, _ = self._save(_inspection(), schema_version=V2)
 
         def add(value):
             _first_players(value)[0][FIELD] = None
@@ -277,7 +299,7 @@ class SchemaVersionSelectionTest(_RecordTest):
         with self.assertRaisesRegex(
             DurableLocalGameRecordError, rf"players\[3\]\.{FIELD}"
         ):
-            self._save(_inspection_with_declaration())
+            self._save(_inspection_with_declaration(), schema_version=V2)
 
 
 if __name__ == "__main__":
