@@ -81,8 +81,12 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "6be9b906bcde7b1de8b572fd052464e57421469f"
+PINNED_LISJONG_REVISION = "76844f51b4f3b5604fc48d717014458fd6958a39"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #493でリーチ宣言牌の位置（lisjong #301）・確定安全牌の基盤（lisjong #302）・
+``PolicyInput``の保存形式v2（lisjong #305）を含む``76844f5``へ追随した。
+``6be9b90..76844f5``の``outcome_source.py``は不変。
 
 Arena #476で聴牌PUSH/FOLDの対比較source契約（lisjong #288）を含む``6be9b90``へ
 追随した。``994f529..6be9b90``の``outcome_source.py``は不変。
