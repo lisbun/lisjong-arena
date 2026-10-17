@@ -1,5 +1,6 @@
 """#245 formal run contract tests (no AWS call, no hanchan execution)."""
 
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -642,7 +643,21 @@ class VerifySourceTest(unittest.TestCase):
         )
         module = types.ModuleType("lisjong.learning.riichi_deal_in_source")
         module.read_decisions = lambda directory: (manifest, decisions)
-        return mock.patch.dict(sys.modules, {module.__name__: module})
+        return self._stub_reader(module)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _stub_reader(module):
+        """``from lisjong.learning import riichi_deal_in_source``は、実moduleを先に
+        importしたshardではpackage属性を優先する。属性も差し替えて、test順に依存させない。
+        """
+        import lisjong.learning as package
+
+        with (
+            mock.patch.dict(sys.modules, {module.__name__: module}),
+            mock.patch.object(package, "riichi_deal_in_source", module, create=True),
+        ):
+            yield
 
     def verify(self, **kwargs):
         return self.driver.verify_source(
