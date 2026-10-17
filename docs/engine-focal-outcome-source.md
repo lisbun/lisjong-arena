@@ -15,6 +15,16 @@ lisjongが所有し、Arenaは算出も公開もしない。
 
 実装は`src/lisjong_arena/focal_outcome_source/engine_source.py`にある。
 
+## #493以降の新規生成の制限
+
+この旧schemaは#493の移行対象外です。Adapterが供給する宣言牌位置を持つ入力は、
+共通encoderが保存前に拒否し、生成全体を失敗として部分sourceを公開しません。
+既存sourceの読込・identityは維持します。再び生成に使うには、lisjongのreader対応、
+Arenaのpin更新、producerの新schema選択を順に移す必要があります。
+位置を除去して旧形式へ保存するproductionの互換変換はありません。
+詳細は[宣言牌位置の移行記録](source-schema-migration-493.md)を参照してください。
+
+
 ## Kyoku boundary
 
 RiichiEnv event deltaからの再構成は行わない。lisjong-engineの

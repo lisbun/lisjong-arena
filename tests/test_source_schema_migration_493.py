@@ -240,7 +240,7 @@ class MigrationTest(unittest.TestCase):
 
     def test_engine_ron_checkpoint_writer_preserves_supplied_positions(self):
         recorder, _ = ron_fixture.fixture(riichi=True)
-        # The live Adapter intentionally supplies None in this migration stage.
+        # Real engine declarations now supply positions before serialization.
         for row in recorder.history:
             self.assertEqual(row["schema"], ron_legal_source.HISTORY_SCHEMA_V2)
         value = next(
@@ -255,18 +255,7 @@ class MigrationTest(unittest.TestCase):
         checkpoint = ron_legal_source._checkpoint(
             value, "development", schema=ron_legal_source.HISTORY_SCHEMA_V2
         )
-        marked = tuple(
-            replace(
-                view,
-                players=tuple(
-                    replace(p, riichi_declaration_discard_order=p.discards[-1].order)
-                    if p.riichi is RiichiState.ACCEPTED
-                    else p
-                    for p in view.players
-                ),
-            )
-            for view in checkpoint.views
-        )
+        marked = checkpoint.views
         written = ron_fixture.producer.checkpoint_to_value(
             marked, copy.deepcopy(value["contexts"])
         )

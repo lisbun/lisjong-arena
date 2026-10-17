@@ -256,12 +256,15 @@ class PlayersTest(unittest.TestCase):
     def test_riichi_states_are_projected_for_every_seat(self) -> None:
         policy_input = build_policy_input(
             observation(
+                discards=seat_discards(
+                    west=(discard(manzu(9), 0, is_riichi_declaration=True),)
+                ),
                 riichi_states=(
                     SeatRiichiState(EngineSeat.EAST, PublicRiichiStatus.NONE),
                     SeatRiichiState(EngineSeat.SOUTH, PublicRiichiStatus.PENDING),
                     SeatRiichiState(EngineSeat.WEST, PublicRiichiStatus.ESTABLISHED),
                     SeatRiichiState(EngineSeat.NORTH, PublicRiichiStatus.NONE),
-                )
+                ),
             )
         )
         self.assertEqual(

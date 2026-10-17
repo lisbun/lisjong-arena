@@ -27,21 +27,63 @@ policy source recordはmanifestのschemaからcodecを選択する。
 hand beliefとriichi deal-inは学習用readerまで通す。
 聴牌PUSH/FOLDは既知のRETIRED development seedのengine fixtureと保存用入力を使い、
 ロン合法はengine fixtureのcheckpointから位置を持つ保存用viewを構成してwriter/readerを照合する。
-これらはserializationと接続の検証であり、Adapterが実際に求める宣言位置の正しさや
-Policyの強さを主張するものではない。実native scorerによるロン合法sourceの完全な読込は専用CIで確認する。
+初期のproducer移行（#500）ではserializationをfixtureで検証した。
+続く供給段階では実engine fixtureの宣言factを使い、ロン合法historyの全viewの位置保持と
+base判断記録のPolicyInput全体の一致、聴牌PUSH/FOLDの保存・読み戻しを検証する。
+実native scorerによるロン合法sourceの完全な読込は専用CIで確認する。
 
 対象外のoffense O0とfocal outcome sourceは旧schemaと位置の拒否を維持する。
 policy sourceが共用するO0 row helperには明示的なcodec選択だけを追加し、
 O0 producer自身は常に従来のversion 2を使う。historical artifactのidentityは変更しない。
+旧focal sourceの実engine/RiichiEnv入力は、位置供給後に拒否されることと、逐次/並列の
+生成が部分sourceを公開しないことをtestで固定する。既存readback・改ざん検知のtestは
+field導入前を模したtest専用historical fixtureで維持し、production側で値を除去しない。
 
-## 後続の順序
+## 供給と整合検証
 
-1. producer移行PR #500はmerge済み（`9bbb96a`、merge前CI全10件成功）。
-2. durable local game recordの保存の既定をv3へ変更する。保存の既定定数をversion識別子から分け、旧v2の明示保存・identity・互換読込は維持する。
-3. その後にRiichiEnvとlisjong-engine両Adapterの供給・整合検証を有効にする。
-   現在のengine offline checkpoint projectionも位置はNoneであり、最終供給段階では
-   `generate_ron_legal_source_457.Recorder.project_checkpoint`も公開の宣言factから同じ位置を供給する。
-   base判断記録とhistoryのPolicyInput全体が一致することを実engine fixtureで再確認する。
-4. #493の局面テストと#489の固定入力で位置を照合する。個別のraw行を外部へ出さない。
+producer移行PR #500（`9bbb96a`）とdurable既定v3化PR #501（`810d26e`）をmerge済み。
+供給段階では以下を同時に有効にする。
 
-producerのwire移行だけでは両Adapterの供給は有効にならない。
+- RiichiEnv: seat-visible `reach`後の本人の最初の`dahai`の局内orderを保存する。
+  宣言牌は手出し・ツモ切りの両方を許可し、鳴かれても位置を保持する。
+  宣言前はNone、打牌後はDECLAREDの応答時点から値を供給する。局開始でresetする。
+- lisjong-engine: `PublicDiscard.is_riichi_declaration`のorderを使う。
+  pendingで打牌前はNone、打牌後はDECLARED、成立後はACCEPTEDとして同じ位置を保持する。
+  ロンで成立しなかった宣言は、engineが公開フラグを保持していてもRiichiState.NONEなので位置を供給しない。
+- 両経路: 宣言後の本人の打牌に非ツモ切りがあれば停止し、ACCEPTEDで位置なしも停止する。
+  engineの宣言フラグ複数も拒否する。入力の修正や位置の除去は行わない。
+- ロン合法offline checkpoint: engineのpending declaration・finalizationの公開宣言factから
+  物理牌を照合し、既存の公開打牌orderへ射影する。両engine経路は同じ検証関数を使う。
+  4席の非公開手牌を含むcheckpointはofflineだけで扱い、online Policyへ渡さない。
+
+局面テストは宣言牌の手出し/ツモ切り、鳴かれた宣言牌、第一打のリーチ、複数席、
+暗槓前後、宣言直後、局reset、hidden hand/wallの違い、異常入力の拒否を対象とする。
+既存`learned_policy_input`のfeatureとtensor値も位置の有無で同一であることを固定する。
+
+## #489の固定入力による照合
+
+`scripts/validate_declaration_positions_493.py`は、#489と同じChampion入力だけをoffline replayする。
+`_select_games`でhistory identity・対象IDのhash・対局数を検証し、既存#489 v3集計の
+全game log digestとの一致も確認する。既存診断のtrackerは新fieldを読まずに位置の候補範囲を求める。
+範囲が1つの行だけをAdapterの局内orderと照合し、不一致・入力不一致・replay失敗は停止する。
+個別行・対局IDは出力せず、集計件数だけをstdoutへ返す。既存入力・集計への書込はない。
+
+2026-10-17の確認（変更branch、RiichiEnv 0.4.10）:
+
+| 入力 | 対局×席 | 判断行 | 一意な位置の一致行 | 診断側が複数候補の行 |
+| --- | ---: | ---: | ---: | ---: |
+| dev | 209 | 33,945 | 7,433 | 15 |
+| baseline | 214 | 33,145 | 8,084 | 15 |
+| 席合計 | 423 | 67,090 | 15,517 | 30 |
+
+共有66対局を含む。不一致は0件。一致行は判断時点×他家の行であり、独立した宣言の数ではない。
+複数候補の30行は一致数に含めない。これは取得位置の検証で、強さ・安全牌の統計的主張や
+過去の評価の再実行ではない。既存artifact・固定population・評価結果は維持する。
+
+実行例（pathは各localの固定入力を指定）:
+
+```text
+python scripts/validate_declaration_positions_493.py --dev-history <dev-history> --baseline-history <baseline-history> --reference <existing-issue-489-champion-play.json>
+```
+
+#493はこの供給PRのmerge後、lisjong側の基盤Issueへ供給revisionを引き渡して完了確認する。

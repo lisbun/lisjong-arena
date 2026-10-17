@@ -1,5 +1,7 @@
 """Shared test-only provenance fixtures for the #359 focal outcome source tests."""
 
+from dataclasses import replace
+
 from lisjong_arena import seed_registry
 from lisjong_arena.focal_outcome_source import source
 
@@ -22,3 +24,27 @@ def source_contract():
         "game_mode": source.GAME_MODE,
         "python": "3.14.0",
     }
+
+
+def historical_policy_input_fixture(view):
+    """Test-only pre-#493 snapshot, never a production compatibility writer."""
+    return replace(
+        view,
+        players=tuple(
+            replace(player, riichi_declaration_discard_order=None)
+            for player in view.players
+        ),
+    )
+
+
+def historical_captures_fixture(captures):
+    return tuple(
+        replace(
+            capture,
+            decision=replace(
+                capture.decision,
+                input=historical_policy_input_fixture(capture.decision.input),
+            ),
+        )
+        for capture in captures
+    )

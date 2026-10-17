@@ -164,6 +164,9 @@ def build_policy_input(
                 discards=materialized_seat_discards,
                 melds=melds,
                 riichi=riichi_state,
+                riichi_declaration_discard_order=tracker.riichi_declaration_discard_order[
+                    seat_index
+                ],
             )
         )
 

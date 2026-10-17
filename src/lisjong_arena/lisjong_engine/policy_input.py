@@ -20,6 +20,7 @@ from lisjong.policy_contract import (
     OwnHandState,
     PlayerPublicState,
     PolicyInput,
+    RiichiState,
     RoundState,
     Seat,
 )
@@ -46,8 +47,7 @@ _SEAT_ORDER = tuple(Seat)
 def _discard_from_engine_discard(discard) -> Discard:
     """engine `PublicDiscard`をlisjong `Discard`へ変換する。
 
-    engineの`is_riichi_declaration`はcurrent `lisjong.Discard`契約に対応
-    fieldがないため、独自fieldを追加せず、他fieldへ丸めもしない。
+    宣言牌フラグはplayer単位の位置へ別途射影する。
     """
     return Discard(
         tile=tile_from_public_tile(discard.tile),
@@ -59,6 +59,26 @@ def _discard_from_engine_discard(discard) -> Discard:
             else seat_from_engine_seat(discard.called_by)
         ),
     )
+
+
+def _riichi_declaration_discard_order(discards, riichi: RiichiState) -> int | None:
+    """公開の宣言factを局内orderへ変換し、宣言後の打牌を検証する。"""
+    # ロンで成立しなかった宣言の公開フラグもengineは保持する。
+    if riichi is RiichiState.NONE:
+        return None
+    marked = tuple(d for d in discards if d.is_riichi_declaration)
+    if len(marked) > 1:
+        raise ObservationProjectionError("multiple riichi declaration discards")
+    if not marked:
+        if riichi is RiichiState.ACCEPTED:
+            raise ObservationProjectionError(
+                "ACCEPTED riichi requires a declaration discard order"
+            )
+        return None
+    order = marked[0].order
+    if any(d.order > order and not d.is_tsumogiri for d in discards):
+        raise ObservationProjectionError("post-riichi discard must be tsumogiri")
+    return order
 
 
 def _seat_ordered(values, field_name: str) -> tuple:
@@ -97,6 +117,10 @@ def build_policy_input(observation: object) -> PolicyInput:
                 public_meld_from_engine_meld(meld) for meld in melds[index].melds
             ),
             riichi=riichi_state_from_engine_status(riichi_states[index].status),
+            riichi_declaration_discard_order=_riichi_declaration_discard_order(
+                discards[index].discards,
+                riichi_state_from_engine_status(riichi_states[index].status),
+            ),
         )
     if set(states_by_seat) != set(_SEAT_ORDER):
         raise ObservationProjectionError(
