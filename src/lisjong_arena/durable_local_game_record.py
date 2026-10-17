@@ -524,6 +524,15 @@ def _parse_meld(value: object, context: str) -> PublicMeld:
 def _policy_input_to_value(policy_input: PolicyInput) -> dict[str, object]:
     if not isinstance(policy_input, PolicyInput):
         raise DurableLocalGameRecordError("policy_input must be a PolicyInput")
+    # この形式はリーチ宣言牌の位置（lisjong #301）を持たない。値を落として保存すると、
+    # 読み戻した入力から導く確定安全牌が変わりうるので、値を持つ入力は拒否する
+    # （lisjong-arena #493）。lisjongのpinがfield追加前でも動くようgetattrで読む。
+    for seat, player in enumerate(policy_input.players):
+        if getattr(player, "riichi_declaration_discard_order", None) is not None:
+            raise DurableLocalGameRecordError(
+                f"policy_input.players[{seat}].riichi_declaration_discard_order "
+                "cannot be stored in this record schema"
+            )
     round_state = policy_input.round
     return {
         "own_hand": {
