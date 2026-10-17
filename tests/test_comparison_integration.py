@@ -109,13 +109,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # revisionへ、Arena #409でlisjong #225（0004構造評価の一括native化）の
         # revisionへ、Arena #423でlisjong #231（最新Belief-paijia統合候補）の
         # revisionへ、Arena #476でlisjong #288（聴牌PUSH/FOLDの対比較source契約）の
+        # revisionへ、Arena #493でlisjong #305（PolicyInputの保存形式v2）の
         # revisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "6be9b906bcde7b1de8b572fd052464e57421469f",
+            "76844f51b4f3b5604fc48d717014458fd6958a39",
         )
 
 
