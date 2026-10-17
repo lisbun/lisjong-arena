@@ -22,9 +22,10 @@ durable raw execution / decision record
     -> consumer-specific dataset / diagnostic / viewer projection
 ```
 
-## Bundle v2
+## Bundle v3（既定）・v2（互換）
 
-schema identityは`lisjong-arena-durable-local-game-record`、versionは`2`です。
+schema identityは`lisjong-arena-durable-local-game-record`、保存の既定versionは`3`です。
+`save_local_game_record(..., schema_version=2)`による旧形式の明示保存も維持します。
 
 | File | Meaning |
 | --- | --- |
@@ -57,14 +58,18 @@ v3
 v1 bundleのsemanticsは変更していません。loaderはversion 2と3を受理し、
 version 1 bundleは「per-round result factを持たない」という明示的な理由で
 拒否します。version間のbest-effort補完はしません。既存のv1 bundleは書き換えず、
-必要な場合はv2として作り直してください。
+自動的な変換・再生成は行いません。
 
 ## リーチ宣言牌の位置（v3、#493）
 
-- **既定の保存はversion 2のままです。** version 2の出力は変えず、宣言牌の位置を持つ
-  入力は保存前に拒否します。値を落として保存しません。
-- version 3は、`save_local_game_record(..., schema_version=3)`で呼び出し側が明示的に
-  選んだときだけ保存します。入力の値の有無で形式を自動的に切り替えません。
+- **新規保存の既定はversion 3です。** 位置が全席`None`でもversion 3で保存します。
+  `save_local_game_record(..., schema_version=3)`の明示指定も同じ結果になります。
+- `schema_version=2`を明示すれば、従来と同じbyte列・identityで保存します。
+  宣言牌の位置を持つ入力はversion 2では保存前に拒否し、値を落としません。
+  入力の値の有無で形式を自動的に切り替えません。
+- 保存の既定は`DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION`（3）です。
+  既存の`LOCAL_GAME_RECORD_SCHEMA_VERSION`（2）は旧形式の識別子として維持します。
+  旧wireを扱う内部codecの既定もv2のままで、記録全体の保存の既定と分離しています。
 - version 3では、`decisions.json`の全playerに`riichi_declaration_discard_order`
   （`int`または`null`）が必須です。fieldの欠落、未知のfield、整数でない値、契約に
   反する値（リーチしていないのに値がある、値の指す打牌がない）を拒否します。
@@ -72,8 +77,9 @@ version 1 bundleは「per-round result factを持たない」という明示的�
   記録にfieldがあれば拒否します。どちらの形式で読むかはmanifestのschema versionだけで
   決まります。
 - 読み込んだ記録の`DurableLocalGameRecord.schema_version`で形式を確認できます。
-- version 3を既定にする切り替えは、この記録の現行の生成・読み込み経路の対応を確認した後の
-  別の変更として行います（#493の残作業。Adapterの供給開始までに完了させる）。
+- policy source recordと4種類の派生sourceのproducer移行（PR #500）後に、保存の既定をv3へ
+  切り替えました。両Adapterからの宣言牌位置の供給は、この変更では有効にしません。
+  実供給・整合検証とoffline checkpoint projectionの対応は#493の後続作業です。
 
 ## Round result facts (v2)
 

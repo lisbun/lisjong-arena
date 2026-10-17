@@ -125,6 +125,7 @@ class ProducerTest(unittest.TestCase):
                 policy_identities=_identities(),
                 max_steps=10,
                 provenance=_provenance(),
+                schema_version=2,
             )
 
         self.assertIn(f"policy_input.players[3].{FIELD}", str(raised.exception))
@@ -139,6 +140,7 @@ class ProducerTest(unittest.TestCase):
             policy_identities=_identities(),
             max_steps=10,
             provenance=_provenance(),
+            schema_version=2,
         )
 
         record = load_local_game_record(path)

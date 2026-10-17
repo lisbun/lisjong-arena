@@ -113,14 +113,17 @@ from lisjong_arena.single_round_artifact import (
 
 LOCAL_GAME_RECORD_SCHEMA_ID = "lisjong-arena-durable-local-game-record"
 LOCAL_GAME_RECORD_SCHEMA_VERSION = 2
-"""既定で保存するschema version。リーチ宣言牌の位置を持たない。"""
+"""旧version 2の識別子。明示保存・互換読込と旧wire consumerのため維持する。"""
 LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS = 1
 LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION = 3
 """各playerのリーチ宣言牌の位置（lisjong #301）を保存するschema version。
 
-呼び出し側が明示的に選んだときだけ保存する（lisjong-arena #493）。入力の値の有無で
-形式を自動的に切り替えない。
+新規保存の既定（lisjong-arena #493）。入力の値の有無で形式を切り替えない。
 """
+DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION = (
+    LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION
+)
+"""新規bundle保存とDurableLocalGameRecord構築の既定。旧形式の識別子とは分離する。"""
 _READABLE_SCHEMA_VERSIONS = frozenset(
     {
         LOCAL_GAME_RECORD_SCHEMA_VERSION,
@@ -187,7 +190,7 @@ class DurableLocalGameRecord:
     provenance: SingleRoundExecutionProvenance
     inspection: LocalGameInspection
     payloads: Mapping[str, PayloadReference]
-    schema_version: int = LOCAL_GAME_RECORD_SCHEMA_VERSION
+    schema_version: int = DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         if (
@@ -1932,12 +1935,12 @@ def save_local_game_record(
     policy_identities: Mapping[Seat, str],
     max_steps: int | None,
     provenance: SingleRoundExecutionProvenance | None = None,
-    schema_version: int = LOCAL_GAME_RECORD_SCHEMA_VERSION,
+    schema_version: int = DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION,
 ) -> DurableLocalGameRecord:
     """completed inspectionをnew immutable bundleへstrict readback後にfinalizeする。
 
-    `schema_version`は既定のversion 2か、リーチ宣言牌の位置を保存するversion 3を
-    呼び出し側が明示的に選ぶ。version 2は宣言牌の位置を持つ入力を拒否する。
+    `schema_version`の既定は宣言牌の位置を保持するversion 3。明示的なversion 2の
+    保存も維持し、version 2は宣言牌の位置を持つ入力を拒否する。
     """
     if not isinstance(inspection, LocalGameInspection):
         raise TypeError("inspection must be a completed LocalGameInspection")
@@ -2058,7 +2061,7 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
         if schema_version == LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS:
             raise DurableLocalGameRecordError(
                 "schema version 1 records do not contain per-round result facts "
-                "and are not readable by this version 2 only loader"
+                "and are not readable by this version 2/3 loader"
             )
         raise DurableLocalGameRecordError("unsupported record schema version")
     if (
@@ -2288,6 +2291,7 @@ __all__ = [
     "DECISIONS_FILENAME",
     "LOCAL_GAME_RECORD_BACKEND",
     "LOCAL_GAME_RECORD_SCHEMA_ID",
+    "DEFAULT_LOCAL_GAME_RECORD_SCHEMA_VERSION",
     "LOCAL_GAME_RECORD_SCHEMA_VERSION",
     "LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS",
     "LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION",
