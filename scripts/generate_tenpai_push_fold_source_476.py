@@ -410,7 +410,11 @@ def play_seed(seed: int, runtime) -> dict[str, object]:
                     fold.rounds[-1],
                 )
             )
-        decisions.append(dev.canonical_line(wire.decision_to_value(record)))
+        decisions.append(
+            dev.canonical_line(
+                wire.decision_to_value(record, schema=wire.DECISION_SCHEMA_V2)
+            )
+        )
         for outcome, side_fact in sides:
             multiple_ron_deal_ins += (
                 outcome.deal_in_to is not None and len(side_fact.winners) > 1

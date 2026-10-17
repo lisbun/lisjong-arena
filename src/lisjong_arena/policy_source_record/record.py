@@ -1,4 +1,4 @@
-"""``arena-policy-source-record-v1``: player-safe source rows for any catalog teacher.
+"""Policy source records v1/v2: player-safe rows for any catalog teacher.
 
 Rows use exactly the player-safe row shape of the Offense Foundation source
 record (lisbun/lisjong-arena#342): typed ``PolicyInput``, canonical legal
@@ -28,6 +28,19 @@ from lisjong_arena.offense_foundation.semantics import OffenseError
 from .errors import PolicySourceRecordError
 
 SCHEMA = "arena-policy-source-record-v1"
+SCHEMA_V2 = "arena-policy-source-record-v2"
+
+
+def _input_version(schema):
+    if schema == SCHEMA:
+        return 2
+    if schema == SCHEMA_V2:
+        return 3
+    raise PolicySourceRecordError(
+        f"unsupported policy source record schema: {schema!r}"
+    )
+
+
 KIND = "policy-source-record"
 POPULATION_SCHEMA = "arena-policy-source-population-v1"
 GAME_MODE = "4p-red-half"
@@ -159,8 +172,11 @@ def _file_info(path: Path) -> dict[str, object]:
     return {"bytes": path.stat().st_size, "sha256": digest.hexdigest()}
 
 
-def write_game(path: Path, *, game_ordinal, split, seed, result, inspection):
+def write_game(
+    path: Path, *, game_ordinal, split, seed, result, inspection, schema=SCHEMA
+):
     """Write every seat decision of one executed hanchan, in execution order."""
+    input_version = _input_version(schema)
     if result.seed != seed or result.game_mode != GAME_MODE:
         raise PolicySourceRecordError("executed game identity mismatch")
     path.mkdir()
@@ -183,6 +199,7 @@ def write_game(path: Path, *, game_ordinal, split, seed, result, inspection):
                     seed=seed,
                     step_ordinal=step.step_ordinal,
                     decision_ordinal=ordinal,
+                    policy_input_schema_version=input_version,
                 )
                 stream.write(offense_source._canonical_line(row))
                 ordinal += 1
@@ -201,10 +218,11 @@ def write_game(path: Path, *, game_ordinal, split, seed, result, inspection):
     )
 
 
-def build_manifest(population, contract, game_summaries):
+def build_manifest(population, contract, game_summaries, *, schema=SCHEMA):
+    _input_version(schema)
     return seal(
         {
-            "schema": SCHEMA,
+            "schema": schema,
             "kind": KIND,
             "purpose": population["purpose"],
             "game_mode": GAME_MODE,
@@ -216,21 +234,25 @@ def build_manifest(population, contract, game_summaries):
     )
 
 
-def write_manifest(path: Path, population, contract, game_summaries):
-    manifest = build_manifest(population, contract, game_summaries)
+def write_manifest(path: Path, population, contract, game_summaries, *, schema=SCHEMA):
+    manifest = build_manifest(population, contract, game_summaries, schema=schema)
     _strict(write_document, path / "manifest.json", manifest)
     return manifest
 
 
-def iter_rows(path: Path, game: Mapping):
+def iter_rows(path: Path, game: Mapping, *, schema=None):
     """Yield ``(row, policy_input, legal_actions, selected)`` for one game."""
+    if schema is None:
+        # Select from the durable manifest, never by inspecting the row values.
+        schema = _strict(read_document, path.parent / "manifest.json")["schema"]
+    input_version = _input_version(schema)
     with (path / SOURCE_FILENAME).open(encoding="utf-8") as rows:
         for line in rows:
             row = _strict(parse_json_text, line)
             if line != offense_source._canonical_line(row):
                 raise PolicySourceRecordError("source row is not canonical JSON")
             policy_input, legal_actions, selected = _strict(
-                offense_source._read_row, row
+                offense_source._read_row, row, policy_input_schema_version=input_version
             )
             if (
                 row["game_ordinal"] != game["game_ordinal"]
@@ -241,7 +263,9 @@ def iter_rows(path: Path, game: Mapping):
             yield row, policy_input, legal_actions, selected
 
 
-def _read_game(path: Path, game: object, *, game_ordinal: int, split: str, seed: int):
+def _read_game(
+    path: Path, game: object, *, game_ordinal: int, split: str, seed: int, schema
+):
     body = _strict(unseal, game)
     if set(body) != _GAME_FIELDS:
         raise PolicySourceRecordError("invalid source game fields")
@@ -262,7 +286,7 @@ def _read_game(path: Path, game: object, *, game_ordinal: int, split: str, seed:
     if _file_info(path / SOURCE_FILENAME) != game["files"][SOURCE_FILENAME]:
         raise PolicySourceRecordError("source payload checksum/size mismatch")
     total, last_step, last_seat = 0, -1, -1
-    for row, _, _, _ in iter_rows(path, game):
+    for row, _, _, _ in iter_rows(path, game, schema=schema):
         step, seat = row["step_ordinal"], row["actor_seat"]
         if (
             row["decision_ordinal"] != total
@@ -283,8 +307,8 @@ def read_source_record(path, *, expected_population=None):
     path = Path(path)
     manifest = _strict(read_document, path / "manifest.json")
     body = _strict(unseal, manifest)
-    if body.get("schema") != SCHEMA:
-        raise PolicySourceRecordError("unsupported policy source record schema")
+    schema = body.get("schema")
+    _input_version(schema)
     if set(body) != _MANIFEST_FIELDS:
         raise PolicySourceRecordError("invalid policy source manifest fields")
     if manifest["kind"] != KIND or manifest["game_mode"] != GAME_MODE:
@@ -325,6 +349,7 @@ def read_source_record(path, *, expected_population=None):
             game_ordinal=game_ordinal,
             split=split,
             seed=seed,
+            schema=schema,
         )
     return manifest
 
@@ -355,6 +380,7 @@ __all__ = [
     "KIND",
     "POPULATION_SCHEMA",
     "SCHEMA",
+    "SCHEMA_V2",
     "SCIENTIFIC",
     "SOURCE_FILENAME",
     "SPLITS",

@@ -20,7 +20,8 @@ the Learning code that consumes these rows.
 ## Schema and layout
 
 ```text
-arena-policy-source-record-v1
+arena-policy-source-record-v1 (legacy)
+arena-policy-source-record-v2 (new generation)
 ```
 
 ```text
@@ -31,7 +32,7 @@ arena-policy-source-record-v1
   ...
 ```
 
-Each JSONL row has **exactly the same fields and encoding** as the Offense
+Each JSONL row has the same top-level fields as the Offense
 Foundation source row (`game_ordinal`, `seed`, `split`, `step_ordinal`,
 `decision_ordinal`, `actor_seat`, `policy_input`, `legal_actions`,
 `teacher_selected_action`). The encoder and row validator are reused, not
@@ -39,6 +40,22 @@ copied. `teacher_selected_action` is the `DecisionTrace.selected_action` of the
 same traced execution: the canonical legal action that passed lisjong's
 legal-action validation and that the runner resolved and applied. Rows hold no
 analysis, reward, oracle label, or encoded feature tensor.
+
+Schema v1 keeps the Offense Foundation row encoding and rejects a supplied
+`riichi_declaration_discard_order`. Schema v2 adds that field (integer or null)
+to every player in `policy_input`, using the durable local record v3 codec.
+Its wire shape matches lisjong's PolicyInput v2 codec. Other row fields are unchanged.
+The manifest selects the codec for every row; v1/v2 payloads reject each other.
+Readers support both schemas, including replay and archive restoration.
+
+`generation.generate()` and the CLI now select v2. An explicit
+`generate(..., schema=record.SCHEMA)` retains legacy v1 generation and its rejection.
+The low-level `write_game` / `build_manifest` / `write_manifest` defaults remain v1;
+callers selecting v2 must pass `schema=record.SCHEMA_V2` consistently.
+`iter_rows` reads the parent manifest when no schema is explicitly supplied.
+There is no selection by field values and no loss of supplied positions.
+Offense O0 itself retains its old encoder, manifest and rejection semantics.
+See [the #493 producer migration](source-schema-migration-493.md) for downstream paths.
 
 `manifest.json` is sealed canonical JSON and binds:
 

@@ -202,7 +202,7 @@ class PolicySourceRecordTest(unittest.TestCase):
     def test_roundtrip_binds_teacher_population_and_rows(self):
         manifest, path = self.generate()
         self.assertEqual(record.read_source_record(path), manifest)
-        self.assertEqual(manifest["schema"], record.SCHEMA)
+        self.assertEqual(manifest["schema"], record.SCHEMA_V2)
         self.assertEqual(manifest["purpose"], DEVELOPMENT)
         self.assertIsNone(manifest["allocation_bindings"])
         contract = manifest["source_contract"]
@@ -256,12 +256,12 @@ class PolicySourceRecordTest(unittest.TestCase):
     def test_tampering_is_rejected(self):
         _, path = self.generate()
         payload = path / "game-001" / record.SOURCE_FILENAME
-        original = payload.read_text()
+        original = payload.read_bytes()
         lines = original.splitlines(keepends=True)
-        payload.write_text("".join(lines[:-1]))
+        payload.write_bytes(b"".join(lines[:-1]))
         with self.assertRaisesRegex(PolicySourceRecordError, "checksum"):
             record.read_source_record(path)
-        payload.write_text(original)
+        payload.write_bytes(original)
         record.read_source_record(path)
 
         (path / "extra.json").write_text("{}")

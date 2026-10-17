@@ -45,7 +45,7 @@ def run_unrecorded_game(teacher: str, seed: int):
     ).run()
 
 
-def _write_game(path, teacher, game_ordinal, split, seed):
+def _write_game(path, teacher, game_ordinal, split, seed, schema):
     result, inspection = run_recorded_game(teacher, seed)
     return record.write_game(
         path,
@@ -54,6 +54,7 @@ def _write_game(path, teacher, game_ordinal, split, seed):
         seed=seed,
         result=result,
         inspection=inspection,
+        schema=schema,
     )
 
 
@@ -66,8 +67,10 @@ def generate(
     ledger=None,
     workers: int = 1,
     progress=None,
+    schema=record.SCHEMA_V2,
 ):
     """Publish a complete, strict-read source record; existing paths are refused."""
+    record._input_version(schema)
     if type(workers) is not int or not 1 <= workers <= MAX_PROCESS_WORKERS:
         raise PolicySourceRecordError(
             f"workers must be an integer from 1 through {MAX_PROCESS_WORKERS}"
@@ -94,7 +97,7 @@ def generate(
         staging.mkdir()
         summaries = [None] * len(games)
         jobs = [
-            (staging / f"game-{i:03d}", teacher, i, split, seed)
+            (staging / f"game-{i:03d}", teacher, i, split, seed, schema)
             for i, (split, seed) in enumerate(games)
         ]
         if workers == 1:
@@ -120,7 +123,9 @@ def generate(
                 executor.shutdown(wait=True, cancel_futures=True)
         if any(summary is None for summary in summaries):
             raise PolicySourceRecordError("incomplete hanchan collection")
-        manifest = record.write_manifest(staging, population, contract, summaries)
+        manifest = record.write_manifest(
+            staging, population, contract, summaries, schema=schema
+        )
         if (
             record.read_source_record(staging, expected_population=population)
             != manifest
