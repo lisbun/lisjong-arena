@@ -476,7 +476,8 @@ class DurableLocalGameRecordRoundTripTest(unittest.TestCase):
     def test_unknown_version_and_tampered_manifest_fail_closed(self):
         for field, value, message in (
             ("schema_id", "future-schema", "unsupported"),
-            ("schema_version", 3, "unsupported"),
+            # version 3はリーチ宣言牌の位置を持つ形式として読める（#493）。未知のversionは4。
+            ("schema_version", 4, "unsupported"),
             ("seed", 8, "identity"),
             ("record_identity", "0" * 64, "identity"),
         ):

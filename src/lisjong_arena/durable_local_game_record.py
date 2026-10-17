@@ -20,7 +20,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -113,7 +113,21 @@ from lisjong_arena.single_round_artifact import (
 
 LOCAL_GAME_RECORD_SCHEMA_ID = "lisjong-arena-durable-local-game-record"
 LOCAL_GAME_RECORD_SCHEMA_VERSION = 2
+"""既定で保存するschema version。リーチ宣言牌の位置を持たない。"""
 LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS = 1
+LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION = 3
+"""各playerのリーチ宣言牌の位置（lisjong #301）を保存するschema version。
+
+呼び出し側が明示的に選んだときだけ保存する（lisjong-arena #493）。入力の値の有無で
+形式を自動的に切り替えない。
+"""
+_READABLE_SCHEMA_VERSIONS = frozenset(
+    {
+        LOCAL_GAME_RECORD_SCHEMA_VERSION,
+        LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION,
+    }
+)
+_DECLARATION_ORDER_KEY = "riichi_declaration_discard_order"
 LOCAL_GAME_RECORD_BACKEND = "riichienv-local-game-runner"
 
 MANIFEST_FILENAME = "manifest.json"
@@ -173,8 +187,14 @@ class DurableLocalGameRecord:
     provenance: SingleRoundExecutionProvenance
     inspection: LocalGameInspection
     payloads: Mapping[str, PayloadReference]
+    schema_version: int = LOCAL_GAME_RECORD_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version not in _READABLE_SCHEMA_VERSIONS
+        ):
+            raise ValueError("schema_version must be a readable record schema version")
         if (
             type(self.record_identity) is not str
             or len(self.record_identity) != _SHA256_LENGTH
@@ -578,9 +598,28 @@ def _policy_input_to_value(policy_input: PolicyInput) -> dict[str, object]:
     }
 
 
+def _policy_input_to_value_v3(policy_input: PolicyInput) -> dict[str, object]:
+    """schema version 3の射影。v2の全fieldに加え、各playerに宣言牌の位置を必ず持つ。"""
+    if not isinstance(policy_input, PolicyInput):
+        raise DurableLocalGameRecordError("policy_input must be a PolicyInput")
+    value = _policy_input_to_value(
+        replace(
+            policy_input,
+            players=tuple(
+                replace(player, riichi_declaration_discard_order=None)
+                for player in policy_input.players
+            ),
+        )
+    )
+    for projected, player in zip(value["players"], policy_input.players, strict=True):
+        projected[_DECLARATION_ORDER_KEY] = player.riichi_declaration_discard_order
+    return value
+
+
 _POLICY_INPUT_KEYS = {"own_hand", "players", "round", "self_seat"}
 _OWN_HAND_KEYS = {"concealed_tiles", "drawn_tile"}
 _PLAYER_KEYS = {"discards", "melds", "riichi", "score"}
+_PLAYER_KEYS_V3 = _PLAYER_KEYS | {_DECLARATION_ORDER_KEY}
 _ROUND_KEYS = {
     "dealer_seat",
     "dora_indicators",
@@ -592,7 +631,23 @@ _ROUND_KEYS = {
 }
 
 
-def _parse_policy_input(value: object, context: str) -> PolicyInput:
+def _parse_policy_input(
+    value: object,
+    context: str,
+    *,
+    schema_version: int = LOCAL_GAME_RECORD_SCHEMA_VERSION,
+) -> PolicyInput:
+    """記録のschema versionに応じて厳密にparseする。
+
+    version 2は宣言牌の位置のfieldを持たず、復元した値は`None`になる（互換読み込み）。
+    version 3は全playerにfieldを必須とする。どちらも未知のfieldを拒否する。
+    """
+    if schema_version == LOCAL_GAME_RECORD_SCHEMA_VERSION:
+        player_keys = _PLAYER_KEYS
+    elif schema_version == LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION:
+        player_keys = _PLAYER_KEYS_V3
+    else:
+        raise DurableLocalGameRecordError("unsupported record schema version")
     raw = expect_object(value, _POLICY_INPUT_KEYS, context)
     round_raw = expect_object(raw["round"], _ROUND_KEYS, f"{context}.round")
     own_raw = expect_object(raw["own_hand"], _OWN_HAND_KEYS, f"{context}.own_hand")
@@ -600,7 +655,12 @@ def _parse_policy_input(value: object, context: str) -> PolicyInput:
     players = []
     for index, item in enumerate(players_raw):
         player_context = f"{context}.players[{index}]"
-        player = expect_object(item, _PLAYER_KEYS, player_context)
+        player = expect_object(item, player_keys, player_context)
+        declaration_order = player.get(_DECLARATION_ORDER_KEY)
+        if declaration_order is not None:
+            declaration_order = expect_int(
+                declaration_order, f"{player_context}.{_DECLARATION_ORDER_KEY}"
+            )
         players.append(
             _construct(
                 PlayerPublicState,
@@ -621,6 +681,7 @@ def _parse_policy_input(value: object, context: str) -> PolicyInput:
                 riichi=_parse_enum(
                     RiichiState, player["riichi"], f"{player_context}.riichi"
                 ),
+                riichi_declaration_discard_order=declaration_order,
             )
         )
     drawn = own_raw["drawn_tile"]
@@ -1005,7 +1066,15 @@ def _parse_trace(value: object) -> GameTrace:
     )
 
 
-def _decisions_document(inspection: LocalGameInspection) -> dict[str, Any]:
+def _decisions_document(
+    inspection: LocalGameInspection, *, schema_version: int
+) -> dict[str, Any]:
+    if schema_version == LOCAL_GAME_RECORD_SCHEMA_VERSION:
+        policy_input_to_value = _policy_input_to_value
+    elif schema_version == LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION:
+        policy_input_to_value = _policy_input_to_value_v3
+    else:
+        raise DurableLocalGameRecordError("unsupported record schema version")
     return {
         "decision_count": inspection.result.decisions,
         "game_mode": inspection.result.game_mode,
@@ -1021,7 +1090,7 @@ def _decisions_document(inspection: LocalGameInspection) -> dict[str, Any]:
                             decision.decision_trace,
                             f"steps[{step.step_ordinal}].seat_decisions[{index}].decision_trace",
                         ),
-                        "policy_input": _policy_input_to_value(decision.policy_input),
+                        "policy_input": policy_input_to_value(decision.policy_input),
                         "seat": int(decision.seat),
                     }
                     for index, decision in enumerate(step.seat_decisions)
@@ -1044,7 +1113,7 @@ _SEAT_DECISION_KEYS = {"decision_trace", "policy_input", "seat"}
 
 
 def _parse_decisions(
-    value: object,
+    value: object, *, schema_version: int
 ) -> tuple[int, str, int, int, tuple[StepDecisionObservation, ...]]:
     raw = expect_object(value, _DECISIONS_KEYS, "decisions")
     steps = []
@@ -1063,7 +1132,9 @@ def _parse_decisions(
                     seat_context,
                     seat=_parse_seat(seat_raw["seat"], f"{seat_context}.seat"),
                     policy_input=_parse_policy_input(
-                        seat_raw["policy_input"], f"{seat_context}.policy_input"
+                        seat_raw["policy_input"],
+                        f"{seat_context}.policy_input",
+                        schema_version=schema_version,
                     ),
                     decision_trace=_parse_decision_trace(
                         seat_raw["decision_trace"], f"{seat_context}.decision_trace"
@@ -1805,6 +1876,7 @@ def _manifest_without_identity(
     max_steps: int | None,
     provenance: SingleRoundExecutionProvenance,
     payloads: Mapping[str, PayloadReference],
+    schema_version: int,
 ) -> dict[str, Any]:
     return {
         "effective_game_config": {
@@ -1822,7 +1894,7 @@ def _manifest_without_identity(
         ],
         "provenance": execution_provenance_to_dict(provenance),
         "schema_id": LOCAL_GAME_RECORD_SCHEMA_ID,
-        "schema_version": LOCAL_GAME_RECORD_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "seed": inspection.result.seed,
     }
 
@@ -1860,10 +1932,19 @@ def save_local_game_record(
     policy_identities: Mapping[Seat, str],
     max_steps: int | None,
     provenance: SingleRoundExecutionProvenance | None = None,
+    schema_version: int = LOCAL_GAME_RECORD_SCHEMA_VERSION,
 ) -> DurableLocalGameRecord:
-    """completed inspectionをnew immutable bundleへstrict readback後にfinalizeする。"""
+    """completed inspectionをnew immutable bundleへstrict readback後にfinalizeする。
+
+    `schema_version`は既定のversion 2か、リーチ宣言牌の位置を保存するversion 3を
+    呼び出し側が明示的に選ぶ。version 2は宣言牌の位置を持つ入力を拒否する。
+    """
     if not isinstance(inspection, LocalGameInspection):
         raise TypeError("inspection must be a completed LocalGameInspection")
+    if type(schema_version) is not int:
+        raise TypeError("schema_version must be an int")
+    if schema_version not in _READABLE_SCHEMA_VERSIONS:
+        raise ValueError("schema_version must be 2 or 3")
     identities = _normalize_policy_identities(policy_identities)
     if max_steps is not None and type(max_steps) is not int:
         raise TypeError("max_steps must be an int or None")
@@ -1880,7 +1961,7 @@ def save_local_game_record(
 
     documents = {
         "objective_trace": _trace_document(inspection.game_trace),
-        "decisions": _decisions_document(inspection),
+        "decisions": _decisions_document(inspection, schema_version=schema_version),
         "result": _result_document(inspection.result),
         "round_results": _round_results_document(inspection),
     }
@@ -1901,6 +1982,7 @@ def save_local_game_record(
             max_steps=max_steps,
             provenance=provenance,
             payloads=payloads,
+            schema_version=schema_version,
         )
     )
 
@@ -1972,7 +2054,7 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
     ):
         raise DurableLocalGameRecordError("unsupported record schema id")
     schema_version = expect_int(manifest["schema_version"], "manifest.schema_version")
-    if schema_version != LOCAL_GAME_RECORD_SCHEMA_VERSION:
+    if schema_version not in _READABLE_SCHEMA_VERSIONS:
         if schema_version == LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS:
             raise DurableLocalGameRecordError(
                 "schema version 1 records do not contain per-round result facts "
@@ -2069,7 +2151,7 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
     trace = _parse_trace(payload_documents["objective_trace"])
     result = _parse_result(payload_documents["result"])
     decision_seed, decision_mode, step_count, decision_count, steps = _parse_decisions(
-        payload_documents["decisions"]
+        payload_documents["decisions"], schema_version=schema_version
     )
     round_seed, round_mode, round_results = _parse_round_results(
         payload_documents["round_results"]
@@ -2103,6 +2185,7 @@ def _load_local_game_record(path: str | Path) -> DurableLocalGameRecord:
         provenance=provenance,
         inspection=inspection,
         payloads=payloads,
+        schema_version=schema_version,
     )
 
 
@@ -2207,6 +2290,7 @@ __all__ = [
     "LOCAL_GAME_RECORD_SCHEMA_ID",
     "LOCAL_GAME_RECORD_SCHEMA_VERSION",
     "LOCAL_GAME_RECORD_SCHEMA_VERSION_WITHOUT_ROUND_RESULTS",
+    "LOCAL_GAME_RECORD_SCHEMA_VERSION_WITH_RIICHI_DECLARATION",
     "MANIFEST_FILENAME",
     "OBJECTIVE_TRACE_FILENAME",
     "RESULT_FILENAME",
