@@ -22,6 +22,7 @@ from lisjong_arena.durable_local_game_record import (
     _parse_action,
     _parse_policy_input,
     _policy_input_to_value,
+    _policy_input_to_value_v3,
 )
 
 from .protocol import GAME_MODE, ordered_games
@@ -102,8 +103,19 @@ def encode_observation(
     seed: int,
     step_ordinal: int,
     decision_ordinal: int,
+    policy_input_schema_version: int = 2,
 ) -> dict[str, object]:
     """Project one actual teacher decision onto the player-safe source schema."""
+    # Only policy source v2 opts into v3; O0 writers keep the legacy projection.
+    if type(
+        policy_input_schema_version
+    ) is not int or policy_input_schema_version not in (2, 3):
+        raise OffenseError("unsupported PolicyInput record schema version")
+    to_value = (
+        _policy_input_to_value_v3
+        if policy_input_schema_version == 3
+        else _policy_input_to_value
+    )
     seat = int(observation.seat)
     policy_input = observation.policy_input
     trace = observation.decision_trace
@@ -134,7 +146,7 @@ def encode_observation(
         "step_ordinal": step_ordinal,
         "decision_ordinal": decision_ordinal,
         "actor_seat": seat,
-        "policy_input": _policy_input_to_value(policy_input),
+        "policy_input": to_value(policy_input),
         "legal_actions": legal,
         "teacher_selected_action": selected,
     }
@@ -224,7 +236,16 @@ def write_manifest(path: Path, lock, scientific_corpus_identity, game_summaries)
     return manifest
 
 
-def _read_row(row: object):
+def _read_row(row: object, *, policy_input_schema_version: int = 2):
+    if type(
+        policy_input_schema_version
+    ) is not int or policy_input_schema_version not in (2, 3):
+        raise OffenseError("unsupported PolicyInput record schema version")
+    to_value = (
+        _policy_input_to_value_v3
+        if policy_input_schema_version == 3
+        else _policy_input_to_value
+    )
     if type(row) is not dict or set(row) != _ROW_FIELDS:
         raise OffenseError("invalid source-record decision fields")
     for field in (
@@ -240,8 +261,12 @@ def _read_row(row: object):
         raise OffenseError("invalid source-record split")
 
     try:
-        policy_input = _parse_policy_input(row["policy_input"], "policy_input")
-        if _policy_input_to_value(policy_input) != row["policy_input"]:
+        policy_input = _parse_policy_input(
+            row["policy_input"],
+            "policy_input",
+            schema_version=policy_input_schema_version,
+        )
+        if to_value(policy_input) != row["policy_input"]:
             raise OffenseError("source-record PolicyInput roundtrip mismatch")
 
         legal_values = row["legal_actions"]

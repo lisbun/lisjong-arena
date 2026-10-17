@@ -46,7 +46,7 @@ from lisjong_engine.transaction_observation import (
 from lisjong_arena import seed_registry  # noqa: E402
 from lisjong_arena.durable_local_game_record import (  # noqa: E402
     _action_to_value,
-    _policy_input_to_value,
+    _policy_input_to_value_v3,
     _tile_to_value,
 )
 from lisjong_arena.lisjong_engine.action_mapping import (  # noqa: E402
@@ -123,6 +123,14 @@ def rules_projection(rules):
     if result != RULES:
         raise RonProducerError("RuleSet is not the fixed ron source projection")
     return result
+
+
+def checkpoint_to_value(views, contexts):
+    """Serialize four offline views without losing supplied declaration orders."""
+    return {
+        "views": [_policy_input_to_value_v3(view) for view in views],
+        "contexts": contexts,
+    }
 
 
 class Recorder:
@@ -245,21 +253,19 @@ class Recorder:
                 key=tile_sort_key,
             )
             views.append(
-                _policy_input_to_value(
-                    PolicyInput(
-                        self_seat=seat_from_engine_seat(value.seat),
-                        round=round_value,
-                        players=tuple(players),
-                        own_hand=OwnHandState(
-                            concealed_tiles=tuple(hand),
-                            drawn_tile=None
-                            if value.drawn_tile is None
-                            else tile(value.drawn_tile),
-                        ),
-                    )
+                PolicyInput(
+                    self_seat=seat_from_engine_seat(value.seat),
+                    round=round_value,
+                    players=tuple(players),
+                    own_hand=OwnHandState(
+                        concealed_tiles=tuple(hand),
+                        drawn_tile=None
+                        if value.drawn_tile is None
+                        else tile(value.drawn_tile),
+                    ),
                 )
             )
-        return {"views": views, "contexts": [context(s) for s in raw.seats]}
+        return checkpoint_to_value(views, [context(s) for s in raw.seats])
 
     def reaction(self, raw, decisions, skipped=False):
         if self.raw_checkpoint is None:
@@ -532,7 +538,7 @@ class Recorder:
             raise RonProducerError("transaction has no representable semantic step")
         self.history.append(
             {
-                "schema": "lisjong-ron-legal-history-record-v1",
+                "schema": "lisjong-ron-legal-history-record-v2",
                 "seed": self.seed,
                 "round_id": self.round_id,
                 "index": self.index,

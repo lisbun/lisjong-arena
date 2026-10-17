@@ -11,7 +11,7 @@ shape.
 Output directory (all new; existing paths are refused)::
 
     manifest.json      lisjong-hand-belief-source-manifest-v1
-    decisions.jsonl    lisjong-hand-belief-decision-record-v1    player-safe
+    decisions.jsonl    lisjong-hand-belief-decision-record-v2    player-safe
     hand_facts.jsonl   lisjong-hand-belief-hand-fact-record-v1   training-only
     coverage.json      Arena producer evidence (not read by lisjong)
 
@@ -63,7 +63,7 @@ SEAT_COUNT = 4
 
 # lisjong.learning.hand_belief_source (lisjong#256) owns these identifiers.
 MANIFEST_SCHEMA = "lisjong-hand-belief-source-manifest-v1"
-DECISION_SCHEMA = "lisjong-hand-belief-decision-record-v1"
+DECISION_SCHEMA = "lisjong-hand-belief-decision-record-v2"
 HAND_FACT_SCHEMA = "lisjong-hand-belief-hand-fact-record-v1"
 SCOPE = "all-observer-discard-decisions.v1"
 POLICY = "PlacementAwareSpeedCallPolicy"
@@ -204,7 +204,7 @@ def extract_records(
     from lisjong_arena.durable_local_game_record import (
         _action_to_value,
         _meld_to_value,
-        _policy_input_to_value,
+        _policy_input_to_value_v3,
         _tiles_to_value,
     )
 
@@ -224,7 +224,7 @@ def extract_records(
                     _action_to_value(a, f"legal_actions[{i}]")
                     for i, a in enumerate(decision.legal_actions)
                 ],
-                "policy_input": _policy_input_to_value(decision.input),
+                "policy_input": _policy_input_to_value_v3(decision.input),
                 "schema": DECISION_SCHEMA,
                 "selected_action": _action_to_value(recorded.action, "selected"),
             }
@@ -379,7 +379,7 @@ def write_source(
     games: Sequence[tuple[int, list[dict], list[dict], list[tuple[int, int]]]],
     producer: dict[str, str],
 ) -> dict[str, object]:
-    """Write the v1 files plus Arena's coverage evidence.
+    """Write v2 decisions, unchanged facts/manifest and Arena coverage evidence.
 
     Coverage is re-checked over the whole run immediately before writing.
     """

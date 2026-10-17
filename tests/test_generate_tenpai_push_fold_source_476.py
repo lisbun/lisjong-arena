@@ -19,6 +19,7 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -195,6 +196,62 @@ class GenerationTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls._directory.cleanup()
+
+    def test_v2_retains_supplied_declaration_orders_through_save_and_read(self):
+        records = []
+        for pair in self.pairs:
+            view = pair.decision.policy_input
+            players = tuple(
+                replace(
+                    player, riichi_declaration_discard_order=player.discards[-1].order
+                )
+                if player.riichi.value == "accepted" and player.discards
+                else player
+                for player in view.players
+            )
+            records.append(
+                replace(pair.decision, policy_input=replace(view, players=players))
+            )
+        output = self.root / "positions"
+        producer.write_source(
+            output,
+            splits=SPLITS,
+            producer=PRODUCER,
+            games=[
+                {
+                    "seed": SEED,
+                    "decisions": [
+                        producer.dev.canonical_line(
+                            wire.decision_to_value(item, schema=wire.DECISION_SCHEMA_V2)
+                        )
+                        for item in records
+                    ],
+                    "outcomes": [
+                        producer.dev.canonical_line(wire.outcome_to_value(outcome))
+                        for pair in self.pairs
+                        for outcome in (pair.push, pair.fold)
+                        if outcome is not None
+                    ],
+                }
+            ],
+        )
+        _, restored = wire.read_source(output)
+        self.assertEqual([pair.decision for pair in restored], records)
+        self.assertTrue(
+            any(
+                player.riichi_declaration_discard_order is not None
+                for item in records
+                for player in item.policy_input.players
+            )
+        )
+        rows = (
+            (self.root / "first" / wire.DECISIONS_FILENAME)
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertTrue(
+            all(json.loads(row)["schema"] == wire.DECISION_SCHEMA_V2 for row in rows)
+        )
 
     def test_the_strict_reader_accepts_every_kind_and_both_sides(self) -> None:
         self.assertEqual(self.manifest.producer, PRODUCER)

@@ -9,7 +9,7 @@ contract is owned by lisjong; Arena only writes that wire shape).
 Output directory (all new; existing paths are refused)::
 
     manifest.json      lisjong-riichi-deal-in-source-manifest-v1
-    decisions.jsonl    lisjong-riichi-deal-in-decision-record-v1    player-safe
+    decisions.jsonl    lisjong-riichi-deal-in-decision-record-v2    player-safe
     label_facts.jsonl  lisjong-riichi-deal-in-label-fact-record-v1  training-only
 
 - In scope: exactly one opponent in riichi (declared or accepted), the decider
@@ -53,7 +53,7 @@ SPLITS = ("train", "valid", "test")
 
 # lisjong.learning.riichi_deal_in_source (lisjong#237) owns these identifiers.
 MANIFEST_SCHEMA = "lisjong-riichi-deal-in-source-manifest-v1"
-DECISION_SCHEMA = "lisjong-riichi-deal-in-decision-record-v1"
+DECISION_SCHEMA = "lisjong-riichi-deal-in-decision-record-v2"
 LABEL_FACT_SCHEMA = "lisjong-riichi-deal-in-label-fact-record-v1"
 SCOPE = "single-opponent-riichi.self-not-riichi.at-least-two-candidate-tile-types.v1"
 POLICY = "PlacementAwareSpeedCallPolicy"
@@ -103,7 +103,7 @@ def extract_records(seed: int, events, ron_results) -> tuple[list[dict], list[di
     from lisjong_arena.durable_local_game_record import (
         _action_to_value,
         _meld_to_value,
-        _policy_input_to_value,
+        _policy_input_to_value_v3,
         _tiles_to_value,
     )
 
@@ -198,7 +198,7 @@ def extract_records(seed: int, events, ron_results) -> tuple[list[dict], list[di
                     _action_to_value(a, f"legal_actions[{i}]")
                     for i, a in enumerate(decision.legal_actions)
                 ],
-                "policy_input": _policy_input_to_value(pi),
+                "policy_input": _policy_input_to_value_v3(pi),
                 "schema": DECISION_SCHEMA,
                 "selected_action": _action_to_value(action, "selected"),
             }
