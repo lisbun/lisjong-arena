@@ -229,9 +229,25 @@ class StrictReadTest(_RecordTest):
             manifest["schema_version"] = V2
 
         _rewrite_json(path / MANIFEST_FILENAME, downgrade)
+        # manifestのrecord_identityを再計算し、identityの不一致で止まらないようにする。
+        _refresh_payload_reference(path, "decisions")
 
-        with self.assertRaises(DurableLocalGameRecordError):
+        with self.assertRaises(DurableLocalGameRecordError) as raised:
             load_local_game_record(path)
+
+        # identityの不一致ではなく、version 2のparserが宣言牌の位置のfieldを持つplayerを
+        # 受理しないことで拒否された。loaderは具体的な理由を原因として連鎖させる。
+        messages = []
+        error = raised.exception
+        while error is not None:
+            messages.append(str(error))
+            error = error.__cause__ or error.__context__
+        self.assertNotIn("record identity mismatch", messages)
+        self.assertIn(
+            "decisions.steps[0].seat_decisions[0].policy_input.players[0] "
+            "fields are invalid",
+            messages,
+        )
 
 
 class SchemaVersionSelectionTest(_RecordTest):
