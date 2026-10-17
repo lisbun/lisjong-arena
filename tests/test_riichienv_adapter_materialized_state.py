@@ -273,6 +273,11 @@ class RiichiTransitionTest(unittest.TestCase):
         self.assertEqual(tracker.riichi_state[2], RiichiState.DECLARED)
 
         tracker.apply_observation(
+            _FakeObservation(
+                0, [{"type": "dahai", "actor": 2, "pai": "1m", "tsumogiri": False}]
+            )
+        )
+        tracker.apply_observation(
             _FakeObservation(0, [{"type": "reach_accepted", "actor": 2}])
         )
         self.assertEqual(tracker.riichi_state[2], RiichiState.ACCEPTED)

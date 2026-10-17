@@ -19,7 +19,6 @@ import json
 import sys
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -198,19 +197,12 @@ class GenerationTest(unittest.TestCase):
         cls._directory.cleanup()
 
     def test_v2_retains_supplied_declaration_orders_through_save_and_read(self):
-        records = []
-        for pair in self.pairs:
-            view = pair.decision.policy_input
-            players = tuple(
-                replace(
-                    player, riichi_declaration_discard_order=player.discards[-1].order
-                )
-                if player.riichi.value == "accepted" and player.discards
-                else player
-                for player in view.players
-            )
-            records.append(
-                replace(pair.decision, policy_input=replace(view, players=players))
+        records = [pair.decision for pair in self.pairs]
+        control, _ = _control()
+        # Check the actual engine-backed decision inputs, without injecting positions.
+        for record in records:
+            self.assertEqual(
+                record.policy_input, control.calls[record.key.sequence].context.input
             )
         output = self.root / "positions"
         producer.write_source(

@@ -78,8 +78,9 @@ version 1 bundleは「per-round result factを持たない」という明示的�
   決まります。
 - 読み込んだ記録の`DurableLocalGameRecord.schema_version`で形式を確認できます。
 - policy source recordと4種類の派生sourceのproducer移行（PR #500）後に、保存の既定をv3へ
-  切り替えました。両Adapterからの宣言牌位置の供給は、この変更では有効にしません。
-  実供給・整合検証とoffline checkpoint projectionの対応は#493の後続作業です。
+  切り替えました。両Adapterとロン合法offline checkpointも公開の宣言factから位置を供給し、
+  宣言後の非ツモ切り・ACCEPTEDでの位置欠落を拒否します。
+  取得・照合の詳細は[移行記録](source-schema-migration-493.md)を参照してください。
 
 ## Round result facts (v2)
 
@@ -149,7 +150,8 @@ exhaustive drawのtenpai seat
   RiichiEnv 0.4.10のryukyoku eventはtenpais / tehaisを含まない
 typed settlement decomposition
   (本供託の移動は riichi_sticks_before / riichi_sticks_after で表現する)
-riichi宣言牌がriverのどれかというmarker(別Issue)
+riichi宣言牌のmarkerをround_resultsへ重複記録すること
+  判断時点の位置はdecisions.jsonのPolicyInput（v3）が保持する
 ```
 
 `wins[].ura_indicators`はRiichiEnvが`hora` eventへ無条件に載せる裏ドラ表示牌

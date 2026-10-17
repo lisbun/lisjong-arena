@@ -161,6 +161,53 @@ class ProjectionTests(unittest.TestCase):
                 self.assertFalse(hasattr(decision, "checkpoint"))
                 self.assertFalse(hasattr(decision.input, "contexts"))
 
+    def test_real_riichi_positions_match_base_and_every_saved_history_view(self):
+        from lisjong.learning import ron_legal_source
+
+        recorder, policies = fixture(riichi=True)
+        game, _facts, history, _coverage = recorder.finish()
+        by_sequence = {row["key"]["sequence"]: row for row in game[1]}
+        count = 0
+        for index, row in enumerate(history):
+            for step in row["steps"]:
+                checkpoint = ron_legal_source._checkpoint(
+                    step["checkpoint"],
+                    "fixture",
+                    schema=ron_legal_source.HISTORY_SCHEMA_V2,
+                )
+                self.assertTrue(
+                    all(
+                        view.players == checkpoint.views[0].players
+                        for view in checkpoint.views
+                    )
+                )
+                for player in checkpoint.views[0].players:
+                    if player.riichi.value == "accepted":
+                        self.assertIsNotNone(player.riichi_declaration_discard_order)
+                        self.assertTrue(
+                            any(
+                                d.order == player.riichi_declaration_discard_order
+                                for d in player.discards
+                            )
+                        )
+                        count += 1
+                for sequence in step["selector_sequences"]:
+                    if sequence in by_sequence:
+                        prior = history[index - 1]["steps"][-1]["checkpoint"]
+                        seat = by_sequence[sequence]["key"]["seat"]
+                        self.assertEqual(
+                            prior["views"][seat], by_sequence[sequence]["policy_input"]
+                        )
+        self.assertGreater(count, 0)
+        self.assertTrue(
+            any(
+                p.riichi_declaration_discard_order is not None
+                for policy in policies
+                for decision in policy.inputs
+                for p in decision.input.players
+            )
+        )
+
     def test_missing_or_repeated_transactions_and_incomplete_game_rejected(self):
         recorder, _ = fixture()
         with self.assertRaises(producer.RonProducerError):

@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import generate_hand_belief_source_255 as base  # noqa: E402
 from lisjong.policy_contract import (  # noqa: E402
     AnkanAction,
-    Discard,
     DiscardAction,
     OwnHandState,
     PlayerPublicState,
@@ -29,7 +28,11 @@ from lisjong.policy_contract import (  # noqa: E402
 )
 from lisjong.policy_contract.tile import tile_sort_key  # noqa: E402
 from lisjong_engine.meld import Kakan  # noqa: E402
-from lisjong_engine.public_state import public_meld, public_tile  # noqa: E402
+from lisjong_engine.public_state import (  # noqa: E402
+    PublicDiscard,
+    public_meld,
+    public_tile,
+)
 from lisjong_engine.round_event import (  # noqa: E402
     DrawSource,
     KanConfirmedEvent,
@@ -57,6 +60,10 @@ from lisjong_arena.lisjong_engine.domain_conversion import (  # noqa: E402
     seat_from_engine_seat,
     tile_from_public_tile,
     wind_from_engine_wind,
+)
+from lisjong_arena.lisjong_engine.policy_input import (  # noqa: E402
+    _discard_from_engine_discard,
+    _riichi_declaration_discard_order,
 )
 
 OWNER = "lisbun/lisjong-arena#457"
@@ -205,6 +212,10 @@ class Recorder:
             for f in raw.riichi_finalizations
             if f.contribution is not None
         ]
+        declarations = [f.declaration for f in raw.riichi_finalizations]
+        if raw.pending_riichi_declaration is not None:
+            declarations.append(raw.pending_riichi_declaration)
+        declaration_ids = {d.tile.id for d in declarations}
         players = []
         for value in raw.seats:
             own = seat(value.seat)
@@ -213,26 +224,29 @@ class Recorder:
                 status = RiichiState.ACCEPTED
             elif self.pending_riichi == own:
                 status = RiichiState.DECLARED
+            discards = tuple(
+                PublicDiscard(
+                    tile=public_tile(d.tile),
+                    is_tsumogiri=d.is_tsumogiri,
+                    order=self.orders[d.tile.id],
+                    is_riichi_declaration=d.tile.id in declaration_ids,
+                    called_by=d.called_by,
+                )
+                for d in value.discards
+            )
             players.append(
                 PlayerPublicState(
                     score=self.match.scores[value.seat]
                     - sum(c.points for c in contributions if c.seat is value.seat),
-                    discards=tuple(
-                        Discard(
-                            tile=tile(d.tile),
-                            tsumogiri=d.is_tsumogiri,
-                            order=self.orders[d.tile.id],
-                            called_by=None
-                            if d.called_by is None
-                            else seat_from_engine_seat(d.called_by),
-                        )
-                        for d in value.discards
-                    ),
+                    discards=tuple(_discard_from_engine_discard(d) for d in discards),
                     melds=tuple(
                         public_meld_from_engine_meld(public_meld(m))
                         for m in value.melds
                     ),
                     riichi=status,
+                    riichi_declaration_discard_order=_riichi_declaration_discard_order(
+                        discards, status
+                    ),
                 )
             )
         round_value = RoundState(

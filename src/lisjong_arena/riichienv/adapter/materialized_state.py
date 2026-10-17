@@ -6,7 +6,7 @@ lisbun/lisjong `docs/policy-input-schema.md`の「Materialized state」、
 `PolicyInput`生成に履歴が必要な公開意味状態だけを保持する。
 
 - 各seatのdiscard履歴(tile、tsumogiri、局内`order`、`called_by`)
-- 各seatのriichi段階(NONE / DECLARED / ACCEPTED)
+- 各seatのriichi段階(NONE / DECLARED / ACCEPTED)と宣言牌の局内order
 - 公開済みdora indicator
 - live wall残数算出用のkyoku内tsumo event数
 - 現在のkyoku identity(場風・局・本場・親)。resetの正本として使用する
@@ -88,6 +88,7 @@ class SeatMaterializedState:
         self._discards: list[list[Discard]] = [[] for _ in range(4)]
         self._next_discard_order = 0
         self._riichi_state: list[RiichiState] = [RiichiState.NONE] * 4
+        self._riichi_declaration_discard_order: list[int | None] = [None] * 4
         self._dora_indicators: list = []
         self._tsumo_count = 0
         self._pending_chankan_actor: Seat | None = None
@@ -105,6 +106,10 @@ class SeatMaterializedState:
     @property
     def riichi_state(self) -> tuple[RiichiState, ...]:
         return tuple(self._riichi_state)
+
+    @property
+    def riichi_declaration_discard_order(self) -> tuple[int | None, ...]:
+        return tuple(self._riichi_declaration_discard_order)
 
     @property
     def dora_indicators(self) -> tuple:
@@ -246,6 +251,7 @@ class SeatMaterializedState:
         self._discards = [[] for _ in range(4)]
         self._next_discard_order = 0
         self._riichi_state = [RiichiState.NONE] * 4
+        self._riichi_declaration_discard_order = [None] * 4
         self._dora_indicators = [tile_from_mjai(event["dora_marker"])]
         self._tsumo_count = 0
         self._pending_chankan_actor = None
@@ -263,6 +269,14 @@ class SeatMaterializedState:
             order=self._next_discard_order,
             called_by=None,
         )
+        declaration_order = self._riichi_declaration_discard_order[actor]
+        if declaration_order is not None and not tsumogiri:
+            raise AdapterSyncError("post-riichi discard must be tsumogiri")
+        if (
+            self._riichi_state[actor] is RiichiState.DECLARED
+            and declaration_order is None
+        ):
+            self._riichi_declaration_discard_order[actor] = discard.order
         self._discards[actor].append(discard)
         self._next_discard_order += 1
 
@@ -301,5 +315,9 @@ class SeatMaterializedState:
             raise AdapterSyncError(
                 f"reach_accepted event received for seat {actor} "
                 "without a preceding reach"
+            )
+        if self._riichi_declaration_discard_order[actor] is None:
+            raise AdapterSyncError(
+                "ACCEPTED riichi requires a declaration discard order"
             )
         self._riichi_state[actor] = RiichiState.ACCEPTED
