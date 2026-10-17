@@ -334,6 +334,14 @@ def _policy_input_to_dict(value: object) -> dict[str, Any]:
     """
     if not isinstance(value, PolicyInput):
         raise MortalDecisionAnalysisArtifactError("policy_input must be a PolicyInput")
+    # このschemaはリーチ宣言牌の位置（lisjong #301）を持たず、移行の対象外とする
+    # （lisjong-arena #493）。値を落として書かないよう、値を持つ入力は拒否する。
+    for index, player in enumerate(value.players):
+        if player.riichi_declaration_discard_order is not None:
+            raise MortalDecisionAnalysisArtifactError(
+                f"policy_input.players[{index}].riichi_declaration_discard_order "
+                "cannot be stored in this artifact schema"
+            )
     return {
         "self_seat": _seat_value(value.self_seat, "policy_input.self_seat"),
         "round": _round_state_to_dict(value.round, "policy_input.round"),
