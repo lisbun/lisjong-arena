@@ -16,6 +16,16 @@ lisjong-engine backendの別lineage
 [engine-focal-outcome-source.md](engine-focal-outcome-source.md)を参照。
 このdocumentのschemaと意味はその追加で変更しない。
 
+## #493以降の新規生成の制限
+
+この旧schemaは#493の移行対象外です。Adapterが供給する宣言牌位置を持つ入力は、
+共通encoderが保存前に拒否し、生成全体を失敗として部分sourceを公開しません。
+既存sourceの読込・identityは維持します。再び生成に使うには、lisjongのreader対応、
+Arenaのpin更新、producerの新schema選択を順に移す必要があります。
+位置を除去して旧形式へ保存するproductionの互換変換はありません。
+詳細は[宣言牌位置の移行記録](source-schema-migration-493.md)を参照してください。
+
+
 ## Pinned consumer
 
 producerはlisjong `aed9c840bc120471e557fc0c8444965c0b81a9c3`

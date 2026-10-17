@@ -35,6 +35,9 @@ base判断記録のPolicyInput全体の一致、聴牌PUSH/FOLDの保存・読�
 対象外のoffense O0とfocal outcome sourceは旧schemaと位置の拒否を維持する。
 policy sourceが共用するO0 row helperには明示的なcodec選択だけを追加し、
 O0 producer自身は常に従来のversion 2を使う。historical artifactのidentityは変更しない。
+旧focal sourceの実engine/RiichiEnv入力は、位置供給後に拒否されることと、逐次/並列の
+生成が部分sourceを公開しないことをtestで固定する。既存readback・改ざん検知のtestは
+field導入前を模したtest専用historical fixtureで維持し、production側で値を除去しない。
 
 ## 供給と整合検証
 

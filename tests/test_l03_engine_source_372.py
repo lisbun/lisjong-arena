@@ -9,9 +9,13 @@ import json
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from _engine_focal_outcome_source_fixtures import source_contract
+from _focal_outcome_source_fixtures import historical_captures_fixture
+from lisjong.policy_contract import Seat
 
 from lisjong_arena import seed_registry
 from lisjong_arena.focal_outcome_source import engine_source
@@ -164,7 +168,17 @@ class PlanPopulationTest(unittest.TestCase):
 
 
 class GenerateTest(unittest.TestCase):
-    def test_real_engine_generation_writes_source_and_record(self):
+    @classmethod
+    def setUpClass(cls):
+        cls.current_execution = engine_source.run_engine_focal_game(
+            seed=SMOKE_SEED, focal_seat=Seat(0)
+        )
+        cls.historical_execution = replace(
+            cls.current_execution,
+            captures=historical_captures_fixture(cls.current_execution.captures),
+        )
+
+    def test_historical_generation_writes_source_and_record(self):
         ledger, record = _reserve(
             seed_registry.new_ledger(), "CALIBRATION", [SMOKE_SEED]
         )
@@ -176,15 +190,29 @@ class GenerateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "c0"
             lines = []
-            result = runner.generate(
-                output,
-                population_role="CALIBRATION",
-                games=games,
-                allocation_bindings=bindings,
-                allocation_records=records,
-                source_contract=source_contract(),
-                log=lines.append,
-            )
+            real_generate = engine_source.generate_engine_focal_outcome_source
+
+            def historical_generate(*args, **kwargs):
+                return real_generate(
+                    *args,
+                    **kwargs,
+                    run_game=lambda **_kwargs: self.historical_execution,
+                )
+
+            with patch.object(
+                engine_source,
+                "generate_engine_focal_outcome_source",
+                side_effect=historical_generate,
+            ):
+                result = runner.generate(
+                    output,
+                    population_role="CALIBRATION",
+                    games=games,
+                    allocation_bindings=bindings,
+                    allocation_records=records,
+                    source_contract=source_contract(),
+                    log=lines.append,
+                )
             verified = engine_source.verify_engine_focal_outcome_source(
                 output / "source"
             )

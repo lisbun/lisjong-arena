@@ -1,24 +1,29 @@
 """Integration tests for the #359 focal outcome source producer.
 
-test専用seedの実RiichiEnv対局1 hanchanだけからsourceを生成し、pinned lisjong
-(`PINNED_LISJONG_REVISION`)の``outcome_source.py`` consumerでstrict readする。
-改ざんcaseは生成済みsourceのcopyに対して検証する。
+実RiichiEnvの位置付き入力は旧schemaで拒否する。導入前を模したtest専用fixtureで、
+従来のconsumer readback・改ざん検証を維持する。productionでの位置除去は行わない。
 """
 
 import json
 import shutil
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from _focal_outcome_source_fixtures import binding, source_contract
+from _focal_outcome_source_fixtures import (
+    binding,
+    historical_captures_fixture,
+    source_contract,
+)
 from lisjong.learning import (
     UnsupportedSourceSchemaError,
     build_outcome_targets,
     read_outcome_source,
 )
 
+from lisjong_arena.durable_local_game_record import DurableLocalGameRecordError
 from lisjong_arena.focal_outcome_source import source
 from lisjong_arena.focal_outcome_source.accounting import FocalOutcomeSourceError
 from lisjong_arena.offense_foundation.qualification import seal
@@ -102,7 +107,37 @@ class FocalOutcomeSourceIntegrationTest(unittest.TestCase):
         real_run = source.run_focal_game
 
         def run_and_keep(**kwargs):
-            execution = real_run(**kwargs)
+            cls.current_execution = real_run(**kwargs)
+            # Explicit historical fixture only; current production is tested below.
+            captures = historical_captures_fixture(cls.current_execution.captures)
+            historical_views = {
+                id(current.decision.input): old.decision.input
+                for current, old in zip(
+                    cls.current_execution.captures, captures, strict=True
+                )
+            }
+            execution = replace(
+                cls.current_execution,
+                captures=captures,
+                inspection=replace(
+                    cls.current_execution.inspection,
+                    step_observations=tuple(
+                        replace(
+                            step,
+                            seat_decisions=tuple(
+                                replace(
+                                    row,
+                                    policy_input=historical_views.get(
+                                        id(row.policy_input), row.policy_input
+                                    ),
+                                )
+                                for row in step.seat_decisions
+                            ),
+                        )
+                        for step in cls.current_execution.inspection.step_observations
+                    ),
+                ),
+            )
             cls.executions.append(execution)
             return execution
 
@@ -129,6 +164,31 @@ class FocalOutcomeSourceIntegrationTest(unittest.TestCase):
             source.verify_focal_outcome_source(tampered.path)
         if pattern is not None:
             self.assertRegex(str(caught.exception), pattern)
+
+    def test_current_positions_are_rejected_without_partial_source(self):
+        self.assertTrue(
+            any(
+                p.riichi_declaration_discard_order is not None
+                for capture in self.current_execution.captures
+                for p in capture.decision.input.players
+            )
+        )
+        output = self.root / "current-source"
+        with patch.object(
+            source, "run_focal_game", return_value=self.current_execution
+        ):
+            with self.assertRaisesRegex(
+                DurableLocalGameRecordError, "riichi_declaration_discard_order"
+            ):
+                source.generate_focal_outcome_source(
+                    output,
+                    population_role=source.CALIBRATION_ROLE,
+                    games=[(SMOKE_SEED, "CALIBRATION")],
+                    allocation_bindings={"CALIBRATION": binding([SMOKE_SEED])},
+                    source_contract=source_contract(),
+                )
+        self.assertFalse(output.exists())
+        self.assertFalse(output.with_name(f".{output.name}.partial").exists())
 
     def test_pinned_lisjong_consumer_strict_reads_the_smoke_source(self):
         consumed = read_outcome_source(self.path)

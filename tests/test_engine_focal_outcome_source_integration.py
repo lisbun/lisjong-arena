@@ -1,16 +1,20 @@
 """Integration tests for the #370 lisjong-engine focal outcome source.
 
-test専用seedの実lisjong-engine対局1 hanchanだけからsourceを生成し、Arenaの
-strict readbackを通す。focal decisionの改ざんcaseは生成済みsourceのcopyで検証する。
+test専用seedの実engine入力は、#493の位置供給後は旧schemaで拒否する。
+従来のreadback・改ざん検証は、位置field導入前を模したtest専用historical fixtureで維持する。
+productionで位置を除去する変換や新しい保存schemaは導入しない。
 """
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from _engine_focal_outcome_source_fixtures import Tampered, read_lines, source_contract
+from _focal_outcome_source_fixtures import historical_captures_fixture
 from lisjong_engine.seat import Seat as ES
 
+from lisjong_arena.durable_local_game_record import DurableLocalGameRecordError
 from lisjong_arena.focal_outcome_source import engine_source
 from lisjong_arena.focal_outcome_source.accounting import FocalOutcomeSourceError
 from lisjong_arena.focal_outcome_source.exploration_token import exploration_token
@@ -26,11 +30,20 @@ class EngineFocalOutcomeSourceIntegrationTest(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls._tmp.name)
         cls.path = cls.root / "source"
-        executions = []
+        from lisjong.policy_contract import Seat
+
+        cls.current_execution = engine_source.run_engine_focal_game(
+            seed=SMOKE_SEED, focal_seat=Seat(0)
+        )
+        # Historical v1 input fixture only. It emulates pre-#493 snapshots so the
+        # existing reader/tamper cases remain covered; never used by production.
+        cls.execution = replace(
+            cls.current_execution,
+            captures=historical_captures_fixture(cls.current_execution.captures),
+        )
 
         def run_game(**kwargs):
-            executions.append(engine_source.run_engine_focal_game(**kwargs))
-            return executions[-1]
+            return cls.execution
 
         cls.source = engine_source.generate_engine_focal_outcome_source(
             cls.path,
@@ -40,7 +53,6 @@ class EngineFocalOutcomeSourceIntegrationTest(unittest.TestCase):
             source_contract=source_contract(),
             run_game=run_game,
         )
-        (cls.execution,) = executions
         cls.kyokus = read_lines(cls.path / "game-000" / "kyokus.jsonl")
         cls.decisions = read_lines(cls.path / "game-000" / "focal-decisions.jsonl")
 
@@ -52,7 +64,30 @@ class EngineFocalOutcomeSourceIntegrationTest(unittest.TestCase):
         with self.assertRaisesRegex(FocalOutcomeSourceError, pattern):
             engine_source.verify_engine_focal_outcome_source(tampered.path)
 
-    def test_real_engine_source_passes_strict_readback(self):
+    def test_current_engine_positions_are_rejected_without_a_partial_source(self):
+        self.assertTrue(
+            any(
+                p.riichi_declaration_discard_order is not None
+                for capture in self.current_execution.captures
+                for p in capture.decision.input.players
+            )
+        )
+        output = self.root / "current-source"
+        with self.assertRaisesRegex(
+            DurableLocalGameRecordError, "riichi_declaration_discard_order"
+        ):
+            engine_source.generate_engine_focal_outcome_source(
+                output,
+                population_role="DIAGNOSTIC",
+                games=[(SMOKE_SEED, "DIAGNOSTIC")],
+                allocation_bindings={},
+                source_contract=source_contract(),
+                run_game=lambda **kwargs: self.current_execution,
+            )
+        self.assertFalse(output.exists())
+        self.assertFalse(output.with_name(f".{output.name}.partial").exists())
+
+    def test_historical_engine_source_passes_strict_readback(self):
         (game,) = self.source.games
         self.assertEqual(
             (game.seed, game.split, int(game.focal_seat)), (SMOKE_SEED, "DIAGNOSTIC", 0)

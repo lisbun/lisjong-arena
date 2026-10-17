@@ -2,8 +2,8 @@
 
 The driver is operational tooling that runs outside the frozen checkout. These
 tests pin that parallel execution is operational only: output is reassembled in
-canonical game ordinal order, a failed game publishes nothing, and a real
-parallel run is byte-identical to the unchanged sequential producer. Only
+canonical game ordinal order and a failed game publishes nothing. Since #493,
+real position-bearing inputs are rejected by both legacy producers. Only
 test-only 900000-range seeds are used.
 """
 
@@ -22,6 +22,7 @@ from unittest.mock import patch
 from _focal_outcome_source_fixtures import binding, source_contract
 
 from lisjong_arena import seed_registry
+from lisjong_arena.durable_local_game_record import DurableLocalGameRecordError
 from lisjong_arena.focal_outcome_source import source as producer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "aws"))
@@ -277,9 +278,9 @@ class OperatorScriptSyntaxTest(unittest.TestCase):
 
 
 class SequentialParallelEquivalenceTest(unittest.TestCase):
-    """Real RiichiEnv: spawn-parallel output is byte-identical to the producer."""
+    """The intentionally unmigrated schema fails closed on both execution paths."""
 
-    def test_parallel_source_is_byte_identical_to_sequential(self):
+    def test_parallel_and_sequential_reject_position_bearing_inputs(self):
         games = [(SMOKE_SEEDS[0], "TRAIN"), (SMOKE_SEEDS[1], "SELECT")]
         bindings = {
             "TRAIN": binding([SMOKE_SEEDS[0]]),
@@ -293,30 +294,17 @@ class SequentialParallelEquivalenceTest(unittest.TestCase):
                 allocation_bindings=bindings,
                 source_contract=source_contract(),
             )
-            sequential = producer.generate_focal_outcome_source(
-                root / "sequential", **common
-            )
-            parallel = driver.generate_parallel(root / "parallel", workers=2, **common)
-            self.assertEqual(parallel.identity, sequential.identity)
-            files = sorted(
-                p.relative_to(root / "sequential")
-                for p in (root / "sequential").rglob("*")
-                if p.is_file()
-            )
-            self.assertEqual(
-                files,
-                sorted(
-                    p.relative_to(root / "parallel")
-                    for p in (root / "parallel").rglob("*")
-                    if p.is_file()
-                ),
-            )
-            for relative in files:
-                self.assertEqual(
-                    (root / "parallel" / relative).read_bytes(),
-                    (root / "sequential" / relative).read_bytes(),
-                    relative,
-                )
+            with self.assertRaisesRegex(
+                DurableLocalGameRecordError, "riichi_declaration_discard_order"
+            ):
+                producer.generate_focal_outcome_source(root / "sequential", **common)
+            with self.assertRaisesRegex(
+                DurableLocalGameRecordError, "riichi_declaration_discard_order"
+            ):
+                driver.generate_parallel(root / "parallel", workers=2, **common)
+            for name in ("sequential", "parallel"):
+                self.assertFalse((root / name).exists())
+                self.assertFalse((root / f".{name}.partial").exists())
 
 
 if __name__ == "__main__":
