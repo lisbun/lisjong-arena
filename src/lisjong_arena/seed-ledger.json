@@ -353,6 +353,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "041ddad60b1638a18dffb7c4b062671c9f0a5ee2d5147cb7ef44c8fd01eed23b",
+      "allocation_timestamp": "2026-10-18T02:10:52.134546Z",
+      "arena_revision": "e7affd6efcecfef767002fa4e660c4df4db79740",
+      "owner_issue": "lisbun/lisjong-arena#503",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "passed-tile-genbutsu-development-230",
+      "protocol": "arena-passed-tile-genbutsu-development-comparison-v1",
+      "protocol_revision": "arena-passed-tile-genbutsu-development-comparison-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/503#issuecomment-6243127263",
+      "purpose": "#503 passed-tile genbutsu candidate development comparison",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 940000,
+        "kind": "range",
+        "last": 940229
+      },
+      "seed_membership_identity": "9fcf4efe5fcc2a6c7bebcaa056da51e98257d310c48b2a635eb645021cb68b53",
+      "split": "DEV-MAIN180-ALT50",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "03f2d85591810e7a2a12a6fb8df960ac7812c988a382701332a251c31667afd7",
       "allocation_timestamp": null,
       "arena_revision": null,
