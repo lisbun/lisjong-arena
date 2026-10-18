@@ -771,6 +771,28 @@
       "state": "RESERVED"
     },
     {
+      "allocation_identity": "3fd38a490745fb87e72293297c6e62158c1795f41f4ec70ae54a9f984814f4f8",
+      "allocation_timestamp": "2026-10-18T10:49:28.303590Z",
+      "arena_revision": "e7affd6efcecfef767002fa4e660c4df4db79740",
+      "owner_issue": "lisbun/lisjong-arena#506",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "l2a-c0-source-850",
+      "protocol": "l2a-c0-distillation-source-v1",
+      "protocol_revision": "l2a-c0-distillation-source-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/506",
+      "purpose": "L2a C0 distillation source OFFLINE-EVAL, used once after freeze (lisjong#267, docs/learning-l2a.md 3.1)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 506700,
+        "kind": "range",
+        "last": 506849
+      },
+      "seed_membership_identity": "33cf9cf88756968a33a6a14787e754660adcc3638522984f2296ed6b0eb58b26",
+      "split": "OFFLINE-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
