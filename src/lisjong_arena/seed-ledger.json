@@ -793,6 +793,28 @@
       "state": "RESERVED"
     },
     {
+      "allocation_identity": "f536a79cfb9c02d382e809795fee54d49f13620e7df0234499897f56bd1cbba7",
+      "allocation_timestamp": "2026-10-18T10:50:00.976388Z",
+      "arena_revision": "e7affd6efcecfef767002fa4e660c4df4db79740",
+      "owner_issue": "lisbun/lisjong-arena#506",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "l2a-runtime-smoke-16",
+      "protocol": "l2a-runtime-smoke-v1",
+      "protocol_revision": "l2a-runtime-smoke-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/506",
+      "purpose": "L2a frozen-model runtime smoke, 1 seat model + 3 C0, 16 hanchan, no strength claim (lisjong#267, docs/learning-l2a.md 5.4)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 506900,
+        "kind": "range",
+        "last": 506915
+      },
+      "seed_membership_identity": "c5c9a924b6e22817c601a63cc9bdf3148e4bbf8a7dc354e2584274203203fce6",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
