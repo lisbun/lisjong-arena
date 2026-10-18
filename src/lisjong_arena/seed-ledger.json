@@ -749,6 +749,28 @@
       "state": "RESERVED"
     },
     {
+      "allocation_identity": "12edf056ee4eb49bd341c56f3387611ee4b3c1bf89802f774be0ff23bc024de0",
+      "allocation_timestamp": "2026-10-18T10:48:50.987409Z",
+      "arena_revision": "e7affd6efcecfef767002fa4e660c4df4db79740",
+      "owner_issue": "lisbun/lisjong-arena#506",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "l2a-c0-source-850",
+      "protocol": "l2a-c0-distillation-source-v1",
+      "protocol_revision": "l2a-c0-distillation-source-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/506",
+      "purpose": "L2a C0 distillation source SELECT (lisjong#267, docs/learning-l2a.md 3.1)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 506600,
+        "kind": "range",
+        "last": 506699
+      },
+      "seed_membership_identity": "f23d15731d4cd863a5dec0f8f535c1d8d7070f9a01f0d55246ba9ce3c1db5c7b",
+      "split": "SELECT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
