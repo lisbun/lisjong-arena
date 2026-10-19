@@ -283,7 +283,7 @@ jobs:
     timeout-minutes: 15
     env:
       LISJONG_REQUIRE_NATIVE: "1"
-      LISJONG_NATIVE_SOURCE_REVISION: "174bf48556e6ee0b7f4cda5cb8b93262140e7386"
+      LISJONG_NATIVE_SOURCE_REVISION: "999553b6faf4c515c3a9f862429896308188e504"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -292,8 +292,8 @@ jobs:
       - name: Install pinned Arena and native scorer
         run: |
           python -m pip install --disable-pip-version-check -e .
-          python -m pip install --disable-pip-version-check "git+https://github.com/lisbun/lisjong.git@174bf48556e6ee0b7f4cda5cb8b93262140e7386#subdirectory=native"
-          python -c 'import _lisjong_native; assert _lisjong_native.SOURCE_REVISION == "174bf48556e6ee0b7f4cda5cb8b93262140e7386"'
+          python -m pip install --disable-pip-version-check "git+https://github.com/lisbun/lisjong.git@999553b6faf4c515c3a9f862429896308188e504#subdirectory=native"
+          python -c 'import _lisjong_native; assert _lisjong_native.SOURCE_REVISION == "999553b6faf4c515c3a9f862429896308188e504"'
       - name: Validate synthetic engine source with the real lisjong reader
         run: |
           python -m unittest discover -s tests -p test_ron_legal_source_producer.py -v
