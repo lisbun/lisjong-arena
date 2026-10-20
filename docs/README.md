@@ -57,6 +57,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [Rust向聴数backend：AWS workerへのopt-in導入と検証](rust-shanten-backend-400.md) — Issue #400（親lisjong#216）のwheel導入・fail-closed・worker検査・同値性/性能測定とAWS実行計画
 - [Champion 2botのR5 Rust版でのAWS試運転](aws-riichilab-rust-434.md) — 30分試運転、wheel転送・権限、停止・回収、時間評価の限界
 - [現行のlisjong pin・Rust wheelの組み合わせ](lisjong-native-wheel-current.md) — Issue #434：lisjong `51e832e`（#233）とR5対応wheel（API_VERSION 3）。過去の#423 / #409の固定記録は別文書に保持
+- [L2a合成Policyの動作確認](l2a-runtime-smoke-507.md) — Issue #507（親lisjong#318）。凍結したL2a 1席 + C0 3席の16半荘で、完走・全判断の合法・推論時間・RSSを記録する（強さの比較はしない）
 - [#245 待ち確率推定器の正式test](riichi-wait-formal-245.md) — Issue #447（owner lisjong#245）の予約済み新規seed 932000..932099の生成・`select`・`test`をAWS 1台で実行する経路（actual runはmerge後のoperator作業）
 - [聴牌PUSH/FOLDの対比較source producerとpilot](tenpai-push-fold-source-476.md) — Issue #476（owner lisjong#254）。lisjong#288のwire契約どおりに押す／降りるの局の結果を対で記録する経路と、16半荘pilotの固定値（pilotの実行はmerge後のoperator作業）
 - [聴牌PUSH/FOLDの対比較source 本生成](tenpai-push-fold-source-475.md) — Issue #475。400半荘（train 200 / valid 200）の固定値と、AWS 1台で生成する経路（actual runはmerge後のoperator作業）

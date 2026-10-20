@@ -112,13 +112,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # revisionへ、Arena #493でlisjong #305（PolicyInputの保存形式v2）の
         # revisionへ、さらにlisjong #307/#309（source readerと派生sourceのv2）の
         # revisionへ、Arena #503でlisjong #312（確定安全牌の候補Policy）の
+        # revisionへ、Arena #507でlisjong #316/#317（L2aの合成Policy）の
         # revisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "174bf48556e6ee0b7f4cda5cb8b93262140e7386",
+            "999553b6faf4c515c3a9f862429896308188e504",
         )
 
 
