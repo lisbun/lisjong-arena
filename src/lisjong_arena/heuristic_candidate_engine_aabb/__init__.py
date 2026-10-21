@@ -16,6 +16,9 @@ protocol・実行（#514）
   executor          1 workerでの逐次実行、新しいPolicy、呼び出し数、timeout
   result / runner   正式result、offline verify、STOP時の診断証跡
   development       §10.7の開発用記録経路確認
+校正（#517）
+  calibration       CALIBRATION専用のplan / run / verify / report（強さの結果ではない）
+  backend_check     校正前のPython/Rust照合P2
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は

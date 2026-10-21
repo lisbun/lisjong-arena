@@ -69,6 +69,8 @@ class PlayedHanchan:
     environment: dict
     worker_pid: int
     peak_rss_kib: int | None = None
+    selected_actions: tuple | None = None
+    """``play_backend_check_hanchan``（P2）だけが記録する選択行動の列。正式runでは``None``。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,9 +80,10 @@ class ExecutedHanchan:
     capture: HanchanCapture
     wall_seconds: float
     peak_rss_kib: int | None
+    selected_actions: tuple | None = None
 
 
-def _peak_rss_kib() -> int | None:
+def current_peak_rss_kib() -> int | None:
     """workerのpeak RSS（Linuxの``ru_maxrss``、KiB）。計測できない環境では``None``。"""
     try:
         import resource
@@ -92,16 +95,22 @@ def _peak_rss_kib() -> int | None:
 class _CountingPolicy:
     """``choose_action``の呼び出し数だけを数えるproxy。判断には触れない。"""
 
-    __slots__ = ("_policy", "_counts", "_seat")
+    __slots__ = ("_policy", "_counts", "_seat", "_on_action")
 
-    def __init__(self, policy, counts: Counter, seat: EngineSeat) -> None:
+    def __init__(
+        self, policy, counts: Counter, seat: EngineSeat, on_action=None
+    ) -> None:
         self._policy = policy
         self._counts = counts
         self._seat = seat
+        self._on_action = on_action
 
     def choose_action(self, decision):
         self._counts[self._seat] += 1
-        return self._policy.choose_action(decision)
+        action = self._policy.choose_action(decision)
+        if self._on_action is not None:
+            self._on_action(self._seat, action)
+        return action
 
 
 def environment_document(wheel_path: str) -> dict[str, object]:
@@ -137,6 +146,16 @@ def environment_document(wheel_path: str) -> dict[str, object]:
 def play_hanchan(task: HanchanTask) -> PlayedHanchan:
     """worker内で1半荘を実行する（実engine・実Policy）。"""
     environment = environment_document(task.wheel_path)
+    capture = play_task(task)
+    return PlayedHanchan(capture, environment, os.getpid(), current_peak_rss_kib())
+
+
+def play_task(task: HanchanTask, *, on_action=None) -> HanchanCapture:
+    """1半荘を実行してcaptureを返す（環境の検査はcallerが行う）。
+
+    ``on_action(seat, action)`` はPolicyが返した行動を観測するoptionalなhookで、
+    判断には触れない。
+    """
     candidate = parse_participant(task.candidate, "candidate")
     incumbent = parse_participant(task.incumbent, "incumbent")
     rules = locked_rules()
@@ -149,7 +168,7 @@ def play_hanchan(task: HanchanTask) -> PlayedHanchan:
         factory = resolve_factory(participant)
         # 半荘ごと・seatごとに新しいPolicy（seat間・半荘間で共有しない）
         policy = factory(**participant.behavior_configuration)
-        policies[seat] = _CountingPolicy(policy, policy_calls, seat)
+        policies[seat] = _CountingPolicy(policy, policy_calls, seat, on_action)
     completions = []
 
     def count_selector(seat: EngineSeat) -> None:
@@ -169,7 +188,7 @@ def play_hanchan(task: HanchanTask) -> PlayedHanchan:
         )
         for role in roles
     )
-    capture = HanchanCapture(
+    return HanchanCapture(
         match=match,
         seed=task.seed,
         placement=task.placement,
@@ -178,7 +197,6 @@ def play_hanchan(task: HanchanTask) -> PlayedHanchan:
         policy_call_counts=tuple(policy_calls[seat] for seat in EngineSeat),
         round_evidence=tuple(completions),
     )
-    return PlayedHanchan(capture, environment, os.getpid(), _peak_rss_kib())
 
 
 def _guarded(play: Callable, task: HanchanTask) -> PlayedHanchan:
@@ -202,12 +220,15 @@ def run_schedule(
     expected_environment: dict,
     play: Callable[[HanchanTask], PlayedHanchan] = play_hanchan,
     on_hanchan: Callable[[int, int], None] | None = None,
+    on_executed: Callable[[ExecutedHanchan], None] | None = None,
 ) -> list[ExecutedHanchan]:
     """lockしたscheduleを順に実行し、全6K半荘の結果を返す。
 
     ``timeout_seconds``は1半荘あたりの上限で、callerがlockから渡す（defaultを持たない）。
     ``play``はtestで単一半荘の実行境界を差し替えるためのseamで、module-levelの
     関数でなければならない（spawn workerへ渡すため）。
+    ``on_executed`` は1半荘ごとの計測値を受け取るoptionalなhookで、例外を送出すると
+    ほかの失敗と同じくworkerを止めてeventを止める（校正の資源上限に使う）。
     """
     if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise RunStopped("timeout_seconds must be a positive int taken from the lock")
@@ -253,11 +274,15 @@ def run_schedule(
             capture = played.capture
             if (capture.seed, capture.placement) != (task.seed, task.placement):
                 raise RunStopped("worker returned a different hanchan")
-            executed.append(
-                ExecutedHanchan(
-                    capture, time.perf_counter() - started, played.peak_rss_kib
-                )
+            item_result = ExecutedHanchan(
+                capture,
+                time.perf_counter() - started,
+                played.peak_rss_kib,
+                played.selected_actions,
             )
+            executed.append(item_result)
+            if on_executed is not None:
+                on_executed(item_result)
             if on_hanchan is not None:
                 on_hanchan(index + 1, len(hanchans))
     except BaseException:
@@ -275,6 +300,8 @@ __all__ = [
     "PlayedHanchan",
     "RunStopped",
     "environment_document",
+    "current_peak_rss_kib",
     "play_hanchan",
+    "play_task",
     "run_schedule",
 ]

@@ -112,18 +112,41 @@ def require_population_seeds(
     ledger: object, binding: object, seeds: tuple[int, ...], *, event: int
 ) -> dict:
     """allocation bindingをledgerへ照合し、全domainの他allocationとの衝突を拒否する。"""
-    owner = _owner_issue(event)
+    return require_allocated_seeds(
+        ledger,
+        binding,
+        seeds,
+        owner_issue=_owner_issue(event),
+        population=f"{POPULATION_PREFIX}{event}",
+        split=FORMAL_SPLIT,
+    )
+
+
+def require_allocated_seeds(
+    ledger: object,
+    binding: object,
+    seeds: tuple[int, ...],
+    *,
+    owner_issue: str,
+    population: str,
+    split: str,
+) -> dict:
+    """bindingが、このprotocol・engine domainの指定ownerのactive allocationであることと、
+    全domainの他allocationと1 seedも重ならないことを要求する。
+
+    正式lockは ``require_population_seeds``（split ``FORMAL-EVAL``）を通して使う。
+    """
     try:
         validated = seed_registry.validate_binding_shape(binding, seeds=seeds)
         record = seed_registry.require_allocation_binding(
             ledger,
             validated,
             seeds=seeds,
-            owner_issue=owner,
+            owner_issue=owner_issue,
             protocol=PROTOCOL_ID,
             seed_domain=SEED_DOMAIN,
-            population=f"{POPULATION_PREFIX}{event}",
-            split=FORMAL_SPLIT,
+            population=population,
+            split=split,
         )
         ledger_document = seed_registry.validate_ledger(ledger)
     except seed_registry.SeedRegistryError as error:
@@ -512,6 +535,7 @@ __all__ = [
     "locked_event",
     "locked_participants",
     "parse_lock_document",
+    "require_allocated_seeds",
     "require_live_target",
     "require_population_seeds",
     "save_lock",

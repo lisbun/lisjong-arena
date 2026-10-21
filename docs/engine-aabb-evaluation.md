@@ -32,7 +32,9 @@ dev-check §10.7の記録経路確認（開発用seed・別document、正式resu
 | `result` | result document、offline verify |
 | `runner` | 正式eventの実行入口、STOP時の診断証跡 |
 | `development` | §10.7の開発用確認（plan / raw / summary / timings） |
-| `__main__` | `lock` / `run` / `verify` / `dev-check` / `dev-verify` |
+| `calibration` | 限定校正（#517）のplan / run / verify / report（§8） |
+| `backend_check` | 校正前のPython/Rust照合P2（#517、§8.2） |
+| `__main__` | `lock` / `run` / `verify` / `dev-check` / `dev-verify`、校正用の6 command（§8） |
 
 依存は `protocol / lock / executor / result → 局単位record（#513）` の一方向で、record側は
 protocol・lockを知らない。bridgeの `run_policy_hanchan` には、`on_round_evidence_complete`
@@ -158,3 +160,78 @@ J3（P2の規模）の決定でも、固定C0（J6）の代替証拠でもない
 - §10.7の確認（本Issueで開発用入力により1回）、P2 / P3の正式構成照合、校正、project #83のgate、
   承認済みのevent計画、seed予約がそろうまで正式評価は始めない
 - worker数は1に固定した。並列化する場合は、worker間の環境一致を含めて別に設計する
+
+## 8. 限定校正（#517）
+
+Issue: [lisbun/lisjong-arena#517](https://github.com/lisbun/lisjong-arena/issues/517)
+
+> Status: **実装のみ**。P2 / P3、seed予約、校正の実行はしていない（実行対象・上限の承認後に行う）。
+
+仕様§11の校正を、固定した1組・1構成に限って行う入口。正式lock（`FORMAL-EVAL`）と
+dev-check（既知12半荘）の検査は緩めず、別のplan document（`evaluation_kind = CALIBRATION`）を使う。
+executor・局単位record・`block_totals`・I/O検査は正式runと同じcodeである。
+
+| 項目 | 値 |
+| --- | --- |
+| A（candidate） | `one-shanten-defense-placement-aware-speed-call` |
+| B（incumbent、`current-champion`） | `placement-aware-speed-call`（§6 dev-checkとはA / Bが逆） |
+| 規模 | 32 seed blocks × 6配置 = 192半荘、Rust、worker 1、1回（`CALIBRATION_K`。正式の最小Kではない） |
+| population | owner `lisbun/lisjong-arena#517`、`heuristic-candidate-engine-aabb-calibration-517`、split `CALIBRATION`、engine domain |
+| 設計値（J1） | δ = 1.0 pt / seat-result、両側α = .05、power = .80、`K_plan = ceil(((1.959964 + 0.841621) × σ / δ)²)` |
+| bootstrap | seed block単位、10,000回、乱数seed 514、SDの片側95%上限（nearest-rank） |
+
+### 8.1 Command
+
+```text
+calibration-plan   --seeds S1,..,S32 --allocation-identity ID --timeout-seconds T
+                   --wall-limit-seconds W --rss-limit-bytes R --limit-enforcement TEXT
+                   --wheel WHL --calibration-output DIR --diagnostics DIR --output plan.json
+calibration-run    --plan plan.json
+calibration-verify --plan plan.json      保存物だけからsummary（とreport）を再導出、file一覧とSHA-256を出力
+calibration-report --plan plan.json      verifyに通った保存物からreport.jsonをwrite-onceで書く
+```
+
+- plan: pair、seeds（allocation binding。全domainの他allocation・registry外の既知seedと重なれば拒否）、
+  設計値、timeout、資源上限（stageごとのwall秒、process tree RSS bytes、OS側の強制方法の記述）、
+  実行環境（正式lockと同じ `environment_document`）、clean で `main` に含まれるArena revision、
+  保存先（`output` / `diagnostics`、未作成）。defaultはない。write-onceで、読込時に全fieldとdigestを再検査する
+- run: live gate（HEAD・環境・allocationがactive）→ 192半荘 → live gate → 第1層・第2層・scheduleを
+  書込前に検査 → stagingに `raw/`・`summary.json`・`timings.json` を書いてから `output` へ公開する
+- 上限: 1半荘timeoutは既存executor。stage全体のwall秒と、親 + workerのpeak RSSの和は1半荘ごとに確かめ、
+  超えたらworkerを止めてSTOPする。これはcode側の二重化で、process tree全体の強制はOS側
+  （例: `systemd-run --user --scope -p MemoryMax=… -p RuntimeMaxSec=…`）で行い、その方法をplanに書く
+- STOP / INCOMPLETE: 例外、timeout、上限超過、環境・呼び出し数・第1層・第2層・scheduleの不一致。
+  `output` には何も公開せず、`diagnostics/stop-<UTC>.json`（`not_a_result: true`）だけを残す。
+  成功分だけのsummary、seedの差し替え・追加・再試行、条件の緩和はしない。`output` があれば再実行しない
+
+### 8.2 保存物
+
+| file | 内容 | 再導出 |
+| --- | --- | --- |
+| `raw/` | 局単位record（第1層・第2層とも `VALID` を要求、bindingsはplan digest） | — |
+| `summary.json` | blockごとの `S_A` / `S_B` / 差 / `D`、K、SD(K-1)、bootstrap SD上限、leave-one-block-outのSDと各blockの寄与、各σでの `K_plan` と半荘数、副指標（#513、seed単位）、`status = CALIBRATION COMPLETE; NOT A STRENGTH RESULT` | plan + raw |
+| `timings.json` | 半荘ごとのwall秒・局数・worker peak RSS・親peak RSS、schedule・保存・summaryの秒数 | 計測値 |
+| `report.json` | 1半荘 / 6配置blockの時間（平均・中央値・最大）、局数、RSS最大、file容量とSHA-256、J1の各σでの所要時間（観測平均、暫定timeout・2倍案timeoutでのworst case）、J2の観測最大と `ceil(2 × 最大 / 60) × 60` 案 | plan + summary + timings + file |
+
+summaryとreportはD平均・区間・classificationを出さない（校正のD平均の符号・区間を採否に使わない）。
+正式の最小K・timeoutは校正値から自動決定せず、別のevent計画で決める。
+
+### 8.3 P2 / P3（`backend-check` / `backend-compare`）
+
+```text
+LISJONG_SHANTEN_BACKEND=python ... backend-check --backend python --timeout-seconds T --output python.json
+LISJONG_SHANTEN_BACKEND=rust   ... backend-check --backend rust --wheel WHL --timeout-seconds T --output rust.json
+... backend-compare --python python.json --rust rust.json --output p2.json      MATCHでだけ終了コード0
+```
+
+- 入力は#472の開発用seed 472005・472006 × 6配置（12半荘）を、上表のpairでbackendごとに1回。
+  backendはprocessごとに選ばれるので別processで実行する。正式runnerのRust固定は変えない
+- 半荘ごとに局数、`end_reason`、`final_points`、`CompletedMatch` 全体（各局の `CompletedRound` の結果・
+  精算・transfer・本場・供託、`final_score`）の正規化表現、Policyが返した全選択行動の列を比べる。
+  許容誤差はなく、1つでも違えば `MISMATCH`（Rustを補正しない、Pythonへ自動で切り替えない）
+- 正規化（`canonical_engine_value`）は#472のP2と同じ規則: enumは `型名.名前`、dataclass / slotsは
+  field名と値、集合・dictはsortしたlist
+- P3: rustの `backend-check` と `calibration-run` は、親とworkerの両方で `environment_document`
+  （wheel filename・bytes・SHA-256、installed native filesと wheelの一致、`SOURCE_REVISION`、
+  `API_VERSION`、backend、provenance）を取り、planの値との完全一致を要求する。指定WSL構成についての
+  確認であり、別のimage（AWS等）のPASSではない

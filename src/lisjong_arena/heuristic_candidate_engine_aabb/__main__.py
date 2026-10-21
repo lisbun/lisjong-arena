@@ -6,6 +6,14 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb run --lock L 正式event
 python -m lisjong_arena.heuristic_candidate_engine_aabb verify --lock L
 python -m lisjong_arena.heuristic_candidate_engine_aabb dev-check --output D --wheel W --timeout-seconds T
 python -m lisjong_arena.heuristic_candidate_engine_aabb dev-verify --output D
+
+校正（#517。強さの結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb backend-check --backend B --output F ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb backend-compare --python F1 --rust F2 --output F3
+python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-plan ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-verify --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-report --plan P
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -18,7 +26,16 @@ import sys
 from pathlib import Path
 
 from lisjong_arena import seed_registry
+from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_file
 
+from .backend_check import MATCH, compare_backend_checks, run_backend_check
+from .calibration import (
+    build_plan,
+    run_calibration,
+    save_plan,
+    verify_calibration,
+    write_report,
+)
 from .development import (
     catalog_participant,
     run_development_check,
@@ -76,7 +93,87 @@ def main(argv: list[str] | None = None) -> int:
     dev_verify = sub.add_parser("dev-verify", help="re-derive a development summary")
     dev_verify.add_argument("--output", required=True)
 
+    check = sub.add_parser("backend-check", help="P2: run the 12 dev hanchans once")
+    check.add_argument("--backend", choices=("python", "rust"), required=True)
+    check.add_argument("--output", required=True)
+    check.add_argument("--wheel", default="", help="required for rust")
+    check.add_argument("--timeout-seconds", type=int, required=True)
+
+    compare = sub.add_parser("backend-compare", help="P2: compare python and rust")
+    compare.add_argument("--python", required=True)
+    compare.add_argument("--rust", required=True)
+    compare.add_argument("--output", required=True)
+
+    plan = sub.add_parser("calibration-plan", help="write the calibration plan")
+    plan.add_argument("--seeds", required=True, help="comma separated, in order")
+    plan.add_argument("--allocation-identity", required=True)
+    plan.add_argument("--timeout-seconds", type=int, required=True)
+    plan.add_argument("--wall-limit-seconds", type=int, required=True)
+    plan.add_argument("--rss-limit-bytes", type=int, required=True)
+    plan.add_argument("--limit-enforcement", required=True)
+    plan.add_argument("--wheel", required=True)
+    plan.add_argument("--calibration-output", required=True)
+    plan.add_argument("--diagnostics", required=True)
+    plan.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    plan.add_argument("--output", required=True)
+
+    for name in ("calibration-run", "calibration-verify", "calibration-report"):
+        command = sub.add_parser(name)
+        command.add_argument("--plan", required=True)
+        if name == "calibration-run":
+            command.add_argument(
+                "--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH)
+            )
+
     args = parser.parse_args(argv)
+    if args.command == "backend-check":
+        document = run_backend_check(
+            args.output,
+            backend=args.backend,
+            wheel_path=str(Path(args.wheel).resolve()) if args.wheel else "",
+            timeout_seconds=args.timeout_seconds,
+        )
+        print(f"BACKEND CHECK {args.backend} {document['document_digest']}")
+        return 0
+    if args.command == "backend-compare":
+        comparison = compare_backend_checks(args.python, args.rust)
+        write_new_artifact_file(Path(args.output), canonical_json_text(comparison))
+        print(f"P2 {comparison['status']} {comparison['comparison_digest']}")
+        return 0 if comparison["status"] == MATCH else 3
+    if args.command == "calibration-plan":
+        document = build_plan(
+            ordered_seeds=_seeds(args.seeds),
+            allocation_identity=args.allocation_identity,
+            timeout_seconds=args.timeout_seconds,
+            resource_limits={
+                "enforcement": args.limit_enforcement,
+                "process_tree_rss_bytes": args.rss_limit_bytes,
+                "wall_seconds_per_stage": args.wall_limit_seconds,
+            },
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={
+                "diagnostics": args.diagnostics,
+                "output": args.calibration_output,
+            },
+            ledger_path=args.ledger,
+        )
+        save_plan(document, args.output)
+        print(document["plan_digest"])
+        return 0
+    if args.command == "calibration-run":
+        summary = run_calibration(
+            args.plan, ledger_path=args.ledger, on_hanchan=_progress
+        )
+        print(f"{summary['status']} {summary['summary_digest']}")
+        return 0
+    if args.command == "calibration-verify":
+        verified = verify_calibration(args.plan)
+        print(json.dumps(verified, sort_keys=True, indent=2))
+        return 0
+    if args.command == "calibration-report":
+        report = write_report(args.plan)
+        print(f"REPORT {report['report_digest']} (not a strength result)")
+        return 0
     if args.command == "lock":
         document = build_lock(
             event=args.event,
