@@ -142,6 +142,11 @@ recordの全検査、期待schedule、bindings、主統計、副指標を再導�
 `dev-verify` は保存物だけからsummaryを再導出して完全一致を確かめる。この12半荘は強さの比較でも、
 J3（P2の規模）の決定でも、固定C0（J6）の代替証拠でもない。
 
+実施（2026-10-21、Arena `92fedd2`、WSL、Rust）: 12半荘・143局、第2層 `VALID`、別processの
+`dev-verify` で完全一致、1半荘最大59.4秒、worker peak RSS 274 MiB。12半荘とも `final_points` と
+局数が#472の同じ半荘と一致した。実行条件・指標・hashは
+[#514のcomment](https://github.com/lisbun/lisjong-arena/issues/514#issuecomment-6320600309)にある。
+
 ## 7. 残る開始条件
 
 - J1（Kと最小値）、J2（timeoutとfail-safe）は校正後に決める。未決のまま正式eventを始めない
