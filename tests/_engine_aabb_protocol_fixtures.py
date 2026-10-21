@@ -198,6 +198,20 @@ def fake_play_slow(task):
     return fake_play(task)
 
 
+HEARTBEAT_ENV = "ENGINE_AABB_TEST_HEARTBEAT"
+
+
+def fake_play_heartbeat(task):
+    """(SEED_A, 1) で止まらずに、0.2秒ごとにheartbeat fileへ追記し続ける。"""
+    if (task.seed, task.placement) == (SEED_A, 1):
+        path = os.environ[HEARTBEAT_ENV]
+        for _ in range(300):
+            with open(path, "a", encoding="utf-8") as stream:
+                stream.write(f"{os.getpid()}\n")
+            time.sleep(0.2)
+    return fake_play(task)
+
+
 def fake_play_other_environment(task):
     played = fake_play(task)
     if (task.seed, task.placement) == (SEED_B, 5):

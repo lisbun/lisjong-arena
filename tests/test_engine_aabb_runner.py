@@ -5,17 +5,21 @@
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _engine_aabb_protocol_fixtures as fx
 
 from lisjong_arena import seed_registry
 from lisjong_arena._artifact_io import canonical_json_text
+from lisjong_arena.heuristic_candidate_engine_aabb import runner
 from lisjong_arena.heuristic_candidate_engine_aabb.errors import EngineAabbRecordError
 from lisjong_arena.heuristic_candidate_engine_aabb.executor import RunStopped
 from lisjong_arena.heuristic_candidate_engine_aabb.lock import (
@@ -123,17 +127,60 @@ class StopTest(_EventCase):
                 self.assertIn(pattern.split()[0], stop["error"])
                 shutil.rmtree(self.tmp / "diagnostics")
 
-    def test_timeout_stops_the_event(self):
-        lock = fx.lock_document(self.tmp, timeout_seconds=3)
+    def test_timeout_stops_the_event_and_the_worker(self):
+        lock = fx.lock_document(self.tmp, timeout_seconds=5)
         path = save_lock(lock, self.tmp / "short-lock.json")
-        with self.assertRaisesRegex(RunStopped, "timeout"):
-            run_formal_event(
-                path,
-                ledger_path=self.ledger_path,
-                play=fx.fake_play_slow,
-                live_gate=fx.gate,
-            )
+        heartbeat = self.tmp / "heartbeat.txt"
+        with mock.patch.dict(os.environ, {fx.HEARTBEAT_ENV: str(heartbeat)}):
+            with self.assertRaisesRegex(RunStopped, "timeout"):
+                run_formal_event(
+                    path,
+                    ledger_path=self.ledger_path,
+                    play=fx.fake_play_heartbeat,
+                    live_gate=fx.gate,
+                )
         self.assert_no_result()
+        # 止めたworkerはheartbeatを書き続けない（例外が返るだけでなく、processが終わる）
+        time.sleep(1.5)
+        beats = heartbeat.read_text("utf-8").count("\n")
+        self.assertGreater(beats, 0)
+        time.sleep(1.5)
+        self.assertEqual(heartbeat.read_text("utf-8").count("\n"), beats)
+
+    def test_failure_after_raw_is_written_publishes_nothing_and_can_rerun(self):
+        for target in ("build_result", "save_result"):
+            with self.subTest(target=target):
+                with mock.patch.object(
+                    runner, target, side_effect=OSError(f"injected {target} failure")
+                ):
+                    with self.assertRaisesRegex(RunStopped, f"injected {target}"):
+                        self.run_event()
+                self.assert_no_result()
+                self.assertEqual(
+                    sorted(p.name for p in self.tmp.iterdir() if "staging" in p.name),
+                    [],
+                )
+                shutil.rmtree(self.tmp / "diagnostics")
+        result = self.run_event()
+        self.assertEqual(self.verify(), result)
+
+    def test_failure_while_publishing_the_result_rolls_back_raw(self):
+        original = Path.rename
+
+        def rename(path, target):
+            if Path(target).name == "result.json":
+                raise OSError("injected rename failure")
+            return original(path, target)
+
+        with mock.patch.object(Path, "rename", rename):
+            with self.assertRaisesRegex(RunStopped, "injected rename"):
+                self.run_event()
+        self.assert_no_result()
+        self.assertEqual(
+            sorted(p.name for p in self.tmp.iterdir() if "staging" in p.name), []
+        )
+        result = self.run_event()
+        self.assertEqual(self.verify(), result)
 
     def test_aborted_event_can_be_rerun_with_the_same_lock(self):
         with self.assertRaises(RunStopped):

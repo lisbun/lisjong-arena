@@ -59,8 +59,12 @@ MINIMUM_BLOCKS = 2
 
 REGISTRY_EXTERNAL_SEEDS = {
     "lisbun/lisjong-arena#472": tuple(range(472_000, 472_007)),
+    "lisbun/lisjong-arena#513": (513_000,),
 }
-"""Seed Registryのallocation外で使ったengine domainの既知seed（§14）。正式populationから除く。"""
+"""Seed Registryのallocation外で使ったengine domainの既知seed。正式populationから除く。
+
+#472: 開発用試行（§14）。#513: 実engineの1半荘を回すtest（#514のtestも同じseedを使う）。
+"""
 
 PARTICIPANT_FAMILY = "heuristic"
 FACTORY_MODULE = "lisjong_arena.policy_catalog"

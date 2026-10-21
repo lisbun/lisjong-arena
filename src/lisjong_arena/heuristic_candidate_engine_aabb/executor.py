@@ -260,9 +260,12 @@ def run_schedule(
             )
             if on_hanchan is not None:
                 on_hanchan(index + 1, len(hanchans))
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+    except BaseException:
+        # terminate_workers()はprocess一覧を写してからshutdownする。先に
+        # shutdown()を呼ぶと一覧が消え、timeout中のworkerが残る
         pool.terminate_workers()
+        raise
+    pool.shutdown(wait=True)
     return executed
 
 

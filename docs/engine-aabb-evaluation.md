@@ -79,7 +79,8 @@ allocation、Kの根拠のJSON、timeout、wheel、出力先を明示して書�
 - K = ordered seedsの件数、`K >= 2`（算術上の下限。正式評価の最小KはJ1で決める）、seedの重複なし
 - allocation bindingを `require_allocation_binding()` でlive ledgerへ照合する（owner Issue・protocol・
   domain・population・split・membership・active state）。加えて、**全domain**の他allocationと
-  1 seedでも重なれば拒否する。registry外で使った既知seed（#472の472000〜472006）も拒否する
+  1 seedでも重なれば拒否する。registry外で使った既知seed（#472の472000〜472006、#513 / #514の
+  実engine testの513000）も拒否する
 - ledgerが読めない・壊れている場合は止まる。fallbackはない
 - A / Bはidentityとfactoryが異なり、同じlisjong revisionで、installed lisjongと一致する。
   学習artifact、`policy_catalog` 以外のfactory、factoryに合わない設定は受理しない
@@ -95,15 +96,17 @@ allocation、Kの根拠のJSON、timeout、wheel、出力先を明示して書�
 4. live gateをもう一度通す
 5. 書込前に、第1層の全検査（#513）、期待schedule・seat・identity（K1 / K2）、`S_A + S_B = 0`、
    主統計が成り立つことを確かめる
-6. raw record（`event_facts_required = False`、bindingsはlock digestと環境digest）、resultの順に
-   write-onceで保存する
+6. raw record（`event_facts_required = False`、bindingsはlock digestと環境digest）とresultを
+   同じparentのstagingへ書き、resultの保存まで成功してから両方を公開する（rawを先に公開して
+   resultで失敗した場合はrawを戻す）。途中で失敗しても公開先には何も残らない
 
 STOP / INVALID（resultを書かない）: Policy・engine・bridge・mapping（`PolicyActionValidationError`、
 `UnmappedActionError` 等）の例外、1半荘がlockのtimeoutを超える、workerの環境がlockと違う、
 workerが別の半荘を返す、呼び出し数の不一致、第1層・schedule・ゼロサムの不一致、ledger・HEAD・
 環境のlive照合の失敗。成功分のresult、seedの差し替え、skip、fallbackはない。
-`diagnostics/stop-<UTC>.json`（`not_a_result: true`）に理由と完了半荘数を残す。resultを書く前に
-止まった場合は、同じlock・seed・destinationでschedule全体をやり直せる。
+`diagnostics/stop-<UTC>.json`（`not_a_result: true`）に理由と完了半荘数を残す。resultを公開する前に
+止まった場合は、同じlock・seed・destinationでschedule全体をやり直せる。timeoutや失敗のときは
+workerを強制終了する（`terminate_workers()`。止まらずに残るworkerを作らない）。
 
 第2層だけの失敗は§10.6のとおり、第2層を `INVALID` にして理由を残し、第2層の副指標を出さない。
 主指標と第1層の副指標は第1層の検査だけで判断する。

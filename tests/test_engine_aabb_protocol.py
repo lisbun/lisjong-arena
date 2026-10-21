@@ -103,6 +103,9 @@ class ProtocolConstantsTest(unittest.TestCase):
             protocol.require_seeds([SEED_A, SEED_A])
         with self.assertRaisesRegex(EngineAabbProtocolError, "outside the registry"):
             protocol.require_seeds([SEED_A, 472_005])
+        # #513 / #514の実engine testで使ったseed
+        with self.assertRaisesRegex(EngineAabbProtocolError, r"\[513000\]"):
+            protocol.require_seeds([513_000, SEED_A])
         with self.assertRaises(EngineAabbProtocolError):
             protocol.require_seeds([SEED_A, True])
         with self.assertRaises(EngineAabbProtocolError):

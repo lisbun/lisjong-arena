@@ -13,9 +13,13 @@ load lock -> destinations未作成を確認 -> live gate（HEAD・環境・ledge
   ``diagnostics``へ ``stop-<UTC時刻>.json`` として別に残す（resultではない）
 - 第2層だけの失敗は§10.6のとおり第2層を ``INVALID`` にして続け、主指標は第1層で判断する
 - raw / resultのdestinationが既にあれば開始しない（write-once。§4.3の救済経路にしない）
+- raw / resultはstagingへ書き、resultの保存まで成功してから両方を公開する。途中で
+  失敗しても公開先には何も残らず、同じlock・保存先で再実行できる
 """
 
 import datetime
+import shutil
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -52,6 +56,41 @@ def _write_stop(diagnostics: Path, lock: dict | None, error: BaseException, done
     write_new_artifact_file(
         diagnostics / f"stop-{stamp}.json", canonical_json_text(document)
     )
+
+
+def _publish(lock: dict, captures, destinations: dict, revision: str) -> dict:
+    """rawとresultをstagingへ書き、両方そろってから公開する。
+
+    result構築・保存のどこで失敗してもstagingを消し、raw / resultの公開先には
+    何も残さない（同じlock・保存先でschedule全体をやり直せる。§4.3）。
+    """
+    token = uuid.uuid4().hex
+    raw, result_path = destinations["raw"], destinations["result"]
+    raw_staging = raw.with_name(f".{raw.name}.staging-{token}")
+    result_staging = result_path.with_name(f".{result_path.name}.staging-{token}")
+    published_raw = False
+    try:
+        records = write_kyoku_records(
+            raw_staging,
+            captures,
+            producer_revision=revision,
+            event_facts_required=False,
+            bindings=record_bindings(lock),
+        )
+        result = build_result(lock, records, aggregation_revision=revision)
+        save_result(result, result_staging)
+        if raw.exists() or result_path.exists():
+            raise FileExistsError("a destination appeared during the run")
+        raw_staging.rename(raw)
+        published_raw = True
+        result_staging.rename(result_path)
+    except BaseException:
+        if published_raw:
+            raw.rename(raw_staging)
+        shutil.rmtree(raw_staging, ignore_errors=True)
+        result_staging.unlink(missing_ok=True)
+        raise
+    return result
 
 
 def run_formal_event(
@@ -111,15 +150,7 @@ def run_formal_event(
         )
         summarize_blocks([b["difference_internal"] for b in block_totals(hanchans)])
         revision = lock["execution_target"]["revision"]
-        records = write_kyoku_records(
-            destinations["raw"],
-            captures,
-            producer_revision=revision,
-            event_facts_required=False,
-            bindings=record_bindings(lock),
-        )
-        result = build_result(lock, records, aggregation_revision=revision)
-        save_result(result, destinations["result"])
+        result = _publish(lock, captures, destinations, revision)
     except BaseException as error:
         _write_stop(destinations["diagnostics"], lock, error, progress["done"])
         if not isinstance(error, Exception) or isinstance(
