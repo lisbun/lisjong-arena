@@ -12,6 +12,10 @@ arena-heuristic-candidate-engine-aabb-half-v1
 > Status: **仕様固定のみ**。実装、seed予約、AWS起動、対局実行、校正、wheel / pin変更、
 > Champion変更は行っていない。本書の仕様を満たす実装と校正が終わり、親#83のgateが
 > 完了するまで、このprotocolによる正式評価は開始しない。旧protocolへの自動fallbackもしない。
+>
+> 前提検証（[#472](https://github.com/lisbun/lisjong-arena/issues/472)、2026-10-21）: §12.2の
+> 未確認事項のうちN1〜N6とN8をfixtureと開発用試行で確認した。N7（固定C0のrevision間比較）は、
+> 基準revisionが現行bridgeで実行できないため、比較を行っていない。結果と確認範囲は§14にまとめる。
 
 本書は、Heuristic family-internalの正式半荘評価をlisjong-engine上で行う新protocolと、
 その前提になるbridge / backend検証・局単位記録の仕様を固定する。旧
@@ -253,8 +257,9 @@ lisjong-engine  91af75e3aa11520c3b0543719dc74bb4c517ee06   （予定値）
 - 実行時は `run_policy_hanchan(policies, seed=seed, rules=<lockから復元したRuleSet>)` のように
   RuleSetを明示して渡し、`rules=None` の既定値に依存しない
 - 赤牌の枚数、喰いタン・後付けの可否など、`RuleSet` のfieldになくengine実装が固定している
-  項目は、rules documentでは表現できない。engine revisionの固定で拘束し、内容は
-  §6.3で確認する（**未確認**）
+  項目は、rules documentでは表現できない。engine revisionの固定で拘束する。`91af75e` では
+  赤5が萬子・筒子・索子に1枚ずつ、喰いタンあり（断么九は鳴いても1翻）、後付けあり
+  （役の有無は和了牌ごとに判定）であることを確認した（#472、§14.2）
 
 ### 5.3 Game modeと終局条件
 
@@ -297,7 +302,8 @@ participantごとに次を固定する。
 - 1つの実行環境にinstallできるlisjong revisionは1つなので、candidateとincumbentは同じ
   lisjong revisionから生成する。固定C0（`PlacementAwareSpeedCallPolicy`、lisjong
   `2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1`）を、より新しいrevisionの候補と比べるときに
-  C0の挙動をどう固定するかは**未確認**（§12）
+  C0の挙動をどう固定するかは**判断待ち**（§12、§14.6）。`2a9debe` は現行のArena bridgeで
+  実行できないことを確認した（#472）
 
 ### 5.5 Seed lock
 
@@ -357,7 +363,7 @@ split         FORMAL-EVAL
 | 3 | 端数処理 | なし（100点刻みを0.1 ptとして保持） | 非首位は `(素点 - 30000)` を1000点単位で0方向へ丸め、残差を首位へ | source確認 | §7 F1〜F3 |
 | 4 | 得点の単位 | 1 = 1素点（`FINAL_SCORE_UNITS_PER_POINT = 1000`） | 1 = 0.1 pt | 確定 | 表示は `/ 10`。旧値と桁を取り違えない |
 | 5 | 飛び終了 | 負点で終了 | 0点未満で終了（0点は続行） | source確認 | F6 |
-| 6 | 飛び賞罰 | 主指標に含まない | 賞 +10 pt / 罰 -10 pt（ゼロサム）。受取人は飛んだ席が実際に支払ったtransferから決まる | source確認 | F7〜F9。複数受取人・複数飛びの配分は**未確認** |
+| 6 | 飛び賞罰 | 主指標に含まない | 賞 +10 pt / 罰 -10 pt（ゼロサム）。受取人は飛んだ席が実際に支払ったtransferから決まる | 新側fixture確認（#472） | F7〜F9。複数受取人・複数飛びの配分は§14.1 |
 | 7 | 南4以降の親終了 | 連荘・首位・30000以上で終了。途中流局は除外 | 親和了・親聴牌終了が有効。途中流局は親継続だが終了理由にはならない | source確認 | F10〜F12。同点首位を含む |
 | 8 | 西4局 | 親流れなら終了。親連荘は終了条件次第で継続し得る | 必ず終了 | source確認（明確な差） | F13 |
 | 9 | 終了時の残供託 | 首位に加算、同点は若いseat優先 | `final_riichi_stick_awards` として最終1位席へ加算（`seat_order` では1席） | source確認 | F4〜F5。局精算と二重計上しない |
@@ -370,7 +376,7 @@ split         FORMAL-EVAL
 | 16 | リーチ後の暗槓 | 上流依存 | 待ちと面子構成を変えない場合のみ可 | 旧側**未確認** | B9 |
 | 17 | 立直の条件 | 上流依存 | 1000点以上、山の残り4枚以上 | 旧側**未確認** | B8 |
 | 18 | 役・符の設定 | 上流依存 | 切り上げ満貫なし、数え役満あり、複合役満あり、ダブル役満なし、連風牌雀頭4符、国士の暗槓槍槓なし、パオは大三元・大四喜（全額） | 旧側**未確認** | 差分の列挙のみ。役判定そのものはengine所有 |
-| 19 | 赤牌・喰いタン等 | `4p-red-half` | `RuleSet` にfieldがない | 新旧とも**未確認** | §6.3 |
+| 19 | 赤牌・喰いタン等 | `4p-red-half` | `RuleSet` にfieldがない。赤5各1枚・喰いタンあり・後付けあり | 新側fixture確認（#472）、旧側**未確認** | §14.2 |
 | 20 | 全員聴牌流局の精算 | `ryukyoku.deltas` が立直供託を重複して含む（#364、upstream #247） | `CompletedRound.settlement` が正本 | source確認 | 新protocolは影響を受けない。補正しない |
 | 21 | step上限 | `max_steps = 10,000` | なし | 確定 | §4.2 |
 | 22 | 起家 | 旧runnerの席割りに依存 | seat 0固定 | 旧側**未確認** | 配置表はengineのseat基準で定義済み |
@@ -391,6 +397,8 @@ split         FORMAL-EVAL
 
 旧RiichiEnv側の未確認（#10〜#19、#22）は、新protocolの成立には不要である。新旧の結果を
 並べて説明する文書を書くときにだけ、該当項目を確認する。
+
+U1〜U6は#472で確認した（§14.2）。
 
 ## 7. 最終得点の検証
 
@@ -434,6 +442,9 @@ engineの値を正本とし、不一致は補正せず `STOP / INVALID` とす�
 | F13 | 西4局、親連荘の結果 | `final_round` で必ず終了 |
 | F14 | 2席同点・3席同点の最終順位 | `seat_order` による順位と順位点 |
 | F15 | 南4局で親流れ、全員30000点未満 | 西入 |
+
+F1〜F15は `tests/test_engine_aabb_half_settlement_fixtures.py` に、手計算の期待値で固定した
+（#472、§14.1）。
 
 ## 8. 現Champion系列のbridge fixtureと責任範囲
 
@@ -510,6 +521,9 @@ fixture表へ記録する。未対応・説明できない差が1つでもあれ
 加えて、開発用seedでの短い半荘試行（現Champion系列を4席、および6配置）で、各行動種別の
 発生件数を数え、0件の行動種別を報告する。件数は検証範囲の記録であり、強さの証拠ではない。
 
+確認結果（#472）と、現Champion系列では確認できない範囲（槓・九種九牌を選ばない）は§14.3に
+まとめる。
+
 ## 9. Python/Rust比較計画
 
 正式実行はRust backend（native wheel）、照合基準はPython backendとする。backendはlisjongが
@@ -521,9 +535,11 @@ fixture表へ記録する。未対応・説明できない差が1つでもあれ
 | P2 短い試行 | 同じengine revision・RuleSet・seed・配置・Policy、backendだけを変える | 局数、各局の `CompletedRound`（結果、精算、transfer、供託、本場）、`end_reason`、`final_score`、decisionごとの選択行動の列 | 全件完全一致 |
 | P3 実行環境 | 正式実行と同じimage / wheel | wheelのSHA-256、`SOURCE_REVISION`、`API_VERSION`、選択されたbackend名、worker間の一致 | lockの値と一致 |
 
-- P1の「補助出力」は、lisjongが公開APIとして返す値に限る。対象の一覧は**未確認**で、
-  lisjong側の公開範囲を確認して実装Issueで固定する。ArenaがPolicy内部の推定値を再計算・
-  再定義することはしない
+- P1の「補助出力」は、lisjongが公開APIとして返す値に限る。lisjongの公開範囲は
+  `execute_policy_with_trace()` が `DecisionTrace.analysis` として返す値
+  （`choose_action_with_analysis()` の `PolicyDecision.analysis`、capabilityがなければ `None`）
+  である（#472で確認）。照合はanalysisの正規化表現のdigestで行い、analysisの中身はartifactへ
+  保存しない。ArenaがPolicy内部の推定値を再計算・再定義することはしない
 - P2は同じengine・同じ初期条件の中での比較である。RiichiEnvとengineの間で、同じseedから
   同じ牌山が出ることは仮定しない
 - 入力はすべて開発用seed・fixtureとし、正式評価用seedを使わない。P2の規模（半荘数）は
@@ -648,9 +664,9 @@ fileだけを入力に再計算でき、実行時のprocess状態・engineの再
 | 順位分布 | role別の1〜4着回数、平均順位（半荘単位） |
 
 - 本場を手の点数と分けられるのは、`honba` が別transferとして記録される場合に限る。
-  §6.3 U5で確認できるまで、「平均和了打点」「平均放銃失点」の
-  本場を除く定義は**未確認**とし、分けられない場合は総点数移動をこれらの指標へ読み替えず、
-  「平均和了収入」「平均放銃支払」だけを報告する
+  `91af75e` ではロン・ツモ・ダブロンのいずれでも、本場が手の点数とは別の `honba`
+  transferになることをU5で確認した（#472）。したがって「平均和了打点」「平均放銃失点」は
+  上表の本場を除く定義で**確定**とする。engine revisionを変える場合はU5を再確認する
 - 集計の重み付けは#432と同じ: seedごとにrole別の分子・分母を6半荘で合算して率を作り、
   `D(s) = A(s) - B(s)` をseed等重みで平均する。区間は `mean ± 1.96 × SD(K-1) / sqrt(K)`、
   N = block数。seed別・role別の分子と分母も保存する
@@ -676,8 +692,10 @@ fileだけを入力に再計算でき、実行時のprocess状態・engineの再
   第一候補は `on_round_evidence_complete`（局ごとに1回、viewerごとの `RoundEvidence`）で、
   `MeldCalledEvidence` / `KanDeclaredEvidence` / `KanConfirmedEvidence` /
   `RiichiDeclaredEvidence` / `RiichiEstablishedEvidence` / `RiichiFailedEvidence` を使う。
-  どのcallbackを使うかの最終確定は実装Issueで行う（**未確認**: 4 viewerの公開factが一致する
-  ことをfixtureで確認する）
+  使うcallbackは `on_round_evidence_complete` に**確定**した（#472、§14.4）。保存するのは
+  上記の公開factだけとし、viewer自身のツモ牌などviewer-privateなevidenceは第2層recordへ
+  入れない。**槓のfact（`KanDeclaredEvidence` / `KanConfirmedEvidence`、大明槓の
+  `MeldCalledEvidence`）の取得は未確認**である（現Champion系列が槓を選ばないため）
 - `on_transaction_observation`（全席の手牌を含むprivileged observation）は、正式runnerでは
   使わない。observer用のcallbackが受け取った値をPolicyの入力へ流さない
 - callbackを付けても対局の進行が変わらないことを§6.3 U4で確認する
@@ -743,22 +761,25 @@ AGENTS.md「対局評価の実行前確認」と
 | J3 | Python/Rust比較P2の規模（半荘数） | 実装Issue |
 | J4 | 対C0のeventと対現Championのeventを、候補ごとに両方行うか | project #83 / #84のgovernance |
 | J5 | Python/Rustが一致しない場合の正式backend | 不一致が出た時点 |
+| J6 | 固定C0（lisjong `2a9debe`）を、より新しいrevisionの候補と比べるときの固定方法（N7、§14.6） | 対C0のeventを計画するとき |
 
 ### 12.2 未確認（fixture・調査で確かめる）
 
-| # | 事項 | 参照 |
-| ---: | --- | --- |
-| N1 | 飛び賞罰の、複数受取人・複数飛びでの配分 | §7.2 F8、F9 |
-| N2 | engineの赤牌構成、喰いタン・後付け | §6.3 U2、U3 |
-| N3 | `honba` が常に別transferとして記録されるか | U5 |
-| N4 | 同じseedの牌山が6配置で一致すること、callbackの有無で進行が変わらないこと | U1、U4 |
-| N5 | 第2層に使うcallbackの確定と、4 viewerの公開factの一致 | §10.6 |
-| N6 | Python/Rust比較で照合する「補助出力」の一覧 | §9 |
-| N7 | 固定C0を、より新しいlisjong revisionの候補と比べるときのC0の固定方法 | §5.4 |
-| N8 | 現Champion系列が各行動種別を実際に選ぶ局面を用意できるか | §8.3 |
-| N9 | 小さいKでの正規近似の妥当性 | §3.3 |
-| N10 | 旧RiichiEnv側の役・槓・複数ロン・同点順位・起家の実挙動 | §6.2 #10〜#19、#22。新protocolの成立には不要 |
-| N11 | `rules_digest` / `protocol_digest` の値 | §5.6 |
+状態は#472（2026-10-21）時点。
+
+| # | 事項 | 参照 | 状態 |
+| ---: | --- | --- | --- |
+| N1 | 飛び賞罰の、複数受取人・複数飛びでの配分 | §7.2 F8、F9 | 解消（§14.1） |
+| N2 | engineの赤牌構成、喰いタン・後付け | §6.3 U2、U3 | 解消（§14.2） |
+| N3 | `honba` が常に別transferとして記録されるか | U5 | 解消（§14.1）。§10.5の本場を除く定義を確定 |
+| N4 | 同じseedの牌山が6配置で一致すること、callbackの有無で進行が変わらないこと | U1、U4 | 解消（§14.2） |
+| N5 | 第2層に使うcallbackの確定と、4 viewerの公開factの一致 | §10.6 | 解消（§14.4）。**槓のfactは未確認** |
+| N6 | Python/Rust比較で照合する「補助出力」の一覧 | §9 | 解消（§9、§14.5） |
+| N7 | 固定C0を、より新しいlisjong revisionの候補と比べるときのC0の固定方法 | §5.4 | 継続。`2a9debe` は現行bridgeで実行不能のため比較していない（§14.6）。固定方法はJ6 |
+| N8 | 現Champion系列が各行動種別を実際に選ぶ局面を用意できるか | §8.3 | 範囲付きで解消（§14.3）。槓・九種九牌は選ばないため、候補の提示・変換までを確認 |
+| N9 | 小さいKでの正規近似の妥当性 | §3.3 | 継続（校正工程） |
+| N10 | 旧RiichiEnv側の役・槓・複数ロン・同点順位・起家の実挙動 | §6.2 #10〜#19、#22。新protocolの成立には不要 | 対象外 |
+| N11 | `rules_digest` / `protocol_digest` の値 | §5.6 | 継続（実装Issue） |
 
 ### 12.3 Follow-up Issue候補
 
@@ -768,9 +789,10 @@ AGENTS.md「対局評価の実行前確認」と
 2. **局単位record実装**: §10の第1層・第2層、整合検査、
    保存物からの再集計、`engine_source.py` の検査の共有方法
 3. **最終得点・RuleSet fixture**: §6.3、
-   §7.2
-4. **Champion系列bridge fixture**: §8.3
-5. **Python/Rust比較**: §9。lisjong側の補助出力の公開範囲の確認を含む
+   §7.2（#472で実施。§14）
+4. **Champion系列bridge fixture**: §8.3（#472で開発用試行により実施。§14.3。槓を選ぶcandidateを
+   評価する場合は、そのcandidateで槓の適用・記録を別途確認する）
+5. **Python/Rust比較**: §9（#472で開発用試行により実施。§14.5。正式実行のP2・P3は実装・校正で行う）
 6. **校正**: §11。課金を伴うため、見積りと承認を先に行う
 7. **AWS実行入口とseed予約**: 上記がすべて完了し、親#83のgateを通過したあと
 8. **学習artifactを使うparticipantの受理**: 必要になった時点で、protocol versionを改めて定める
@@ -793,3 +815,119 @@ AGENTS.md「対局評価の実行前確認」と
 - 旧400半荘、旧SD、#385のfocal paired 8半荘 / seedの流用
 - generic backend、`EvaluationBackend`、backend registry、generic match runtimeの導入
 - RiichiEnv #364の補正
+
+## 14. 前提検証の結果（#472）
+
+[#472](https://github.com/lisbun/lisjong-arena/issues/472)で、2026-10-21に確認した結果である。
+正式評価ではなく、強さの証拠でもない。有限のfixtureと試行での一致は、全局面での同一性の
+証明ではない。詳細な件数と証跡のSHA-256は#472のcommentにある。開発試行の入出力は
+repositoryへcommitしていない。
+
+| 項目 | 値 |
+| --- | --- |
+| engine | lisjong-engine `91af75e3aa11520c3b0543719dc74bb4c517ee06`、`RuleSet.default()` |
+| lisjong | `999553b6faf4c515c3a9f862429896308188e504`（2026-10-21のArena pin）。Rust wheel SHA-256 `9aa0ca4e…bdb7`、`SOURCE_REVISION 999553b`、`API_VERSION 3` |
+| Arena | bridgeはmain `6942d00` と同じ（以後のmainの変更はtestだけ） |
+| Python | 3.14.7（開発試行はWSL Ubuntu 24.04） |
+| seed | 開発用 `472000`〜`472006`。registryのallocation外のdiagnostic seedであり、engine domainの既存allocationと重ならない。今後の正式・校正allocationはこの範囲を避ける |
+
+### 14.1 局精算・最終得点（N1、N3）
+
+`tests/test_engine_aabb_half_settlement_fixtures.py`（30件）。期待値は実行前に手計算で書き、
+修正していない。終局fixtureでは§7.1 C1〜C10、各局ではK4・K5・K8相当を検査する。
+
+- 本場は、ロン・子ツモ・親ツモ・ダブロンのいずれでも、手の点数とは別の `honba` transferになる
+- 供託は和了者がまとめて受け取り、荒牌流局では持ち越す。ダブロンの本場と供託は、
+  放銃者の下家から数えて最も近い和了者が受け取る（seat順ではない）
+- 終局時の残供託は最終1位へ1回だけ加算する。同点首位ならseat順で若い席へ全額
+- 非首位の端数は正負とも0方向へ丸め、残差は首位へ寄せる。2席・3席・4席の同点は
+  `seat_order` で一意の順位に分かれる
+- 0点は続行し、0点未満で `bankruptcy`。飛び賞の受取人は、飛んだ席が実際に支払った
+  transferの受取人（`ron` / `tsumo` / `pao_*` / `honba` / `noten_penalty` / `nagashi_mangan`）である。
+  飛んだ席はそれぞれ −10 pt。各席の +10 pt はその席の受取人へ1 pt単位で均等割りし、
+  余りは飛んだ席の下家から数えた順に配る（例: ノーテン罰符の受取人3人で 4 / 3 / 3、
+  ダブロンで 5 / 5、2席が同じ和了者へ飛んで和了者に +20）
+- 南4・西1〜3の終局条件は§5.3のとおり。西4は親連荘でも、親和了の条件を満たしていても
+  `final_round` で必ず終局する
+
+### 14.2 engine固定ルールと再現性（N2、N4、U1〜U6）
+
+| ID | 結果 | 方法 |
+| --- | --- | --- |
+| U1 | 同じseedの6配置で、共通するround ordinalの `random_provenance` が一致する | 開発試行（2 seed × 6配置） |
+| U2 | 標準136枚に赤5が萬子・筒子・索子に1枚ずつ。調べた牌山はすべて標準136枚の並べ替え | `tests/test_engine_aabb_half_rules_fixtures.py` |
+| U3 | 喰いタンあり（鳴いた断么九は1翻、ツモでも門前清自摸和は付かない）。後付けあり（役の有無は和了牌ごとに判定。同じ待ちでも役のない和了牌ではロンできない） | 同上 |
+| U4 | `on_round_evidence_complete` を付けても、正規化した `CompletedMatch` と選択行動の列が付けない場合と完全一致する | 開発試行（4半荘） |
+| U5 | 本場は別transferになる | §14.1 |
+| U6 | 別processで同じ入力を2回実行し、`CompletedMatch` と選択行動の列が一致する | 開発試行（2半荘。Python / Rustの別process比較も§14.5で一致） |
+
+### 14.3 現Champion系列のbridge（N8）
+
+開発試行は1 backendあたり16半荘（ユーザーが実行前に規模を固定）。C0×4席を4 seed、
+6配置（A = C0 `placement-aware-speed-call`、B = `one-shanten-defense-placement-aware-speed-call`）を
+2 seedで行った。全decisionで次を検査し、違反は0件だった。
+
+- 全descriptorが1対1・順序どおりに候補へ変換され、各候補が元のdescriptor objectへ戻る。
+  descriptor種別と `InternalAction` 種別が対応する
+- 候補のactorと `PolicyInput.self_seat` がviewer seatに一致する
+- selectorは提示されたobjectのいずれか1つだけを返し、seatごとにselector呼び出し数 = Policy呼び出し数
+
+C0が選んだ行動: 打牌、立直（2段階decision）、チー、ポン（赤牌の有無だけが違う候補を含む）、
+ロン（ダブロンを含む）、ツモ、パス。
+
+**現Champion系列では確認できない範囲**: 大明槓・暗槓・加槓・九種九牌は、候補として正しく
+提示・変換された（加槓では元ポンの解決を含む）。ただし、C0系列（lisjong `999553b`）には
+これらを選ぶ判断がないため、選ばれなかった。したがって、槓を選んだ後のengine適用・槓ドラ・
+嶺上ツモ・リーチ後の槓（B3〜B5、B9）と九種九牌の途中流局（B14）は、bridge経由では
+確認していない。槓を選ぶcandidateを評価する場合は、そのcandidateで別途確認する。
+
+試行中に発生しなかった事象: 槍槓、嶺上ツモ、途中流局、三家和、流し満貫、パオ、聴牌0人・4人の
+荒牌流局、終局理由 `dealer_win` / `final_round`。局精算と終局理由はfixture（§14.1）で確認した。
+発生しなかった事象を探すためだけに試行を拡大することはしていない。
+
+### 14.4 第2層callback（N5）
+
+`on_round_evidence_complete` の出力を4半荘（37局）で検査し、違反は0件だった。
+
+- 4 viewerの公開fact（`MeldCalled` / `KanDeclared` / `KanConfirmed` / `RiichiDeclared` /
+  `RiichiEstablished` / `RiichiFailed`）の列は、順序を含めて一致する
+- completionは局と1対1に対応する（件数 = `history` の局数。`(prevailing_wind, hand_number, honba)`
+  と親が `position_before` と一致し、半荘内で重複しない）
+- 副露のfactは、局・seat・種類ごとに、実際に選ばれた鳴きの数と一致する
+- 立直は、局・seatごとに「選ばれた立直 = 宣言 = 成立 + 不成立」で、成立seatは第1層の
+  `riichi_contributions` と一致する
+- 槓のfactは0件（現Champion系列が槓を選ばないため）。**槓のfactの取得は未確認**
+
+### 14.5 Python/Rust（N6）
+
+- P1: 開発試行の2半荘から採取した固定入力1230件で、両backendが選んだ `InternalAction` と、
+  `DecisionTrace.analysis` の正規化digestが全件一致した（C0のanalysisは
+  `TargetedHonorReleaseAnalysis` または `None`）
+- P2: §14.3の16半荘すべてで、正規化した `CompletedMatch` と選択行動の列が完全一致した。
+  許容誤差は置いていない
+- 正式実行のP2の規模（J3）と、P3（正式実行と同じimage・wheel）は、実装・校正の工程で扱う
+
+### 14.6 固定C0のrevision間比較（N7）
+
+基準revision lisjong `2a9debe` を、現行のengine `91af75e` とArena bridgeで実行できるかを確認した。
+lisjongだけを `2a9debe` に替え、ほかはすべて同じ環境で、C0×4席の1半荘を開始した。
+1回目のdecisionで `PolicyInput` を構築する時点で、次の例外により実行できなかった。
+
+```text
+TypeError: PlayerPublicState.__init__() got an unexpected keyword argument
+'riichi_declaration_discard_order'
+```
+
+この引数は、Arena bridgeが `PlayerPublicState` へ立直宣言牌の位置を渡すためのものである。
+lisjong #301（`85c81f5`）で、`2a9debe` より後に追加された。したがって、現行bridgeで
+`2a9debe` と `999553b` のC0を比べることはできず、**比較は行っていない**（一致・不一致は未確認）。
+旧bridgeでの実行や、席ごとに別revisionを動かす実行基盤は追加していない。
+
+固定方法を決めるときの事実:
+
+- `2a9debe..999553b` は61 commitで、C0本体（`placement_aware_speed_call.py`）、親Policy、
+  向聴数計算（backend切替）が変わっている
+- 追加されたfieldを読むのはlisjongの `belief` / `learning` だけで、C0系列のPolicyは読まない
+  （sourceの確認のみ）
+- 固定方法の候補（lisjong側に凍結版C0を別identityで置く、C0の基準revisionを一度だけ付け替える、など）
+  はJ6として判断待ちとする
