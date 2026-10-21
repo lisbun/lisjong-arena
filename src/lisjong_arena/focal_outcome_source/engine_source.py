@@ -48,14 +48,14 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
 
 from lisjong.learning import ConstantResidualRuntime, select_residual_exploration
 from lisjong.policy_contract import DecisionContext, Seat, Wind
-from lisjong_engine.match_state import CompletedMatch, CompletedRound, RoundPosition
-from lisjong_engine.points import SeatPoints
+from lisjong_engine.match_state import CompletedMatch
 from lisjong_engine.round_result import (
     AbortiveDrawResult,
     ExhaustiveDrawResult,
@@ -63,7 +63,6 @@ from lisjong_engine.round_result import (
 )
 from lisjong_engine.rules import RuleSet
 from lisjong_engine.seat import Seat as EngineSeat
-from lisjong_engine.settlement import RoundSettlement
 
 import lisjong_arena
 from lisjong_arena import seed_registry
@@ -74,6 +73,13 @@ from lisjong_arena.durable_local_game_record import (
     _parse_action,
     _parse_policy_input,
     _policy_input_to_value,
+)
+from lisjong_arena.lisjong_engine import completed_match_facts
+from lisjong_arena.lisjong_engine.completed_match_facts import (
+    MATCH_END_REASONS as _MATCH_END_REASONS,
+)
+from lisjong_arena.lisjong_engine.completed_match_facts import (
+    CompletedMatchFactError,
 )
 from lisjong_arena.lisjong_engine.domain_conversion import (
     seat_from_engine_seat,
@@ -88,7 +94,7 @@ from lisjong_arena.offense_foundation.qualification import (
 )
 from lisjong_arena.offense_foundation.semantics import OffenseError
 
-from .accounting import RIICHI_DEPOSIT, FocalOutcomeSourceError
+from .accounting import FocalOutcomeSourceError
 from .adapter import FocalExplorationPolicy, FocalSelectionCapture
 from .exploration_token import exploration_token
 from .source import (
@@ -189,9 +195,6 @@ _DECISION_FIELDS = frozenset(
         "selected_action",
     }
 )
-_MATCH_END_REASONS = frozenset(
-    {"bankruptcy", "dealer_tenpai", "dealer_win", "final_round", "target_reached"}
-)
 _ABORTIVE_DRAW_KINDS = frozenset(
     {"four_kans", "four_riichi", "four_winds", "nine_terminals", "triple_ron"}
 )
@@ -239,13 +242,13 @@ class EngineGameFacts:
     match_end_reason: str
 
 
-def _points(value: object, context: str) -> Points:
-    if not isinstance(value, SeatPoints):
-        raise FocalOutcomeSourceError(f"{context} must be engine SeatPoints")
-    points = [0, 0, 0, 0]
-    for engine_seat in EngineSeat:
-        points[int(seat_from_engine_seat(engine_seat))] = value[engine_seat]
-    return tuple(points)
+@contextmanager
+def _source_errors():
+    """共有engine fact検査の失敗を、このsourceのerror型で伝える。"""
+    try:
+        yield
+    except CompletedMatchFactError as error:
+        raise FocalOutcomeSourceError(str(error)) from error
 
 
 def _end(result: object) -> dict[str, object]:
@@ -265,32 +268,25 @@ def _end(result: object) -> dict[str, object]:
 
 def require_kyoku_facts(kyoku: EngineKyoku, context: str) -> None:
     """engine settlementの逆算と保存則を検証する（精算は再計算しない）。"""
-    if any(
-        before + delta != after
-        for before, delta, after in zip(
-            kyoku.points_before_kyoku,
-            kyoku.point_deltas,
-            kyoku.points_after_kyoku,
-            strict=True,
-        )
-    ):
-        raise FocalOutcomeSourceError(
-            f"{context} points_before_kyoku + point_deltas != points_after_kyoku"
-        )
-    pot_delta = kyoku.riichi_sticks_after - kyoku.riichi_sticks_before
-    if sum(kyoku.point_deltas) + RIICHI_DEPOSIT * pot_delta != 0:
-        raise FocalOutcomeSourceError(
-            f"{context} score/riichi-stick conservation is violated"
+    with _source_errors():
+        completed_match_facts.require_kyoku_balance(
+            points_before=kyoku.points_before_kyoku,
+            point_deltas=kyoku.point_deltas,
+            points_after=kyoku.points_after_kyoku,
+            riichi_sticks_before=kyoku.riichi_sticks_before,
+            riichi_sticks_after=kyoku.riichi_sticks_after,
+            context=context,
         )
 
 
 def require_continuity(previous: EngineKyoku, kyoku: EngineKyoku, context: str) -> None:
-    if (
-        kyoku.points_before_kyoku != previous.points_after_kyoku
-        or kyoku.riichi_sticks_before != previous.riichi_sticks_after
-    ):
-        raise FocalOutcomeSourceError(
-            f"{context} points / riichi sticks do not continue from the previous kyoku"
+    with _source_errors():
+        completed_match_facts.require_continuity(
+            previous_points_after=previous.points_after_kyoku,
+            previous_riichi_sticks_after=previous.riichi_sticks_after,
+            points_before=kyoku.points_before_kyoku,
+            riichi_sticks_before=kyoku.riichi_sticks_before,
+            context=context,
         )
 
 
@@ -300,88 +296,47 @@ def require_final_adjustment(
     awards: Sequence[tuple[Seat, int]],
 ) -> None:
     """hanchan最終scoreとの差を、残存供託の最終配分だけで説明する。"""
-    awarded = [0, 0, 0, 0]
-    for seat, amount in awards:
-        if type(amount) is not int or amount <= 0:
-            raise FocalOutcomeSourceError("final riichi stick award must be positive")
-        awarded[int(seat)] += amount
-    if sum(awarded) != RIICHI_DEPOSIT * final.riichi_sticks_after:
-        raise FocalOutcomeSourceError(
-            "final riichi stick awards do not distribute exactly the remaining sticks"
-        )
-    if list(hanchan_final_raw_scores) != [
-        after + award
-        for after, award in zip(final.points_after_kyoku, awarded, strict=True)
-    ]:
-        raise FocalOutcomeSourceError(
-            "hanchan final raw scores differ from the final kyoku boundary by more "
-            "than the final riichi stick awards"
+    with _source_errors():
+        completed_match_facts.require_final_adjustment(
+            final_points_after=final.points_after_kyoku,
+            final_riichi_sticks_after=final.riichi_sticks_after,
+            final_raw_scores=hanchan_final_raw_scores,
+            awards=[(int(seat), amount) for seat, amount in awards],
         )
 
 
 def engine_game_facts(match: object) -> EngineGameFacts:
-    """``CompletedMatch``からkyoku境界の事実値を作り、整合をfail closedで検証する。"""
-    if not isinstance(match, CompletedMatch):
-        raise FocalOutcomeSourceError("match must be a lisjong-engine CompletedMatch")
-    if not match.history:
-        raise FocalOutcomeSourceError("CompletedMatch has no completed kyoku")
-    kyokus: list[EngineKyoku] = []
-    for index, completed in enumerate(match.history):
-        context = f"completed kyoku {index}"
-        if not isinstance(completed, CompletedRound):
-            raise FocalOutcomeSourceError(f"{context} is not a CompletedRound")
-        position = completed.position_before
-        settlement = completed.settlement
-        if not isinstance(position, RoundPosition) or not isinstance(
-            settlement, RoundSettlement
-        ):
-            raise FocalOutcomeSourceError(f"{context} has invalid engine values")
-        is_final = index == len(match.history) - 1
-        if (completed.next_position is None) is not is_final:
-            raise FocalOutcomeSourceError(
-                f"{context} next_position does not match the terminal kyoku"
+    """``CompletedMatch``からkyoku境界の事実値を作り、整合をfail closedで検証する。
+
+    射影と検査は``lisjong_engine.completed_match_facts``（#513で抽出）を使う。
+    """
+    with _source_errors():
+        boundaries = completed_match_facts.match_boundaries(match)
+    kyokus = []
+    for boundary in boundaries.rounds:
+        position = boundary.completed.position_before
+        kyokus.append(
+            EngineKyoku(
+                round_wind=wind_from_engine_wind(position.prevailing_wind),
+                hand_number=position.hand_number,
+                honba=position.honba,
+                dealer_seat=seat_from_engine_seat(position.dealer_seat),
+                riichi_sticks_before=position.riichi_sticks,
+                riichi_sticks_after=boundary.completed.settlement.riichi_sticks_after,
+                points_before_kyoku=boundary.points_before,
+                points_after_kyoku=boundary.points_after,
+                point_deltas=boundary.point_deltas,
+                end=_end(boundary.completed.result),
             )
-        if index and match.history[index - 1].next_position != position:
-            raise FocalOutcomeSourceError(
-                f"{context} position_before is not the previous next_position"
-            )
-        after = _points(completed.scores_after_settlement, f"{context} scores_after")
-        deltas = _points(settlement.point_deltas, f"{context} point_deltas")
-        kyoku = EngineKyoku(
-            round_wind=wind_from_engine_wind(position.prevailing_wind),
-            hand_number=position.hand_number,
-            honba=position.honba,
-            dealer_seat=seat_from_engine_seat(position.dealer_seat),
-            riichi_sticks_before=position.riichi_sticks,
-            riichi_sticks_after=settlement.riichi_sticks_after,
-            points_before_kyoku=tuple(
-                a - d for a, d in zip(after, deltas, strict=True)
-            ),
-            points_after_kyoku=after,
-            point_deltas=deltas,
-            end=_end(completed.result),
         )
-        require_kyoku_facts(kyoku, context)
-        if kyokus:
-            require_continuity(kyokus[-1], kyoku, context)
-        kyokus.append(kyoku)
-    identities = [kyoku.round_identity for kyoku in kyokus]
-    if len(set(identities)) != len(identities):
-        raise FocalOutcomeSourceError("completed kyoku round identity is not unique")
-    awards = tuple(
-        (seat_from_engine_seat(award.recipient), award.amount)
-        for award in match.final_riichi_stick_awards
-    )
-    final_raw = _points(match.final_raw_scores, "final_raw_scores")
-    require_final_adjustment(kyokus[-1], final_raw, awards)
-    end_reason = match.end_reason.value
-    if end_reason not in _MATCH_END_REASONS:
-        raise FocalOutcomeSourceError(f"unsupported match end reason {end_reason!r}")
     return EngineGameFacts(
         kyokus=tuple(kyokus),
-        hanchan_final_raw_scores=final_raw,
-        final_riichi_stick_awards=awards,
-        match_end_reason=end_reason,
+        hanchan_final_raw_scores=boundaries.final_raw_scores,
+        final_riichi_stick_awards=tuple(
+            (Seat(seat), amount)
+            for seat, amount in boundaries.final_riichi_stick_awards
+        ),
+        match_end_reason=boundaries.end_reason,
     )
 
 

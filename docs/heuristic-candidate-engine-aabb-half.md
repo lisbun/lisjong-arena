@@ -577,6 +577,12 @@ fixture表へ記録する。未対応・説明できない差が1つでもあれ
 共通化の方法（import、小さな共有moduleへの抽出）は実装Issueで決める。実装を複製しない。
 #370のsourceのschema・意味・固定revisionは変更しない。
 
+> 実装（[#513](https://github.com/lisbun/lisjong-arena/issues/513)）: 上表の「再利用する」部分を
+> `lisjong_arena/lisjong_engine/completed_match_facts.py` へ抽出し、#370のsourceと本protocolの
+> 局単位recordが共有する。第1層・第2層・検査・副指標のAPIと失敗状態は
+> [`engine-aabb-kyoku-record.md`](engine-aabb-kyoku-record.md) を正本とする。
+> 実runnerでの§10.7は後続（#514）で行い、まだ完了していない。
+
 ### 10.3 第1層: 局精算record
 
 schema identity（予定）: `arena-heuristic-candidate-engine-aabb-kyoku-record-v1`。1半荘1行の
