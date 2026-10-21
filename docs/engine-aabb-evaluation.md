@@ -213,6 +213,10 @@ calibration-report --plan plan.json      verifyに通った保存物からreport
 | `timings.json` | 半荘ごとのwall秒・局数・worker peak RSS・親peak RSS、schedule・保存・summaryの秒数 | 計測値 |
 | `report.json` | 1半荘 / 6配置blockの時間（平均・中央値・最大）、局数、RSS最大、file容量とSHA-256、J1の各σでの所要時間（観測平均、暫定timeout・2倍案timeoutでのworst case）、J2の観測最大と `ceil(2 × 最大 / 60) × 60` 案 | plan + summary + timings + file |
 
+`timings.json` は再導出しないが、verify・reportの前に毎回検査する（reportの有無によらない）:
+時間は有限の非負数、局数は正の整数で保存済みraw recordの局数と一致、RSSは正の整数か欠測（`null`）。
+boolは拒否する。RSSの欠測は0として扱わず、reportでは最大値の対象から外して欠測件数を記録する。
+
 summaryとreportはD平均・区間・classificationを出さない（校正のD平均の符号・区間を採否に使わない）。
 正式の最小K・timeoutは校正値から自動決定せず、別のevent計画で決める。
 

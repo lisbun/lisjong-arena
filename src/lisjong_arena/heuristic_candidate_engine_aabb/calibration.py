@@ -685,7 +685,9 @@ def run_calibration(
                 f"calibration exceeded the wall limit of "
                 f"{limits['wall_seconds_per_stage']} s after {len(rows)} hanchans"
             )
-        known = [value for value in (parent_kib, item.peak_rss_kib) if value]
+        known = [
+            value for value in (parent_kib, item.peak_rss_kib) if value is not None
+        ]
         if sum(known) * 1024 > limits["process_tree_rss_bytes"]:
             raise RunStopped(
                 "parent + worker peak RSS exceeded the process tree limit of "
@@ -812,7 +814,27 @@ _TIMING_TOTAL_FIELDS = (
 )
 
 
-def _require_timings(plan: dict, timings: object) -> dict:
+def _seconds(value: object, context: str) -> float:
+    """有限の非負数（boolは拒否）。"""
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        raise EngineAabbCalibrationError(
+            f"{context} must be a finite non-negative number"
+        )
+    return value
+
+
+def _rss(value: object, context: str) -> int | None:
+    """正の整数（KiB）、または計測できなかったことを示す ``None``（0は欠測ではない）。"""
+    if value is not None and (type(value) is not int or value <= 0):
+        raise EngineAabbCalibrationError(f"{context} must be a positive int or null")
+    return value
+
+
+def _require_timings(plan: dict, timings: object, hanchans: Sequence[dict]) -> dict:
+    """timingsの形・値を検査し、局数を保存済みraw recordと照合する。
+
+    ``hanchans`` はschedule照合済みの第1層row（``build_summary`` を通ったrecord）。
+    """
     if type(timings) is not dict or timings.get("plan_digest") != plan["plan_digest"]:
         raise EngineAabbCalibrationError("timings do not belong to the plan")
     rows = timings.get("hanchans")
@@ -823,20 +845,57 @@ def _require_timings(plan: dict, timings: object) -> dict:
         or [(row["seed"], row["placement"]) for row in rows] != expected
     ):
         raise EngineAabbCalibrationError("timings do not cover the planned schedule")
+    if [(row["seed"], row["placement"]) for row in hanchans] != expected:
+        raise EngineAabbCalibrationError(
+            "raw records do not cover the planned schedule"
+        )
+    for row, record in zip(rows, hanchans, strict=True):
+        context = f"timings seed {row['seed']} placement {row['placement']}"
+        _seconds(row["wall_seconds"], f"{context} wall_seconds")
+        kyoku = row["kyoku_count"]
+        if type(kyoku) is not int or kyoku <= 0:
+            raise EngineAabbCalibrationError(
+                f"{context} kyoku_count must be a positive int"
+            )
+        if kyoku != len(record["kyokus"]):
+            raise EngineAabbCalibrationError(
+                f"{context} kyoku_count differs from the raw record"
+            )
+        _rss(row["worker_peak_rss_kib"], f"{context} worker_peak_rss_kib")
+        _rss(row["parent_peak_rss_kib"], f"{context} parent_peak_rss_kib")
     for name in _TIMING_TOTAL_FIELDS:
-        if type(timings.get(name)) not in (int, float):
-            raise EngineAabbCalibrationError(f"timings {name} is not a number")
+        _seconds(timings.get(name), f"timings {name}")
     return timings
 
 
-def build_report(plan: dict, summary: dict, timings: dict, files: list) -> dict:
-    """summary・timings・保存file一覧から、時間・RSS・容量・J1 / J2の数値を作る。"""
-    timings = _require_timings(plan, timings)
+def build_report(
+    plan: dict, summary: dict, timings: dict, files: list, records
+) -> dict:
+    """summary・timings・保存file一覧から、時間・RSS・容量・J1 / J2の数値を作る。
+
+    ``records`` はsummaryの再導出に使った保存済みrecord（局数の照合に使う）。
+    RSSの欠測（``null``）は0として扱わず、最大値の対象から外して件数を記録する。
+    """
+    timings = _require_timings(plan, timings, records.hanchans)
     rows = timings["hanchans"]
     walls = [row["wall_seconds"] for row in rows]
     blocks = [sum(walls[start : start + 6]) for start in range(0, len(walls), 6)]
-    worker = [row["worker_peak_rss_kib"] for row in rows if row["worker_peak_rss_kib"]]
-    parent = [row["parent_peak_rss_kib"] for row in rows if row["parent_peak_rss_kib"]]
+    worker = [
+        row["worker_peak_rss_kib"]
+        for row in rows
+        if row["worker_peak_rss_kib"] is not None
+    ]
+    parent = [
+        row["parent_peak_rss_kib"]
+        for row in rows
+        if row["parent_peak_rss_kib"] is not None
+    ]
+    both = [
+        row["worker_peak_rss_kib"] + row["parent_peak_rss_kib"]
+        for row in rows
+        if row["worker_peak_rss_kib"] is not None
+        and row["parent_peak_rss_kib"] is not None
+    ]
     timeout = plan["execution"]["timeout_seconds"]
     observed_max = max(walls)
     factor_2 = max(60, math.ceil(2 * observed_max / 60) * 60)
@@ -864,11 +923,11 @@ def build_report(plan: dict, summary: dict, timings: dict, files: list) -> dict:
         },
         "memory": {
             "parent_peak_rss_kib_max": max(parent) if parent else None,
-            "sum_of_peaks_kib_max": max(
-                (row["worker_peak_rss_kib"] or 0) + (row["parent_peak_rss_kib"] or 0)
-                for row in rows
-            ),
+            "parent_peak_rss_missing_rows": len(rows) - len(parent),
+            "sum_of_peaks_kib_max": max(both) if both else None,
+            "sum_of_peaks_rows": len(both),
             "worker_peak_rss_kib_max": max(worker) if worker else None,
+            "worker_peak_rss_missing_rows": len(rows) - len(worker),
         },
         "not_a_strength_result": True,
         "plan_digest": plan["plan_digest"],
@@ -890,12 +949,8 @@ def build_report(plan: dict, summary: dict, timings: dict, files: list) -> dict:
     return {**payload, "report_digest": document_identity(payload)}
 
 
-def verify_calibration(plan_path: str | Path) -> dict[str, object]:
-    """保存したplan・rawだけからsummaryを再導出し、reportがあればそれも再導出する。
-
-    engineの再実行・Policyの生成・live ledgerの照合はしない。戻り値は
-    summary digest・report digest・保存file一覧（回収先でのhash照合用）。
-    """
+def _verified_outputs(plan_path: str | Path):
+    """保存物を読み、summaryの再導出とtimingsの検査（局数のraw照合を含む）を通す。"""
     plan = load_plan(plan_path)
     output = Path(plan["artifact_destinations"]["output"])
     recorded = _read(output / SUMMARY_FILENAME, "calibration summary")
@@ -905,13 +960,26 @@ def verify_calibration(plan_path: str | Path) -> dict[str, object]:
         raise EngineAabbCalibrationError(
             "calibration summary differs from the re-derivation"
         )
-    timings = _require_timings(plan, _read(output / TIMINGS_FILENAME, "timings"))
-    files = output_files(output)
+    timings = _require_timings(
+        plan, _read(output / TIMINGS_FILENAME, "timings"), records.hanchans
+    )
+    return plan, output, summary, timings, records, output_files(output)
+
+
+def verify_calibration(plan_path: str | Path) -> dict[str, object]:
+    """保存したplan・rawだけからsummaryを再導出し、timingsを検査し、reportがあれば
+    それも再導出する。
+
+    reportの有無にかかわらず、timingsの不正値・局数の不一致は拒否する。
+    engineの再実行・Policyの生成・live ledgerの照合はしない。戻り値は
+    summary digest・report digest・保存file一覧（回収先でのhash照合用）。
+    """
+    plan, output, summary, timings, records, files = _verified_outputs(plan_path)
     report_digest = None
     report_path = output / REPORT_FILENAME
     if report_path.exists():
         report = _read(report_path, "calibration report")
-        if report != build_report(plan, summary, timings, files):
+        if report != build_report(plan, summary, timings, files, records):
             raise EngineAabbCalibrationError(
                 "calibration report differs from the re-derivation"
             )
@@ -926,13 +994,12 @@ def verify_calibration(plan_path: str | Path) -> dict[str, object]:
 
 
 def write_report(plan_path: str | Path) -> dict[str, object]:
-    """verifyに通った保存物からreportを作り、``<output>/report.json`` へwrite-onceで書く。"""
-    plan = load_plan(plan_path)
-    verified = verify_calibration(plan_path)
-    output = Path(plan["artifact_destinations"]["output"])
-    summary = _read(output / SUMMARY_FILENAME, "calibration summary")
-    timings = _read(output / TIMINGS_FILENAME, "timings")
-    report = build_report(plan, summary, timings, verified["files"])
+    """verifyと同じ検査に通った保存物からreportを作り、``<output>/report.json`` へ
+    write-onceで書く。"""
+    plan, output, summary, timings, records, files = _verified_outputs(plan_path)
+    if (output / REPORT_FILENAME).exists():
+        raise FileExistsError(f"refusing to overwrite: {output / REPORT_FILENAME}")
+    report = build_report(plan, summary, timings, files, records)
     write_new_artifact_file(output / REPORT_FILENAME, canonical_json_text(report))
     return report
 

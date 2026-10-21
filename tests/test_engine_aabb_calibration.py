@@ -363,6 +363,84 @@ class RunTest(_Case):
         with self.assertRaises(EngineAabbRecordError):
             calibration.verify_calibration(self.plan_path)
 
+    def rewrite_timings(self, change):
+        path = self.output / "timings.json"
+        timings = json.loads(path.read_text("utf-8"))
+        change(timings)
+        path.write_text(canonical_json_text(timings), "utf-8", newline="\n")
+
+    def test_verify_rejects_invalid_timings_before_a_report_exists(self):
+        self.run_calibration()
+        original = (self.output / "timings.json").read_text("utf-8")
+        first = json.loads(original)["hanchans"][0]
+
+        def row(field, value):
+            def change(timings):
+                timings["hanchans"][0][field] = value
+
+            return change
+
+        def total(field, value):
+            def change(timings):
+                timings[field] = value
+
+            return change
+
+        cases = [
+            (row("wall_seconds", -0.5), "finite non-negative"),
+            (row("wall_seconds", True), "finite non-negative"),
+            (row("wall_seconds", "1.0"), "finite non-negative"),
+            (row("kyoku_count", 0), "positive int"),
+            (row("kyoku_count", -3), "positive int"),
+            (row("kyoku_count", True), "positive int"),
+            (row("kyoku_count", 1.0 * first["kyoku_count"]), "positive int"),
+            (
+                row("kyoku_count", first["kyoku_count"] + 1),
+                "differs from the raw record",
+            ),
+            (row("worker_peak_rss_kib", 0), "positive int or null"),
+            (row("worker_peak_rss_kib", -1), "positive int or null"),
+            (row("worker_peak_rss_kib", 1024.0), "positive int or null"),
+            (row("parent_peak_rss_kib", True), "positive int or null"),
+            (total("schedule_wall_seconds", -1), "finite non-negative"),
+            (total("summary_seconds", False), "finite non-negative"),
+        ]
+        for change, message in cases:
+            with self.subTest(message=message):
+                self.rewrite_timings(change)
+                self.assertFalse((self.output / "report.json").exists())
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    calibration.verify_calibration(self.plan_path)
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    calibration.write_report(self.plan_path)
+                self.rewrite_timings(lambda t: t.update(json.loads(original)))
+        calibration.verify_calibration(self.plan_path)
+
+    def test_missing_rss_is_not_counted_as_zero(self):
+        self.run_calibration()
+
+        def missing(timings):
+            for item in timings["hanchans"]:
+                item["parent_peak_rss_kib"] = None
+            timings["hanchans"][0]["worker_peak_rss_kib"] = None
+
+        self.rewrite_timings(missing)
+        calibration.verify_calibration(self.plan_path)
+        report = calibration.write_report(self.plan_path)
+        memory = report["memory"]
+        self.assertIsNone(memory["parent_peak_rss_kib_max"])
+        self.assertEqual(memory["parent_peak_rss_missing_rows"], 18)
+        self.assertIsNone(memory["sum_of_peaks_kib_max"])
+        self.assertEqual(memory["sum_of_peaks_rows"], 0)
+        self.assertEqual(memory["worker_peak_rss_kib_max"], 1024)
+        self.assertEqual(memory["worker_peak_rss_missing_rows"], 1)
+        self.assertEqual(
+            calibration.verify_calibration(self.plan_path)["report_digest"],
+            report["report_digest"],
+        )
+        with self.assertRaises(FileExistsError):
+            calibration.write_report(self.plan_path)
+
     def test_failures_stop_without_output(self):
         cases = [
             (fx.fake_play_policy_error, "synthetic Policy failure"),
