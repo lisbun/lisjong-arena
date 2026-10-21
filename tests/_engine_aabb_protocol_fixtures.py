@@ -250,3 +250,51 @@ def fake_play_wrong_seed(task):
             replace(played.capture, placement=2), ENVIRONMENT, played.worker_pid, 1
         )
     return played
+
+
+# ---------------------------------------------------------------------------
+# #517 calibration / backend check
+# ---------------------------------------------------------------------------
+
+PYTHON_ENVIRONMENT = {
+    "native": None,
+    "provenance": ENVIRONMENT["provenance"],
+    "python": ENVIRONMENT["python"],
+    "shanten_backend": {"backend": "python", "lisjong_revision": LISJONG_REVISION},
+}
+
+
+def _actions(task, *, drift=False):
+    count = 40 + 41 + 42 + 43
+    actions = [
+        ["EAST", {"__type": "SyntheticAction", "index": n}] for n in range(count)
+    ]
+    if drift and (task.seed, task.placement) == (472_006, 3):
+        actions[7] = ["EAST", {"__type": "SyntheticAction", "index": -1}]
+    return tuple(actions)
+
+
+def fake_play_rust_actions(task):
+    return PlayedHanchan(_capture(task), ENVIRONMENT, os.getpid(), 1024, _actions(task))
+
+
+def fake_play_python_actions(task):
+    return PlayedHanchan(
+        _capture(task), PYTHON_ENVIRONMENT, os.getpid(), 1024, _actions(task)
+    )
+
+
+def fake_play_python_drift(task):
+    return PlayedHanchan(
+        _capture(task),
+        PYTHON_ENVIRONMENT,
+        os.getpid(),
+        1024,
+        _actions(task, drift=True),
+    )
+
+
+def fake_play_rust_missing_actions(task):
+    return PlayedHanchan(
+        _capture(task), ENVIRONMENT, os.getpid(), 1024, _actions(task)[1:]
+    )

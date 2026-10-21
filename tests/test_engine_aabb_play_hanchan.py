@@ -102,6 +102,24 @@ class PlayHanchanCompositionTest(unittest.TestCase):
         self.assertTrue(status.valid)
         self.assertEqual(len(rows[0]["kyokus"]), len(capture.match.history))
 
+    def test_real_engine_hanchan_canonicalizes_match_and_actions(self):
+        """#517 P2: 実engineの ``CompletedMatch`` とPolicyの行動を正規化できること。"""
+        from lisjong_arena.heuristic_candidate_engine_aabb.backend_check import (
+            canonical_engine_value,
+        )
+
+        actions = []
+        capture = executor.play_task(
+            _task(513000, 0),
+            on_action=lambda seat, action: actions.append(
+                [seat.name, canonical_engine_value(action)]
+            ),
+        )
+        self.assertEqual(len(actions), sum(capture.policy_call_counts))
+        completed = canonical_engine_value(capture.match)
+        self.assertEqual(completed["__type"], "CompletedMatch")
+        self.assertEqual(canonical_engine_value(capture.match), completed)
+
 
 if __name__ == "__main__":
     unittest.main()
