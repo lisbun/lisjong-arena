@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from _engine_aabb_record_fixtures import (
     PRODUCER_REVISION,
@@ -41,6 +42,7 @@ from lisjong_arena.heuristic_candidate_engine_aabb import (
     KyokuRecordError,
     build_records,
     read_kyoku_records,
+    record_store,
     summarize_secondary_metrics,
     validate_event_fact_row,
     write_kyoku_records,
@@ -366,6 +368,144 @@ class FailureHandlingTest(unittest.TestCase):
         )
         read = read_kyoku_records(self.path, event_facts_required=False)
         self.assertFalse(read.event_fact_status.valid)
+
+
+class StorageFailureTest(unittest.TestCase):
+    """保存・公開前検査の失敗を注入する（PR #515 review）。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.captures = [capture(81, 0, SCRIPT_X), capture(81, 1, SCRIPT_Y)]
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.path = self.tmp / "record"
+
+    def write(self, *, required):
+        return write_kyoku_records(
+            self.path,
+            self.captures,
+            producer_revision=PRODUCER_REVISION,
+            event_facts_required=required,
+        )
+
+    def failing_write(self, filename):
+        original = record_store.write_new_artifact_file
+
+        def write(path, text):
+            if path.name == filename:
+                # 途中まで書いてから失敗する場合も、partial fileを残さない
+                original(path, text[:10])
+                path.unlink()
+                raise OSError(f"injected failure for {filename}")
+            return original(path, text)
+
+        return mock.patch.object(record_store, "write_new_artifact_file", write)
+
+    def assert_nothing_published(self):
+        self.assertFalse(self.path.exists())
+        self.assertEqual(list(self.tmp.iterdir()), [])
+
+    def test_layer2_write_failure_keeps_layer1_in_a_formal_run(self):
+        with self.failing_write(EVENT_FACT_FILENAME):
+            records = self.write(required=False)
+        self.assertFalse(records.event_fact_status.valid)
+        self.assertIn("event fact write failed", records.event_fact_status.reason)
+        self.assertEqual(len(records.hanchans), 2)
+        self.assertEqual(
+            sorted(child.name for child in self.path.iterdir()),
+            [KYOKU_RECORD_FILENAME, MANIFEST_FILENAME],
+        )
+        read = read_kyoku_records(self.path, event_facts_required=False)
+        self.assertEqual(read, records)
+        self.assertIsNone(read.event_facts)
+
+    def test_layer2_write_failure_stops_a_preflight(self):
+        with self.failing_write(EVENT_FACT_FILENAME), self.assertRaises(OSError):
+            self.write(required=True)
+        self.assert_nothing_published()
+
+    def test_layer1_and_manifest_write_failures_always_stop(self):
+        for filename in (KYOKU_RECORD_FILENAME, MANIFEST_FILENAME):
+            for required in (False, True):
+                with (
+                    self.subTest(filename=filename, required=required),
+                    self.failing_write(filename),
+                    self.assertRaises(OSError),
+                ):
+                    self.write(required=required)
+                self.assert_nothing_published()
+
+    def test_layer2_pre_publication_check_failure_keeps_layer1(self):
+        def reject(row, hanchan):
+            raise EventFactError("injected pre-publication failure")
+
+        with mock.patch.object(record_store, "validate_event_fact_row", reject):
+            records = self.write(required=False)
+        self.assertFalse(records.event_fact_status.valid)
+        self.assertIn("pre-publication check failed", records.event_fact_status.reason)
+        self.assertIn("injected", records.event_fact_status.reason)
+        self.assertEqual(
+            sorted(child.name for child in self.path.iterdir()),
+            [KYOKU_RECORD_FILENAME, MANIFEST_FILENAME],
+        )
+        manifest = json.loads((self.path / MANIFEST_FILENAME).read_text("utf-8"))
+        self.assertEqual(manifest["event_facts"]["status"], "INVALID")
+        # 公開後の読込は（差し替えなしでも）同じINVALIDと第1層を返す
+        self.assertEqual(
+            read_kyoku_records(self.path, event_facts_required=False), records
+        )
+
+    def test_layer2_pre_publication_check_failure_stops_a_preflight(self):
+        def reject(row, hanchan):
+            raise EventFactError("injected pre-publication failure")
+
+        with (
+            mock.patch.object(record_store, "validate_event_fact_row", reject),
+            self.assertRaisesRegex(EventFactError, "injected"),
+        ):
+            self.write(required=True)
+        self.assert_nothing_published()
+
+
+class InvalidTypeTest(unittest.TestCase):
+    """不正型は辞書検索・同値比較の前に拒否し、EventFactErrorに統一する。"""
+
+    @classmethod
+    def setUpClass(cls):
+        rows, events, _ = _build([capture(1, 0, SCRIPT_Y)])
+        cls.row, cls.events = rows[0], events[0]
+
+    def rejected(self, mutate):
+        row = copy.deepcopy(self.events)
+        mutate(row)
+        with self.assertRaises(EventFactError):
+            validate_event_fact_row(row, self.row)
+
+    def test_unhashable_fact_type(self):
+        self.rejected(lambda r: r["kyokus"][0]["facts"].append({"type": []}))
+        self.rejected(lambda r: r["kyokus"][0]["facts"].append({"type": {}}))
+        self.rejected(lambda r: r["kyokus"][0]["facts"].append([]))
+
+    def test_bool_is_not_accepted_for_binding_ints(self):
+        self.assertEqual((self.row["seed"], self.row["placement"]), (1, 0))
+        self.rejected(lambda r: r.update(seed=True))
+        self.rejected(lambda r: r.update(placement=False))
+        self.rejected(lambda r: r.update(seed=1.0))
+        self.rejected(lambda r: r["kyokus"][0].update(kyoku_index=False))
+        self.rejected(lambda r: r["kyokus"][0].update(hand_number=True))
+        self.rejected(lambda r: r["kyokus"][0].update(dealer_seat=False))
+        self.rejected(lambda r: r["kyokus"][1].update(honba=True))
+
+    def test_other_wrong_containers(self):
+        self.rejected(lambda r: r.update(kyokus={}))
+        self.rejected(lambda r: r["kyokus"].__setitem__(0, []))
+        self.rejected(lambda r: r["kyokus"][0].update(facts={}))
+        self.rejected(lambda r: r.update(seed=[1]))
+
+    def test_valid_row_still_passes(self):
+        validate_event_fact_row(copy.deepcopy(self.events), self.row)
 
 
 class DrawEvidenceShapeTest(unittest.TestCase):

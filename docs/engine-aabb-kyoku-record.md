@@ -93,12 +93,14 @@ ordered seeds、§2.2の配置表、participant identityから作る。本関数
 | 場面 | `event_facts_required` | 第2層が失敗したとき |
 | --- | --- | --- |
 | 実行前確認（§10.7） | `True` | `EventFactError`。何も公開しない |
-| 正式実行 | `False` | 第2層全体を `INVALID` にし、最初に失敗した半荘と理由を `reason` に残す。`event-facts.jsonl` を書かない。以後の第2層rowも作らない |
+| 正式実行 | `False` | 第2層全体を `INVALID` にし、最初に失敗した半荘と理由を `reason` に残す。`event-facts.jsonl` を書かない。以後の第2層rowも作らない。第2層fileの書込失敗（`event fact write failed`）、公開前の読み戻し検査での第2層の失敗（`pre-publication check failed`）も同じ扱いで、第1層とmanifestは公開する |
 | 読込（正式） | `False` | 第2層の破損・欠落・不一致は `INVALID`（`read-time verification failed: ...`）。第1層は独立に判定する |
 
 - 第2層の失敗には、callback出力の未取得（`round_evidence=None`）を含む。未取得を0件として扱わない
-- 第1層・manifest・artifact全体の失敗は、どの場面でも `KyokuRecordError` で止める。
-  第2層の失敗へ読み替えない
+- 第1層・manifest・artifact全体の失敗（検査失敗の `KyokuRecordError`、`kyoku-records.jsonl` /
+  `manifest.json` の書込失敗）は、どの場面でも止めて何も公開しない。第2層の失敗へ読み替えない
+- 第2層の検査は、不正な型（unhashableな値、`int` の代わりの `bool` 等）も含めてすべて
+  `EventFactError` にする。型の誤りが別の例外として正式実行の扱いをすり抜けない
 - 正式実行で第2層が `INVALID` でも、結果を見たあとの再実行・seed追加で第2層を補わない（§10.6）
 
 ## 5. 副指標（`summarize_secondary_metrics`）

@@ -271,34 +271,62 @@ def write_kyoku_records(
     kyoku_payload = _payload_info(
         KYOKU_RECORD_SCHEMA, KYOKU_RECORD_FILENAME, kyoku_text, len(hanchans)
     )
-    if events is not None:
-        event_text = _payload_text(events)
-        event_payload = {
-            **_payload_info(
-                EVENT_FACT_SCHEMA, EVENT_FACT_FILENAME, event_text, len(events)
-            ),
-            "status": EVENT_FACTS_VALID,
-        }
-    else:
-        event_payload = status.to_value()
-    manifest = _build_manifest(
-        producer_revision=producer_revision,
-        bindings=bindings,
-        hanchan_count=len(hanchans),
-        kyoku_payload=kyoku_payload,
-        event_facts=event_payload,
-    )
-    with staged_artifact_directory(destination) as staging:
-        write_new_artifact_file(staging / KYOKU_RECORD_FILENAME, kyoku_text)
-        if events is not None:
-            write_new_artifact_file(staging / EVENT_FACT_FILENAME, event_text)
-        write_new_artifact_file(
-            staging / MANIFEST_FILENAME, canonical_json_text(manifest)
+    event_text = None if events is None else _payload_text(events)
+
+    def manifest_text(current: EventFactStatus) -> str:
+        if current.valid:
+            event_payload = {
+                **_payload_info(
+                    EVENT_FACT_SCHEMA, EVENT_FACT_FILENAME, event_text, len(events)
+                ),
+                "status": EVENT_FACTS_VALID,
+            }
+        else:
+            event_payload = current.to_value()
+        return canonical_json_text(
+            _build_manifest(
+                producer_revision=producer_revision,
+                bindings=bindings,
+                hanchan_count=len(hanchans),
+                kyoku_payload=kyoku_payload,
+                event_facts=event_payload,
+            )
         )
+
+    with staged_artifact_directory(destination) as staging:
+        event_path = staging / EVENT_FACT_FILENAME
+        # 第1層・manifestの保存失敗は、どのmodeでも停止する（何も公開しない）
+        write_new_artifact_file(staging / KYOKU_RECORD_FILENAME, kyoku_text)
+        if status.valid:
+            try:
+                write_new_artifact_file(event_path, event_text)
+            except Exception as error:
+                if event_facts_required:
+                    raise
+                # 第2層だけの保存失敗: 第2層全体をINVALIDにし、第1層は残す
+                event_path.unlink(missing_ok=True)
+                status = EventFactStatus(
+                    EVENT_FACTS_INVALID,
+                    f"event fact write failed: {type(error).__name__}: {error}",
+                )
+        write_new_artifact_file(staging / MANIFEST_FILENAME, manifest_text(status))
         # 公開前に、読込と同じ検査を保存bytesに対して行う（renameはbytesを変えない）
         verified = read_kyoku_records(
             staging, event_facts_required=event_facts_required
         )
+        if status.valid and not verified.event_fact_status.valid:
+            # 第2層だけの公開前検査失敗（event_facts_required=Falseでだけ到達する）。
+            # 第2層fileを外し、INVALIDと理由を記録したmanifestで第1層を公開する
+            event_path.unlink()
+            (staging / MANIFEST_FILENAME).unlink()
+            status = EventFactStatus(
+                EVENT_FACTS_INVALID,
+                f"pre-publication check failed: {verified.event_fact_status.reason}",
+            )
+            write_new_artifact_file(staging / MANIFEST_FILENAME, manifest_text(status))
+            verified = read_kyoku_records(
+                staging, event_facts_required=event_facts_required
+            )
         if verified.event_fact_status != status:
             raise KyokuRecordError("event fact status changed on readback")
     return verified

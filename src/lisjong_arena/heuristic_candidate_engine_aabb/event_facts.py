@@ -235,6 +235,11 @@ def _fields(value: object, fields: frozenset[str], context: str) -> dict:
     return value
 
 
+def _same(value: object, expected: object) -> bool:
+    """型まで含めた一致（``True == 1``や``False == 0``を受理しない）。"""
+    return type(value) is type(expected) and value == expected
+
+
 def _int(value: object, context: str, *, minimum: int = 0) -> int:
     if type(value) is not int or value < minimum:
         raise EventFactError(f"{context} must be an int >= {minimum}")
@@ -295,7 +300,12 @@ def _validate_facts(facts: object, *, contributions: set[int], context: str) -> 
     open_kans: list[tuple[int, object]] = []
     for index, fact in enumerate(facts):
         fact_context = f"{context}.facts[{index}]"
-        if type(fact) is not dict or fact.get("type") not in _FACT_FIELDS:
+        # 辞書検索の前に型を確かめる（unhashableな値をTypeErrorにしない）
+        if (
+            type(fact) is not dict
+            or type(fact.get("type")) is not str
+            or (fact["type"] not in _FACT_FIELDS)
+        ):
             raise EventFactError(f"{fact_context}.type is unsupported")
         kind = fact["type"]
         _fields(fact, _FACT_FIELDS[kind], fact_context)
@@ -359,12 +369,25 @@ def _validate_facts(facts: object, *, contributions: set[int], context: str) -> 
 
 
 def validate_event_fact_row(row: object, hanchan_row: dict) -> dict:
-    """第2層の1半荘rowを、検査済みの第1層rowに対して検査する。"""
+    """第2層の1半荘rowを、検査済みの第1層rowに対して検査する。
+
+    不正な値はすべて``EventFactError``にする（正式実行で第2層だけを無効化できるように、
+    型の誤りを``TypeError``等として伝播させない）。
+    """
+    try:
+        return _validate_event_fact_row(row, hanchan_row)
+    except (TypeError, KeyError, ValueError, AttributeError) as error:
+        raise EventFactError(
+            f"event fact row has an invalid value: {type(error).__name__}: {error}"
+        ) from error
+
+
+def _validate_event_fact_row(row: object, hanchan_row: dict) -> dict:
     _fields(row, _ROW_FIELDS, "event fact row")
     seed = hanchan_row["seed"]
     placement = hanchan_row["placement"]
     context = f"seed {seed} placement {placement} event facts"
-    if row["seed"] != seed or row["placement"] != placement:
+    if not _same(row["seed"], seed) or not _same(row["placement"], placement):
         raise EventFactError(f"{context}: row is not bound to its hanchan")
     kyokus = row["kyokus"]
     if type(kyokus) is not list or len(kyokus) != len(hanchan_row["kyokus"]):
@@ -374,19 +397,16 @@ def validate_event_fact_row(row: object, hanchan_row: dict) -> dict:
     ):
         kyoku_context = f"{context} kyoku {index}"
         _fields(kyoku, _KYOKU_FIELDS, kyoku_context)
-        if [
-            kyoku["kyoku_index"],
-            kyoku["prevailing_wind"],
-            kyoku["hand_number"],
-            kyoku["honba"],
-            kyoku["dealer_seat"],
-        ] != [
-            source["kyoku_index"],
-            source["prevailing_wind"],
-            source["hand_number"],
-            source["honba"],
-            source["dealer_seat"],
-        ] or type(kyoku["kyoku_index"]) is not int:
+        if not all(
+            _same(kyoku[name], source[name])
+            for name in (
+                "kyoku_index",
+                "prevailing_wind",
+                "hand_number",
+                "honba",
+                "dealer_seat",
+            )
+        ):
             raise EventFactError(f"{kyoku_context} is not bound to its kyoku")
         _validate_facts(
             kyoku["facts"],
