@@ -1,20 +1,25 @@
-"""engine版AABB半荘評価の局単位record（#513）。
+"""engine版AABB半荘評価（protocol ``arena-heuristic-candidate-engine-aabb-half-v1``）。
 
-protocol identity ``arena-heuristic-candidate-engine-aabb-half-v1``
-（仕様 ``docs/heuristic-candidate-engine-aabb-half.md`` §7・§10）のうち、
-同じ対局実行から得た局精算・公開event factの保存、検査、副指標の再集計を
-担当する。protocol / lock / result、runner、seed予約は後続（#514）が担当し、
-本packageはそれらを持たない。旧protocol（RiichiEnv）のcodeは使わない。
+仕様 ``docs/heuristic-candidate-engine-aabb-half.md``。旧protocol（RiichiEnv）のcodeは使わない。
 
 ```text
-kyoku_record      第1層: CompletedMatch.history -> 局精算row、K3〜K12・C1〜C10、
-                  K1 / K2のschedule照合API
-event_facts       第2層: on_round_evidence_complete -> 公開fact row
-record_store      manifest、write-once I/O、strict readback、第2層の無効化
-secondary_metrics 保存物だけからの副指標・点数分解
+局単位record（#513）
+  kyoku_record      第1層: CompletedMatch.history -> 局精算row、K3〜K12・C1〜C10、
+                    K1 / K2のschedule照合API
+  event_facts       第2層: on_round_evidence_complete -> 公開fact row
+  record_store      manifest、write-once I/O、strict readback、第2層の無効化
+  secondary_metrics 保存物だけからの副指標・点数分解
+protocol・実行（#514）
+  protocol          固定値、rules / protocol / schedule digest、participant
+  statistics        S_A / S_B、D、区間、classification
+  lock              実行前lock、Seed Registry照合、live gate
+  executor          1 workerでの逐次実行、新しいPolicy、呼び出し数、timeout
+  result / runner   正式result、offline verify、STOP時の診断証跡
+  development       §10.7の開発用記録経路確認
 ```
 
-API・失敗状態・後続が渡す値は ``docs/engine-aabb-kyoku-record.md`` を正本とする。
+依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は
+``docs/engine-aabb-kyoku-record.md`` と ``docs/engine-aabb-evaluation.md`` を正本とする。
 """
 
 from .errors import (
