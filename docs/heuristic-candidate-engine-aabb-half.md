@@ -16,6 +16,8 @@ arena-heuristic-candidate-engine-aabb-half-v1
 > 前提検証（[#472](https://github.com/lisbun/lisjong-arena/issues/472)、2026-10-21）: §12.2の
 > 未確認事項のうちN1〜N6とN8をfixtureと開発用試行で確認した。N7（固定C0のrevision間比較）は、
 > 基準revisionが現行bridgeで実行できないため、比較を行っていない。結果と確認範囲は§14にまとめる。
+>
+> 実装（[#513](https://github.com/lisbun/lisjong-arena/issues/513)、[#514](https://github.com/lisbun/lisjong-arena/issues/514)）: 局単位record、protocol・lock・6配置executor・result・verifyを実装した。使い方・gate・残件は[`engine-aabb-evaluation.md`](engine-aabb-evaluation.md)と[`engine-aabb-kyoku-record.md`](engine-aabb-kyoku-record.md)を正本とする。正式eventはまだ実行していない（J1 / J2が未決）。
 
 本書は、Heuristic family-internalの正式半荘評価をlisjong-engine上で行う新protocolと、
 その前提になるbridge / backend検証・局単位記録の仕様を固定する。旧
@@ -332,8 +334,18 @@ split         FORMAL-EVAL
 | `lock_digest` | lock全体。rawとresultのmanifestが参照する |
 
 - canonical JSONは既存artifactと同じ規則（key sort、enumは `.value`、集合はsortしたlist、
-  tupleはlist、`None` は `null`）で作る。**digestの値は実装Issueで算出して本書へ追記する**
-  （本Issueでは算出しない）
+  tupleはlist、`None` は `null`）で作る。digestはそのcanonical JSON（indent 2）のUTF-8 bytesの
+  SHA-256である。#514で算出した値:
+
+  ```text
+  rules_digest     1393f5021bd332ca6efe733c12fd79e011b55706ae559db894b0619cd0fa9626
+  protocol_digest  e60f75d7c32695e1c79225cad409334c3233dc8dd8b1cd0c6c7995789c9adec2
+  ```
+
+  実装はimportのたびにこの値を再計算して照合する。protocol documentの中身は
+  `heuristic_candidate_engine_aabb.protocol.protocol_document()` を正本とする
+- 実行環境（Python、lisjong、lisjong-engine、native wheel）はlockの `environment` に記録し、
+  raw manifestはそのdigest（`environment_digest`）とlock digestを持つ（#513 / #514）
 - raw（半荘record、局record、第2層record）のmanifestは、schema identity、lock digest、
   Arena producer revision、実行環境（Python、lisjong、lisjong-engine、native）、
   payload fileごとのSHA-256・行数を持つ
@@ -785,7 +797,7 @@ AGENTS.md「対局評価の実行前確認」と
 | N8 | 現Champion系列が各行動種別を実際に選ぶ局面を用意できるか | §8.3 | 範囲付きで解消（§14.3）。槓・九種九牌は選ばないため、候補の提示・変換までを確認 |
 | N9 | 小さいKでの正規近似の妥当性 | §3.3 | 継続（校正工程） |
 | N10 | 旧RiichiEnv側の役・槓・複数ロン・同点順位・起家の実挙動 | §6.2 #10〜#19、#22。新protocolの成立には不要 | 対象外 |
-| N11 | `rules_digest` / `protocol_digest` の値 | §5.6 | 継続（実装Issue） |
+| N11 | `rules_digest` / `protocol_digest` の値 | §5.6 | 解消（#514。§5.6に追記） |
 
 ### 12.3 Follow-up Issue候補
 
