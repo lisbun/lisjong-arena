@@ -457,6 +457,41 @@ class StorageFailureTest(unittest.TestCase):
             read_kyoku_records(self.path, event_facts_required=False), records
         )
 
+    def missing_before_check(self):
+        """公開前検査の直前に、staging上の第2層fileを消す。"""
+        original = record_store.read_kyoku_records
+        calls = []
+
+        def read(path, *, event_facts_required):
+            if not calls:
+                (Path(path) / EVENT_FACT_FILENAME).unlink()
+            calls.append(path)
+            return original(path, event_facts_required=event_facts_required)
+
+        return mock.patch.object(record_store, "read_kyoku_records", read)
+
+    def test_layer2_file_missing_at_pre_publication_check_keeps_layer1(self):
+        with self.missing_before_check():
+            records = self.write(required=False)
+        self.assertFalse(records.event_fact_status.valid)
+        self.assertIn("pre-publication check failed", records.event_fact_status.reason)
+        self.assertIn("missing", records.event_fact_status.reason)
+        self.assertEqual(len(records.hanchans), 2)
+        self.assertEqual(
+            sorted(child.name for child in self.path.iterdir()),
+            [KYOKU_RECORD_FILENAME, MANIFEST_FILENAME],
+        )
+        manifest = json.loads((self.path / MANIFEST_FILENAME).read_text("utf-8"))
+        self.assertEqual(manifest["event_facts"]["status"], "INVALID")
+        self.assertEqual(
+            read_kyoku_records(self.path, event_facts_required=False), records
+        )
+
+    def test_layer2_file_missing_at_pre_publication_check_stops_a_preflight(self):
+        with self.missing_before_check(), self.assertRaises(EventFactError):
+            self.write(required=True)
+        self.assert_nothing_published()
+
     def test_layer2_pre_publication_check_failure_stops_a_preflight(self):
         def reject(row, hanchan):
             raise EventFactError("injected pre-publication failure")

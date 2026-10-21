@@ -317,7 +317,8 @@ def write_kyoku_records(
         if status.valid and not verified.event_fact_status.valid:
             # 第2層だけの公開前検査失敗（event_facts_required=Falseでだけ到達する）。
             # 第2層fileを外し、INVALIDと理由を記録したmanifestで第1層を公開する
-            event_path.unlink()
+            # 公開前検査が第2層fileの欠落をINVALIDにした場合もここへ来る
+            event_path.unlink(missing_ok=True)
             (staging / MANIFEST_FILENAME).unlink()
             status = EventFactStatus(
                 EVENT_FACTS_INVALID,
