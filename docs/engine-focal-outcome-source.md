@@ -58,6 +58,10 @@ points_before_kyoku   scores_after_settlement - point_deltas
 - 全員聴牌の流局（RiichiEnv #247で`ryukyoku.deltas`が不整合になったpattern）も
   engine settlementをそのまま使うため、特別扱いを必要としない
 
+この射影と検査は#513で`lisjong_arena/lisjong_engine/completed_match_facts.py`へ抽出し、
+engine版AABBの局単位record（[engine-aabb-kyoku-record.md](engine-aabb-kyoku-record.md)）と
+共有している。本sourceのschema・意味・固定revision・error型（`FocalOutcomeSourceError`）は変わらない。
+
 ## 対局構成
 
 RiichiEnv sourceと同じ#79 A4構成である。
