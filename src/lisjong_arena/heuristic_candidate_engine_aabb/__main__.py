@@ -22,6 +22,12 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-activation-verify
 python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-screen-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-screen-verify --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-screen-report --plan P
+
+#522 凍結paijia候補の混成相手focal比較（DEVELOPMENT。正式結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb focal-plan --run-kind R ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb focal-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb focal-verify --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb focal-report --plan P
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -36,6 +42,7 @@ from pathlib import Path
 from lisjong_arena import seed_registry
 from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_file
 
+from . import focal_mixed_compare, focal_mixed_plan
 from .backend_check import MATCH, compare_backend_checks, run_backend_check
 from .calibration import (
     build_plan,
@@ -181,9 +188,30 @@ def main(argv: list[str] | None = None) -> int:
     ):
         sub.add_parser(name).add_argument("--plan", required=True)
 
+    focal = sub.add_parser("focal-plan", help="#522: write a write-once plan")
+    focal.add_argument("--run-kind", choices=focal_mixed_plan.RUN_KINDS, required=True)
+    focal.add_argument("--seeds", help="allocated only: comma separated, in order")
+    focal.add_argument("--allocation-identity", help="allocated only")
+    focal.add_argument("--timeout-seconds", type=int, required=True)
+    focal.add_argument("--wall-limit-seconds", type=int, required=True)
+    focal.add_argument("--rss-limit-bytes", type=int, required=True)
+    focal.add_argument("--limit-enforcement", required=True)
+    focal.add_argument("--wheel", required=True)
+    focal.add_argument("--run-output", required=True)
+    focal.add_argument("--diagnostics", required=True)
+    focal.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    focal.add_argument("--output", required=True)
+    focal_run = sub.add_parser("focal-run")
+    focal_run.add_argument("--plan", required=True)
+    focal_run.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    for name in ("focal-verify", "focal-report"):
+        sub.add_parser(name).add_argument("--plan", required=True)
+
     args = parser.parse_args(argv)
     if args.command.startswith("paijia-"):
         return _paijia(args)
+    if args.command.startswith("focal-"):
+        return _focal(args)
     if args.command == "backend-check":
         document = run_backend_check(
             args.output,
@@ -369,6 +397,53 @@ def _paijia(args) -> int:
         else verify_screen
     )
     print(json.dumps(verify(args.plan), sort_keys=True, indent=2))
+    return 0
+
+
+def _focal(args) -> int:
+    if args.command == "focal-plan":
+        allocated = args.run_kind == focal_mixed_plan.ALLOCATED
+        if allocated != (args.seeds is not None) or allocated != (
+            args.allocation_identity is not None
+        ):
+            raise focal_mixed_plan.FocalMixedError(
+                "--seeds and --allocation-identity are required for an allocated "
+                "plan and not accepted for a rehearsal (fixed seed "
+                f"{focal_mixed_plan.REHEARSAL_SEEDS})"
+            )
+        document = focal_mixed_plan.build_plan(
+            run_kind=args.run_kind,
+            ordered_seeds=_seeds(args.seeds)
+            if allocated
+            else focal_mixed_plan.REHEARSAL_SEEDS,
+            allocation_identity=args.allocation_identity,
+            timeout_seconds=args.timeout_seconds,
+            resource_limits={
+                "enforcement": args.limit_enforcement,
+                "process_tree_rss_bytes": args.rss_limit_bytes,
+                "wall_seconds": args.wall_limit_seconds,
+            },
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={"diagnostics": args.diagnostics, "output": args.run_output},
+            ledger_path=args.ledger,
+        )
+        focal_mixed_plan.save_plan(document, args.output)
+        print(f"{args.run_kind} {document['plan_digest']}")
+        return 0
+    if args.command == "focal-run":
+        summary = focal_mixed_compare.run_comparison(
+            args.plan, ledger_path=args.ledger, on_hanchan=_progress
+        )
+        progression = summary["progression"]
+        decision = progression["decision"] if progression else REHEARSAL
+        print(f"{summary['status']} {decision} {summary['summary_digest']}")
+        return 0
+    if args.command == "focal-report":
+        report = focal_mixed_compare.write_report(args.plan)
+        print(f"REPORT {report['report_digest']} (development, not a formal result)")
+        return 0
+    verified = focal_mixed_compare.verify_comparison(args.plan)
+    print(json.dumps(verified, sort_keys=True, indent=2))
     return 0
 
 

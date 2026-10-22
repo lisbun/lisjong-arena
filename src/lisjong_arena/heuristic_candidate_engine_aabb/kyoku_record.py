@@ -19,7 +19,7 @@ CompletedMatch（同じ実行の戻り値）
 """
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from lisjong_engine.match_state import CompletedMatch
@@ -87,20 +87,20 @@ ABORTIVE_DRAW_REASONS = (
 )
 RESULT_KINDS = ("win", "exhaustive_draw", "abortive_draw")
 
-_HANCHAN_FIELDS = frozenset(
+_HANCHAN_CORE_FIELDS = frozenset(
     {
         "end_reason",
         "final_raw_scores",
         "final_riichi_stick_awards",
         "final_score",
         "kyokus",
-        "placement",
         "policy_call_counts",
         "seats",
         "seed",
         "selector_call_counts",
     }
 )
+"""半荘rowのうち、半荘identityのkey（AABBでは ``placement``）以外のfield。"""
 _SEAT_FIELDS = frozenset({"policy_identity", "role"})
 _FINAL_SCORE_FIELDS = frozenset(
     {
@@ -184,6 +184,38 @@ def placement_roles(placement: int) -> tuple[str, str, str, str]:
         ROLE_CANDIDATE if seat in candidate else ROLE_INCUMBENT
         for seat in range(SEAT_COUNT)
     )
+
+
+@dataclass(frozen=True, slots=True)
+class RecordLayout:
+    """半荘rowのidentity・seat roleの意味と、保存物のprotocol / schema名。
+
+    局・終局の検査（K3〜K11）と第2層・manifestのI/Oは共通で、半荘をseed以外の
+    どのkeyで識別し、seatのroleをどう検査するかだけをprotocolごとに分ける。
+    AABB（#513）は ``AABB_LAYOUT``。#522の混成focal比較は別の値を使い、AABBの
+    配置表・role検査を緩めない。
+
+    ``validate_keys(row)`` はkey値の型・範囲、``validate_seats(row)`` はseatの
+    role・identityを検査し、どちらも ``KyokuRecordError`` で拒否する。
+    """
+
+    protocol_id: str
+    kyoku_record_schema: str
+    event_fact_schema: str
+    manifest_schema: str
+    key_fields: tuple[str, ...]
+    validate_keys: Callable[[dict], None]
+    validate_seats: Callable[[dict], None]
+
+    def hanchan_fields(self) -> frozenset[str]:
+        return _HANCHAN_CORE_FIELDS | frozenset(self.key_fields)
+
+    def key(self, row: Mapping) -> tuple:
+        """event内で半荘を一意に識別する ``(seed, *keys)``。"""
+        return (row["seed"], *(row[name] for name in self.key_fields))
+
+    def context(self, row: Mapping) -> str:
+        return " ".join(f"{name} {row[name]}" for name in ("seed", *self.key_fields))
 
 
 # ---------------------------------------------------------------------------
@@ -311,10 +343,35 @@ def project_hanchan(
     ``selector_call_counts`` / ``policy_call_counts``はrunnerが同じ実行で数えた
     seat index順の値である（§10.3、K12）。
     """
+    return project_row(
+        match,
+        seed=seed,
+        keys={"placement": placement},
+        seats=seats,
+        selector_call_counts=selector_call_counts,
+        policy_call_counts=policy_call_counts,
+        layout=AABB_LAYOUT,
+    )
+
+
+def project_row(
+    match: CompletedMatch,
+    *,
+    seed: int,
+    keys: Mapping[str, object],
+    seats: Sequence[SeatAssignment],
+    selector_call_counts: Sequence[int],
+    policy_call_counts: Sequence[int],
+    layout: "RecordLayout",
+) -> dict[str, object]:
+    """``project_hanchan`` と同じ射影を、``layout`` の半荘identity keyで行う。"""
+    if set(keys) != set(layout.key_fields):
+        raise KyokuRecordError(f"hanchan keys must be exactly {layout.key_fields}")
+    context = layout.context({"seed": seed, **keys})
     try:
         boundaries = facts.match_boundaries(match)
     except facts.CompletedMatchFactError as error:
-        raise KyokuRecordError(f"seed {seed} placement {placement}: {error}") from error
+        raise KyokuRecordError(f"{context}: {error}") from error
     if any(not isinstance(item, SeatAssignment) for item in seats) or len(seats) != 4:
         raise KyokuRecordError("seats must be four SeatAssignment values")
     players = {seat_index(player.seat): player for player in match.final_score.players}
@@ -341,7 +398,7 @@ def project_hanchan(
             _kyoku_value(index, boundary)
             for index, boundary in enumerate(boundaries.rounds)
         ],
-        "placement": placement,
+        **keys,
         "policy_call_counts": list(policy_call_counts),
         "seats": [item.to_value() for item in seats],
         "seed": seed,
@@ -350,10 +407,9 @@ def project_hanchan(
     for boundary in boundaries.rounds:
         if boundary.completed.random_provenance.match_seed != seed:
             raise KyokuRecordError(
-                f"seed {seed} placement {placement}: CompletedMatch was played "
-                "with a different match seed"
+                f"{context}: CompletedMatch was played with a different match seed"
             )
-    return validate_hanchan_row(roundtrip(row))
+    return validate_hanchan_row(roundtrip(row), layout)
 
 
 # ---------------------------------------------------------------------------
@@ -736,6 +792,10 @@ def _validate_final(row: dict, last: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _validate_aabb_keys(row: dict) -> None:
+    placement_roles(row["placement"])
+
+
 def _validate_seats(row: dict) -> None:
     """K2（record内部）: roleが§2.2の配置表と一致し、roleごとにidentityが1つ。"""
     seats = _list(row["seats"], "seats")
@@ -756,15 +816,26 @@ def _validate_seats(row: dict) -> None:
         )
 
 
-def validate_hanchan_row(row: object) -> dict:
+AABB_LAYOUT = RecordLayout(
+    protocol_id=PROTOCOL_ID,
+    kyoku_record_schema=KYOKU_RECORD_SCHEMA,
+    event_fact_schema="arena-heuristic-candidate-engine-aabb-event-fact-v1",
+    manifest_schema="arena-heuristic-candidate-engine-aabb-record-manifest-v1",
+    key_fields=("placement",),
+    validate_keys=_validate_aabb_keys,
+    validate_seats=_validate_seats,
+)
+"""#513のAABB record（半荘は ``(seed, placement)``、roleはA / Bの配置表）。"""
+
+
+def validate_hanchan_row(row: object, layout: RecordLayout = AABB_LAYOUT) -> dict:
     """第1層の1半荘rowを検査し、そのまま返す（作成時・読込時の共通検査）。"""
-    _fields(row, _HANCHAN_FIELDS, "hanchan")
+    _fields(row, layout.hanchan_fields(), "hanchan")
     seed = _seed(row["seed"], "seed")
-    placement = row["placement"]
-    placement_roles(placement)
-    context = f"seed {seed} placement {placement}"
+    layout.validate_keys(row)
+    context = layout.context(row)
     try:
-        _validate_seats(row)
+        layout.validate_seats(row)
         # K12
         selector = _four(row["selector_call_counts"], "selector_call_counts")
         policy = _four(row["policy_call_counts"], "policy_call_counts")
@@ -836,11 +907,14 @@ def validate_hanchan_row(row: object) -> dict:
     return row
 
 
-def require_unique_hanchans(rows: Sequence[Mapping]) -> None:
-    """event内で``(seed, placement)``が重複しないこと（K1の一部）。"""
-    keys = [(row["seed"], row["placement"]) for row in rows]
+def require_unique_hanchans(
+    rows: Sequence[Mapping], layout: RecordLayout = AABB_LAYOUT
+) -> None:
+    """event内で半荘のkey（AABBは ``(seed, placement)``）が重複しないこと（K1の一部）。"""
+    keys = [layout.key(row) for row in rows]
     if len(set(keys)) != len(keys):
-        raise KyokuRecordError("K1: (seed, placement) appears more than once")
+        names = ", ".join(("seed", *layout.key_fields))
+        raise KyokuRecordError(f"K1: ({names}) appears more than once")
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +962,7 @@ def verify_schedule(
 
 
 __all__ = [
+    "AABB_LAYOUT",
     "BANKRUPTCY_THRESHOLD",
     "KYOKU_RECORD_SCHEMA",
     "OKA_TOP_POINTS",
@@ -902,10 +977,12 @@ __all__ = [
     "STARTING_POINTS",
     "UMA",
     "ExpectedHanchan",
+    "RecordLayout",
     "SeatAssignment",
     "canonical_line",
     "placement_roles",
     "project_hanchan",
+    "project_row",
     "require_unique_hanchans",
     "roundtrip",
     "validate_hanchan_row",

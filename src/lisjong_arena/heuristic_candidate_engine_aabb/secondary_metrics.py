@@ -23,12 +23,14 @@ from collections.abc import Callable, Sequence
 
 from .errors import SecondaryMetricError
 from .kyoku_record import (
+    AABB_LAYOUT,
     PLACEMENT_CANDIDATE_SEATS,
     ROLE_CANDIDATE,
     ROLE_INCUMBENT,
     ROLES,
     SEAT_COUNT,
     STARTING_POINTS,
+    RecordLayout,
 )
 from .record_store import VerifiedKyokuRecords
 
@@ -383,29 +385,76 @@ def _conditional(per_seed, metrics) -> dict[str, object]:
 
 
 def _role_totals(
-    rows: Sequence[dict],
+    members: Sequence[tuple[int, int, str]],
+    hanchans: Sequence[dict],
     events: Sequence[dict] | None,
     seat_values: Callable,
 ) -> dict[str, dict[str, int]]:
     totals = {role: {} for role in ROLES}
-    for row_index, row in enumerate(rows):
+    for row_index, seat, role in members:
         event_row = None if events is None else events[row_index]
-        for seat in range(SEAT_COUNT):
-            role = row["seats"][seat]["role"]
-            _add(totals[role], seat_values(row, event_row, seat))
+        _add(totals[role], seat_values(hanchans[row_index], event_row, seat))
     return totals
 
 
 def summarize_secondary_metrics(records: VerifiedKyokuRecords) -> dict[str, object]:
-    """保存物から§10.5・§10.6の副指標と点数分解を再集計する。"""
+    """保存物から§10.5・§10.6の副指標と点数分解を再集計する（AABBの6配置block）。"""
+    if not isinstance(records, VerifiedKyokuRecords):
+        raise SecondaryMetricError("records must be VerifiedKyokuRecords")
+    hanchans = records.hanchans
+    groups = [
+        (
+            seed,
+            [
+                (index, seat, hanchans[index]["seats"][seat]["role"])
+                for index in indices
+                for seat in range(SEAT_COUNT)
+            ],
+        )
+        for seed, indices in _blocks(hanchans)
+    ]
+    return summarize_seat_groups(records, groups)
+
+
+def summarize_seat_groups(
+    records: VerifiedKyokuRecords,
+    groups: Sequence[tuple[int, Sequence[tuple[int, int, str]]]],
+    *,
+    layout: RecordLayout = AABB_LAYOUT,
+    schema: str = SECONDARY_METRICS_SCHEMA,
+) -> dict[str, object]:
+    """seed blockごとに数える ``(row index, seat, role A / B)`` を明示して集計する。
+
+    AABBは各半荘の全seatをroleどおりに数える。#522の混成focal比較はfocal席だけを
+    条件（A / B）で数え、相手席は数えない。重み付け・分子 / 分母・null・第2層の
+    扱いは同じである。seedの重複、空のgroup、同じseatの重複、範囲外のrow / seat、
+    A / B以外のroleは拒否する。
+    """
     if not isinstance(records, VerifiedKyokuRecords):
         raise SecondaryMetricError("records must be VerifiedKyokuRecords")
     hanchans = records.hanchans
     events = records.event_facts if records.event_fact_status.valid else None
-    blocks = _blocks(hanchans)
+    blocks = [(seed, list(members)) for seed, members in groups]
+    seeds = [seed for seed, _ in blocks]
+    if not blocks or len(set(seeds)) != len(seeds):
+        raise SecondaryMetricError("seed groups must be non-empty and unique")
+    for seed, members in blocks:
+        seats = [(index, seat) for index, seat, _ in members]
+        if (
+            not members
+            or len(set(seats)) != len(seats)
+            or any(
+                not 0 <= index < len(hanchans)
+                or hanchans[index]["seed"] != seed
+                or not 0 <= seat < SEAT_COUNT
+                or role not in ROLES
+                for index, seat, role in members
+            )
+        ):
+            raise SecondaryMetricError(f"seed {seed}: invalid seat group")
 
     def layer1(row, _event_row, seat):
-        context = f"seed {row['seed']} placement {row['placement']} seat {seat}"
+        context = f"{layout.context(row)} seat {seat}"
         total = _result_seat_values(row, seat)
         for index, kyoku in enumerate(row["kyokus"]):
             _add(total, _kyoku_seat_values(kyoku, seat, f"{context} kyoku {index}"))
@@ -422,12 +471,12 @@ def summarize_secondary_metrics(records: VerifiedKyokuRecords) -> dict[str, obje
 
     per_seed = []
     per_seed_events = []
-    for seed, indices in blocks:
-        rows = [hanchans[index] for index in indices]
-        per_seed.append((seed, _role_totals(rows, None, layer1)))
+    for seed, members in blocks:
+        per_seed.append((seed, _role_totals(members, hanchans, None, layer1)))
         if events is not None:
-            event_rows = [events[index] for index in indices]
-            per_seed_events.append((seed, _role_totals(rows, event_rows, layer2)))
+            per_seed_events.append(
+                (seed, _role_totals(members, hanchans, events, layer2))
+            )
 
     decomposition = []
     for seed, totals in per_seed:
@@ -471,7 +520,7 @@ def summarize_secondary_metrics(records: VerifiedKyokuRecords) -> dict[str, obje
         },
         "point_decomposition": decomposition,
         "rank_distribution": ranks,
-        "schema": SECONDARY_METRICS_SCHEMA,
+        "schema": schema,
         "seeds": [seed for seed, _ in blocks],
     }
 
@@ -484,5 +533,6 @@ __all__ = [
     "KYOKU_CONDITIONAL_METRICS",
     "KYOKU_PAIRED_METRICS",
     "SECONDARY_METRICS_SCHEMA",
+    "summarize_seat_groups",
     "summarize_secondary_metrics",
 ]

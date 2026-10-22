@@ -40,9 +40,9 @@ from lisjong_engine.round_evidence_completion import RoundEvidenceCompletion
 from lisjong_arena.lisjong_engine.completed_match_facts import seat_index
 
 from .errors import EventFactError
-from .kyoku_record import SEAT_COUNT, roundtrip
+from .kyoku_record import AABB_LAYOUT, SEAT_COUNT, RecordLayout, roundtrip
 
-EVENT_FACT_SCHEMA = "arena-heuristic-candidate-engine-aabb-event-fact-v1"
+EVENT_FACT_SCHEMA = AABB_LAYOUT.event_fact_schema
 
 FACT_TYPES = (
     "meld_called",
@@ -58,7 +58,8 @@ _MELD_TILE_COUNT = {"chi": 3, "pon": 3, "daiminkan": 4, "ankan": 4, "kakan": 4}
 _RED_TILE_TYPES = frozenset({4, 13, 22})
 """赤牌になり得る牌種ID（5m / 5p / 5s）。"""
 
-_ROW_FIELDS = frozenset({"kyokus", "placement", "seed"})
+_ROW_CORE_FIELDS = frozenset({"kyokus", "seed"})
+"""第2層rowのうち、第1層rowと同じ半荘identity key以外のfield。"""
 _KYOKU_FIELDS = frozenset(
     {"dealer_seat", "facts", "hand_number", "honba", "kyoku_index", "prevailing_wind"}
 )
@@ -154,7 +155,9 @@ def _public_facts(evidence: Sequence[object], context: str) -> list[dict]:
     return rows
 
 
-def project_event_facts(completions: object, hanchan_row: dict) -> dict[str, object]:
+def project_event_facts(
+    completions: object, hanchan_row: dict, layout: RecordLayout = AABB_LAYOUT
+) -> dict[str, object]:
     """1半荘分の``RoundEvidenceCompletion``列を第2層rowへ射影し、検査する。
 
     ``hanchan_row``は検査済みの第1層rowである。completionの件数が局数と違う、
@@ -162,8 +165,7 @@ def project_event_facts(completions: object, hanchan_row: dict) -> dict[str, obj
     ``EventFactError``でfail closedする。
     """
     seed = hanchan_row["seed"]
-    placement = hanchan_row["placement"]
-    context = f"seed {seed} placement {placement} event facts"
+    context = f"{layout.context(hanchan_row)} event facts"
     if completions is None:
         raise EventFactError(f"{context}: round evidence was not captured")
     if isinstance(completions, (str, bytes)) or not isinstance(completions, Sequence):
@@ -220,8 +222,12 @@ def project_event_facts(completions: object, hanchan_row: dict) -> dict[str, obj
                 "prevailing_wind": kyoku["prevailing_wind"],
             }
         )
-    row = {"kyokus": rows, "placement": placement, "seed": seed}
-    return validate_event_fact_row(roundtrip(row), hanchan_row)
+    row = {
+        "kyokus": rows,
+        "seed": seed,
+        **{name: hanchan_row[name] for name in layout.key_fields},
+    }
+    return validate_event_fact_row(roundtrip(row), hanchan_row, layout)
 
 
 # ---------------------------------------------------------------------------
@@ -368,26 +374,28 @@ def _validate_facts(facts: object, *, contributions: set[int], context: str) -> 
         )
 
 
-def validate_event_fact_row(row: object, hanchan_row: dict) -> dict:
+def validate_event_fact_row(
+    row: object, hanchan_row: dict, layout: RecordLayout = AABB_LAYOUT
+) -> dict:
     """第2層の1半荘rowを、検査済みの第1層rowに対して検査する。
 
     不正な値はすべて``EventFactError``にする（正式実行で第2層だけを無効化できるように、
     型の誤りを``TypeError``等として伝播させない）。
     """
     try:
-        return _validate_event_fact_row(row, hanchan_row)
+        return _validate_event_fact_row(row, hanchan_row, layout)
     except (TypeError, KeyError, ValueError, AttributeError) as error:
         raise EventFactError(
             f"event fact row has an invalid value: {type(error).__name__}: {error}"
         ) from error
 
 
-def _validate_event_fact_row(row: object, hanchan_row: dict) -> dict:
-    _fields(row, _ROW_FIELDS, "event fact row")
-    seed = hanchan_row["seed"]
-    placement = hanchan_row["placement"]
-    context = f"seed {seed} placement {placement} event facts"
-    if not _same(row["seed"], seed) or not _same(row["placement"], placement):
+def _validate_event_fact_row(row: object, hanchan_row: dict, layout) -> dict:
+    _fields(row, _ROW_CORE_FIELDS | frozenset(layout.key_fields), "event fact row")
+    context = f"{layout.context(hanchan_row)} event facts"
+    if not all(
+        _same(row[name], hanchan_row[name]) for name in ("seed", *layout.key_fields)
+    ):
         raise EventFactError(f"{context}: row is not bound to its hanchan")
     kyokus = row["kyokus"]
     if type(kyokus) is not list or len(kyokus) != len(hanchan_row["kyokus"]):
