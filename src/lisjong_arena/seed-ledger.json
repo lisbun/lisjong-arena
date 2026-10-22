@@ -133,6 +133,28 @@
       "state": "RESERVED"
     },
     {
+      "allocation_identity": "744b0846a19fe8227850137f5a1ce5e851bc9b70dce7543b52131b91584ba720",
+      "allocation_timestamp": "2026-10-22T09:47:51.866639Z",
+      "arena_revision": "33721fd9883d6f4a58a1d53e92a9ba1187ccfa47",
+      "owner_issue": "lisbun/lisjong-arena#520",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-paijia-tie-screen-520",
+      "protocol": "arena-heuristic-candidate-engine-aabb-half-v1",
+      "protocol_revision": "protocol_digest e60f75d7c32695e1c79225cad409334c3233dc8dd8b1cd0c6c7995789c9adec2",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/520",
+      "purpose": "#520 stage 2 development screen: 32 seeds x 6 placements once; DEVELOPMENT, not a formal result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 520100,
+        "kind": "range",
+        "last": 520131
+      },
+      "seed_membership_identity": "e23a2b72bc971a48300487f73802bce4cd955b2b49f93208ae75068919b991f0",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
