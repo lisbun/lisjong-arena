@@ -254,6 +254,32 @@ class PlanTest(_Case):
 # ---------------------------------------------------------------------------
 
 
+def _rewrite(path, change):
+    document = json.loads(path.read_text("utf-8"))
+    change(document)
+    path.write_text(canonical_json_text(document), "utf-8", newline="\n")
+
+
+def _over_limit_cases(limits):
+    """planの上限を超えたtimings（review B2）。RSSの欠測はそのまま受理する。"""
+    wall = limits["wall_seconds"]
+    over_rss_kib = limits["process_tree_rss_bytes"] // 1024 + 1
+
+    def total(name, value):
+        return lambda timings: timings.update({name: value})
+
+    def first_row(name, value):
+        return lambda timings: timings["hanchans"][0].update({name: value})
+
+    return [
+        (total("monotonic_elapsed_seconds", wall + 1), "wall limit"),
+        (total("realtime_elapsed_seconds", wall + 1), "wall limit"),
+        (total("schedule_wall_seconds", wall + 1), "wall limit"),
+        (first_row("parent_peak_rss_kib", over_rss_kib), "RSS"),
+        (first_row("worker_peak_rss_kib", over_rss_kib), "RSS"),
+    ]
+
+
 class ActivationRunTest(_Case):
     def setUp(self):
         super().setUp()
@@ -443,6 +469,74 @@ class ActivationRunTest(_Case):
         with self.assertRaisesRegex(EngineAabbRecordError, "kyoku_count"):
             paijia_tie_activation.verify_activation(self.plan_path)
 
+    def test_detail_changes_are_rejected_without_touching_the_summary(self):
+        """review B1: summaryに現れない詳細だけを壊しても、verifyが拒否する。"""
+        self.run_activation()
+        path = self.output / "shadow.json"
+        original = path.read_text("utf-8")
+
+        def detail(change):
+            def apply(shadow):
+                change(shadow["hanchans"][0]["seats"][0]["decisions"][0]["detail"])
+
+            return apply
+
+        def set_paijia(entry):
+            entry["analysis"]["paijia_evaluations"][1]["paijia"] = 4
+
+        cases = [
+            (detail(lambda d: d.update(analysis=None)), "switch analysis"),
+            (detail(lambda d: d.update(candidate_action=None)), "A action"),
+            (detail(lambda d: d.update(incumbent_action=None)), "B action"),
+            (detail(lambda d: d.update(violations=["x"])), "violations"),
+            (
+                detail(lambda d: d["candidate_action"].update(tsumogiri=True)),
+                "differs from the recorded actions",
+            ),
+            # 形は正しいまま値だけ変えた詳細は、summaryが拘束するdigestで検出する
+            (detail(set_paijia), "summary differs"),
+        ]
+        for change, message in cases:
+            with self.subTest(message=message):
+                _rewrite(path, change)
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_activation.verify_activation(self.plan_path)
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_activation.screen_prerequisite(self.plan_path)
+                path.write_text(original, "utf-8", newline="\n")
+        paijia_tie_activation.verify_activation(self.plan_path)
+        hanchans = self.output / "hanchans.json"
+        _rewrite(hanchans, lambda d: d["hanchans"][0].update(end_reason="other"))
+        with self.assertRaisesRegex(EngineAabbRecordError, "summary differs"):
+            paijia_tie_activation.verify_activation(self.plan_path)
+
+    def test_timings_over_the_plan_limits_are_rejected(self):
+        """review B2: 保存timingsが上限を超えていればverify・前提の作成が拒否する。"""
+        self.run_activation()
+        path = self.output / "timings.json"
+        original = path.read_text("utf-8")
+        for change, message in _over_limit_cases(self.plan["resource_limits"]):
+            with self.subTest(message=message):
+                _rewrite(path, change)
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_activation.verify_activation(self.plan_path)
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_activation.screen_prerequisite(self.plan_path)
+                path.write_text(original, "utf-8", newline="\n")
+
+        def missing(timings):
+            for row in timings["hanchans"]:
+                row["parent_peak_rss_kib"] = None
+                row["worker_peak_rss_kib"] = None
+
+        # 欠測は上限超過ではない（summaryはRSSも持つので、ここではtimings検査だけを見る）
+        timings = json.loads(original)
+        missing(timings)
+        hanchans = json.loads((self.output / "hanchans.json").read_text("utf-8"))
+        paijia_tie_plan.require_timings(
+            self.plan, timings, [row["kyoku_count"] for row in hanchans["hanchans"]]
+        )
+
     def test_completed_stage_is_never_rerun(self):
         self.run_activation()
         with self.assertRaisesRegex(EngineAabbRecordError, "write-once"):
@@ -567,6 +661,57 @@ class ScreenRunTest(_Case):
         with self.assertRaisesRegex(RunStopped, "peak RSS"):
             self.run_screen()
         self.assertFalse(self.output.exists())
+
+    def test_switch_changes_are_rejected_without_touching_the_summary(self):
+        """review B1: switchのanalysisだけを壊しても、verifyが拒否する（reportなし）。"""
+        self.run_screen()
+        path = self.output / "policy-analysis.json"
+        original = path.read_text("utf-8")
+
+        def switch(change):
+            def apply(analysis):
+                change(analysis["hanchans"][0]["seats"][0]["switches"][0])
+
+            return apply
+
+        def set_paijia(entry):
+            entry["analysis"]["paijia_evaluations"][1]["paijia"] = 4
+
+        cases = [
+            (switch(lambda e: e.update(analysis=None)), "switch analysis"),
+            (switch(lambda e: e.update(kind="red-only-change")), "kind differs"),
+            (
+                switch(lambda e: e["analysis"].update(selected_action=None)),
+                "evaluations",
+            ),
+            (switch(set_paijia), "summary differs"),
+        ]
+        for change, message in cases:
+            with self.subTest(message=message):
+                _rewrite(path, change)
+                self.assertFalse((self.output / "report.json").exists())
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_screen.verify_screen(self.plan_path)
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_screen.write_report(self.plan_path)
+                path.write_text(original, "utf-8", newline="\n")
+        paijia_tie_screen.verify_screen(self.plan_path)
+
+    def test_timings_over_the_plan_limits_are_rejected(self):
+        """review B2: reportがない状態でも、上限超過のtimingsをverifyが拒否する。"""
+        self.run_screen()
+        path = self.output / "timings.json"
+        original = path.read_text("utf-8")
+        for change, message in _over_limit_cases(self.plan["resource_limits"]):
+            with self.subTest(message=message):
+                _rewrite(path, change)
+                self.assertFalse((self.output / "report.json").exists())
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_screen.verify_screen(self.plan_path)
+                with self.assertRaisesRegex(EngineAabbRecordError, message):
+                    paijia_tie_screen.write_report(self.plan_path)
+                path.write_text(original, "utf-8", newline="\n")
+        paijia_tie_screen.verify_screen(self.plan_path)
 
     def test_tampering_is_rejected(self):
         self.run_screen()
@@ -793,6 +938,38 @@ class ShadowProxyTest(unittest.TestCase):
         self.assertEqual(
             rows[0]["detail"]["incumbent_action"]["__type"], "DiscardAction"
         )
+
+
+class StoredShapeTest(unittest.TestCase):
+    """保存側の検査が、実際のlisjong値の正規化表現（canonical_engine_value）を受理する。"""
+
+    def test_real_canonical_values_pass_the_stored_checks(self):
+        from lisjong_arena.heuristic_candidate_engine_aabb.backend_check import (
+            canonical_engine_value,
+        )
+
+        tile, category = _tiles()
+        m5 = _discard(tile(category.MANZU, 5))
+        p9 = _discard(tile(category.PINZU, 9))
+        m5_red = _discard(tile(category.MANZU, 5, red=True))
+        switch = _analysis("PAIJIA_SWITCH", m5, p9, [(m5, 9), (p9, 3)])
+        champion, selected = paijia_tie_plan.require_switch_analysis(
+            canonical_engine_value(switch), "test"
+        )
+        self.assertEqual(champion, canonical_engine_value(m5))
+        kind = paijia_tie_plan.discard_change_kind
+        self.assertEqual(kind(champion, selected, "t"), "tile-type-change")
+        self.assertEqual(
+            kind(canonical_engine_value(m5), canonical_engine_value(m5_red), "t"),
+            "red-only-change",
+        )
+        # fixtureの合成値は実際の正規化表現と同じ形
+        self.assertEqual(set(fx.discard()), set(canonical_engine_value(m5)))
+        self.assertEqual(
+            set(fx.discard()["tile"]), set(canonical_engine_value(m5)["tile"])
+        )
+        synthetic = fx.analysis("PAIJIA_SWITCH", *fx.CHANGE_PAIRS["tile-type-change"])
+        self.assertEqual(set(synthetic), set(canonical_engine_value(switch)))
 
 
 class PlayTaskWrapperTest(unittest.TestCase):

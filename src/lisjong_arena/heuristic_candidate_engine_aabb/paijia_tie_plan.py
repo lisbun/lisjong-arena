@@ -846,7 +846,12 @@ def require_timings(
 
     ``complete=False`` は書込中（保存・summaryの秒数と終了時の経過がまだない）の検査で、
     summaryが使う値（半荘ごとの行とschedule wall）だけを見る。
+
+    実行時と同じ上限もここで再確認する: 半荘ごとの「親 + workerのpeak RSS」の既知値の和、
+    schedule wall、``complete`` ならmax(monotonic経過, realtime経過)。RSSの欠測（null）は
+    欠測のまま扱い、0とみなさない。verify・report・段階2の前提の作成はすべてこの完全検査を通す。
     """
+    limits = plan["resource_limits"]
     if type(timings) is not dict or timings.get("plan_digest") != plan["plan_digest"]:
         raise EngineAabbPaijiaTieError("timings do not belong to the plan")
     rows = timings.get("hanchans")
@@ -871,11 +876,94 @@ def require_timings(
             raise EngineAabbPaijiaTieError(
                 f"{context} kyoku_count differs from the stored record"
             )
-        rss(row["worker_peak_rss_kib"], f"{context} worker_peak_rss_kib")
-        rss(row["parent_peak_rss_kib"], f"{context} parent_peak_rss_kib")
+        known = [
+            value
+            for value in (
+                rss(row["worker_peak_rss_kib"], f"{context} worker_peak_rss_kib"),
+                rss(row["parent_peak_rss_kib"], f"{context} parent_peak_rss_kib"),
+            )
+            if value is not None
+        ]
+        if sum(known) * 1024 > limits["process_tree_rss_bytes"]:
+            raise EngineAabbPaijiaTieError(
+                f"{context}: parent + worker peak RSS exceeds the plan limit"
+            )
     for name in _TIMING_TOTAL_FIELDS if complete else ("schedule_wall_seconds",):
         seconds(timings.get(name), f"timings {name}")
+    elapsed = [timings["schedule_wall_seconds"]]
+    if complete:
+        elapsed += [
+            timings["monotonic_elapsed_seconds"],
+            timings["realtime_elapsed_seconds"],
+        ]
+    if max(elapsed) > limits["wall_seconds"]:
+        raise EngineAabbPaijiaTieError(
+            "timings exceed the stage wall limit of the plan"
+        )
     return timings
+
+
+def document_sha256(document: object) -> str:
+    """保存したJSON documentの内容digest（書いたcanonical JSONのSHA-256）。
+
+    summaryがPolicy側の保存物をこのdigestで拘束するので、summaryに現れない詳細
+    （analysis・行動）を書き換えてもsummaryの再導出が一致しなくなる。
+    """
+    return sha256_bytes(canonical_json_text(document).encode("utf-8"))
+
+
+def _canonical_tile(action: object, context: str) -> tuple:
+    try:
+        tile = action["tile"]
+        return (tile["tile_type"]["category"], tile["tile_type"]["rank"]), tile[
+            "is_red"
+        ]
+    except (TypeError, KeyError) as error:
+        raise EngineAabbPaijiaTieError(f"{context}: action has no tile") from error
+
+
+def discard_change_kind(incumbent: object, candidate: object, context: str) -> str:
+    """保存した正規化済みの2打牌（違う行動）から、違いの種類を読む（worker側と同じ規則）。"""
+    if type(incumbent) is not dict or type(candidate) is not dict:
+        raise EngineAabbPaijiaTieError(f"{context}: actions must be recorded")
+    if incumbent == candidate:
+        raise EngineAabbPaijiaTieError(f"{context}: a change with equal actions")
+    if incumbent.get("__type") != "DiscardAction" or (
+        candidate.get("__type") != "DiscardAction"
+    ):
+        raise EngineAabbPaijiaTieError(f"{context}: a change must be two discards")
+    incumbent_tile = _canonical_tile(incumbent, context)
+    candidate_tile = _canonical_tile(candidate, context)
+    if incumbent_tile == candidate_tile:
+        return "tsumogiri-only"
+    if incumbent_tile[0] == candidate_tile[0]:
+        return "red-only-change"
+    return "tile-type-change"
+
+
+def require_switch_analysis(analysis: object, context: str) -> tuple[dict, dict]:
+    """保存した ``PAIJIA_SWITCH`` のanalysis（lisjongの値の正規化表現）の形を確かめ、
+    ``(champion_action, selected_action)`` を返す。paijia・評価値は再計算しない。"""
+    if (
+        type(analysis) is not dict
+        or analysis.get("__type") != "SuitedPaijiaTieAnalysis"
+        or analysis.get("stage") != "SuitedPaijiaTieStage.PAIJIA_SWITCH"
+        or analysis.get("action_changed") is not True
+        or type(analysis.get("paijia_evaluations")) is not list
+        or len(analysis["paijia_evaluations"]) < 2
+    ):
+        raise EngineAabbPaijiaTieError(f"{context}: switch analysis is invalid")
+    champion = analysis.get("champion_action")
+    selected = analysis.get("selected_action")
+    evaluated = [
+        entry.get("action") if type(entry) is dict else None
+        for entry in analysis["paijia_evaluations"]
+    ]
+    if champion not in evaluated or selected not in evaluated:
+        raise EngineAabbPaijiaTieError(
+            f"{context}: switch actions are not among the evaluations"
+        )
+    return champion, selected
 
 
 def clock_document(timings: dict) -> dict[str, float]:

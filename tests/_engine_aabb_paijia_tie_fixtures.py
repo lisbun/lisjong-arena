@@ -126,15 +126,74 @@ def gate(plan, *, ledger):
 # ---------------------------------------------------------------------------
 
 
+def discard(category="MANZU", rank=5, *, red=False, tsumogiri=False):
+    """``canonical_engine_value(DiscardAction)`` と同じ形の正規化済み打牌。"""
+    return {
+        "__type": "DiscardAction",
+        "actor": "Seat.EAST",
+        "tile": {
+            "__type": "Tile",
+            "is_red": red,
+            "tile_type": {
+                "__type": "TileType",
+                "category": f"TileCategory.{category}",
+                "rank": rank,
+            },
+        },
+        "tsumogiri": tsumogiri,
+    }
+
+
+CHANGE_PAIRS = {
+    "tile-type-change": (discard(), discard("PINZU", 9)),
+    "red-only-change": (discard(), discard(red=True)),
+    "tsumogiri-only": (discard(tsumogiri=True), discard()),
+}
+
+
+def analysis(stage, champion, selected):
+    """``canonical_engine_value(SuitedPaijiaTieAnalysis)`` と同じ形。"""
+    evaluations = []
+    if stage in ("PAIJIA_SWITCH", "CHAMPION_MINIMUM_PAIJIA"):
+        other = discard("SOUZU", 1)
+        values = (
+            ((champion, 9), (selected, 3), (other, 5))
+            if stage == "PAIJIA_SWITCH"
+            else ((champion, 3), (other, 5))
+        )
+        evaluations = [
+            {"__type": "SuitedPaijiaCandidateEvaluation", "action": a, "paijia": p}
+            for a, p in values
+        ]
+    return {
+        "__type": "SuitedPaijiaTieAnalysis",
+        "action_changed": champion != selected,
+        "champion_action": champion,
+        "paijia_evaluations": evaluations,
+        "selected_action": selected,
+        "stage": f"SuitedPaijiaTieStage.{stage}",
+    }
+
+
 def _row(outcome="same", stage="NO_ANALYSIS"):
     row = {"a_seconds": 2e-4, "b_seconds": 1e-4, "outcome": outcome, "stage": stage}
-    if outcome != "same" or stage in ("PAIJIA_SWITCH", "CHAMPION_MINIMUM_PAIJIA"):
-        row["detail"] = {
-            "analysis": None,
-            "candidate_action": {"__type": "DiscardAction", "tile": "a"},
-            "incumbent_action": {"__type": "DiscardAction", "tile": "b"},
-            "violations": [],
-        }
+    if outcome in CHANGE_PAIRS:
+        incumbent, candidate = CHANGE_PAIRS[outcome]
+        detail = analysis(stage, incumbent, candidate), candidate, incumbent, []
+    elif outcome == "same" and stage in ("PAIJIA_SWITCH", "CHAMPION_MINIMUM_PAIJIA"):
+        action = discard()
+        detail = analysis(stage, action, action), action, action, []
+    elif outcome != "same":
+        detail = None, discard("PINZU", 9), discard(), ["synthetic reason"]
+    else:
+        return row
+    row["detail"] = dict(
+        zip(
+            ("analysis", "candidate_action", "incumbent_action", "violations"),
+            detail,
+            strict=True,
+        )
+    )
     return row
 
 
@@ -254,9 +313,13 @@ def _screen_seats(task, *, switches=1):
             if switches:
                 stages["PAIJIA_SWITCH"] = switches
             entry["stage_counts"] = {k: v for k, v in stages.items() if v}
+            kinds = ("tile-type-change", "red-only-change")[:switches]
             entry["switches"] = [
-                {"analysis": {"__type": "SuitedPaijiaTieAnalysis"}, "kind": kind}
-                for kind in ("tile-type-change", "red-only-change")[:switches]
+                {
+                    "analysis": analysis("PAIJIA_SWITCH", *CHANGE_PAIRS[kind]),
+                    "kind": kind,
+                }
+                for kind in kinds
             ]
         seats.append(entry)
     return {"seats": seats}

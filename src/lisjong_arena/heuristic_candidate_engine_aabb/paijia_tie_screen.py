@@ -38,7 +38,9 @@ from .paijia_tie_plan import (
     EngineAabbPaijiaTieError,
     clock_document,
     default_clocks,
+    discard_change_kind,
     distribution,
+    document_sha256,
     execute_plan,
     load_plan,
     memory_summary,
@@ -47,6 +49,7 @@ from .paijia_tie_plan import (
     plan_schedule,
     read_document,
     require_live_target,
+    require_switch_analysis,
     require_timings,
     seconds,
 )
@@ -171,6 +174,11 @@ def _require_seat(seat: dict, role: str, count: int, context: str) -> None:
         )
     ):
         raise EngineAabbPaijiaTieError(f"{context}: switches are invalid")
+    for entry in switches:
+        # 内容の整合はここで、改変はsummaryが拘束するfile digestで検出する
+        champion, selected = require_switch_analysis(entry["analysis"], context)
+        if discard_change_kind(champion, selected, context) != entry["kind"]:
+            raise EngineAabbPaijiaTieError(f"{context}: switch kind differs from tiles")
 
 
 def _activation(analysis: dict) -> dict[str, object]:
@@ -270,6 +278,7 @@ def build_summary(plan: dict, records, analysis: dict) -> dict[str, object]:
     secondary = summarize_secondary_metrics(records)
     observed = _activation(analysis)
     payload = {
+        "inputs": {"policy_analysis_sha256": document_sha256(analysis)},
         "activation": observed["activation"],
         "aggregation_revision": plan["execution_target"]["revision"],
         "blocks": [

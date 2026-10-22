@@ -35,7 +35,9 @@ from .paijia_tie_plan import (
     EngineAabbPaijiaTieError,
     clock_document,
     default_clocks,
+    discard_change_kind,
     distribution,
+    document_sha256,
     execute_plan,
     load_plan,
     memory_summary,
@@ -43,6 +45,7 @@ from .paijia_tie_plan import (
     plan_schedule,
     read_document,
     require_live_target,
+    require_switch_analysis,
     require_timings,
     seconds,
 )
@@ -186,6 +189,52 @@ def _require_row(row: object, context: str) -> None:
         row["stage"] != STAGE_SWITCH
     ):
         raise EngineAabbPaijiaTieError(f"{context}: a change outside PAIJIA_SWITCH")
+    if needs_detail:
+        _require_detail(row["outcome"], row["stage"], row["detail"], context)
+
+
+def _require_detail(outcome: str, stage: str, detail: dict, context: str) -> None:
+    """保存したdetailがoutcomeと整合することを確かめる（paijia・評価値は再計算しない）。
+
+    detailはsummaryに現れないので、内容はここで、改変はsummaryが拘束する
+    ``shadow.json`` のdigestで検出する。
+    """
+    incumbent = detail["incumbent_action"]
+    candidate = detail["candidate_action"]
+    analysis = detail["analysis"]
+    violations = detail["violations"]
+    if type(violations) is not list or any(type(v) is not str for v in violations):
+        raise EngineAabbPaijiaTieError(f"{context}: violations must be strings")
+    if type(incumbent) is not dict:
+        raise EngineAabbPaijiaTieError(f"{context}: the B action is not recorded")
+    if outcome in INVALID_OUTCOMES:
+        if not violations:
+            raise EngineAabbPaijiaTieError(f"{context}: an invalid row needs reasons")
+        if (outcome == "candidate-illegal-action") != (candidate is None):
+            raise EngineAabbPaijiaTieError(f"{context}: illegal-action detail mismatch")
+        return
+    if violations:
+        raise EngineAabbPaijiaTieError(f"{context}: a valid row has violations")
+    if type(candidate) is not dict:
+        raise EngineAabbPaijiaTieError(f"{context}: the A action is not recorded")
+    if outcome == SAME:
+        if (
+            candidate != incumbent
+            or type(analysis) is not dict
+            or analysis.get("__type") != "SuitedPaijiaTieAnalysis"
+            or analysis.get("stage") != f"SuitedPaijiaTieStage.{stage}"
+            or analysis.get("champion_action") != incumbent
+            or analysis.get("selected_action") != candidate
+        ):
+            raise EngineAabbPaijiaTieError(f"{context}: same-action detail mismatch")
+        return
+    champion, selected = require_switch_analysis(analysis, context)
+    if champion != incumbent or selected != candidate:
+        raise EngineAabbPaijiaTieError(
+            f"{context}: switch analysis differs from the recorded actions"
+        )
+    if discard_change_kind(incumbent, candidate, context) != outcome:
+        raise EngineAabbPaijiaTieError(f"{context}: change kind differs from tiles")
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +329,10 @@ def build_summary(plan: dict, shadow: dict, hanchans: dict, timings: dict) -> di
         gate = {"checks": checks, "decision": decision}
     rows = timings["hanchans"]
     payload = {
+        "inputs": {
+            "hanchans_sha256": document_sha256(hanchans),
+            "shadow_sha256": document_sha256(shadow),
+        },
         "activation": {
             "by_outcome": by_outcome,
             "by_stage": dict(sorted(by_stage.items())),

@@ -290,6 +290,13 @@ paijia-screen-report     --plan P2
   `diagnostics/stop-<UTC>.json`（`not_a_result: true`）だけを残す。`output` があれば再実行しない
 - stage wall上限はmonotonicとrealtimeの両方で1半荘ごとに確かめ、長い方で判定する（#517で約401 sの差）。
   両方の経過を `timings.json` に記録し、verifyの出力に差を示す。process tree全体の強制はOS側で行う
+- verify・report・段階2の前提の作成は、保存した `timings.json` にも実行時と同じ上限を再確認する
+  （schedule wallとmax(monotonic, realtime)の経過 <= wall上限、半荘ごとの「親 + worker」RSSの既知値の和 <= 上限。
+  RSSの欠測は欠測のまま扱う）
+- summaryはPolicy側の保存物（段階1の `shadow.json` / `hanchans.json`、段階2の `policy-analysis.json`）を内容の
+  SHA-256で拘束する（`inputs`）。summaryに現れない詳細（analysis・行動）だけを書き換えても再導出が一致しない。
+  詳細の形（outcomeに応じたanalysis・行動・理由の有無、`PAIJIA_SWITCH` のanalysisの行動と記録した行動の一致、
+  変化の種類と牌の一致）も読込時に確かめる。paijia・評価値は再計算しない
 
 ### 9.2 段階1（activation）
 
