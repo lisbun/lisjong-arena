@@ -1,30 +1,30 @@
-# 現行のlisjong pin・Rust wheel（#507）
+# 現行のlisjong pin・Rust wheel（#520）
 
 リーチ宣言牌の位置（lisjong #301）、確定安全牌の基盤（lisjong #302）、`PolicyInput`の
 保存形式v2（lisjong #305）、policy source reader v2（lisjong #307）、派生source v2（lisjong #309）、聴牌PUSH/FOLDの対比較source契約（lisjong #288）、
 ロン合法source reader（lisjong #272）、役判定APIを含む組み合わせ。
-確定安全牌の候補Policy（lisjong #312）、L2aの合成Policyと評価tool（lisjong #316 / #317）を含む。
-`200566f..999553b`でnative（`native/`）のsourceは変わっていない。
+確定安全牌の候補Policy（lisjong #312）、L2aの合成Policyと評価tool（lisjong #316 / #317）、
+同点数牌paijia候補（lisjong #330）を含む。`200566f..0fff891`でnative（`native/`）のsourceは変わっていない。
 Pythonがdefault、Rustは明示的opt-in。過去の#423の実験条件は
 [#423時点の固定記録](lisjong-native-wheel-423.md)に保存し、変更しない。
 
 | 項目 | 値 |
 | --- | --- |
-| lisjong pin / native SOURCE_REVISION | `999553b6faf4c515c3a9f862429896308188e504`（lisjong #317 merge） |
-| wheel | `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（300,956 bytes） |
-| wheel SHA-256 | `9aa0ca4e3ce219d4834ee47f084806188ef920c94ff6bbe55f24c6fd44a6bdb7` |
+| lisjong pin / native SOURCE_REVISION | `0fff8918ec349eeec129907f6a723e2d7314b95a`（lisjong #330 / PR #331 merge） |
+| wheel | `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（300,955 bytes） |
+| wheel SHA-256 | `130929229b16b0508a61e77d04c0a219ab65a15f7e79a74d60c43725c0cb8fba` |
 | native API_VERSION / SCORING_API_VERSION | `3` / `1` |
-| main push CI | [39123038083](https://github.com/lisbun/lisjong/actions/runs/39123038083) / attempt 1 / success |
-| artifact | `lisjong-native-wheel-999553b6faf4c515c3a9f862429896308188e504` |
-| build | manylinux_2_28_x86_64、CPython 3.14.8、rustc 1.98.1、maturin 1.15.0、release / `--locked` |
+| main push CI | [39726880815](https://github.com/lisbun/lisjong/actions/runs/39726880815) / attempt 1 / success |
+| artifact | `lisjong-native-wheel-0fff8918ec349eeec129907f6a723e2d7314b95a` |
+| build | manylinux_2_28_x86_64、CPython 3.14.9、rustc 1.98.1、maturin 1.15.0、release / `--locked` |
 
 対象はLinux x86_64 / 通常版CPython 3.14（AL2023対応タグ）。Windowsへこのwheelをinstallしない。
 同名・同versionの旧wheelを上書きせず、revision別directoryで`SHA256SUMS`・`BUILD-INFO.txt`と一緒に保持する。
 GitHub artifactの保存期間は90日。取得後の長期保持先としてprivate S3のrevision別objectを利用できる。
 
 ```bash
-gh -R lisbun/lisjong run download 39123038083 \
-  --name lisjong-native-wheel-999553b6faf4c515c3a9f862429896308188e504 \
+gh -R lisbun/lisjong run download 39726880815 \
+  --name lisjong-native-wheel-0fff8918ec349eeec129907f6a723e2d7314b95a \
   --dir <new-revision-specific-directory>
 # 取得先で sha256sum --strict -c SHA256SUMS
 ```
@@ -51,7 +51,14 @@ AWSでの起動・停止・回収は [Champion 2bot Rust試運転](aws-riichilab
 
 ## 導入確認と正式評価
 
-2026-10-20 JSTにcurrent pin `999553b`のmain push CI成功、取得artifactの実SHA-256とBUILD-INFOを確認した
+2026-10-22 JSTにcurrent pin `0fff891`のmain push CI成功、取得artifactの`sha256sum --strict -c SHA256SUMS`と
+BUILD-INFO（`sha256`、`lisjong_revision` = pin、`github_event=push`、`refs/heads/main`）を確認した。
+merge SHAから作られたwheelで、PR headのwheelではない。WSLでのinstall・`environment_verify`・Rust backend確認は
+Issue #520の実行手順（[実行前計画](paijia-tie-screen-520.md)）で行う。#517の校正は旧pin `999553b`・旧wheel
+`9aa0ca4e…`の組で実行済みで、新pinで再現したことにはしない。
+
+以下は2026-10-20 JSTの旧pin `999553b`・旧wheel `9aa0ca4e…`（#507）の導入確認記録。
+2026-10-20 JSTにpin `999553b`のmain push CI成功、取得artifactの実SHA-256とBUILD-INFOを確認した
 （`sha256sum`の値と`SHA256SUMS`・`BUILD-INFO.txt`の`sha256`が一致、`lisjong_revision`がpinと一致）。
 wheelのbyte列が`ee02748f…`と違うのは、build時に埋め込む`SOURCE_REVISION`が違うためである（native sourceは同一）。
 Arenaは`SOURCE_REVISION`がpinと一致することを要求するので、`999553b`のpinには`9aa0ca4e…`を使う。

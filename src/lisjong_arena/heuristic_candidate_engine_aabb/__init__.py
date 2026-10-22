@@ -19,6 +19,11 @@ protocol・実行（#514）
 校正（#517）
   calibration       CALIBRATION専用のplan / run / verify / report（強さの結果ではない）
   backend_check     校正前のPython/Rust照合P2
+#520 同点数牌paijia候補の開発比較（DEVELOPMENT）
+  paijia_tie_plan        段階1・段階2・rehearsalのwrite-once plan、上限・停止・公開の実行枠
+  paijia_tie_worker      worker内のPolicy観測（shadow採点、analysis・判断時間）
+  paijia_tie_activation  段階1の変更頻度・時間gate
+  paijia_tie_screen      段階2の192半荘screen、進行条件、verify / report
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は
