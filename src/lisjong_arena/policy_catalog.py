@@ -5,7 +5,8 @@
 ``mechanism-riichi-defense`` / ``targeted-honor-release-terminal-progression`` /
 ``placement-aware-speed-call``と#423のexperimental候補
 ``placement-aware-speed-call-kobalab-0004-belief-paijia``、#436の
-``one-shanten-defense-placement-aware-speed-call``の11個である。
+``one-shanten-defense-placement-aware-speed-call``、#520の開発比較候補
+``placement-aware-speed-call-suited-paijia-tie-v1``（lisjong #330）の12個である。
 登録は名前解決のためであり、候補のChampion昇格・default変更を意味しない。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
         OneShantenDefensePlacementAwareSpeedCallPolicy,
         PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy,
         PlacementAwareSpeedCallPolicy,
+        PlacementAwareSpeedCallSuitedPaijiaTiePolicy,
         TargetedHonorReleaseTerminalProgressionPolicy,
     )
 
@@ -119,6 +121,17 @@ def create_one_shanten_defense_placement_aware_speed_call() -> (
     return OneShantenDefensePlacementAwareSpeedCallPolicy()
 
 
+def create_placement_aware_speed_call_suited_paijia_tie() -> (
+    PlacementAwareSpeedCallSuitedPaijiaTiePolicy
+):
+    # #520 development screen candidate (lisjong #330, no configuration, no learned
+    # artifact). The identity is fixed here, not derived from the class name. Lazy
+    # import keeps environments that predate lisjong 0fff891 importable.
+    from lisjong.policies import PlacementAwareSpeedCallSuitedPaijiaTiePolicy
+
+    return PlacementAwareSpeedCallSuitedPaijiaTiePolicy()
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "one-shanten-defense-placement-aware-speed-call": PolicySpec(
         identity="one-shanten-defense-placement-aware-speed-call",
@@ -151,6 +164,10 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
         identity="placement-aware-speed-call",
         factory=create_placement_aware_speed_call,
     ),
+    "placement-aware-speed-call-suited-paijia-tie-v1": PolicySpec(
+        identity="placement-aware-speed-call-suited-paijia-tie-v1",
+        factory=create_placement_aware_speed_call_suited_paijia_tie,
+    ),
 }
 """登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
 
@@ -165,6 +182,7 @@ __all__ = [
     "create_placement_aware_speed_call",
     "create_one_shanten_defense_placement_aware_speed_call",
     "create_placement_aware_speed_call_kobalab_0004_belief_paijia",
+    "create_placement_aware_speed_call_suited_paijia_tie",
     "create_targeted_honor_release_terminal_progression",
     "create_two_step",
     "create_yakuhai_call",

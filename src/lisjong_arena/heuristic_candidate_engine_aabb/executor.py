@@ -71,6 +71,9 @@ class PlayedHanchan:
     peak_rss_kib: int | None = None
     selected_actions: tuple | None = None
     """``play_backend_check_hanchan``（P2）だけが記録する選択行動の列。正式runでは``None``。"""
+    policy_analysis: dict | None = None
+    """#520の開発比較だけが返すPolicy側の観測（判断時間・analysis）。客観recordとは別に
+    保存する。正式run・校正では``None``。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +84,7 @@ class ExecutedHanchan:
     wall_seconds: float
     peak_rss_kib: int | None
     selected_actions: tuple | None = None
+    policy_analysis: dict | None = None
 
 
 def current_peak_rss_kib() -> int | None:
@@ -150,11 +154,13 @@ def play_hanchan(task: HanchanTask) -> PlayedHanchan:
     return PlayedHanchan(capture, environment, os.getpid(), current_peak_rss_kib())
 
 
-def play_task(task: HanchanTask, *, on_action=None) -> HanchanCapture:
+def play_task(task: HanchanTask, *, on_action=None, wrap_policy=None) -> HanchanCapture:
     """1半荘を実行してcaptureを返す（環境の検査はcallerが行う）。
 
     ``on_action(seat, action)`` はPolicyが返した行動を観測するoptionalなhookで、
-    判断には触れない。
+    判断には触れない。``wrap_policy(seat, role, policy)`` は新しく作ったPolicyを
+    観測用のproxyで包むoptionalなhook（#520）で、proxyはPolicyの行動を変えない。
+    どちらも``None``なら従来と同じ実行である。
     """
     candidate = parse_participant(task.candidate, "candidate")
     incumbent = parse_participant(task.incumbent, "incumbent")
@@ -168,6 +174,8 @@ def play_task(task: HanchanTask, *, on_action=None) -> HanchanCapture:
         factory = resolve_factory(participant)
         # 半荘ごと・seatごとに新しいPolicy（seat間・半荘間で共有しない）
         policy = factory(**participant.behavior_configuration)
+        if wrap_policy is not None:
+            policy = wrap_policy(seat, roles[index], policy)
         policies[seat] = _CountingPolicy(policy, policy_calls, seat, on_action)
     completions = []
 
@@ -279,6 +287,7 @@ def run_schedule(
                 time.perf_counter() - started,
                 played.peak_rss_kib,
                 played.selected_actions,
+                played.policy_analysis,
             )
             executed.append(item_result)
             if on_executed is not None:

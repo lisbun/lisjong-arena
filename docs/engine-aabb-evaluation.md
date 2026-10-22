@@ -34,7 +34,8 @@ dev-check §10.7の記録経路確認（開発用seed・別document、正式resu
 | `development` | §10.7の開発用確認（plan / raw / summary / timings） |
 | `calibration` | 限定校正（#517）のplan / run / verify / report（§8） |
 | `backend_check` | 校正前のPython/Rust照合P2（#517、§8.2） |
-| `__main__` | `lock` / `run` / `verify` / `dev-check` / `dev-verify`、校正用の6 command（§8） |
+| `paijia_tie_plan` / `paijia_tie_worker` / `paijia_tie_activation` / `paijia_tie_screen` | #520 同点数牌paijia候補の開発比較（DEVELOPMENT、§9） |
+| `__main__` | `lock` / `run` / `verify` / `dev-check` / `dev-verify`、校正用の6 command（§8）、#520の6 command（§9） |
 
 依存は `protocol / lock / executor / result → 局単位record（#513）` の一方向で、record側は
 protocol・lockを知らない。bridgeの `run_policy_hanchan` には、`on_round_evidence_complete`
@@ -239,3 +240,115 @@ LISJONG_SHANTEN_BACKEND=rust   ... backend-check --backend rust --wheel WHL --ti
   （wheel filename・bytes・SHA-256、installed native filesと wheelの一致、`SOURCE_REVISION`、
   `API_VERSION`、backend、provenance）を取り、planの値との完全一致を要求する。指定WSL構成についての
   確認であり、別のimage（AWS等）のPASSではない
+
+## 9. 同点数牌paijia候補の開発比較（#520）
+
+Issue: [lisbun/lisjong-arena#520](https://github.com/lisbun/lisjong-arena/issues/520)
+（候補: lisbun/lisjong#330、PR lisbun/lisjong#331、merge `0fff891`）。実行前計画は
+[`paijia-tie-screen-520.md`](paijia-tie-screen-520.md)。
+
+> Status: **実装のみ**。rehearsal・seed予約・段階1・段階2は実行していない（実行は別承認）。
+
+`evaluation_kind = DEVELOPMENT` の、この実験専用のplan / run / verify。正式lock（`FORMAL-EVAL`）・
+校正（`CALIBRATION`、固定pair / K）・dev-check（既知12半荘・#472 pair）の検査は変えない。
+executor・局単位record・`block_totals`・副指標・I/O検査は正式runと同じcodeで、汎用runner・探索基盤は作らない。
+正式のclassification（`CANDIDATE SUPERIOR` 等）は出さない。
+
+| 項目 | 値 |
+| --- | --- |
+| A | `placement-aware-speed-call-suited-paijia-tie-v1`（catalog factory `create_placement_aware_speed_call_suited_paijia_tie` → `lisjong.policies:PlacementAwareSpeedCallSuitedPaijiaTiePolicy`、引数なし） |
+| B | `placement-aware-speed-call`（同じlisjong revisionの現Champion。歴史的固定C0ではない） |
+| 設定・artifact | 両者とも `{}`、学習artifactなし |
+| 実行 | Rust、worker 1、1半荘timeoutはplanで明示（defaultなし） |
+| allocation | owner `lisbun/lisjong-arena#520`、split `DEVELOPMENT`、engine domain、population `heuristic-candidate-engine-aabb-paijia-tie-activation-520`（段階1、8 seeds）/ `…-paijia-tie-screen-520`（段階2、32 seeds）。全domainの他allocation・registry外の既知seedと重なれば拒否 |
+
+### 9.1 Command
+
+```text
+paijia-plan --stage activation|screen --run-kind allocated|rehearsal
+            [--seeds S1,.. --allocation-identity ID]            allocatedだけ
+            --timeout-seconds T --wall-limit-seconds W --rss-limit-bytes R --limit-enforcement TEXT
+            [--screen-wall-limit-seconds W2 --screen-rss-limit-bytes R2 --screen-limit-enforcement TEXT2]
+                                                                 activationだけ（段階2の上限を先に固定）
+            [--activation-plan P1]                               allocatedのscreenだけ
+            --wheel WHL --stage-output DIR --diagnostics DIR --output plan.json
+paijia-activation-run    --plan P1     paijia-activation-verify --plan P1
+paijia-screen-run        --plan P2     paijia-screen-verify     --plan P2
+paijia-screen-report     --plan P2
+```
+
+- plan: write-once。pair、seeds（allocation binding、またはrehearsalの固定seed 472005・472006）、
+  timeout、資源上限（stage wall秒、process tree RSS bytes、OS側の強制方法の記述）、判定条件（下記、
+  定数と一致しなければ拒否）、実行環境（正式lockと同じ `environment_document`。native `SOURCE_REVISION` は
+  installed lisjongと一致が必要）、cleanで `main` に含まれるArena revision、保存先（未作成）を持つ
+- 段階2（allocated）のplanは、作成時に段階1の保存物をverifyで再導出し、判定が `PROCEED` であることと、
+  段階1のplanで固定した段階2の上限と同じ値であることを要求する（段階1のplan / summary digestを拘束）
+- rehearsal: 既知の開発用seed（registry外）で同じrunner・保存・verifyを通す動作確認。判定・進行条件は
+  出さない（`gate` / `progression` は `null`）。allocationは使わない
+- run: live gate（HEAD・環境・allocationがactive）→ schedule → live gate → 書込前検査 → stagingに書いてから
+  `output` へ公開。失敗・timeout・上限超過・analysisの不整合は `STOP-INCOMPLETE` で、`output` に何も出さず
+  `diagnostics/stop-<UTC>.json`（`not_a_result: true`）だけを残す。`output` があれば再実行しない
+- stage wall上限はmonotonicとrealtimeの両方で1半荘ごとに確かめ、長い方で判定する（#517で約401 sの差）。
+  両方の経過を `timings.json` に記録し、verifyの出力に差を示す。process tree全体の強制はOS側で行う
+
+### 9.2 段階1（activation）
+
+B×4席を各seed 1半荘（配置の入替なし）。各判断で、Bの行動を実行経路から1回だけ取得して対局に適用し、
+同じ `DecisionContext` で判断ごとに新しく作ったAを lisjongの `execute_policy_with_trace` で1回だけ採点する
+（Aの行動は適用しない）。判断ごとに次へ分類する。
+
+| outcome | 意味 |
+| --- | --- |
+| `same` | A = B |
+| `tile-type-change` / `red-only-change` | `PAIJIA_SWITCH` で基礎牌種が違う / 赤・通常だけが違う（**変更**として数える） |
+| `tsumogiri-only` | 同じ牌の手出し・ツモ切りだけの違い（変更に数えない） |
+| `out-of-scope-difference` | `PAIJIA_SWITCH` 以外でA ≠ B |
+| `candidate-illegal-action` | Aの行動が合法候補に一致しない |
+| `analysis-invariant-violation` | 打牌なのに `SuitedPaijiaTieAnalysis` がない、analysisの `champion_action` が同じ入力のBの行動と違う、Aの行動が `selected_action` と違う、`PAIJIA_SWITCH` ⇔ 行動の変更、選択がpaijia最小でない、Championが最小なのに切替、数牌でない、評価対象外の行動 |
+
+Arenaはpaijiaや評価値を再計算しない。照合はanalysisが報告する値どうしと、実際の行動との整合だけである。
+Aの判断が例外を送出した場合は分類せず、その半荘でSTOP（`STOP-INCOMPLETE`）とする。
+
+保存物: `shadow.json`（判断ごとのoutcome・stage・A/B判断秒。差のある判断とgate通過判断だけ
+lisjongのanalysisと両行動）、`hanchans.json`（客観値: 局数、終了理由、final_points、`CompletedMatch` の
+digest、selector / Policy呼び出し数）、`summary.json`、`timings.json`。判断数はseatごとのPolicy呼び出し数と
+一致しなければならない。勝敗は判定に使わない。
+
+判定（実行前に固定、上から最初に当たったもの）:
+
+1. `STOP-INVALID`: 対象外差分・合法性違反・不変条件違反が1件以上
+2. `STOP-LOW-ACTIVATION`: 変更 < 32件（分母は全32 seat-hanchans）、または変更のあるseed < 4
+3. `STOP-BUDGET`: `192 × mean(半荘wall − (A判断秒 + B判断秒) / 2)` > 0.8 × 段階2のwall上限
+4. `PROCEED`
+
+summaryはgate通過数（`CHAMPION_MINIMUM_PAIJIA` + `PAIJIA_SWITCH`）、stage別の件数（除外理由）、outcome別の件数、
+seed・seat別の変更数、A/B判断秒（中央値・p95・最大）、半荘wall・局数・RSS、段階2の見込み（timeout到達時の
+worst caseも）を持つ。変更頻度は予算配分の基準で、検出力や改善の証拠ではない。
+
+### 9.3 段階2（screen）
+
+正式runと同じ `play_task` で32 seeds × 6配置を1回。A席は `execute_policy_with_trace` で1回だけ判断し
+（行動は同じ）、stage別件数と `PAIJIA_SWITCH`（実発動、analysis付き）を数える。B席は判断秒だけを計る。
+analysisが整合しなければその場でSTOPする。
+
+保存物: `raw/`（第1層・第2層、両方 `VALID` が必要、bindingsはplan digest）、`policy-analysis.json`（Policy側の
+観測。seed・placement・seatで客観recordと対応、判断数はPolicy呼び出し数と一致）、`summary.json`、
+`timings.json`、`report.json`（`paijia-screen-report`。時間・RSS・容量・時計差。強さの値は持たない）。
+
+| 項目 | 内容 |
+| --- | --- |
+| 主指標 | `D_s = (S_A − S_B) / 120`、seed等重みの平均D、SD(K−1)、`D ± 1.96 SD / √32`（記述用。小Kの正規近似・選択後の偏りの限界があり、検出力保証・昇格判定に使わない） |
+| 副指標 | #513の副指標（seed別の分子・分母、和了率・放銃率、本場を除く平均和了打点・平均放銃失点、素点・順位成分、流局聴牌、立直・副露）。分母0はnull |
+| 発動 | A判断数、stage別件数、実発動（`PAIJIA_SWITCH`）数と種類、seed別 |
+| 判断時間 | A / B別の中央値・p95（nearest-rank）・最大・件数 |
+
+進行条件（実行前に固定。すべて満たすときだけ `PROMISING-DEVELOPMENT`、それ以外は `NOT-PROMISING-DEVELOPMENT`）:
+
+1. D平均 > 0
+2. 素点成分（`base_points`）のA−B、seed等重み平均 >= 0（pt / seat-result）
+3. seed等重みの放銃率差 A−B <= +0.01（nullなら不成立）
+4. 完走・第1層 / 第2層VALID・analysis整合・上限内（summaryが書かれた時点で成立。回収後のhash照合と
+   別processのverifyで確かめる）
+
+`PROMISING-DEVELOPMENT` は採用ではなく、別seed・別相手構成での独立した開発再確認の設計へ進む条件である。
+途中のDによる追加・早期採用、結果を見てからの閾値変更はしない。

@@ -14,6 +14,14 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-plan ...
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-verify --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-report --plan P
+
+#520 同点数牌paijia候補の開発比較（DEVELOPMENT。正式結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-plan --stage S --run-kind R ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-activation-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-activation-verify --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-screen-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-screen-verify --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-screen-report --plan P
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -42,6 +50,24 @@ from .development import (
     verify_development_check,
 )
 from .lock import build_lock, load_lock, save_lock
+from .paijia_tie_activation import (
+    run_activation,
+    screen_prerequisite,
+    verify_activation,
+)
+from .paijia_tie_plan import (
+    ACTIVATION,
+    ALLOCATED,
+    REHEARSAL,
+    REHEARSAL_SEEDS,
+    RUN_KINDS,
+    STAGES,
+    EngineAabbPaijiaTieError,
+)
+from .paijia_tie_plan import build_plan as build_paijia_plan
+from .paijia_tie_plan import save_plan as save_paijia_plan
+from .paijia_tie_screen import run_screen, verify_screen
+from .paijia_tie_screen import write_report as write_screen_report
 from .result import verify_result
 from .runner import run_formal_event
 
@@ -125,7 +151,39 @@ def main(argv: list[str] | None = None) -> int:
                 "--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH)
             )
 
+    paijia = sub.add_parser("paijia-plan", help="#520: write a write-once plan")
+    paijia.add_argument("--stage", choices=STAGES, required=True)
+    paijia.add_argument("--run-kind", choices=RUN_KINDS, required=True)
+    paijia.add_argument("--seeds", help="allocated only: comma separated, in order")
+    paijia.add_argument("--allocation-identity", help="allocated only")
+    paijia.add_argument("--timeout-seconds", type=int, required=True)
+    paijia.add_argument("--wall-limit-seconds", type=int, required=True)
+    paijia.add_argument("--rss-limit-bytes", type=int, required=True)
+    paijia.add_argument("--limit-enforcement", required=True)
+    paijia.add_argument("--screen-wall-limit-seconds", type=int, help="activation")
+    paijia.add_argument("--screen-rss-limit-bytes", type=int, help="activation")
+    paijia.add_argument("--screen-limit-enforcement", help="activation")
+    paijia.add_argument("--activation-plan", help="allocated screen only")
+    paijia.add_argument("--wheel", required=True)
+    paijia.add_argument("--stage-output", required=True)
+    paijia.add_argument("--diagnostics", required=True)
+    paijia.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    paijia.add_argument("--output", required=True)
+
+    for name in ("paijia-activation-run", "paijia-screen-run"):
+        command = sub.add_parser(name)
+        command.add_argument("--plan", required=True)
+        command.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    for name in (
+        "paijia-activation-verify",
+        "paijia-screen-verify",
+        "paijia-screen-report",
+    ):
+        sub.add_parser(name).add_argument("--plan", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("paijia-"):
+        return _paijia(args)
     if args.command == "backend-check":
         document = run_backend_check(
             args.output,
@@ -222,6 +280,95 @@ def main(argv: list[str] | None = None) -> int:
     else:
         summary = verify_development_check(args.output)
         print(f"VERIFIED DEVELOPMENT {summary['summary_digest']} (not a formal result)")
+    return 0
+
+
+def _paijia_plan(args) -> dict:
+    limits = {
+        "enforcement": args.limit_enforcement,
+        "process_tree_rss_bytes": args.rss_limit_bytes,
+        "wall_seconds": args.wall_limit_seconds,
+    }
+    allocated = args.run_kind == ALLOCATED
+    if allocated != (args.seeds is not None) or allocated != (
+        args.allocation_identity is not None
+    ):
+        raise EngineAabbPaijiaTieError(
+            "--seeds and --allocation-identity are required for allocated plans and "
+            f"not accepted for a rehearsal (fixed seeds {REHEARSAL_SEEDS})"
+        )
+    screen_arguments = (
+        args.screen_wall_limit_seconds,
+        args.screen_rss_limit_bytes,
+        args.screen_limit_enforcement,
+    )
+    screen_limits = None
+    if args.stage == ACTIVATION:
+        if None in screen_arguments:
+            raise EngineAabbPaijiaTieError(
+                "an activation plan fixes the screen limits for its budget gate"
+            )
+        screen_limits = {
+            "enforcement": args.screen_limit_enforcement,
+            "process_tree_rss_bytes": args.screen_rss_limit_bytes,
+            "wall_seconds": args.screen_wall_limit_seconds,
+        }
+    elif any(value is not None for value in screen_arguments):
+        raise EngineAabbPaijiaTieError("--screen-* belong to the activation plan")
+    needs_activation = args.stage != ACTIVATION and allocated
+    if needs_activation != (args.activation_plan is not None):
+        raise EngineAabbPaijiaTieError(
+            "--activation-plan is required exactly for an allocated screen plan"
+        )
+    return build_paijia_plan(
+        stage=args.stage,
+        run_kind=args.run_kind,
+        ordered_seeds=_seeds(args.seeds) if allocated else REHEARSAL_SEEDS,
+        allocation_identity=args.allocation_identity,
+        timeout_seconds=args.timeout_seconds,
+        resource_limits=limits,
+        screen_limits=screen_limits,
+        prerequisite=screen_prerequisite(args.activation_plan)
+        if needs_activation
+        else None,
+        wheel_path=str(Path(args.wheel).resolve()),
+        destinations={
+            "diagnostics": args.diagnostics,
+            "output": args.stage_output,
+        },
+        ledger_path=args.ledger,
+    )
+
+
+def _paijia(args) -> int:
+    if args.command == "paijia-plan":
+        document = _paijia_plan(args)
+        save_paijia_plan(document, args.output)
+        print(f"{args.stage} {args.run_kind} {document['plan_digest']}")
+        return 0
+    if args.command == "paijia-activation-run":
+        summary = run_activation(
+            args.plan, ledger_path=args.ledger, on_hanchan=_progress
+        )
+        decision = summary["gate"]["decision"] if summary["gate"] else REHEARSAL
+        print(f"{summary['status']} {decision} {summary['summary_digest']}")
+        return 0
+    if args.command == "paijia-screen-run":
+        summary = run_screen(args.plan, ledger_path=args.ledger, on_hanchan=_progress)
+        progression = summary["progression"]
+        decision = progression["decision"] if progression else REHEARSAL
+        print(f"{summary['status']} {decision} {summary['summary_digest']}")
+        return 0
+    if args.command == "paijia-screen-report":
+        report = write_screen_report(args.plan)
+        print(f"REPORT {report['report_digest']} (development, not a formal result)")
+        return 0
+    verify = (
+        verify_activation
+        if args.command == "paijia-activation-verify"
+        else verify_screen
+    )
+    print(json.dumps(verify(args.plan), sort_keys=True, indent=2))
     return 0
 
 
