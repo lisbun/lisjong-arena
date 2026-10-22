@@ -37,23 +37,19 @@ from lisjong_arena._artifact_io import (
 )
 
 from .errors import EventFactError, KyokuRecordError
-from .event_facts import (
-    EVENT_FACT_SCHEMA,
-    project_event_facts,
-    validate_event_fact_row,
-)
+from .event_facts import project_event_facts, validate_event_fact_row
 from .kyoku_record import (
-    KYOKU_RECORD_SCHEMA,
-    PROTOCOL_ID,
+    AABB_LAYOUT,
     RULES_IDENTITY,
+    RecordLayout,
     SeatAssignment,
     canonical_line,
-    project_hanchan,
+    project_row,
     require_unique_hanchans,
     validate_hanchan_row,
 )
 
-MANIFEST_SCHEMA = "arena-heuristic-candidate-engine-aabb-record-manifest-v1"
+MANIFEST_SCHEMA = AABB_LAYOUT.manifest_schema
 MANIFEST_FILENAME = "manifest.json"
 KYOKU_RECORD_FILENAME = "kyoku-records.jsonl"
 EVENT_FACT_FILENAME = "event-facts.jsonl"
@@ -185,6 +181,7 @@ def _payload_info(schema: str, filename: str, text: str, rows: int) -> dict:
 
 def _build_manifest(
     *,
+    layout: RecordLayout,
     producer_revision: str,
     bindings: RecordBindings,
     hanchan_count: int,
@@ -197,9 +194,9 @@ def _build_manifest(
         "hanchan_count": hanchan_count,
         "kyoku_records": kyoku_payload,
         "producer": {"arena_revision": producer_revision},
-        "protocol": PROTOCOL_ID,
+        "protocol": layout.protocol_id,
         "rules": dict(RULES_IDENTITY),
-        "schema": MANIFEST_SCHEMA,
+        "schema": layout.manifest_schema,
     }
 
 
@@ -209,42 +206,51 @@ def _build_manifest(
 
 
 def build_records(
-    captures: Sequence[HanchanCapture], *, event_facts_required: bool
+    captures: Sequence[HanchanCapture],
+    *,
+    event_facts_required: bool,
+    layout: RecordLayout = AABB_LAYOUT,
+    capture_type: type = HanchanCapture,
 ) -> tuple[list[dict], list[dict] | None, EventFactStatus]:
     """全半荘を射影・検査する（I/Oなし）。
 
     第1層の失敗は``KyokuRecordError``で止める。第2層は、最初に失敗した半荘の
     理由で全体を``INVALID``にし、以降の第2層rowを作らない（部分出力しない）。
+    ``layout`` / ``capture_type`` はAABB以外のprotocol（#522）が自分の半荘key・
+    seat検査とcapture型を渡すためのもので、captureは ``layout.key_fields`` と
+    同名の属性を持つ。
     """
+    name = capture_type.__name__
     if isinstance(captures, (str, bytes)) or not isinstance(captures, Sequence):
-        raise KyokuRecordError("captures must be a sequence of HanchanCapture")
+        raise KyokuRecordError(f"captures must be a sequence of {name}")
     if not captures:
         raise KyokuRecordError("a kyoku record needs at least one hanchan")
     hanchans: list[dict] = []
     events: list[dict] | None = []
     status = EventFactStatus(EVENT_FACTS_VALID)
     for capture in captures:
-        if not isinstance(capture, HanchanCapture):
-            raise KyokuRecordError("captures must contain HanchanCapture values")
-        row = project_hanchan(
+        if not isinstance(capture, capture_type):
+            raise KyokuRecordError(f"captures must contain {name} values")
+        row = project_row(
             capture.match,
             seed=capture.seed,
-            placement=capture.placement,
+            keys={key: getattr(capture, key) for key in layout.key_fields},
             seats=capture.seats,
             selector_call_counts=capture.selector_call_counts,
             policy_call_counts=capture.policy_call_counts,
+            layout=layout,
         )
         hanchans.append(row)
         if events is None:
             continue
         try:
-            events.append(project_event_facts(capture.round_evidence, row))
+            events.append(project_event_facts(capture.round_evidence, row, layout))
         except EventFactError as error:
             if event_facts_required:
                 raise
             events = None
             status = EventFactStatus(EVENT_FACTS_INVALID, str(error))
-    require_unique_hanchans(hanchans)
+    require_unique_hanchans(hanchans, layout)
     return hanchans, events, status
 
 
@@ -255,6 +261,8 @@ def write_kyoku_records(
     producer_revision: str,
     event_facts_required: bool,
     bindings: RecordBindings = RecordBindings(),
+    layout: RecordLayout = AABB_LAYOUT,
+    capture_type: type = HanchanCapture,
 ) -> VerifiedKyokuRecords:
     """局単位recordを新しいdirectoryへwrite-onceで保存し、読み戻して返す。"""
     _require_revision(producer_revision)
@@ -265,11 +273,14 @@ def write_kyoku_records(
     if not destination.parent.is_dir():
         raise FileNotFoundError(f"parent directory does not exist: {destination}")
     hanchans, events, status = build_records(
-        captures, event_facts_required=event_facts_required
+        captures,
+        event_facts_required=event_facts_required,
+        layout=layout,
+        capture_type=capture_type,
     )
     kyoku_text = _payload_text(hanchans)
     kyoku_payload = _payload_info(
-        KYOKU_RECORD_SCHEMA, KYOKU_RECORD_FILENAME, kyoku_text, len(hanchans)
+        layout.kyoku_record_schema, KYOKU_RECORD_FILENAME, kyoku_text, len(hanchans)
     )
     event_text = None if events is None else _payload_text(events)
 
@@ -277,7 +288,10 @@ def write_kyoku_records(
         if current.valid:
             event_payload = {
                 **_payload_info(
-                    EVENT_FACT_SCHEMA, EVENT_FACT_FILENAME, event_text, len(events)
+                    layout.event_fact_schema,
+                    EVENT_FACT_FILENAME,
+                    event_text,
+                    len(events),
                 ),
                 "status": EVENT_FACTS_VALID,
             }
@@ -285,6 +299,7 @@ def write_kyoku_records(
             event_payload = current.to_value()
         return canonical_json_text(
             _build_manifest(
+                layout=layout,
                 producer_revision=producer_revision,
                 bindings=bindings,
                 hanchan_count=len(hanchans),
@@ -312,7 +327,7 @@ def write_kyoku_records(
         write_new_artifact_file(staging / MANIFEST_FILENAME, manifest_text(status))
         # 公開前に、読込と同じ検査を保存bytesに対して行う（renameはbytesを変えない）
         verified = read_kyoku_records(
-            staging, event_facts_required=event_facts_required
+            staging, event_facts_required=event_facts_required, layout=layout
         )
         if status.valid and not verified.event_fact_status.valid:
             # 第2層だけの公開前検査失敗（event_facts_required=Falseでだけ到達する）。
@@ -326,7 +341,7 @@ def write_kyoku_records(
             )
             write_new_artifact_file(staging / MANIFEST_FILENAME, manifest_text(status))
             verified = read_kyoku_records(
-                staging, event_facts_required=event_facts_required
+                staging, event_facts_required=event_facts_required, layout=layout
             )
         if verified.event_fact_status != status:
             raise KyokuRecordError("event fact status changed on readback")
@@ -398,7 +413,10 @@ def _check_payload(value: object, schema: str, filename: str, error_type, contex
 
 
 def read_kyoku_records(
-    path: str | Path, *, event_facts_required: bool
+    path: str | Path,
+    *,
+    event_facts_required: bool,
+    layout: RecordLayout = AABB_LAYOUT,
 ) -> VerifiedKyokuRecords:
     """保存済みrecordを読み、作成時と同じ検査を行って返す。"""
     root = Path(path)
@@ -407,12 +425,12 @@ def read_kyoku_records(
         manifest = parse_json_text(manifest_bytes.decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError, ArtifactValidationError) as error:
         raise KyokuRecordError(f"invalid kyoku record manifest: {error}") from error
-    if type(manifest) is not dict or manifest.get("schema") != MANIFEST_SCHEMA:
+    if type(manifest) is not dict or manifest.get("schema") != layout.manifest_schema:
         raise KyokuRecordError("unsupported kyoku record manifest schema")
     if canonical_json_text(manifest).encode("utf-8") != manifest_bytes:
         raise KyokuRecordError("kyoku record manifest is not canonical")
     _fields(manifest, _MANIFEST_FIELDS, "manifest")
-    if manifest["protocol"] != PROTOCOL_ID:
+    if manifest["protocol"] != layout.protocol_id:
         raise KyokuRecordError("manifest.protocol mismatch")
     if manifest["rules"] != RULES_IDENTITY:
         raise KyokuRecordError("manifest.rules mismatch")
@@ -431,7 +449,7 @@ def read_kyoku_records(
 
     kyoku_payload = _check_payload(
         manifest["kyoku_records"],
-        KYOKU_RECORD_SCHEMA,
+        layout.kyoku_record_schema,
         KYOKU_RECORD_FILENAME,
         KyokuRecordError,
         "manifest.kyoku_records",
@@ -460,7 +478,7 @@ def read_kyoku_records(
 
     # 第1層: 失敗は常に例外
     hanchans = [
-        validate_hanchan_row(row)
+        validate_hanchan_row(row, layout)
         for row in _read_lines(
             root / KYOKU_RECORD_FILENAME,
             kyoku_payload,
@@ -468,7 +486,7 @@ def read_kyoku_records(
             "kyoku records",
         )
     ]
-    require_unique_hanchans(hanchans)
+    require_unique_hanchans(hanchans, layout)
 
     # 第2層: 第1層が通った後で、独立に判定する
     events = None
@@ -476,7 +494,7 @@ def read_kyoku_records(
         try:
             event_payload = _check_payload(
                 event_value,
-                EVENT_FACT_SCHEMA,
+                layout.event_fact_schema,
                 EVENT_FACT_FILENAME,
                 EventFactError,
                 "manifest.event_facts",
@@ -489,7 +507,7 @@ def read_kyoku_records(
                 root / EVENT_FACT_FILENAME, event_payload, EventFactError, "event facts"
             )
             events = tuple(
-                validate_event_fact_row(row, hanchan)
+                validate_event_fact_row(row, hanchan, layout)
                 for row, hanchan in zip(rows, hanchans, strict=True)
             )
             status = EventFactStatus(EVENT_FACTS_VALID)

@@ -130,6 +130,7 @@ def require_allocated_seeds(
     owner_issue: str,
     population: str,
     split: str,
+    protocol: str = PROTOCOL_ID,
 ) -> dict:
     """bindingが、このprotocol・engine domainの指定ownerのactive allocationであることと、
     全domainの他allocationと1 seedも重ならないことを要求する。
@@ -143,7 +144,7 @@ def require_allocated_seeds(
             validated,
             seeds=seeds,
             owner_issue=owner_issue,
-            protocol=PROTOCOL_ID,
+            protocol=protocol,
             seed_domain=SEED_DOMAIN,
             population=population,
             split=split,

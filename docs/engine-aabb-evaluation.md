@@ -35,7 +35,8 @@ dev-check §10.7の記録経路確認（開発用seed・別document、正式resu
 | `calibration` | 限定校正（#517）のplan / run / verify / report（§8） |
 | `backend_check` | 校正前のPython/Rust照合P2（#517、§8.2） |
 | `paijia_tie_plan` / `paijia_tie_worker` / `paijia_tie_activation` / `paijia_tie_screen` | #520 同点数牌paijia候補の開発比較（DEVELOPMENT、§9） |
-| `__main__` | `lock` / `run` / `verify` / `dev-check` / `dev-verify`、校正用の6 command（§8）、#520の6 command（§9） |
+| `focal_mixed_plan` / `focal_mixed_worker` / `focal_mixed_compare` | #522 凍結paijia候補の混成相手focal比較（DEVELOPMENT、§10） |
+| `__main__` | `lock` / `run` / `verify` / `dev-check` / `dev-verify`、校正用の6 command（§8）、#520の6 command（§9）、#522の4 command（§10） |
 
 依存は `protocol / lock / executor / result → 局単位record（#513）` の一方向で、record側は
 protocol・lockを知らない。bridgeの `run_policy_hanchan` には、`on_round_evidence_complete`
@@ -359,3 +360,68 @@ analysisが整合しなければその場でSTOPする。
 
 `PROMISING-DEVELOPMENT` は採用ではなく、別seed・別相手構成での独立した開発再確認の設計へ進む条件である。
 途中のDによる追加・早期採用、結果を見てからの閾値変更はしない。
+
+## 10. 凍結paijia候補の混成相手focal比較（#522）
+
+Issue: [lisbun/lisjong-arena#522](https://github.com/lisbun/lisjong-arena/issues/522)
+（親 lisbun/lisjong-project#84、候補 lisbun/lisjong#330、前段 #520）。実行前計画は
+[`focal-mixed-recheck-522.md`](focal-mixed-recheck-522.md)。
+
+> Status: **実装のみ**。rehearsal・seed予約・本比較は実行していない（実行は別承認）。
+
+AABB（§1〜§7）・#520（§9）とは別のcontract（protocol `arena-heuristic-candidate-engine-focal-mixed-v1`）。
+同じ卓にA/Bを2席ずつ置くのではなく、focal 1席と固定の相手3席を置き、focalだけをAとBで入れ替えた
+2半荘を、同じseed・同じ相手identity・同じ席で比べる。AABBの配置表・role検査・除数120・SDは流用しない。
+#520のDとは別のendpointで、合算・同一母集団の追試とは扱わない。
+
+```text
+seed s（seed順） -> rotation r = 0..3 -> 条件 A, B（1 seed 8半荘、K = 32で256半荘、1回だけ）
+  seat r = focal（条件AではA、条件BではB）   seat r+1 = O1   seat r+2 = O2   seat r+3 = O3（mod 4）
+D_s = sum_r (F_A(s, r) - F_B(s, r)) / 40      F = focal席のengine final_points（内部単位 1 = 0.1 pt）
+```
+
+| 項目 | 値 |
+| --- | --- |
+| A | `placement-aware-speed-call-suited-paijia-tie-v1` |
+| B | `placement-aware-speed-call`（同じrevisionの現Champion） |
+| O1 / O2 / O3 | `placement-aware-speed-call` / `targeted-honor-release-terminal-progression` / `placement-aware-speed-call-kobalab-0004-belief-paijia` |
+| 設定・artifact | 全員 `{}`、学習artifactなし。factoryは `policy_catalog` の明示binding |
+| 凍結値 | live環境から作るplanは lisjong `0fff891`・wheel SHA-256 `13092922…8fba` と一致しなければ拒否 |
+| allocation | owner `lisbun/lisjong-arena#522`、protocol上記、split `DEVELOPMENT`、population `heuristic-candidate-engine-focal-mixed-522`、engine domain。全domainの他allocation（#520の8 + 32 seedsを含む）・registry外の既知seedと重なれば拒否 |
+| rehearsal | registry外の開発用seed 472005だけ（8半荘）。判定なし |
+
+- **focalの抽出**: 第1層rowのseatのrole `focal`（= seat r）だけで行う。条件BではfocalとO1が同じ
+  identityなので、identityでは選ばない。O1のBはfocal Bへ含めない（判断時間も `focal-B` と `O1` を分ける）
+- **局記録**: 局・終局の検査（K3〜K11）、第2層、manifestのI/Oは#513と同じcodeで、半荘identity
+  （`rotation` / `condition`）とseat roleの検査、schema名（`…-focal-mixed-kyoku-record-v1` /
+  `…-event-fact-v1` / `…-record-manifest-v1`）だけを `focal_mixed_plan.LAYOUT` が持つ（`kyoku_record.RecordLayout`）。
+  AABBのrecordは `AABB_LAYOUT` のままで、互いのreaderでは読めない
+- **Policy観測**: Aは `execute_policy_with_trace` で1回だけ判断し、#520と同じ検査でstage別件数と
+  `PAIJIA_SWITCH` を数える。他の席は判断秒だけ。`policy-analysis.json` に分けて保存し、summaryが内容の
+  SHA-256で拘束する
+- 実行枠（write-once plan、live gate、1 worker、1半荘timeout、max(monotonic, realtime)のwall、親 + worker RSS、
+  `STOP-INCOMPLETE` で何も公開しない、verify / reportでtimingsの上限を再確認）は#520と同じ規則
+
+```text
+focal-plan --run-kind allocated|rehearsal [--seeds S1,.. --allocation-identity ID]
+           --timeout-seconds T --wall-limit-seconds W --rss-limit-bytes R --limit-enforcement TEXT
+           --wheel WHL --run-output DIR --diagnostics DIR --output plan.json
+focal-run --plan P     focal-verify --plan P     focal-report --plan P
+```
+
+summary: seed blockごとのfocal F_A / F_B（4 rotation）と差・D、平均・SD(K−1)・記述用区間（0を跨ぐかを明示）、
+全K通りのleave-one-seed-out平均（最小値とseed、最大の正のblockを除いた値）、focal席だけの副指標
+（#513の定義。率は各seedの4 focal席を合算してA−B、seed等重み。分母0はnull。条件付きの値は全seed合算）、
+Aの発動数、役割別の判断秒。reportは時間・RSS・容量・時計差と、rehearsalでは256半荘への単純換算の見込み。
+
+進行条件（実行前に固定。すべて満たすときだけ `RECONFIRMED-DEVELOPMENT`、それ以外は `NOT-RECONFIRMED-DEVELOPMENT`）:
+
+1. D平均 > 0
+2. focal素点成分（`base_points`）のA−B、seed等重み平均 >= 0
+3. focal放銃率のseed等重み差 A−B <= +0.01（nullなら不成立）
+4. 全32通りのleave-one-seed-out平均の最小値 > 0
+5. 完走・第1層 / 第2層VALID・analysis整合・上限内（回収後のhash照合と別processのverifyで確かめる）
+
+境界の0は内部単位の整数の和で判定する（丸めで0を正にしない）。4は開発上の予算配分条件で、有意性・
+非劣性・裾の頑健性の証明ではない。`NOT-RECONFIRMED` ならv1の追加対局をせず、条件緩和・seed追加・
+相手入替で救済しない。`RECONFIRMED` でもChampion昇格・稼働変更・他改修との束ねは自動で行わない。

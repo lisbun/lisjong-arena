@@ -207,15 +207,12 @@ def play_task(task: HanchanTask, *, on_action=None, wrap_policy=None) -> Hanchan
     )
 
 
-def _guarded(play: Callable, task: HanchanTask) -> PlayedHanchan:
+def _guarded(play: Callable, task, label: str) -> PlayedHanchan:
     try:
         return play(task)
     except Exception as error:
         # Policy / engineの例外はspawn越しにpickleできるとは限らない
-        raise RunStopped(
-            f"seed {task.seed} placement {task.placement}: "
-            f"{type(error).__name__}: {error}"
-        ) from None
+        raise RunStopped(f"{label}: {type(error).__name__}: {error}") from None
 
 
 def run_schedule(
@@ -238,49 +235,79 @@ def run_schedule(
     ``on_executed`` は1半荘ごとの計測値を受け取るoptionalなhookで、例外を送出すると
     ほかの失敗と同じくworkerを止めてeventを止める（校正の資源上限に使う）。
     """
-    if type(timeout_seconds) is not int or timeout_seconds <= 0:
-        raise RunStopped("timeout_seconds must be a positive int taken from the lock")
     hanchans = list(hanchans)
-    if not hanchans:
-        raise RunStopped("the schedule is empty")
     candidate_document = candidate.to_document()
     incumbent_document = incumbent.to_document()
+    tasks = [
+        HanchanTask(
+            seed=item["seed"],
+            placement=item["placement"],
+            candidate=candidate_document,
+            incumbent=incumbent_document,
+            wheel_path=wheel_path,
+        )
+        for item in hanchans
+    ]
+    return run_tasks(
+        tasks,
+        key_fields=("placement",),
+        timeout_seconds=timeout_seconds,
+        expected_environment=expected_environment,
+        play=play,
+        on_hanchan=on_hanchan,
+        on_executed=on_executed,
+    )
+
+
+def run_tasks(
+    tasks: Sequence,
+    *,
+    key_fields: tuple[str, ...],
+    timeout_seconds: int,
+    expected_environment: dict,
+    play: Callable,
+    on_hanchan: Callable[[int, int], None] | None = None,
+    on_executed: Callable[[ExecutedHanchan], None] | None = None,
+) -> list[ExecutedHanchan]:
+    """1半荘ずつのtaskを1 workerで順に実行する（``run_schedule`` の本体）。
+
+    taskとcaptureは ``seed`` と ``key_fields`` の属性を持ち、workerが別の半荘を
+    返したら止める。#522の混成focal比較はAABBの配置ではなく
+    ``("rotation", "condition")`` で半荘を識別し、同じ停止・timeout・環境照合を使う。
+    """
+    if type(timeout_seconds) is not int or timeout_seconds <= 0:
+        raise RunStopped("timeout_seconds must be a positive int taken from the lock")
+    tasks = list(tasks)
+    if not tasks:
+        raise RunStopped("the schedule is empty")
+    names = ("seed", *key_fields)
     executed: list[ExecutedHanchan] = []
     pool = ProcessPoolExecutor(
         max_workers=1, mp_context=multiprocessing.get_context("spawn")
     )
     try:
-        for index, item in enumerate(hanchans):
-            task = HanchanTask(
-                seed=item["seed"],
-                placement=item["placement"],
-                candidate=candidate_document,
-                incumbent=incumbent_document,
-                wheel_path=wheel_path,
-            )
+        for index, task in enumerate(tasks):
+            key = tuple(getattr(task, name) for name in names)
+            label = " ".join(f"{name} {value}" for name, value in zip(names, key))
             started = time.perf_counter()
-            future = pool.submit(_guarded, play, task)
+            future = pool.submit(_guarded, play, task, label)
             try:
                 played = future.result(timeout=timeout_seconds)
             except FutureTimeout:
                 raise RunStopped(
-                    f"seed {task.seed} placement {task.placement}: hanchan exceeded "
-                    f"the locked timeout of {timeout_seconds} s"
+                    f"{label}: hanchan exceeded the locked timeout of "
+                    f"{timeout_seconds} s"
                 ) from None
             except RunStopped:
                 raise
             except Exception as error:
                 raise RunStopped(
-                    f"seed {task.seed} placement {task.placement}: worker failed: "
-                    f"{type(error).__name__}: {error}"
+                    f"{label}: worker failed: {type(error).__name__}: {error}"
                 ) from None
             if played.environment != expected_environment:
-                raise RunStopped(
-                    f"seed {task.seed} placement {task.placement}: worker environment "
-                    "differs from the lock"
-                )
+                raise RunStopped(f"{label}: worker environment differs from the lock")
             capture = played.capture
-            if (capture.seed, capture.placement) != (task.seed, task.placement):
+            if tuple(getattr(capture, name, None) for name in names) != key:
                 raise RunStopped("worker returned a different hanchan")
             item_result = ExecutedHanchan(
                 capture,
@@ -293,7 +320,7 @@ def run_schedule(
             if on_executed is not None:
                 on_executed(item_result)
             if on_hanchan is not None:
-                on_hanchan(index + 1, len(hanchans))
+                on_hanchan(index + 1, len(tasks))
     except BaseException:
         # terminate_workers()はprocess一覧を写してからshutdownする。先に
         # shutdown()を呼ぶと一覧が消え、timeout中のworkerが残る
@@ -313,4 +340,5 @@ __all__ = [
     "play_hanchan",
     "play_task",
     "run_schedule",
+    "run_tasks",
 ]

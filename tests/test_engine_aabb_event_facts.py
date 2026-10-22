@@ -438,7 +438,7 @@ class StorageFailureTest(unittest.TestCase):
                 self.assert_nothing_published()
 
     def test_layer2_pre_publication_check_failure_keeps_layer1(self):
-        def reject(row, hanchan):
+        def reject(row, hanchan, layout):
             raise EventFactError("injected pre-publication failure")
 
         with mock.patch.object(record_store, "validate_event_fact_row", reject):
@@ -462,11 +462,13 @@ class StorageFailureTest(unittest.TestCase):
         original = record_store.read_kyoku_records
         calls = []
 
-        def read(path, *, event_facts_required):
+        def read(path, *, event_facts_required, layout):
             if not calls:
                 (Path(path) / EVENT_FACT_FILENAME).unlink()
             calls.append(path)
-            return original(path, event_facts_required=event_facts_required)
+            return original(
+                path, event_facts_required=event_facts_required, layout=layout
+            )
 
         return mock.patch.object(record_store, "read_kyoku_records", read)
 
@@ -493,7 +495,7 @@ class StorageFailureTest(unittest.TestCase):
         self.assert_nothing_published()
 
     def test_layer2_pre_publication_check_failure_stops_a_preflight(self):
-        def reject(row, hanchan):
+        def reject(row, hanchan, layout):
             raise EventFactError("injected pre-publication failure")
 
         with (
