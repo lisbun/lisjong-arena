@@ -155,6 +155,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "4e33d3aab214f5d50d8759738590fe91ff278c5b3014b4c1853a9a2c13e22cfb",
+      "allocation_timestamp": "2026-10-22T15:42:10.309436Z",
+      "arena_revision": "86ea7152b0ce3de8241eefca30bbcedcaf00b2ea",
+      "owner_issue": "lisbun/lisjong-arena#522",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-focal-mixed-522",
+      "protocol": "arena-heuristic-candidate-engine-focal-mixed-v1",
+      "protocol_revision": "protocol_digest ee032e80df9a5cbf9ae6be9cd491ee4355aba3cf1e0aa3f4d888f1afbcff6bab",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/522",
+      "purpose": "#522 mixed-opponent focal re-check: 32 seeds x 4 rotations x A/B once; DEVELOPMENT, not a formal result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 522000,
+        "kind": "range",
+        "last": 522031
+      },
+      "seed_membership_identity": "ac0fb71956f8ea6193a73f05d18127e024987fe50be7e222685ea85764e04192",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
