@@ -177,6 +177,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "3d8602567f8730c397602f84881de32b3a4923353d1b31401a0a278e807c26f1",
+      "allocation_timestamp": "2026-10-24T04:22:16.617767Z",
+      "arena_revision": "8ad451e517cfd86ec2d89c3e1cfe9630555cfba2",
+      "owner_issue": "lisbun/lisjong-arena#524",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-single-open-genbutsu-activation-524",
+      "protocol": "arena-heuristic-candidate-engine-aabb-half-v1",
+      "protocol_revision": "protocol_digest e60f75d7c32695e1c79225cad409334c3233dc8dd8b1cd0c6c7995789c9adec2",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/526",
+      "purpose": "#524 shadow change-frequency gate of the single-open-genbutsu candidate: B self-play 8 hanchans; DEVELOPMENT, not a strength result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 524000,
+        "kind": "range",
+        "last": 524007
+      },
+      "seed_membership_identity": "3e2ed23095a773dbd9d9fc3258fb4c27ff945c3d8b18e8be81283026b714bf8c",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
