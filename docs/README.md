@@ -22,6 +22,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 | [Automated Strength Evaluation](automated-strength-evaluation.md) | machine-readable locked evaluation orchestration contract |
 | [Claude Code workflow](claude-code-workflow.md) | repository development workflow |
 | [Testing policy](testing.md) | current test placement, CI coverage, and consolidation gate |
+| [Strength Loop seed preparation](strength-loop-seeds.md) | S1/S2予約要求とlive allocation照合。正式seedは残量確認のみ |
 | [Rust-only consumer compatibility](rust-only-consumer-compatibility.md) | D3: 保存物の読取・再集計と旧Policy再実行の境界、Rust-only移行の順序 |
 
 ここへ載ることは、Arenaがstable AI semanticsのownerになることを意味しない。`PolicyInput`、Policy behavior、HandBelief、value / risk、production Policy等のstable AI-side semanticsは、該当する場合 `lisjong` がownerである。
