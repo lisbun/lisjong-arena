@@ -23,6 +23,9 @@ env:
 jobs:
   static-checks:
     name: static-checks
+    # environment_verify / seed_registry import lisjong_arena, which needs the
+    # native extension since #531.
+    needs: native-wheel
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -38,6 +41,19 @@ jobs:
 
       - name: Install package and development tools
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Download the same-revision native wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: lisjong-native-ci-wheel
+          path: wheelhouse
+
+      - name: Install the same-revision native wheel (binary only, no index)
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check \
+            --only-binary=:all: --no-index --no-deps wheelhouse/*.whl
+          test "$(python -c 'import _lisjong_native; print(_lisjong_native.SOURCE_REVISION)')" = "$LISJONG_NATIVE_SOURCE_REVISION"
 
       - name: Verify internal VCS dependency identity
         run: python -m lisjong_arena.environment_verify --project pyproject.toml
