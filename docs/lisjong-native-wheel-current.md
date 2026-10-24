@@ -52,8 +52,9 @@ R5の小入力probeは配線確認であり、Champion全体の速度や強さ�
 - `python`と未知値は、Arenaのpackage import時（lisjongを読み込む前）と各実行CLIの`--backend`で、
   移行案内付きで拒否する。黙ってRustへ読み替えない。
 - native拡張がない・`API_VERSION`が違う・tableが壊れている場合は、lisjongが
-  `lisjong.hand_evaluation.shanten`のimport時に失敗する。`lisjong_arena`のpackage importは
-  lisjong Policyを読み込むので、保存物の読取・verifyでもnative wheelが必要になる。
+  `lisjong.hand_evaluation.shanten`のimport時に失敗する。lisjongを読むArena module（実行・保存物の読取・
+  verifyのほとんど）はnative wheelが必要。#537以降、`lisjong_arena`のpackage import自体は環境変数の検査だけで、
+  再exportは遅延読込なので、lisjongを使わない`lisjong_arena.seed_registry`はnativeなしで動く。
 - Pythonへ戻す方法はない。旧Python計算の再実行は、記録済みの旧Arena / lisjong revision・wheel・環境の組で行う
   （[互換契約](rust-only-consumer-compatibility.md)の「旧環境の復元」）。
 
