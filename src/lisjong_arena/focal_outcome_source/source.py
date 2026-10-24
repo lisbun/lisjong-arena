@@ -81,8 +81,12 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "0fff8918ec349eeec129907f6a723e2d7314b95a"
+PINNED_LISJONG_REVISION = "d2469f2519b947fb27bf8c1622a2854c200e0aae"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #524で単独副露者genbutsu候補（lisjong #343）を含む``d2469f2``へ追随した。
+``0fff891..d2469f2``の``outcome_source.py``は不変。このproducerのschema・wire・
+明示的な拒否は変えない。
 
 Arena #520で同点数牌paijia候補（lisjong #330）を含む``0fff891``へ追随した。
 ``999553b..0fff891``の``outcome_source.py``は不変。このproducerのschema・wire・

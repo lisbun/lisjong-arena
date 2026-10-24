@@ -662,7 +662,14 @@ def utc_now() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
-def write_stop(diagnostics: Path, plan: dict, error: BaseException, done: int):
+def write_stop(
+    diagnostics: Path,
+    plan: dict,
+    error: BaseException,
+    done: int,
+    *,
+    schema: str = STOP_SCHEMA,
+):
     diagnostics.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S%fZ")
     document = {
@@ -670,7 +677,7 @@ def write_stop(diagnostics: Path, plan: dict, error: BaseException, done: int):
         "error": f"{type(error).__name__}: {error}",
         "not_a_result": True,
         "plan_digest": plan["plan_digest"],
-        "schema": STOP_SCHEMA,
+        "schema": schema,
         "stage": plan["stage"],
         "status": STOP_STATUS,
     }
@@ -689,6 +696,7 @@ def execute_plan(
     on_hanchan: Callable[[int, int], None] | None,
     clock: Callable[[], float],
     realtime: Callable[[], float],
+    stop_schema: str = STOP_SCHEMA,
 ) -> dict[str, object]:
     """planのscheduleを1 workerで実行し、``publish(staging, executed, timings)`` が
     書いた保存物を ``<output>`` へ公開する。失敗はSTOP-INCOMPLETEで何も公開しない。
@@ -701,7 +709,7 @@ def execute_plan(
     diagnostics = Path(plan["artifact_destinations"]["diagnostics"])
     if output.exists():
         raise EngineAabbPaijiaTieError(
-            "output already exists; #520 outputs are write-once and a completed "
+            "output already exists; outputs are write-once and a completed "
             "stage is never re-run"
         )
     limits = plan["resource_limits"]
@@ -780,7 +788,7 @@ def execute_plan(
             if elapsed() > limits["wall_seconds"]:
                 raise RunStopped("stage exceeded the wall limit while saving")
     except BaseException as error:
-        write_stop(diagnostics, plan, error, len(rows))
+        write_stop(diagnostics, plan, error, len(rows), schema=stop_schema)
         if not isinstance(error, Exception) or isinstance(
             error, (RunStopped, EngineAabbProtocolError)
         ):

@@ -4,7 +4,8 @@ Policyのbehaviorそのものは検証しない。catalogが``two-step`` /
 ``finite-horizon`` / ``combined`` / ``hand-value-aware`` /
 ``extended-combined`` / ``yakuhai-call`` / ``mechanism-riichi-defense`` /
 ``targeted-honor-release-terminal-progression`` / ``placement-aware-speed-call``の
-Belief-paijia統合候補と1向聴守備候補、#520の同点数牌paijia候補を含む12個であること、catalog keyと
+Belief-paijia統合候補と1向聴守備候補、#520の同点数牌paijia候補、#524の単独副露者genbutsu候補を
+含む13個であること、catalog keyと
 ``PolicySpec.identity``が一致すること、factoryがtop-levelでfresh instanceを生成し
 spawn-safeであること、CLIが登録名を既存serial / parallel evaluation pathへ解決する
 ことだけを固定する。
@@ -45,6 +46,7 @@ from lisjong_arena.policy_catalog import (
     create_mechanism_riichi_defense,
     create_placement_aware_speed_call,
     create_placement_aware_speed_call_kobalab_0004_belief_paijia,
+    create_placement_aware_speed_call_single_open_genbutsu,
     create_placement_aware_speed_call_suited_paijia_tie,
     create_targeted_honor_release_terminal_progression,
     create_two_step,
@@ -55,7 +57,7 @@ from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
 class CatalogContentsTest(unittest.TestCase):
-    def test_catalog_has_exactly_twelve_registered_policies(self) -> None:
+    def test_catalog_has_exactly_thirteen_registered_policies(self) -> None:
         self.assertEqual(
             set(POLICY_CATALOG),
             {
@@ -71,6 +73,7 @@ class CatalogContentsTest(unittest.TestCase):
                 "placement-aware-speed-call-kobalab-0004-belief-paijia",
                 "one-shanten-defense-placement-aware-speed-call",
                 "placement-aware-speed-call-suited-paijia-tie-v1",
+                "placement-aware-speed-call-single-open-genbutsu-v1",
             },
         )
 
@@ -159,6 +162,7 @@ del lisjong.policies.TargetedHonorReleaseTerminalProgressionPolicy
 del lisjong.policies.PlacementAwareSpeedCallPolicy
 del lisjong.policies.PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy
 del lisjong.policies.PlacementAwareSpeedCallSuitedPaijiaTiePolicy
+del lisjong.policies.SingleOpenGenbutsuPlacementAwareSpeedCallPolicy
 
 from lisjong_arena.learned_policy_offline_q.artifact import provenance_document
 from lisjong_arena.policy_catalog import (
@@ -166,6 +170,7 @@ from lisjong_arena.policy_catalog import (
     create_mechanism_riichi_defense,
     create_placement_aware_speed_call,
     create_placement_aware_speed_call_kobalab_0004_belief_paijia,
+    create_placement_aware_speed_call_single_open_genbutsu,
     create_placement_aware_speed_call_suited_paijia_tie,
     create_targeted_honor_release_terminal_progression,
     create_yakuhai_call,
@@ -185,6 +190,13 @@ except ImportError:
     pass
 else:
     raise AssertionError("#520 candidate must require its symbol only when selected")
+
+try:
+    create_placement_aware_speed_call_single_open_genbutsu()
+except ImportError:
+    pass
+else:
+    raise AssertionError("#524 candidate must require its symbol only when selected")
 
 assert callable(provenance_document)
 assert callable(stage_a0_cli.main)
@@ -316,6 +328,32 @@ class SuitedPaijiaTieCandidateTest(unittest.TestCase):
             binding,
             "lisjong_arena.policy_catalog:"
             "create_placement_aware_speed_call_suited_paijia_tie",
+        )
+        self.assertIs(resolve_binding_callable(binding), factory)
+
+
+class SingleOpenGenbutsuCandidateTest(unittest.TestCase):
+    """#524: lisjong #343の候補を明示identityで登録する（設定なし・学習artifactなし）。"""
+
+    def test_candidate_binding_is_fresh_and_spawn_safe(self) -> None:
+        from lisjong.policies import SingleOpenGenbutsuPlacementAwareSpeedCallPolicy
+
+        identity = "placement-aware-speed-call-single-open-genbutsu-v1"
+        spec = POLICY_CATALOG[identity]
+        factory = create_placement_aware_speed_call_single_open_genbutsu
+        self.assertEqual(spec.identity, identity)
+        self.assertIs(spec.factory, factory)
+        first, second = factory(), factory()
+        self.assertIs(type(first), SingleOpenGenbutsuPlacementAwareSpeedCallPolicy)
+        self.assertIsNot(first, second)
+        # 対照Bは同じrevisionの現Champion（exact parent）
+        self.assertIsInstance(first, PlacementAwareSpeedCallPolicy)
+        check_policy_spec_serializable(spec)
+        binding = factory_binding_of(factory)
+        self.assertEqual(
+            binding,
+            "lisjong_arena.policy_catalog:"
+            "create_placement_aware_speed_call_single_open_genbutsu",
         )
         self.assertIs(resolve_binding_callable(binding), factory)
 
