@@ -525,3 +525,16 @@ summaryはstage別の件数（gate各段階）、対象副露者が1人の判断
 seed・seat別の変更数・副露者1人の判断数・代替のある判断数、A（trace / 通常）とBの判断秒（中央値・p95・最大）、
 半荘wall・局数・RSSを持つ。verifyは出力fileのbytes・SHA-256と合計bytesを返す。変更頻度は予算配分の基準で、
 検出力や改善の証拠ではない。
+
+## 12. call-value-shadow-v1（#534）
+
+Issue: [lisbun/lisjong-arena#534](https://github.com/lisbun/lisjong-arena/issues/534)（設計#533、解析API
+lisbun/lisjong#350、merge `7fc1130`）。契約・CLI・引継ぎは[`call-value-shadow-534.md`](call-value-shadow-534.md)を正本とする。
+
+> Status: **実装のみ**。rehearsal・seed予約・本実行は行っていない（実行は後続の実行Issue）。
+
+#520 / #524のplan・protocol・digestは変えず、別schemaのplan（`arena-call-value-shadow-v1-plan-v1`）を使う。
+実行枠（write-once、live gate、1 worker、1半荘timeout、max(monotonic, realtime)のwall、RSS、`STOP-INCOMPLETE`で
+何も公開しない）は§9の`execute_plan`を共有し、#534で追加した引数（実行順・participant・`SHA256SUMS`を書く
+finalize hook）だけを渡す。既定値では#520 / #524の動作は変わらない。半荘は4席Champion（`placement-aware-speed-call`）で、
+call意図の成立 / 取消はactor席のplayer-safe round evidence（`on_round_evidence_complete`）だけから決める。

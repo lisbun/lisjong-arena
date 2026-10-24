@@ -40,6 +40,12 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb focal-report --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb genbutsu-plan --run-kind R ...
 python -m lisjong_arena.heuristic_candidate_engine_aabb genbutsu-activation-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb genbutsu-activation-verify --plan P
+
+#534 call-value-shadow-v1（#533。DEVELOPMENT診断。強さの結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-plan --run-kind R --observation O ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-verify --plan P [--output V]
+python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-rehearsal-compare --observed P1 --unobserved P2 --output C
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -58,6 +64,8 @@ from lisjong_arena.shanten_backend_verification.backend import (
 )
 
 from . import (
+    call_value_shadow,
+    call_value_shadow_plan,
     focal_mixed_compare,
     focal_mixed_plan,
     rust_only_gate,
@@ -271,7 +279,42 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("genbutsu-activation-verify").add_argument("--plan", required=True)
 
+    call_value = sub.add_parser(
+        "call-value-plan",
+        help="#534: write a write-once call-value-shadow-v1 plan (seeds, limits fixed)",
+    )
+    call_value.add_argument("--run-kind", choices=RUN_KINDS, required=True)
+    call_value.add_argument(
+        "--observation", choices=call_value_shadow_plan.OBSERVATIONS, required=True
+    )
+    call_value.add_argument(
+        "--owner-issue",
+        required=True,
+        help="the execution Issue, lisbun/lisjong-arena#N",
+    )
+    call_value.add_argument("--allocation-identity", help="allocated only")
+    call_value.add_argument("--limit-enforcement", required=True)
+    call_value.add_argument("--wheel", required=True)
+    call_value.add_argument("--run-output", required=True)
+    call_value.add_argument("--diagnostics", required=True)
+    call_value.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    call_value.add_argument("--output", required=True)
+    call_value_run = sub.add_parser("call-value-run")
+    call_value_run.add_argument("--plan", required=True)
+    call_value_run.add_argument(
+        "--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH)
+    )
+    call_value_verify = sub.add_parser("call-value-verify")
+    call_value_verify.add_argument("--plan", required=True)
+    call_value_verify.add_argument("--output", help="write-once verify document")
+    call_value_compare = sub.add_parser("call-value-rehearsal-compare")
+    call_value_compare.add_argument("--observed", required=True)
+    call_value_compare.add_argument("--unobserved", required=True)
+    call_value_compare.add_argument("--output", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("call-value-"):
+        return _call_value(args)
     if args.command.startswith("genbutsu-"):
         return _genbutsu(args)
     if args.command.startswith("paijia-"):
@@ -520,6 +563,39 @@ def _genbutsu(args) -> int:
         return 0
     verified = single_open_genbutsu_activation.verify_activation(args.plan)
     print(json.dumps(verified, sort_keys=True, indent=2))
+    return 0
+
+
+def _call_value(args) -> int:
+    if args.command == "call-value-plan":
+        document = call_value_shadow_plan.build_plan(
+            run_kind=args.run_kind,
+            observation=args.observation,
+            owner_issue=args.owner_issue,
+            allocation_identity=args.allocation_identity,
+            limit_enforcement=args.limit_enforcement,
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={"diagnostics": args.diagnostics, "output": args.run_output},
+            ledger_path=args.ledger,
+        )
+        call_value_shadow_plan.save_plan(document, args.output)
+        print(f"{args.run_kind} {args.observation} {document['plan_digest']}")
+        return 0
+    if args.command == "call-value-run":
+        summary = call_value_shadow.run_plan(
+            args.plan, ledger_path=args.ledger, on_hanchan=_progress
+        )
+        decision = summary["gate"]["decision"] if summary["gate"] else REHEARSAL
+        print(f"{summary['status']} {decision} {summary['summary_digest']}")
+        return 0
+    if args.command == "call-value-verify":
+        verified = call_value_shadow.verify_plan(args.plan, output=args.output)
+        print(json.dumps(verified, sort_keys=True, indent=2))
+        return 0
+    compared = call_value_shadow.compare_rehearsals(
+        args.observed, args.unobserved, output=args.output
+    )
+    print(json.dumps(compared, sort_keys=True, indent=2))
     return 0
 
 

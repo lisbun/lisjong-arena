@@ -81,8 +81,12 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "89dd00d54d3651c1a8a720b2bea3933bb2ca0bd5"
+PINNED_LISJONG_REVISION = "7fc1130f9a6498d0de809f8128608b753c829415"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #534で鳴き採用・直後打牌の解析API（lisjong #350）を含む``7fc1130``へ追随した。
+``89dd00d..7fc1130``の``outcome_source.py``は不変。このproducerのschema・wire・
+明示的な拒否は変えない。
 
 Arena #531でRust必須化（lisjong #346）の``89dd00d``へ追随した。
 ``d2469f2..89dd00d``の``outcome_source.py``は不変。このproducerのschema・wire・

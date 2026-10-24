@@ -62,6 +62,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [同点数牌paijia候補の開発比較: 実行前計画](paijia-tie-screen-520.md) — Issue #520（親lisjong-project#84、候補lisjong#330）。B自己対局8半荘での変更頻度gateと、通過時だけの32 seeds × 6配置の開発screen（DEVELOPMENT、実行は別承認）
 - [凍結paijia候補の混成相手focal比較: 実行前計画](focal-mixed-recheck-522.md) — Issue #522（親lisjong-project#84、候補lisjong#330、前段#520）。新規32 seeds × 4 rotation × A/Bの256半荘を固定相手3者と1回だけ比べる開発再確認（DEVELOPMENT、実行は別承認）
 - [単独副露者genbutsu候補のshadow変更頻度・時間gate: 実行前計画](single-open-genbutsu-activation-524.md) — Issue #524（親lisjong-project#84、候補lisjong#343）。B自己対局8半荘で、Aを通常・trace実行の両方でshadow採点する変更頻度gate（DEVELOPMENT、実行は別承認。192半荘screenは後続Issue）
+- [call-value-shadow-v1：鳴き直後の採用閾値割れshadow](call-value-shadow-534.md) — Issue #534（設計#533、解析API lisjong#350）。Champion×4の固定24 seedsで、主対象speed callの直後打牌が採用閾値を割る頻度と速度損失を測る観測・plan・固定判定・strict verify（DEVELOPMENT、実行は後続の実行Issue）
 - [L2a合成Policyの動作確認](l2a-runtime-smoke-507.md) — Issue #507（親lisjong#318）。凍結したL2a 1席 + C0 3席の16半荘で、完走・全判断の合法・推論時間・RSSを記録する（強さの比較はしない）
 - [#245 待ち確率推定器の正式test](riichi-wait-formal-245.md) — Issue #447（owner lisjong#245）の予約済み新規seed 932000..932099の生成・`select`・`test`をAWS 1台で実行する経路（actual runはmerge後のoperator作業）
 - [聴牌PUSH/FOLDの対比較source producerとpilot](tenpai-push-fold-source-476.md) — Issue #476（owner lisjong#254）。lisjong#288のwire契約どおりに押す／降りるの局の結果を対で記録する経路と、16半荘pilotの固定値（pilotの実行はmerge後のoperator作業）

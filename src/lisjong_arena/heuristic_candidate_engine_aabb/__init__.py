@@ -30,6 +30,10 @@ Rust必須lisjong（#531）
   single_open_genbutsu_plan        write-once plan（実行枠は#520のものを使う）
   single_open_genbutsu_worker      worker内のshadow採点（通常 / trace実行の一致を含む）
   single_open_genbutsu_activation  変更頻度・時間gate、summary、verify
+#534 call-value-shadow-v1（#533、DEVELOPMENT診断）
+  call_value_shadow_plan    write-once plan（固定24 seeds・上限・判定、実行枠は#520のもの）
+  call_value_shadow_worker  call意図→公開evidenceで成立/取消→直後打牌、lisjong解析の運搬
+  call_value_shadow         summary・固定判定・保存contextからの再導出verify・rehearsal照合
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は
