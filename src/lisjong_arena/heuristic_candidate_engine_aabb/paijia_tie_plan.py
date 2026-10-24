@@ -697,6 +697,9 @@ def execute_plan(
     clock: Callable[[], float],
     realtime: Callable[[], float],
     stop_schema: str = STOP_SCHEMA,
+    schedule: Sequence[dict] | None = None,
+    participants: tuple[Participant, Participant] | None = None,
+    finalize: Callable[[Path], None] | None = None,
 ) -> dict[str, object]:
     """planのscheduleを1 workerで実行し、``publish(staging, executed, timings)`` が
     書いた保存物を ``<output>`` へ公開する。失敗はSTOP-INCOMPLETEで何も公開しない。
@@ -704,6 +707,10 @@ def execute_plan(
     stage全体のwall上限はmonotonicとrealtimeの両方で確かめ、長い方で判定する
     （#517でmonotonicがrealtimeより約401 s短かった）。process tree全体の強制は
     OS側（plan ``resource_limits.enforcement``）で行う。
+
+    ``schedule`` / ``participants`` は#520と別形のplan（#534）が渡す実行順と
+    (candidate, incumbent)。``None`` なら#520のplanから読む。``finalize(staging)`` は
+    ``timings.json`` を書いた後、公開前に呼ぶoptionalなhook（#534の``SHA256SUMS``）。
     """
     output = Path(plan["artifact_destinations"]["output"])
     diagnostics = Path(plan["artifact_destinations"]["diagnostics"])
@@ -754,9 +761,11 @@ def execute_plan(
 
     try:
         live_gate(plan, ledger=ledger())
-        candidate, incumbent = plan_participants(plan)
+        candidate, incumbent = (
+            plan_participants(plan) if participants is None else participants
+        )
         executed = run_schedule(
-            hanchans=plan_schedule(plan),
+            hanchans=plan_schedule(plan) if schedule is None else list(schedule),
             candidate=candidate,
             incumbent=incumbent,
             wheel_path=plan["execution"]["wheel_path"],
@@ -785,6 +794,8 @@ def execute_plan(
             write_new_artifact_file(
                 staging / TIMINGS_FILENAME, canonical_json_text(timings)
             )
+            if finalize is not None:
+                finalize(staging)
             if elapsed() > limits["wall_seconds"]:
                 raise RunStopped("stage exceeded the wall limit while saving")
     except BaseException as error:
@@ -848,7 +859,12 @@ def rss(value: object, context: str) -> int | None:
 
 
 def require_timings(
-    plan: dict, timings: object, kyoku_counts: Sequence[int], *, complete: bool = True
+    plan: dict,
+    timings: object,
+    kyoku_counts: Sequence[int],
+    *,
+    complete: bool = True,
+    schedule: Sequence[dict] | None = None,
 ) -> dict:
     """timingsの形・値を検査し、半荘の並びと局数を保存済みの客観値と照合する。
 
@@ -863,7 +879,8 @@ def require_timings(
     if type(timings) is not dict or timings.get("plan_digest") != plan["plan_digest"]:
         raise EngineAabbPaijiaTieError("timings do not belong to the plan")
     rows = timings.get("hanchans")
-    expected = [(item["seed"], item["placement"]) for item in plan_schedule(plan)]
+    planned = plan_schedule(plan) if schedule is None else schedule
+    expected = [(item["seed"], item["placement"]) for item in planned]
     if (
         type(rows) is not list
         or any(type(row) is not dict or set(row) != _TIMING_ROW_FIELDS for row in rows)

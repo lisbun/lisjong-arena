@@ -6,7 +6,7 @@ lisbun/lisjong#217（merge `2553c1b`）で完了している。配布手順の�
 
 本書は、Arena側の導入・worker設定・実行記録と、AWS実行計画（§5、**実行前の承認用の案**）を扱う。
 
-> **#409以降**：現行のlisjong pinとwheelは[現行の組み合わせ](lisjong-native-wheel-current.md)（#531：lisjong `89dd00d`、`API_VERSION` 3 / `SCORING_API_VERSION` 1）である。
+> **#409以降**：現行のlisjong pinとwheelは[現行の組み合わせ](lisjong-native-wheel-current.md)（#534：lisjong `7fc1130`、`API_VERSION` 3 / `SCORING_API_VERSION` 1）である。
 > **#531以降**：lisjong #346でPython backendが削除された。`probe` / `games` はRustだけを受け付け、
 > `startup`（Python/Rust比較）は移行案内付きで拒否する。保存済みの#400記録は `compare` / `report` で読める。
 > #400のPython側の再実行は、当時のArena commit・lisjong revision・wheel・環境の組で行う。

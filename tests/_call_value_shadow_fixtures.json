@@ -1,0 +1,7164 @@
+{
+ "closed_tenpai_below_max": {
+  "actor": 0,
+  "call": {
+   "actor": 0,
+   "called_tile": {
+    "category": "manzu",
+    "is_red": false,
+    "rank": 2
+   },
+   "consumed_tiles": [
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 3
+    },
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 4
+    }
+   ],
+   "kind": "chi",
+   "target": 3
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "closed_before_call": true,
+   "minimum_value": 0,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 0,
+   "value": 2
+  },
+  "decision_ordinal": 0,
+  "invalid": [],
+  "is_primary_target": false,
+  "post": {
+   "analysis": {
+    "__type": "PostCallDiscardAnalysis",
+    "alternative": null,
+    "call_analysis": {
+     "__type": "SpeedCallDecisionAnalysis",
+     "action": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "call": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "closed_before_call": true,
+     "minimum_value": 0,
+     "mode": "GameSituationMode.NORMAL",
+     "route": "CallDecisionRoute.SPEED_CALL",
+     "route_shanten": 0,
+     "value": 2
+    },
+    "candidates": [
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 26662,
+      "route_shanten": 1,
+      "ukeire": 14,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 12048,
+      "route_shanten": 1,
+      "ukeire": 10,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 26662,
+      "route_shanten": 1,
+      "ukeire": 14,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 2
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 20458,
+      "route_shanten": 1,
+      "ukeire": 15,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 26662,
+      "route_shanten": 1,
+      "ukeire": 14,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 12498,
+      "route_shanten": 1,
+      "ukeire": 10,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 26662,
+      "route_shanten": 1,
+      "ukeire": 14,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 4
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 133994,
+      "route_shanten": 0,
+      "ukeire": 3,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 52898,
+      "route_shanten": 1,
+      "ukeire": 30,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 175590,
+      "route_shanten": 0,
+      "ukeire": 4,
+      "value": 1
+     }
+    ],
+    "classification": "PostCallClassification.BELOW_MAX",
+    "discard": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 8
+      }
+     },
+     "tsumogiri": false
+    },
+    "hidden_tile_count": 121,
+    "horizon": 3,
+    "sequence_denominator": 1727880,
+    "speed_loss": null
+   },
+   "context": {
+    "legal_actions": [
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     }
+    ],
+    "policy_input": {
+     "own_hand": {
+      "concealed_tiles": [
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 8
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 4
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 8
+       }
+      ],
+      "drawn_tile": null
+     },
+     "players": [
+      {
+       "discards": [],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "from_seat": 3,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 2
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 3
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 4
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": 0,
+         "order": 0,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      }
+     ],
+     "round": {
+      "dealer_seat": 1,
+      "dora_indicators": [
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 7
+       }
+      ],
+      "hand_number": 1,
+      "honba": 0,
+      "live_wall_tiles_remaining": 50,
+      "riichi_sticks": 0,
+      "round_wind": "east"
+     },
+     "self_seat": 0
+    }
+   },
+   "decision_ordinal": 1,
+   "discard": {
+    "actor": 0,
+    "kind": "discard",
+    "tile": {
+     "category": "souzu",
+     "is_red": false,
+     "rank": 8
+    },
+    "tsumogiri": false
+   }
+  },
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 0,
+     "kind": "pass"
+    },
+    {
+     "actor": 0,
+     "called_tile": {
+      "category": "manzu",
+      "is_red": false,
+      "rank": 2
+     },
+     "consumed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      }
+     ],
+     "kind": "chi",
+     "target": 3
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      }
+     ],
+     "hand_number": 1,
+     "honba": 0,
+     "live_wall_tiles_remaining": 50,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 0
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 0,
+  "round_ordinal": 0
+ },
+ "kuikae_primary_below_threshold": {
+  "actor": 0,
+  "call": {
+   "actor": 0,
+   "called_tile": {
+    "category": "manzu",
+    "is_red": false,
+    "rank": 2
+   },
+   "consumed_tiles": [
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 3
+    },
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 4
+    }
+   ],
+   "kind": "chi",
+   "target": 3
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "closed_before_call": true,
+   "minimum_value": 2,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 1,
+   "value": 2
+  },
+  "decision_ordinal": 0,
+  "invalid": [],
+  "is_primary_target": true,
+  "post": {
+   "analysis": {
+    "__type": "PostCallDiscardAnalysis",
+    "alternative": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 4
+      }
+     },
+     "tsumogiri": false
+    },
+    "call_analysis": {
+     "__type": "SpeedCallDecisionAnalysis",
+     "action": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "call": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "closed_before_call": true,
+     "minimum_value": 2,
+     "mode": "GameSituationMode.NORMAL",
+     "route": "CallDecisionRoute.SPEED_CALL",
+     "route_shanten": 1,
+     "value": 2
+    },
+    "candidates": [
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 1344,
+      "route_shanten": 2,
+      "ukeire": 19,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 576,
+      "route_shanten": 2,
+      "ukeire": 15,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 5616,
+      "route_shanten": 2,
+      "ukeire": 56,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 2
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 5088,
+      "route_shanten": 2,
+      "ukeire": 49,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 2784,
+      "route_shanten": 2,
+      "ukeire": 51,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 2784,
+      "route_shanten": 2,
+      "ukeire": 51,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 4
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 24256,
+      "route_shanten": 1,
+      "ukeire": 12,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 24576,
+      "route_shanten": 1,
+      "ukeire": 12,
+      "value": 1
+     }
+    ],
+    "classification": "PostCallClassification.BELOW_THRESHOLD",
+    "discard": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 8
+      }
+     },
+     "tsumogiri": false
+    },
+    "hidden_tile_count": 121,
+    "horizon": 3,
+    "sequence_denominator": 1727880,
+    "speed_loss": {
+     "__type": "SpeedLoss",
+     "mass_difference": 320,
+     "relative_denominator": 24576,
+     "relative_numerator": 320,
+     "zero_mass": false
+    }
+   },
+   "context": {
+    "legal_actions": [
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     }
+    ],
+    "policy_input": {
+     "own_hand": {
+      "concealed_tiles": [
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 8
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 4
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 8
+       }
+      ],
+      "drawn_tile": null
+     },
+     "players": [
+      {
+       "discards": [],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "from_seat": 3,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 2
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 3
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 4
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": 0,
+         "order": 0,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      }
+     ],
+     "round": {
+      "dealer_seat": 1,
+      "dora_indicators": [
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 7
+       }
+      ],
+      "hand_number": 1,
+      "honba": 0,
+      "live_wall_tiles_remaining": 50,
+      "riichi_sticks": 0,
+      "round_wind": "east"
+     },
+     "self_seat": 0
+    }
+   },
+   "decision_ordinal": 1,
+   "discard": {
+    "actor": 0,
+    "kind": "discard",
+    "tile": {
+     "category": "souzu",
+     "is_red": false,
+     "rank": 8
+    },
+    "tsumogiri": false
+   }
+  },
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 0,
+     "kind": "pass"
+    },
+    {
+     "actor": 0,
+     "called_tile": {
+      "category": "manzu",
+      "is_red": false,
+      "rank": 2
+     },
+     "consumed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      }
+     ],
+     "kind": "chi",
+     "target": 3
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      }
+     ],
+     "hand_number": 1,
+     "honba": 0,
+     "live_wall_tiles_remaining": 50,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 0
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 0,
+  "round_ordinal": 0
+ },
+ "r1_primary_below_threshold": {
+  "actor": 0,
+  "call": {
+   "actor": 0,
+   "called_tile": {
+    "category": "manzu",
+    "is_red": false,
+    "rank": 2
+   },
+   "consumed_tiles": [
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 3
+    },
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 4
+    }
+   ],
+   "kind": "chi",
+   "target": 3
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "closed_before_call": true,
+   "minimum_value": 2,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 1,
+   "value": 2
+  },
+  "decision_ordinal": 0,
+  "invalid": [],
+  "is_primary_target": true,
+  "post": {
+   "analysis": {
+    "__type": "PostCallDiscardAnalysis",
+    "alternative": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 4
+      }
+     },
+     "tsumogiri": false
+    },
+    "call_analysis": {
+     "__type": "SpeedCallDecisionAnalysis",
+     "action": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "call": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "closed_before_call": true,
+     "minimum_value": 2,
+     "mode": "GameSituationMode.NORMAL",
+     "route": "CallDecisionRoute.SPEED_CALL",
+     "route_shanten": 1,
+     "value": 2
+    },
+    "candidates": [
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 5340,
+      "route_shanten": 2,
+      "ukeire": 43,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 2940,
+      "route_shanten": 2,
+      "ukeire": 39,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 5340,
+      "route_shanten": 2,
+      "ukeire": 43,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 2
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 30224,
+      "route_shanten": 1,
+      "ukeire": 15,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 22551,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 22251,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 4
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 40176,
+      "route_shanten": 1,
+      "ukeire": 23,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 30474,
+      "route_shanten": 1,
+      "ukeire": 14,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 45980,
+      "route_shanten": 1,
+      "ukeire": 24,
+      "value": 1
+     }
+    ],
+    "classification": "PostCallClassification.BELOW_THRESHOLD",
+    "discard": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 8
+      }
+     },
+     "tsumogiri": false
+    },
+    "hidden_tile_count": 121,
+    "horizon": 3,
+    "sequence_denominator": 1727880,
+    "speed_loss": {
+     "__type": "SpeedLoss",
+     "mass_difference": 5804,
+     "relative_denominator": 45980,
+     "relative_numerator": 5804,
+     "zero_mass": false
+    }
+   },
+   "context": {
+    "legal_actions": [
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     }
+    ],
+    "policy_input": {
+     "own_hand": {
+      "concealed_tiles": [
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 8
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 4
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 8
+       }
+      ],
+      "drawn_tile": null
+     },
+     "players": [
+      {
+       "discards": [],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "from_seat": 3,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 2
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 3
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 4
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": 0,
+         "order": 0,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      }
+     ],
+     "round": {
+      "dealer_seat": 1,
+      "dora_indicators": [
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 7
+       }
+      ],
+      "hand_number": 1,
+      "honba": 0,
+      "live_wall_tiles_remaining": 50,
+      "riichi_sticks": 0,
+      "round_wind": "east"
+     },
+     "self_seat": 0
+    }
+   },
+   "decision_ordinal": 1,
+   "discard": {
+    "actor": 0,
+    "kind": "discard",
+    "tile": {
+     "category": "souzu",
+     "is_red": false,
+     "rank": 8
+    },
+    "tsumogiri": false
+   }
+  },
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 0,
+     "kind": "pass"
+    },
+    {
+     "actor": 0,
+     "called_tile": {
+      "category": "manzu",
+      "is_red": false,
+      "rank": 2
+     },
+     "consumed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      }
+     ],
+     "kind": "chi",
+     "target": 3
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      }
+     ],
+     "hand_number": 1,
+     "honba": 0,
+     "live_wall_tiles_remaining": 50,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 0
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 0,
+  "round_ordinal": 0
+ },
+ "real_parent_decision": {
+  "actor": 1,
+  "call": {
+   "actor": 1,
+   "called_tile": {
+    "category": "honor",
+    "is_red": false,
+    "rank": 2
+   },
+   "consumed_tiles": [
+    {
+     "category": "honor",
+     "is_red": false,
+     "rank": 2
+    },
+    {
+     "category": "honor",
+     "is_red": false,
+     "rank": 2
+    }
+   ],
+   "kind": "pon",
+   "target": 0
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "PonAction",
+    "actor": "Seat.SEAT_1",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.HONOR",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.HONOR",
+       "rank": 2
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.HONOR",
+       "rank": 2
+      }
+     }
+    ],
+    "target": "Seat.SEAT_0"
+   },
+   "call": null,
+   "closed_before_call": true,
+   "minimum_value": null,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.PARENT_DECISION",
+   "route_shanten": null,
+   "value": null
+  },
+  "decision_ordinal": 1,
+  "invalid": [],
+  "is_primary_target": false,
+  "post": null,
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 1,
+     "kind": "pass"
+    },
+    {
+     "actor": 1,
+     "called_tile": {
+      "category": "honor",
+      "is_red": false,
+      "rank": 2
+     },
+     "consumed_tiles": [
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 2
+      }
+     ],
+     "kind": "pon",
+     "target": 0
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 9
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 6
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 4,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 1,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 2,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 3,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     }
+    ],
+    "round": {
+     "dealer_seat": 0,
+     "dora_indicators": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 2
+      }
+     ],
+     "hand_number": 1,
+     "honba": 0,
+     "live_wall_tiles_remaining": 65,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 1
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 0,
+  "round_ordinal": 0
+ },
+ "real_primary_consistent": {
+  "actor": 2,
+  "call": {
+   "actor": 2,
+   "called_tile": {
+    "category": "manzu",
+    "is_red": false,
+    "rank": 8
+   },
+   "consumed_tiles": [
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 7
+    },
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 9
+    }
+   ],
+   "kind": "chi",
+   "target": 1
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_2",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 8
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 7
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 9
+      }
+     }
+    ],
+    "target": "Seat.SEAT_1"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_2",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 8
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 7
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 9
+      }
+     }
+    ],
+    "target": "Seat.SEAT_1"
+   },
+   "closed_before_call": true,
+   "minimum_value": 2,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 1,
+   "value": 2
+  },
+  "decision_ordinal": 33,
+  "invalid": [],
+  "is_primary_target": true,
+  "post": {
+   "analysis": {
+    "__type": "PostCallDiscardAnalysis",
+    "alternative": null,
+    "call_analysis": {
+     "__type": "SpeedCallDecisionAnalysis",
+     "action": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_2",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 8
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 9
+        }
+       }
+      ],
+      "target": "Seat.SEAT_1"
+     },
+     "call": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_2",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 8
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 9
+        }
+       }
+      ],
+      "target": "Seat.SEAT_1"
+     },
+     "closed_before_call": true,
+     "minimum_value": 2,
+     "mode": "GameSituationMode.NORMAL",
+     "route": "CallDecisionRoute.SPEED_CALL",
+     "route_shanten": 1,
+     "value": 2
+    },
+    "candidates": [
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_2",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 2
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 14696,
+      "route_shanten": 1,
+      "ukeire": 13,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_2",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 9906,
+      "route_shanten": 1,
+      "ukeire": 9,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_2",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 18681,
+      "route_shanten": 1,
+      "ukeire": 11,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_2",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 24236,
+      "route_shanten": 1,
+      "ukeire": 15,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_2",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 3
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 26531,
+      "route_shanten": 1,
+      "ukeire": 18,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_2",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.HONOR",
+         "rank": 1
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 13850,
+      "route_shanten": 1,
+      "ukeire": 10,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_2",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.HONOR",
+         "rank": 3
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 13756,
+      "route_shanten": 1,
+      "ukeire": 10,
+      "value": 2
+     }
+    ],
+    "classification": "PostCallClassification.CONSISTENT",
+    "discard": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_2",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 3
+      }
+     },
+     "tsumogiri": false
+    },
+    "hidden_tile_count": 107,
+    "horizon": 3,
+    "sequence_denominator": 1190910,
+    "speed_loss": null
+   },
+   "context": {
+    "legal_actions": [
+     {
+      "actor": 2,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 2
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 2,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 2,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 2,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 2,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 3
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 2,
+      "kind": "discard",
+      "tile": {
+       "category": "honor",
+       "is_red": false,
+       "rank": 1
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 2,
+      "kind": "discard",
+      "tile": {
+       "category": "honor",
+       "is_red": false,
+       "rank": 3
+      },
+      "tsumogiri": false
+     }
+    ],
+    "policy_input": {
+     "own_hand": {
+      "concealed_tiles": [
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 3
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 3
+       },
+       {
+        "category": "honor",
+        "is_red": false,
+        "rank": 1
+       },
+       {
+        "category": "honor",
+        "is_red": false,
+        "rank": 1
+       },
+       {
+        "category": "honor",
+        "is_red": false,
+        "rank": 1
+       },
+       {
+        "category": "honor",
+        "is_red": false,
+        "rank": 3
+       },
+       {
+        "category": "honor",
+        "is_red": false,
+        "rank": 3
+       },
+       {
+        "category": "honor",
+        "is_red": false,
+        "rank": 3
+       }
+      ],
+      "drawn_tile": null
+     },
+     "players": [
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 3,
+         "tile": {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 1
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 7,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 11,
+         "tile": {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 5
+         },
+         "from_seat": 3,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 5
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 6
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 7
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 0,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 4,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 3
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 8,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": 2,
+         "order": 12,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 8
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 1,
+         "tile": {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 1
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 5,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 9,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 6
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 8
+         },
+         "from_seat": 1,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 7
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 8
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 9
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 23400
+      },
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 2,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 3
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 6,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 1
+         },
+         "tsumogiri": true
+        },
+        {
+         "called_by": 0,
+         "order": 10,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 26600
+      }
+     ],
+     "round": {
+      "dealer_seat": 1,
+      "dora_indicators": [
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 1
+       }
+      ],
+      "hand_number": 2,
+      "honba": 0,
+      "live_wall_tiles_remaining": 58,
+      "riichi_sticks": 0,
+      "round_wind": "east"
+     },
+     "self_seat": 2
+    }
+   },
+   "decision_ordinal": 34,
+   "discard": {
+    "actor": 2,
+    "kind": "discard",
+    "tile": {
+     "category": "souzu",
+     "is_red": false,
+     "rank": 3
+    },
+    "tsumogiri": false
+   }
+  },
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 2,
+     "kind": "pass"
+    },
+    {
+     "actor": 2,
+     "called_tile": {
+      "category": "manzu",
+      "is_red": false,
+      "rank": 8
+     },
+     "consumed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 9
+      }
+     ],
+     "kind": "chi",
+     "target": 1
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 9
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 1
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 1
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 1
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "honor",
+       "is_red": false,
+       "rank": 3
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 3,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 7,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 11,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [
+       {
+        "called_tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 5
+        },
+        "from_seat": 3,
+        "kind": "chi",
+        "tiles": [
+         {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 5
+         },
+         {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 6
+         },
+         {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 7
+         }
+        ]
+       }
+      ],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 4,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 8,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 12,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 8
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 1,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 5,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 9,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 6
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 23400
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 2,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 6,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": true
+       },
+       {
+        "called_by": 0,
+        "order": 10,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 26600
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 1
+      }
+     ],
+     "hand_number": 2,
+     "honba": 0,
+     "live_wall_tiles_remaining": 58,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 2
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 1,
+  "round_ordinal": 1
+ },
+ "real_priority_cancel": {
+  "actor": 2,
+  "call": {
+   "actor": 2,
+   "called_tile": {
+    "category": "souzu",
+    "is_red": false,
+    "rank": 8
+   },
+   "consumed_tiles": [
+    {
+     "category": "souzu",
+     "is_red": false,
+     "rank": 6
+    },
+    {
+     "category": "souzu",
+     "is_red": false,
+     "rank": 7
+    }
+   ],
+   "kind": "chi",
+   "target": 1
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_2",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.SOUZU",
+      "rank": 8
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 6
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 7
+      }
+     }
+    ],
+    "target": "Seat.SEAT_1"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_2",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.SOUZU",
+      "rank": 8
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 6
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 7
+      }
+     }
+    ],
+    "target": "Seat.SEAT_1"
+   },
+   "closed_before_call": false,
+   "minimum_value": 0,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 0,
+   "value": 2
+  },
+  "decision_ordinal": 60,
+  "invalid": [],
+  "is_primary_target": false,
+  "post": null,
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 2,
+     "kind": "pass"
+    },
+    {
+     "actor": 2,
+     "called_tile": {
+      "category": "souzu",
+      "is_red": false,
+      "rank": 8
+     },
+     "consumed_tiles": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      }
+     ],
+     "kind": "chi",
+     "target": 1
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 3,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 6,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 10,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 14,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 18,
+        "tile": {
+         "category": "souzu",
+         "is_red": false,
+         "rank": 9
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 22,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": true
+       }
+      ],
+      "melds": [
+       {
+        "called_tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 4
+        },
+        "from_seat": 3,
+        "kind": "pon",
+        "tiles": [
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 4
+         },
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 4
+         },
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 4
+         }
+        ]
+       },
+       {
+        "called_tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "from_seat": 3,
+        "kind": "pon",
+        "tiles": [
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         }
+        ]
+       }
+      ],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 27500
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": 3,
+        "order": 4,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 6
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 7,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 7
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 11,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 8
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": 2,
+        "order": 15,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 6
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 19,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 23,
+        "tile": {
+         "category": "souzu",
+         "is_red": false,
+         "rank": 8
+        },
+        "tsumogiri": true
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 23500
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 1,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 8,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 7
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 12,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 9
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": 3,
+        "order": 16,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 20,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": true
+       }
+      ],
+      "melds": [
+       {
+        "called_tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 6
+        },
+        "from_seat": 1,
+        "kind": "chi",
+        "tiles": [
+         {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 6
+         },
+         {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 7
+         },
+         {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 8
+         }
+        ]
+       }
+      ],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 20300
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 2,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 5,
+        "tile": {
+         "category": "souzu",
+         "is_red": false,
+         "rank": 9
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 9,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": 0,
+        "order": 13,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 4
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": 0,
+        "order": 17,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 21,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 9
+        },
+        "tsumogiri": true
+       }
+      ],
+      "melds": [
+       {
+        "called_tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 6
+        },
+        "from_seat": 1,
+        "kind": "pon",
+        "tiles": [
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 6
+         },
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 6
+         },
+         {
+          "category": "honor",
+          "is_red": false,
+          "rank": 6
+         }
+        ]
+       },
+       {
+        "called_tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 5
+        },
+        "from_seat": 2,
+        "kind": "chi",
+        "tiles": [
+         {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 4
+         },
+         {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 5
+         },
+         {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 6
+         }
+        ]
+       }
+      ],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 28700
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 7
+      }
+     ],
+     "hand_number": 2,
+     "honba": 0,
+     "live_wall_tiles_remaining": 51,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 2
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "CANCELLED-PRIORITY-CALL"
+  },
+  "response_ordinal": 2,
+  "round_ordinal": 2
+ },
+ "real_speed_not_primary": {
+  "actor": 0,
+  "call": {
+   "actor": 0,
+   "called_tile": {
+    "category": "manzu",
+    "is_red": false,
+    "rank": 5
+   },
+   "consumed_tiles": [
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 6
+    },
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 7
+    }
+   ],
+   "kind": "chi",
+   "target": 3
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 5
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 6
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 7
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 5
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 6
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 7
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "closed_before_call": true,
+   "minimum_value": 0,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 0,
+   "value": 1
+  },
+  "decision_ordinal": 30,
+  "invalid": [],
+  "is_primary_target": false,
+  "post": {
+   "analysis": {
+    "__type": "PostCallDiscardAnalysis",
+    "alternative": null,
+    "call_analysis": {
+     "__type": "SpeedCallDecisionAnalysis",
+     "action": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 5
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 6
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "call": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 5
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 6
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "closed_before_call": true,
+     "minimum_value": 0,
+     "mode": "GameSituationMode.NORMAL",
+     "route": "CallDecisionRoute.SPEED_CALL",
+     "route_shanten": 0,
+     "value": 1
+    },
+    "candidates": [
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 2
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 269784,
+      "route_shanten": 0,
+      "ukeire": 8,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 4
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 43028,
+      "route_shanten": 1,
+      "ukeire": 25,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 143796,
+      "route_shanten": 0,
+      "ukeire": 4,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 30500,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 3
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 49416,
+      "route_shanten": 1,
+      "ukeire": 18,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 4
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 17172,
+      "route_shanten": 1,
+      "ukeire": 11,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 34980,
+      "route_shanten": 1,
+      "ukeire": 15,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 34980,
+      "route_shanten": 1,
+      "ukeire": 15,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 17172,
+      "route_shanten": 1,
+      "ukeire": 11,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 49416,
+      "route_shanten": 1,
+      "ukeire": 18,
+      "value": 1
+     }
+    ],
+    "classification": "PostCallClassification.CONSISTENT",
+    "discard": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.PINZU",
+       "rank": 2
+      }
+     },
+     "tsumogiri": false
+    },
+    "hidden_tile_count": 111,
+    "horizon": 3,
+    "sequence_denominator": 1330890,
+    "speed_loss": null
+   },
+   "context": {
+    "legal_actions": [
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 4
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 3
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     }
+    ],
+    "policy_input": {
+     "own_hand": {
+      "concealed_tiles": [
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 4
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 8
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 8
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 3
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 4
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 8
+       }
+      ],
+      "drawn_tile": null
+     },
+     "players": [
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 3,
+         "tile": {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 1
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 7,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 5
+         },
+         "from_seat": 3,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 5
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 6
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 7
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 0,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 4,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 3
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 8,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 1,
+         "tile": {
+          "category": "pinzu",
+          "is_red": false,
+          "rank": 1
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 5,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 9,
+         "tile": {
+          "category": "honor",
+          "is_red": false,
+          "rank": 6
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 23400
+      },
+      {
+       "discards": [
+        {
+         "called_by": null,
+         "order": 2,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 3
+         },
+         "tsumogiri": false
+        },
+        {
+         "called_by": null,
+         "order": 6,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 1
+         },
+         "tsumogiri": true
+        },
+        {
+         "called_by": 0,
+         "order": 10,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 5
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 26600
+      }
+     ],
+     "round": {
+      "dealer_seat": 1,
+      "dora_indicators": [
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 1
+       }
+      ],
+      "hand_number": 2,
+      "honba": 0,
+      "live_wall_tiles_remaining": 59,
+      "riichi_sticks": 0,
+      "round_wind": "east"
+     },
+     "self_seat": 0
+    }
+   },
+   "decision_ordinal": 31,
+   "discard": {
+    "actor": 0,
+    "kind": "discard",
+    "tile": {
+     "category": "pinzu",
+     "is_red": false,
+     "rank": 2
+    },
+    "tsumogiri": false
+   }
+  },
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 0,
+     "kind": "pass"
+    },
+    {
+     "actor": 0,
+     "called_tile": {
+      "category": "manzu",
+      "is_red": false,
+      "rank": 5
+     },
+     "consumed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      }
+     ],
+     "kind": "chi",
+     "target": 3
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 3,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 7,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 4,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 8,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 1,
+        "tile": {
+         "category": "pinzu",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 5,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 9,
+        "tile": {
+         "category": "honor",
+         "is_red": false,
+         "rank": 6
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 23400
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 2,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 3
+        },
+        "tsumogiri": false
+       },
+       {
+        "called_by": null,
+        "order": 6,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 1
+        },
+        "tsumogiri": true
+       },
+       {
+        "called_by": null,
+        "order": 10,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 5
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 26600
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 1
+      }
+     ],
+     "hand_number": 2,
+     "honba": 0,
+     "live_wall_tiles_remaining": 59,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 0
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 0,
+  "round_ordinal": 1
+ },
+ "red_five_consistent": {
+  "actor": 0,
+  "call": {
+   "actor": 0,
+   "called_tile": {
+    "category": "manzu",
+    "is_red": false,
+    "rank": 2
+   },
+   "consumed_tiles": [
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 3
+    },
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 4
+    }
+   ],
+   "kind": "chi",
+   "target": 3
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "closed_before_call": true,
+   "minimum_value": 2,
+   "mode": "GameSituationMode.NORMAL",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 1,
+   "value": 2
+  },
+  "decision_ordinal": 0,
+  "invalid": [],
+  "is_primary_target": true,
+  "post": {
+   "analysis": {
+    "__type": "PostCallDiscardAnalysis",
+    "alternative": null,
+    "call_analysis": {
+     "__type": "SpeedCallDecisionAnalysis",
+     "action": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "call": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "closed_before_call": true,
+     "minimum_value": 2,
+     "mode": "GameSituationMode.NORMAL",
+     "route": "CallDecisionRoute.SPEED_CALL",
+     "route_shanten": 1,
+     "value": 2
+    },
+    "candidates": [
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 2800,
+      "route_shanten": 2,
+      "ukeire": 27,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 1200,
+      "route_shanten": 2,
+      "ukeire": 23,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 2800,
+      "route_shanten": 2,
+      "ukeire": 27,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 2
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 4824,
+      "route_shanten": 2,
+      "ukeire": 56,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 33096,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": true,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 33096,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 1
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 17632,
+      "route_shanten": 1,
+      "ukeire": 12,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 4
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 27840,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 6160,
+      "route_shanten": 2,
+      "ukeire": 52,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 28416,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 2
+     }
+    ],
+    "classification": "PostCallClassification.CONSISTENT",
+    "discard": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.PINZU",
+       "rank": 5
+      }
+     },
+     "tsumogiri": false
+    },
+    "hidden_tile_count": 122,
+    "horizon": 3,
+    "sequence_denominator": 1771440,
+    "speed_loss": null
+   },
+   "context": {
+    "legal_actions": [
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": true,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     }
+    ],
+    "policy_input": {
+     "own_hand": {
+      "concealed_tiles": [
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 8
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "pinzu",
+        "is_red": true,
+        "rank": 5
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 4
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 8
+       }
+      ],
+      "drawn_tile": null
+     },
+     "players": [
+      {
+       "discards": [],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "from_seat": 3,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 2
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 3
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 4
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      },
+      {
+       "discards": [
+        {
+         "called_by": 0,
+         "order": 0,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      }
+     ],
+     "round": {
+      "dealer_seat": 1,
+      "dora_indicators": [],
+      "hand_number": 1,
+      "honba": 0,
+      "live_wall_tiles_remaining": 50,
+      "riichi_sticks": 0,
+      "round_wind": "east"
+     },
+     "self_seat": 0
+    }
+   },
+   "decision_ordinal": 1,
+   "discard": {
+    "actor": 0,
+    "kind": "discard",
+    "tile": {
+     "category": "pinzu",
+     "is_red": false,
+     "rank": 5
+    },
+    "tsumogiri": false
+   }
+  },
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 0,
+     "kind": "pass"
+    },
+    {
+     "actor": 0,
+     "called_tile": {
+      "category": "manzu",
+      "is_red": false,
+      "rank": 2
+     },
+     "consumed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      }
+     ],
+     "kind": "chi",
+     "target": 3
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "pinzu",
+       "is_red": true,
+       "rank": 5
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [],
+     "hand_number": 1,
+     "honba": 0,
+     "live_wall_tiles_remaining": 50,
+     "riichi_sticks": 0,
+     "round_wind": "east"
+    },
+    "self_seat": 0
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 0,
+  "round_ordinal": 0
+ },
+ "value_mode_below_threshold": {
+  "actor": 0,
+  "call": {
+   "actor": 0,
+   "called_tile": {
+    "category": "manzu",
+    "is_red": false,
+    "rank": 2
+   },
+   "consumed_tiles": [
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 3
+    },
+    {
+     "category": "manzu",
+     "is_red": false,
+     "rank": 4
+    }
+   ],
+   "kind": "chi",
+   "target": 3
+  },
+  "call_analysis": {
+   "__type": "SpeedCallDecisionAnalysis",
+   "action": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "call": {
+    "__type": "ChiAction",
+    "actor": "Seat.SEAT_0",
+    "called_tile": {
+     "__type": "Tile",
+     "is_red": false,
+     "tile_type": {
+      "__type": "TileType",
+      "category": "TileCategory.MANZU",
+      "rank": 2
+     }
+    },
+    "consumed_tiles": [
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 3
+      }
+     },
+     {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.MANZU",
+       "rank": 4
+      }
+     }
+    ],
+    "target": "Seat.SEAT_3"
+   },
+   "closed_before_call": true,
+   "minimum_value": 3,
+   "mode": "GameSituationMode.ALL_LAST_LAST_VALUE",
+   "route": "CallDecisionRoute.SPEED_CALL",
+   "route_shanten": 1,
+   "value": 3
+  },
+  "decision_ordinal": 0,
+  "invalid": [],
+  "is_primary_target": false,
+  "post": {
+   "analysis": {
+    "__type": "PostCallDiscardAnalysis",
+    "alternative": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 4
+      }
+     },
+     "tsumogiri": false
+    },
+    "call_analysis": {
+     "__type": "SpeedCallDecisionAnalysis",
+     "action": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "call": {
+      "__type": "ChiAction",
+      "actor": "Seat.SEAT_0",
+      "called_tile": {
+       "__type": "Tile",
+       "is_red": false,
+       "tile_type": {
+        "__type": "TileType",
+        "category": "TileCategory.MANZU",
+        "rank": 2
+       }
+      },
+      "consumed_tiles": [
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 3
+        }
+       },
+       {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 4
+        }
+       }
+      ],
+      "target": "Seat.SEAT_3"
+     },
+     "closed_before_call": true,
+     "minimum_value": 3,
+     "mode": "GameSituationMode.ALL_LAST_LAST_VALUE",
+     "route": "CallDecisionRoute.SPEED_CALL",
+     "route_shanten": 1,
+     "value": 3
+    },
+    "candidates": [
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 4788,
+      "route_shanten": 2,
+      "ukeire": 42,
+      "value": 3
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 7
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 2622,
+      "route_shanten": 2,
+      "ukeire": 38,
+      "value": 3
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.MANZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 4788,
+      "route_shanten": 2,
+      "ukeire": 42,
+      "value": 3
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 2
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 26344,
+      "route_shanten": 1,
+      "ukeire": 14,
+      "value": 3
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 5
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 22128,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 2
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.PINZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 21804,
+      "route_shanten": 1,
+      "ukeire": 16,
+      "value": 3
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 4
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 35565,
+      "route_shanten": 1,
+      "ukeire": 22,
+      "value": 3
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 6
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 26586,
+      "route_shanten": 1,
+      "ukeire": 13,
+      "value": 3
+     },
+     {
+      "__type": "PostCallDiscardFacts",
+      "action": {
+       "__type": "DiscardAction",
+       "actor": "Seat.SEAT_0",
+       "tile": {
+        "__type": "Tile",
+        "is_red": false,
+        "tile_type": {
+         "__type": "TileType",
+         "category": "TileCategory.SOUZU",
+         "rank": 8
+        }
+       },
+       "tsumogiri": false
+      },
+      "completion_mass": 41034,
+      "route_shanten": 1,
+      "ukeire": 23,
+      "value": 2
+     }
+    ],
+    "classification": "PostCallClassification.BELOW_THRESHOLD",
+    "discard": {
+     "__type": "DiscardAction",
+     "actor": "Seat.SEAT_0",
+     "tile": {
+      "__type": "Tile",
+      "is_red": false,
+      "tile_type": {
+       "__type": "TileType",
+       "category": "TileCategory.SOUZU",
+       "rank": 8
+      }
+     },
+     "tsumogiri": false
+    },
+    "hidden_tile_count": 120,
+    "horizon": 3,
+    "sequence_denominator": 1685040,
+    "speed_loss": {
+     "__type": "SpeedLoss",
+     "mass_difference": 5469,
+     "relative_denominator": 41034,
+     "relative_numerator": 5469,
+     "zero_mass": false
+    }
+   },
+   "context": {
+    "legal_actions": [
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      "tsumogiri": false
+     },
+     {
+      "actor": 0,
+      "kind": "discard",
+      "tile": {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      },
+      "tsumogiri": false
+     }
+    ],
+    "policy_input": {
+     "own_hand": {
+      "concealed_tiles": [
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "manzu",
+        "is_red": false,
+        "rank": 8
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 2
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 5
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 4
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 6
+       },
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 8
+       }
+      ],
+      "drawn_tile": null
+     },
+     "players": [
+      {
+       "discards": [],
+       "melds": [
+        {
+         "called_tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "from_seat": 3,
+         "kind": "chi",
+         "tiles": [
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 2
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 3
+          },
+          {
+           "category": "manzu",
+           "is_red": false,
+           "rank": 4
+          }
+         ]
+        }
+       ],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 10000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 35000
+      },
+      {
+       "discards": [],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 30000
+      },
+      {
+       "discards": [
+        {
+         "called_by": 0,
+         "order": 0,
+         "tile": {
+          "category": "manzu",
+          "is_red": false,
+          "rank": 2
+         },
+         "tsumogiri": false
+        }
+       ],
+       "melds": [],
+       "riichi": "none",
+       "riichi_declaration_discard_order": null,
+       "score": 25000
+      }
+     ],
+     "round": {
+      "dealer_seat": 1,
+      "dora_indicators": [
+       {
+        "category": "souzu",
+        "is_red": false,
+        "rank": 7
+       },
+       {
+        "category": "pinzu",
+        "is_red": false,
+        "rank": 4
+       }
+      ],
+      "hand_number": 4,
+      "honba": 0,
+      "live_wall_tiles_remaining": 50,
+      "riichi_sticks": 0,
+      "round_wind": "south"
+     },
+     "self_seat": 0
+    }
+   },
+   "decision_ordinal": 1,
+   "discard": {
+    "actor": 0,
+    "kind": "discard",
+    "tile": {
+     "category": "souzu",
+     "is_red": false,
+     "rank": 8
+    },
+    "tsumogiri": false
+   }
+  },
+  "pre_context": {
+   "legal_actions": [
+    {
+     "actor": 0,
+     "kind": "pass"
+    },
+    {
+     "actor": 0,
+     "called_tile": {
+      "category": "manzu",
+      "is_red": false,
+      "rank": 2
+     },
+     "consumed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      }
+     ],
+     "kind": "chi",
+     "target": 3
+    }
+   ],
+   "policy_input": {
+    "own_hand": {
+     "concealed_tiles": [
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 3
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "manzu",
+       "is_red": false,
+       "rank": 8
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 2
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 5
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 4
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 6
+      },
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 8
+      }
+     ],
+     "drawn_tile": null
+    },
+    "players": [
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 10000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 35000
+     },
+     {
+      "discards": [],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 30000
+     },
+     {
+      "discards": [
+       {
+        "called_by": null,
+        "order": 0,
+        "tile": {
+         "category": "manzu",
+         "is_red": false,
+         "rank": 2
+        },
+        "tsumogiri": false
+       }
+      ],
+      "melds": [],
+      "riichi": "none",
+      "riichi_declaration_discard_order": null,
+      "score": 25000
+     }
+    ],
+    "round": {
+     "dealer_seat": 1,
+     "dora_indicators": [
+      {
+       "category": "souzu",
+       "is_red": false,
+       "rank": 7
+      },
+      {
+       "category": "pinzu",
+       "is_red": false,
+       "rank": 4
+      }
+     ],
+     "hand_number": 4,
+     "honba": 0,
+     "live_wall_tiles_remaining": 50,
+     "riichi_sticks": 0,
+     "round_wind": "south"
+    },
+    "self_seat": 0
+   }
+  },
+  "resolution": {
+   "detail": null,
+   "status": "ESTABLISHED"
+  },
+  "response_ordinal": 0,
+  "round_ordinal": 0
+ }
+}
