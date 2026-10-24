@@ -551,8 +551,13 @@ class BackendCheckTest(unittest.TestCase):
         document = self.run_check("python", fx.fake_play_python_actions)
         path = self.tmp / "python.json"
         document["schema"] = "arena-heuristic-candidate-engine-aabb-backend-check-v999"
+        document["document_digest"] = backend_check.document_identity(
+            {key: value for key, value in document.items() if key != "document_digest"}
+        )
         path.write_text(canonical_json_text(document), encoding="utf-8")
-        with self.assertRaises(EngineAabbRecordError):
+        with self.assertRaisesRegex(
+            EngineAabbRecordError, "unsupported backend check document"
+        ):
             backend_check.compare_backend_checks(path, self.tmp / "rust.json")
 
     def test_inputs_that_cannot_be_compared(self):
