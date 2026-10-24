@@ -11,7 +11,7 @@ requires-python = ">=3.14,<3.15"
 license = "MIT"
 authors = [{ name = "lisbun" }]
 dependencies = [
-    "lisjong @ git+https://github.com/lisbun/lisjong.git@d2469f2519b947fb27bf8c1622a2854c200e0aae",
+    "lisjong @ git+https://github.com/lisbun/lisjong.git@89dd00d54d3651c1a8a720b2bea3933bb2ca0bd5",
     "lisjong-engine @ git+https://github.com/lisbun/lisjong-engine.git@91af75e3aa11520c3b0543719dc74bb4c517ee06",
     "riichienv==0.4.10",
     "websockets==17.0.1",

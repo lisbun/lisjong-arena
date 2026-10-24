@@ -45,7 +45,7 @@ artifact・判定、Overall protocol（`arena-overall-champion-aabb-half-v1`）�
 | 主指標 | lockしたRuleSetでのengine `FinalPlayerScore.final_points`。protocol側で再計算しない |
 | block構成 | 1 block = 1 seed × 6配置（4席から候補の2席を選ぶ全通り） |
 | CI・採否 | 旧v1と同じ型（block平均Dの両側95%正規近似区間）。非劣性判定は本versionでは採らない |
-| lisjong backend | Rustを正式実行、Pythonを照合基準 |
+| lisjong backend | Rustを正式実行、Pythonを照合基準（#531以降はRustだけ。§9の注記） |
 | 副露fact | 局精算recordとは分離した第2層recordとして必須 |
 
 主指標はRuleSetの値（端数処理、飛び賞罰、uma、返し点、同点規則）に従ってengineが計算する。
@@ -537,6 +537,10 @@ fixture表へ記録する。未対応・説明できない差が1つでもあれ
 まとめる。
 
 ## 9. Python/Rust比較計画
+
+> #531（lisjong `89dd00d`、Python backend削除）以降のpinではP1・P2を実行できない。新pinでは
+> P2の代わりに[Rust-only gate](engine-aabb-evaluation.md#84-rust-only-gaterust-gate-531)を使い、P3は残す。
+> 以下は旧pinでの計画と、その記録の読み方として保持する。
 
 正式実行はRust backend（native wheel）、照合基準はPython backendとする。backendはlisjongが
 所有する実装の切り替えであり、Arenaは一致を確認するだけで、どちらかの結果を補正しない。

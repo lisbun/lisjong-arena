@@ -15,10 +15,12 @@ python -m lisjong_arena.pure_offense_benchmark summarize \
 live ledger snapshotにある#389所有のactive allocationからだけ解決する。
 ``--focal canonical-first`` / ``--focal outcome-q --focal-artifact DIR``は
 lisjong residual runtimeのfocalであり、``focal``moduleが解決する。
-``--shanten-backend {python,rust} --shanten-backend-record PATH``（#406、opt-in）は
+``--shanten-backend rust --shanten-backend-record PATH``（#406、opt-in）は
 parentと全game実行processで``LISJONG_SHANTEN_BACKEND``を検査し（#400の
 ``require_shanten_backend``）、per-gameの検査結果を集約した記録をarmの外の
-``PATH``へ書く。未指定時は従来どおりで、backend既定値（python）も変えない。
+``PATH``へ書く。#531以降のlisjongはRust必須で、``python``は実行前に移行案内付きで拒否する。
+未指定時も``LISJONG_SHANTEN_BACKEND``は未設定か``rust``でなければならない（lisjongへ
+渡す前に拒否する）。
 ``summarize``は保存済みarmだけから再導出し、指定順をlineage順として
 ``(i, j), i < j``の全組について``arm_j - arm_i``をpaired比較する。
 """
@@ -34,7 +36,8 @@ from lisjong_arena.policy_reference import resolve_policy_reference
 from lisjong_arena.progress import ProgressReporter
 from lisjong_arena.seed_registry import load_ledger
 from lisjong_arena.shanten_backend_verification.backend import (
-    BACKENDS,
+    execution_backend_argument,
+    require_execution_environment,
     require_shanten_backend,
 )
 from lisjong_arena.single_round_artifact import collect_execution_provenance
@@ -56,6 +59,7 @@ def _run(arguments: argparse.Namespace) -> int:
     backend = arguments.shanten_backend
     backend_record_path = arguments.shanten_backend_record
     parent_backend = None
+    require_execution_environment()
     if (backend is None) != (backend_record_path is None):
         raise ValueError(
             "--shanten-backend and --shanten-backend-record must be given together"
@@ -157,8 +161,8 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--shanten-backend",
         default=None,
-        choices=BACKENDS,
-        help="verify this LISJONG_SHANTEN_BACKEND in every game process (#406)",
+        type=execution_backend_argument,
+        help="verify the rust backend in every game process (#406, #531)",
     )
     run.add_argument("--shanten-backend-record", default=None, type=Path)
     run.set_defaults(handler=_run)

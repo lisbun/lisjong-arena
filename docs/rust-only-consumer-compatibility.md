@@ -6,7 +6,32 @@ Owner: Arena。Issue [#527](https://github.com/lisbun/lisjong-arena/issues/527)�
 
 調査基準: Arena `8ad451e517cfd86ec2d89c3e1cfe9630555cfba2`、
 lisjong pin `d2469f2519b947fb27bf8c1622a2854c200e0aae`。
-本書は移行前の契約で、現行のbackend、pin、protocol、digestを変更しない。
+D3は移行前に決めた契約で、protocol・digest・保存済み証拠を変更しない。
+
+## 採用状況（#531）
+
+Arena [#531](https://github.com/lisbun/lisjong-arena/issues/531)でRust必須のlisjong
+`89dd00d54d3651c1a8a720b2bea3933bb2ca0bd5`（lisjong #346）を採用した。pin・wheel・CIは
+[現行の組み合わせ](lisjong-native-wheel-current.md)を参照。
+
+- 新規実行はRustだけ。`LISJONG_SHANTEN_BACKEND`は未設定か`rust`。`python`と未知値は、
+  `lisjong_arena`のpackage import時（lisjongを読み込む前、`_shanten_environment`）と各実行CLIの
+  `--backend`で移行案内付きで拒否する。nativeの不在・不整合ではfallbackしない
+- 保存物の`backend`値`python`は読取側で受理し続ける（`RECORDED_BACKENDS`）。実行側の受理値
+  （`EXECUTION_BACKENDS`）とは分けた
+- `lisjong_arena`のpackage importはlisjong Policyを読み込むため、下表の読取・verifyにも新pinのnative wheelが要る
+- P2の代わりの新version gateは[Rust-only gate](engine-aabb-evaluation.md#84-rust-only-gaterust-gate-531)
+  （schema `arena-heuristic-candidate-engine-aabb-rust-only-gate-v1`）。P2 v1・protocol v1は変更しない
+
+| 入口 | #531での変更 |
+| --- | --- |
+| `shanten_backend_verification probe / games` | `--backend`は`rust`だけ。`startup`（Python/Rust比較）は拒否。`compare / report`は従来どおり保存記録を読む |
+| `pure_offense_benchmark run` | `--shanten-backend`は`rust`だけ。未指定でも環境変数は未設定か`rust`。`summarize`は変更なし |
+| `riichilab.aws_backend` / launcher | probe・bot起動はRustだけ（wheel必須）。`start-riichilab-12h.ps1`・bootstrapの既定を`rust`にし、`python`はAWS呼び出し前に拒否。`read_backend_evidence`・`aws_instance_run verify --expected-backend`は読取側として変更なし |
+| engine AABB `backend-check` | `--backend python`を拒否。`backend-compare`は保存済みP2記録を読む |
+| engine AABB `rust-gate-*` | 新設（P2の代わり） |
+| `policy_source_record` | 実行時のbackend identityは`rust`だけを記録する（それ以外は拒否） |
+| その他の`verify / report / *-verify` | 変更なし。新pinのnative wheelを入れた環境で読む |
 
 ## 決定D3
 
@@ -48,12 +73,15 @@ Python全対局比較の恒常的な要求を外すことは、これらの検�
 
 1. 旧記録が指定するArena/lisjong/engine revision、source archive、wheel、hash、Python/platform、
    protocol・依存環境を組で保持する。git SHAだけを復元可能性の証拠にしない。
+   採用直前の組は、Arena `ce10fc7`（main）・lisjong `d2469f2`・wheel `0157f3dc…`
+   （`C:\Dev\lisjong-artifacts\native\d2469f2519b947fb27bf8c1622a2854c200e0aae\`）。
+   それより前の記録は、その記録が指定する組を使う
 2. 旧環境を新規venv等へ復元し、identityを照合する。新環境を上書きしない。
    lisjongの同revision bundleは`tools/native_bundle.py`で検証する。
 3. 本互換準備のmerge後、lisjong側でRust必須化・numeric/batched/R5のPython計算削除、
    仕様検証への対応付け・CI更新を行う。Policy/学習/binding、artifact reader/generatorは保持する。
 4. 切替後のmain CI wheelと同revision sourceを保存して導入確認し、Arenaのpackage/native pin、
-   wheel hash、CI、新規実行CLI、新gateを一体で更新する。
+   wheel hash、CI、新規実行CLI、新gateを一体で更新する（#531で実施）。
 5. rollbackは旧revision・wheel・環境の組で行う。廃止後にenvをpythonへ戻すだけでは復元できない。
 
 旧bundleの現物保存・全過去artifactの復元成功は、本書のsource調査だけでは確認できない。
@@ -68,3 +96,9 @@ backend probe・environment probe・schedule実行を呼ばないこと、未知
 
 後続の採用PRでは本表の各入口について、Rust-only環境でのimport/読取、旧python実行拒否、
 既存record fixtureの回帰を確認する。現在のPython計算backendでのtest passを、その検証の代替にしない。
+
+#531では、新pinのnative wheelを入れた環境で全testを実行し（CIを正本とする。WSLの新規venvと
+main CI wheelでも実行）、上表の読取・verify・再集計のfixture回帰（`BackendCheckTest`、
+`test_riichilab_aws_backend.py`、`test_shanten_backend_verification_report.py` 等）が通ることを確認した。拒否系は`test_shanten_backend_verification.py`（環境変数・`--backend`・package import時）、
+`test_pure_offense_benchmark_shanten_backend.py`、`test_riichilab_aws_backend.py`（launcher含む）、
+`test_engine_aabb_rust_only_gate.py`で検査する。旧artifact現物の全件検証はしていない。

@@ -381,20 +381,22 @@ commits or retires seeds.
 ### Opt-in shanten backend check
 
 ```text
-LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.pure_offense_benchmark run \
+python -m lisjong_arena.pure_offense_benchmark run \
     ... --shanten-backend rust --shanten-backend-record <backend.json>
 ```
 
+- Since #531 (lisjong #346) lisjong requires its native extension. Only `rust`
+  is accepted; `--shanten-backend python` and `LISJONG_SHANTEN_BACKEND=python`
+  (or any unknown value) are refused with a migration message before any game.
+  The variable may be unset or `rust`.
 - The parent process and every game process run the #400
   `require_shanten_backend` check once:
-  - the variable is set explicitly;
   - the installed lisjong is the pin;
-  - for rust, `SOURCE_REVISION` matches, `API_VERSION` is 2 (#409) and a
+  - `SOURCE_REVISION` matches, `API_VERSION` is the expected one and a
     native call happens.
-- Every game must also pass a per-game check:
-  - rust: at least one native call during the game;
-  - python: the native extension is never imported.
-- Any failure fails the whole arm. Nothing falls back to Python.
+- Every game must also pass a per-game check: at least one native call
+  during the game.
+- Any failure fails the whole arm. Nothing falls back to another backend.
 - The aggregated record goes to `<backend.json>`, outside the arm. It holds the
   backend, the revisions, the per-worker game and native-call counts, and the
   minimum native calls per game.
@@ -404,7 +406,8 @@ LISJONG_SHANTEN_BACKEND=rust python -m lisjong_arena.pure_offense_benchmark run 
   not fail other Policies. See
   [the current combination](lisjong-native-wheel-current.md).
 - The arm directory and its schemas are unchanged.
-- Without the option nothing changes, and the default backend stays Python.
+- Without the option no backend record is written; the run still uses the
+  native backend.
 
 ### Supplementary paired metrics
 

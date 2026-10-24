@@ -8,7 +8,7 @@ fail closed、集約記録、CLIの事前拒否）だけを固定する。実Rii
 import contextlib
 import io
 import json
-import sys
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,7 +25,6 @@ from lisjong_arena.pure_offense_benchmark import execution
 from lisjong_arena.pure_offense_benchmark.artifact import load_benchmark_arm
 from lisjong_arena.pure_offense_benchmark.protocol import MAX_STEPS
 from lisjong_arena.shanten_backend_verification.backend import (
-    NATIVE_MODULE,
     ShantenBackendVerificationError,
 )
 from lisjong_arena.single_round_evaluation import SingleRoundEvaluationError
@@ -196,21 +195,22 @@ class ShantenBackendExecutionTest(_BackendPatch):
                     shanten_backend="rust",
                 )
 
-    def test_python_game_importing_the_extension_fails_the_arm(self) -> None:
-        patches = self._patches("python")
+    def test_python_backend_is_refused_before_any_game(self) -> None:
+        # #531: lisjong#346 removed the Python backend; no fallback to Rust.
+        game = mock.Mock(side_effect=AssertionError("no game must run"))
+        require = mock.Mock(side_effect=AssertionError("no process check"))
         with (
-            patches[0],
-            patches[1],
-            patches[2],
-            patches[3],
-            mock.patch.dict(sys.modules, {NATIVE_MODULE: object()}),
+            mock.patch.object(execution, "require_shanten_backend", require),
+            mock.patch.object(execution, "_run_benchmark_game", game),
         ):
-            with self.assertRaises(SingleRoundEvaluationError):
+            with self.assertRaisesRegex(ShantenBackendVerificationError, "lisjong#346"):
                 execution.run_benchmark_arm(
                     execution.benchmark_plan(_FOCAL, (1,)),
                     max_workers=1,
                     shanten_backend="python",
                 )
+        game.assert_not_called()
+        require.assert_not_called()
 
     def test_failed_process_verification_fails_before_any_game(self) -> None:
         game = mock.Mock(side_effect=AssertionError("no game must run"))
@@ -228,7 +228,7 @@ class ShantenBackendExecutionTest(_BackendPatch):
         game.assert_not_called()
 
     def test_unknown_backend_is_rejected(self) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ShantenBackendVerificationError):
             execution.run_benchmark_arm(
                 execution.benchmark_plan(_FOCAL, (1,)),
                 max_workers=1,
@@ -282,19 +282,6 @@ class ShantenBackendRecordTest(_BackendPatch):
             execution.shanten_backend_record(
                 arm, backend="python", parent=_process_record("python")
             )
-
-    def test_python_record_has_no_native_calls(self) -> None:
-        arm = self._arm("python")
-        record = execution.shanten_backend_record(
-            arm, backend="python", parent=_process_record("python")
-        )
-        self.assertIsNone(record["native_source_revision"])
-        self.assertIsNone(record["min_native_calls_per_game"])
-        self.assertIsNone(record["native_discard_evaluations"])
-        self.assertEqual(
-            record["workers"]["4321"],
-            {"games": 4, "native_calls": None, "native_discard_evaluations": None},
-        )
 
     def test_arm_without_observations_has_no_record(self) -> None:
         with mock.patch.object(execution, "_run_benchmark_game", _GAME):
@@ -389,6 +376,26 @@ class ShantenBackendCliTest(_BackendPatch):
             mock.patch.object(execution, "_run_benchmark_game", game),
             mock.patch.object(cli, "require_shanten_backend", failing),
         ):
+            with (
+                mock.patch("sys.stderr"),
+                self.assertRaises(SystemExit) as refused,
+            ):
+                cli.main(
+                    self._arguments(
+                        "--shanten-backend",
+                        "python",
+                        "--shanten-backend-record",
+                        str(self.root / "python.json"),
+                    )
+                )
+            self.assertEqual(refused.exception.code, 2)
+            for value in ("python", "cython"):
+                with (
+                    self.subTest(environment=value),
+                    mock.patch.dict(os.environ, {"LISJONG_SHANTEN_BACKEND": value}),
+                ):
+                    with self.assertRaises(ShantenBackendVerificationError):
+                        cli.main(self._arguments())
             with self.assertRaises(ValueError):
                 cli.main(self._arguments("--shanten-backend", "rust"))
             with self.assertRaises(ValueError):
@@ -413,6 +420,7 @@ class ShantenBackendCliTest(_BackendPatch):
                 )
         game.assert_not_called()
         self.assertFalse((self.root / "arm").exists())
+        self.assertFalse((self.root / "python.json").exists())
 
 
 if __name__ == "__main__":

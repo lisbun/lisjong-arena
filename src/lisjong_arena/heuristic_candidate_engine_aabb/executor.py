@@ -74,6 +74,8 @@ class PlayedHanchan:
     policy_analysis: dict | None = None
     """#520の開発比較だけが返すPolicy側の観測（判断時間・analysis）。客観recordとは別に
     保存する。正式run・校正では``None``。"""
+    native_counters: dict | None = None
+    """Rust-only gate（#531）だけが返す、この半荘でのnative呼び出し数の増分。正式runでは``None``。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +87,7 @@ class ExecutedHanchan:
     peak_rss_kib: int | None
     selected_actions: tuple | None = None
     policy_analysis: dict | None = None
+    native_counters: dict | None = None
 
 
 def current_peak_rss_kib() -> int | None:
@@ -315,6 +318,7 @@ def run_tasks(
                 played.peak_rss_kib,
                 played.selected_actions,
                 played.policy_analysis,
+                played.native_counters,
             )
             executed.append(item_result)
             if on_executed is not None:

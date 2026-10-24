@@ -8,8 +8,15 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb dev-check --output D --w
 python -m lisjong_arena.heuristic_candidate_engine_aabb dev-verify --output D
 
 校正（#517。強さの結果ではない）
-python -m lisjong_arena.heuristic_candidate_engine_aabb backend-check --backend B --output F ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb backend-check --backend rust --output F ...
 python -m lisjong_arena.heuristic_candidate_engine_aabb backend-compare --python F1 --rust F2 --output F3
+  （P2 v1。#531以降は新規のpython実行を拒否する。保存済みP2記録の照合はそのまま読める）
+
+Rust-only gate（#531。P2に代わる新version gate、強さの結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb rust-gate-run --run first --wheel W --timeout-seconds T --output F1
+python -m lisjong_arena.heuristic_candidate_engine_aabb rust-gate-run --run second --wheel W --timeout-seconds T --output F2
+python -m lisjong_arena.heuristic_candidate_engine_aabb rust-gate-compare --first F1 --second F2 --output G
+python -m lisjong_arena.heuristic_candidate_engine_aabb rust-gate-verify --first F1 --second F2 --gate G
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-plan ...
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-verify --plan P
@@ -46,10 +53,14 @@ from pathlib import Path
 
 from lisjong_arena import seed_registry
 from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_file
+from lisjong_arena.shanten_backend_verification.backend import (
+    execution_backend_argument,
+)
 
 from . import (
     focal_mixed_compare,
     focal_mixed_plan,
+    rust_only_gate,
     single_open_genbutsu_activation,
     single_open_genbutsu_plan,
 )
@@ -137,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     dev_verify.add_argument("--output", required=True)
 
     check = sub.add_parser("backend-check", help="P2: run the 12 dev hanchans once")
-    check.add_argument("--backend", choices=("python", "rust"), required=True)
+    # #531: the python half of P2 runs only in its recorded old environment.
+    check.add_argument("--backend", type=execution_backend_argument, required=True)
     check.add_argument("--output", required=True)
     check.add_argument("--wheel", default="", help="required for rust")
     check.add_argument("--timeout-seconds", type=int, required=True)
@@ -146,6 +158,28 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("--python", required=True)
     compare.add_argument("--rust", required=True)
     compare.add_argument("--output", required=True)
+
+    gate_run = sub.add_parser(
+        "rust-gate-run", help="Rust-only gate (#531): run the 12 dev hanchans once"
+    )
+    gate_run.add_argument("--run", choices=rust_only_gate.RUN_LABELS, required=True)
+    gate_run.add_argument("--wheel", required=True)
+    gate_run.add_argument("--timeout-seconds", type=int, required=True)
+    gate_run.add_argument("--output", required=True)
+
+    gate_compare = sub.add_parser(
+        "rust-gate-compare", help="Rust-only gate (#531): compare the two runs"
+    )
+    gate_compare.add_argument("--first", required=True)
+    gate_compare.add_argument("--second", required=True)
+    gate_compare.add_argument("--output", required=True)
+
+    gate_verify = sub.add_parser(
+        "rust-gate-verify", help="Rust-only gate (#531): re-derive a saved gate"
+    )
+    gate_verify.add_argument("--first", required=True)
+    gate_verify.add_argument("--second", required=True)
+    gate_verify.add_argument("--gate", required=True)
 
     plan = sub.add_parser("calibration-plan", help="write the calibration plan")
     plan.add_argument("--seeds", required=True, help="comma separated, in order")
@@ -258,6 +292,24 @@ def main(argv: list[str] | None = None) -> int:
         write_new_artifact_file(Path(args.output), canonical_json_text(comparison))
         print(f"P2 {comparison['status']} {comparison['comparison_digest']}")
         return 0 if comparison["status"] == MATCH else 3
+    if args.command == "rust-gate-run":
+        document = rust_only_gate.run_rust_gate(
+            args.output,
+            run_label=args.run,
+            wheel_path=str(Path(args.wheel).resolve()),
+            timeout_seconds=args.timeout_seconds,
+        )
+        print(f"RUST GATE RUN {args.run} {document['document_digest']}")
+        return 0
+    if args.command == "rust-gate-compare":
+        gate = rust_only_gate.compare_rust_gate_runs(args.first, args.second)
+        write_new_artifact_file(Path(args.output), canonical_json_text(gate))
+        print(f"RUST GATE {gate['status']} {gate['gate_digest']}")
+        return 0 if gate["status"] == rust_only_gate.PASS else 3
+    if args.command == "rust-gate-verify":
+        gate = rust_only_gate.verify_rust_gate(args.first, args.second, args.gate)
+        print(f"RUST GATE VERIFIED {gate['status']} {gate['gate_digest']}")
+        return 0 if gate["status"] == rust_only_gate.PASS else 3
     if args.command == "calibration-plan":
         document = build_plan(
             ordered_seeds=_seeds(args.seeds),
