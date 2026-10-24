@@ -97,7 +97,7 @@ backend probe・environment probe・schedule実行を呼ばないこと、未知
 後続の採用PRでは本表の各入口について、Rust-only環境でのimport/読取、旧python実行拒否、
 既存record fixtureの回帰を確認する。現在のPython計算backendでのtest passを、その検証の代替にしない。
 
-#531では、新pinのnative wheelを入れた環境で全testを実行し（CIを正本とする。WSLの新規venvと
+Arena #531では、新pinのnative wheelを入れた環境で全testを実行し（CIを正本とする。WSLの新規venvと
 main CI wheelでも実行）、上表の読取・verify・再集計のfixture回帰（`BackendCheckTest`、
 `test_riichilab_aws_backend.py`、`test_shanten_backend_verification_report.py` 等）が通ることを確認した。拒否系は`test_shanten_backend_verification.py`（環境変数・`--backend`・package import時）、
 `test_pure_offense_benchmark_shanten_backend.py`、`test_riichilab_aws_backend.py`（launcher含む）、
