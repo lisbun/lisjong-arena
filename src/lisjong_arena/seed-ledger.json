@@ -199,6 +199,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "87e6e74408ba684941993306e8b7b22240ec38a4fcd92870262dacb984664cb4",
+      "allocation_timestamp": "2026-10-24T14:36:07.196240Z",
+      "arena_revision": "00e6839c5879939fca9822eddf9dc9b32fc863f6",
+      "owner_issue": "lisbun/lisjong-arena#536",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-call-value-shadow-v1",
+      "protocol": "call-value-shadow-v1",
+      "protocol_revision": "call-value-shadow-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/536#issuecomment-6384804852",
+      "purpose": "#533 call-value-shadow-v1 main run: Champion x4 seats, 24 hanchans x 1 placement; DEVELOPMENT diagnostic, not a strength result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 533000,
+        "kind": "range",
+        "last": 533023
+      },
+      "seed_membership_identity": "4338e4ef5f5a8b58a5f66dc56f59afe8e4d4b0fff8fc5cf6e98199fffd2aa53a",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
