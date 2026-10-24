@@ -525,6 +525,36 @@ class BackendCheckTest(unittest.TestCase):
             [{"field": "selected_actions", "placement": 3, "seed": 472_006}],
         )
 
+    def test_saved_comparison_does_not_probe_or_execute_a_backend(self):
+        """D3: Python evidence remains readable without executing Python Policy."""
+        self.run_check("rust", fx.fake_play_rust_actions)
+        self.run_check("python", fx.fake_play_python_actions)
+        with (
+            mock.patch.object(
+                backend_check, "run_schedule", side_effect=AssertionError
+            ),
+            mock.patch.object(
+                backend_check, "environment_document", side_effect=AssertionError
+            ),
+            mock.patch(
+                "lisjong_arena.shanten_backend_verification.backend.require_shanten_backend",
+                side_effect=AssertionError,
+            ),
+        ):
+            comparison = backend_check.compare_backend_checks(
+                self.tmp / "python.json", self.tmp / "rust.json"
+            )
+        self.assertEqual(comparison["status"], backend_check.MATCH)
+
+    def test_saved_comparison_rejects_unknown_schema(self):
+        self.run_check("rust", fx.fake_play_rust_actions)
+        document = self.run_check("python", fx.fake_play_python_actions)
+        path = self.tmp / "python.json"
+        document["schema"] = "arena-heuristic-candidate-engine-aabb-backend-check-v999"
+        path.write_text(canonical_json_text(document), encoding="utf-8")
+        with self.assertRaises(EngineAabbRecordError):
+            backend_check.compare_backend_checks(path, self.tmp / "rust.json")
+
     def test_inputs_that_cannot_be_compared(self):
         self.run_check("rust", fx.fake_play_rust_actions)
         self.run_check("rust", fx.fake_play_rust_actions, name="rust-2.json")
