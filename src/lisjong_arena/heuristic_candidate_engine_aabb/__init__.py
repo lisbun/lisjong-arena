@@ -24,6 +24,10 @@ protocol・実行（#514）
   paijia_tie_worker      worker内のPolicy観測（shadow採点、analysis・判断時間）
   paijia_tie_activation  段階1の変更頻度・時間gate
   paijia_tie_screen      段階2の192半荘screen、進行条件、verify / report
+#524 単独副露者genbutsu候補のshadow変更頻度gate（DEVELOPMENT）
+  single_open_genbutsu_plan        write-once plan（実行枠は#520のものを使う）
+  single_open_genbutsu_worker      worker内のshadow採点（通常 / trace実行の一致を含む）
+  single_open_genbutsu_activation  変更頻度・時間gate、summary、verify
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は

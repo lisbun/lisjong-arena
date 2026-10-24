@@ -425,3 +425,68 @@ Aの発動数、役割別の判断秒。reportは時間・RSS・容量・時計�
 境界の0は内部単位の整数の和で判定する（丸めで0を正にしない）。4は開発上の予算配分条件で、有意性・
 非劣性・裾の頑健性の証明ではない。`NOT-RECONFIRMED` ならv1の追加対局をせず、条件緩和・seed追加・
 相手入替で救済しない。`RECONFIRMED` でもChampion昇格・稼働変更・他改修との束ねは自動で行わない。
+
+## 11. 単独副露者genbutsu候補のshadow変更頻度gate（#524）
+
+Issue: [lisbun/lisjong-arena#524](https://github.com/lisbun/lisjong-arena/issues/524)
+（候補: lisbun/lisjong#343、PR lisbun/lisjong#345、merge `d2469f2`）。実行前計画は
+[`single-open-genbutsu-activation-524.md`](single-open-genbutsu-activation-524.md)。
+
+> Status: **実装のみ**。rehearsal・seed予約・本実行は行っていない（実行は別Issue・別承認）。
+
+#520（§9）のplan・protocol・digestは変えず、別schemaのplan（`…-single-open-genbutsu-plan-v1`、owner #524、
+population `heuristic-candidate-engine-aabb-single-open-genbutsu-activation-524`）を使う。stageは段階1
+（activation）だけで、後続の192半荘screenは別の実行Issueで別planとして事前登録する。互いのplan readerは
+相手のplanを受理しない。実行枠（write-once plan、live gate、1 worker、1半荘timeout、max(monotonic, realtime)の
+wall、親 + worker RSS、`STOP-INCOMPLETE` で何も公開しない、verifyでtimingsの上限を再確認）と半荘の実行
+（§9.2の `activation_task`）は#520と同じcodeで、判断ごとの採点proxyだけを差し替える。
+
+| 項目 | 値 |
+| --- | --- |
+| A | `placement-aware-speed-call-single-open-genbutsu-v1`（catalog factory `create_placement_aware_speed_call_single_open_genbutsu` → `lisjong.policies:SingleOpenGenbutsuPlacementAwareSpeedCallPolicy`、引数なし） |
+| B | `placement-aware-speed-call`（同じlisjong revisionの現Champion、Aのexact parent） |
+| 設定・artifact | 両者とも `{}`、学習artifactなし |
+| 規模 | 8 seeds × 1半荘（4席B、配置の入替なし）= 32 seat-hanchans。K・seedの追加はしない |
+| rehearsal | registry外の開発用seed 472005・472006。判定なし（`gate` は `null`） |
+
+```text
+genbutsu-plan --run-kind allocated|rehearsal [--seeds S1,.. --allocation-identity ID]
+              --timeout-seconds T --wall-limit-seconds W --rss-limit-bytes R --limit-enforcement TEXT
+              --wheel WHL --run-output DIR --diagnostics DIR --output plan.json
+genbutsu-activation-run --plan P     genbutsu-activation-verify --plan P
+```
+
+各判断で、Bの行動を実行経路から1回だけ取得して対局へ適用する。Aは判断ごとに新しく作った2つのinstanceで
+通常実行（`execute_policy`）とtrace実行（`execute_policy_with_trace`）を1回ずつ行い、適用しない。
+lisjong #343の `SingleOpenGenbutsuAnalysis` を集計し、gate・現物集合・向聴・受入・価値proxyを再計算しない。
+
+| outcome | 意味 |
+| --- | --- |
+| `same` | A = B |
+| `tile-type-change` / `red-only-change` | `SWITCHED` で基礎牌種が違う / 赤・通常だけが違う（**変更**として数える） |
+| `tsumogiri-only` | 同じ牌の手出し・ツモ切りだけの違い（変更に数えない） |
+| `out-of-scope-difference` | `SWITCHED` 以外でA ≠ B |
+| `candidate-illegal-action` | Aの行動が合法候補に一致しない |
+| `trace-action-mismatch` | Aの通常実行とtrace実行の行動が違う |
+| `analysis-invariant-violation` | 打牌なのに `SingleOpenGenbutsuAnalysis` がない、`parent_action` が同じ入力のBの行動と違う、Aの行動が `selected_action` と違う、`SWITCHED` ⇔ 行動の変更、stageと記録fieldの有無（副露者席・現物判定・比較値）の矛盾、`parent_in_genbutsu` と現物集合の矛盾、現物でない代替、聴牌parentの比較、`qualifying_actions` が「同向聴・受入・retained・yaku非減」を満たす代替と一致しない、選択が `qualifying_actions` にない |
+
+照合はanalysisが報告する値どうしと、実際の行動との整合だけである（代替の選び方の順位は照合しない）。
+Aの判断が例外を送出した場合は分類せず、その半荘でSTOP（`STOP-INCOMPLETE`）とする。
+
+保存物: `shadow.json`（判断ごとのoutcome・stage・A trace / A通常 / Bの判断秒。差のある判断と比較値を計算した
+判断（`NO_QUALIFYING_ALTERNATIVE` / `SWITCHED`）だけlisjongのanalysisと3つの行動・理由）、`hanchans.json`
+（客観値、#520と同じ形）、`summary.json`、`timings.json`。判断数はseatごとのPolicy呼び出し数と一致しなければ
+ならない。summaryは `shadow.json` / `hanchans.json` を内容のSHA-256で拘束し、詳細の形も読込時に確かめる。
+
+判定（実行前に固定、上から最初に当たったもの）:
+
+1. `STOP-INVALID`: 上表の不正outcomeが1件以上
+2. `STOP-LOW-ACTIVATION`: 変更 < 32件（分母は全32 seat-hanchans）、または変更のあるseed < 4
+3. `PROCEED`
+
+予算の判定（`STOP-BUDGET`）はここでは出さない。summaryの `screen_projection` は
+`192 × mean(半荘wall − A通常秒 − (A trace秒 + B秒) / 2)` の記述値で、後続の実行Issueが承認済み枠と比べる。
+summaryはstage別の件数（gate各段階）、対象副露者が1人の判断数、代替牌のある判断数、`SWITCHED` 数、outcome別の件数、
+seed・seat別の変更数・副露者1人の判断数・代替のある判断数、A（trace / 通常）とBの判断秒（中央値・p95・最大）、
+半荘wall・局数・RSSを持つ。verifyは出力fileのbytes・SHA-256と合計bytesを返す。変更頻度は予算配分の基準で、
+検出力や改善の証拠ではない。

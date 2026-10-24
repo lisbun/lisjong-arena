@@ -232,8 +232,14 @@ class _ShadowedIncumbent:
         return incumbent_action
 
 
-def activation_task(task: HanchanTask) -> tuple[HanchanCapture, dict]:
-    """段階1の1半荘: B×4席で対局し、全判断でAをshadow採点する。"""
+def activation_task(task: HanchanTask, *, shadow=None) -> tuple[HanchanCapture, dict]:
+    """段階1の1半荘: B×4席で対局し、全判断でAをshadow採点する。
+
+    ``shadow(incumbent, new_candidate, rows)`` は判断ごとの採点proxy（defaultは#520の
+    ``_ShadowedIncumbent``）。#524は同じ枠で候補固有の分類だけを差し替える。proxyは
+    Bの行動だけを返し、対局へAの行動を適用しない。
+    """
+    shadow = _ShadowedIncumbent if shadow is None else shadow
     candidate = parse_participant(task.candidate, "candidate")
     incumbent = parse_participant(task.incumbent, "incumbent")
     candidate_factory = resolve_factory(candidate)
@@ -250,7 +256,7 @@ def activation_task(task: HanchanTask) -> tuple[HanchanCapture, dict]:
     rows = {seat: [] for seat in EngineSeat}
     policies = {
         seat: _CountingPolicy(
-            _ShadowedIncumbent(
+            shadow(
                 incumbent_factory(**incumbent.behavior_configuration),
                 new_candidate,
                 rows[seat],

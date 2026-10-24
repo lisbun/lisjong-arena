@@ -28,6 +28,11 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb focal-plan --run-kind R 
 python -m lisjong_arena.heuristic_candidate_engine_aabb focal-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb focal-verify --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb focal-report --plan P
+
+#524 単独副露者genbutsu候補のshadow変更頻度gate（DEVELOPMENT。強さの結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb genbutsu-plan --run-kind R ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb genbutsu-activation-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb genbutsu-activation-verify --plan P
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -42,7 +47,12 @@ from pathlib import Path
 from lisjong_arena import seed_registry
 from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_file
 
-from . import focal_mixed_compare, focal_mixed_plan
+from . import (
+    focal_mixed_compare,
+    focal_mixed_plan,
+    single_open_genbutsu_activation,
+    single_open_genbutsu_plan,
+)
 from .backend_check import MATCH, compare_backend_checks, run_backend_check
 from .calibration import (
     build_plan,
@@ -207,7 +217,29 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("focal-verify", "focal-report"):
         sub.add_parser(name).add_argument("--plan", required=True)
 
+    genbutsu = sub.add_parser("genbutsu-plan", help="#524: write a write-once plan")
+    genbutsu.add_argument("--run-kind", choices=RUN_KINDS, required=True)
+    genbutsu.add_argument("--seeds", help="allocated only: comma separated, in order")
+    genbutsu.add_argument("--allocation-identity", help="allocated only")
+    genbutsu.add_argument("--timeout-seconds", type=int, required=True)
+    genbutsu.add_argument("--wall-limit-seconds", type=int, required=True)
+    genbutsu.add_argument("--rss-limit-bytes", type=int, required=True)
+    genbutsu.add_argument("--limit-enforcement", required=True)
+    genbutsu.add_argument("--wheel", required=True)
+    genbutsu.add_argument("--run-output", required=True)
+    genbutsu.add_argument("--diagnostics", required=True)
+    genbutsu.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    genbutsu.add_argument("--output", required=True)
+    genbutsu_run = sub.add_parser("genbutsu-activation-run")
+    genbutsu_run.add_argument("--plan", required=True)
+    genbutsu_run.add_argument(
+        "--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH)
+    )
+    sub.add_parser("genbutsu-activation-verify").add_argument("--plan", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("genbutsu-"):
+        return _genbutsu(args)
     if args.command.startswith("paijia-"):
         return _paijia(args)
     if args.command.startswith("focal-"):
@@ -397,6 +429,45 @@ def _paijia(args) -> int:
         else verify_screen
     )
     print(json.dumps(verify(args.plan), sort_keys=True, indent=2))
+    return 0
+
+
+def _genbutsu(args) -> int:
+    if args.command == "genbutsu-plan":
+        allocated = args.run_kind == ALLOCATED
+        if allocated != (args.seeds is not None) or allocated != (
+            args.allocation_identity is not None
+        ):
+            raise single_open_genbutsu_plan.EngineAabbSingleOpenGenbutsuError(
+                "--seeds and --allocation-identity are required for an allocated "
+                f"plan and not accepted for a rehearsal (fixed seeds {REHEARSAL_SEEDS})"
+            )
+        document = single_open_genbutsu_plan.build_plan(
+            run_kind=args.run_kind,
+            ordered_seeds=_seeds(args.seeds) if allocated else REHEARSAL_SEEDS,
+            allocation_identity=args.allocation_identity,
+            timeout_seconds=args.timeout_seconds,
+            resource_limits={
+                "enforcement": args.limit_enforcement,
+                "process_tree_rss_bytes": args.rss_limit_bytes,
+                "wall_seconds": args.wall_limit_seconds,
+            },
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={"diagnostics": args.diagnostics, "output": args.run_output},
+            ledger_path=args.ledger,
+        )
+        single_open_genbutsu_plan.save_plan(document, args.output)
+        print(f"{args.run_kind} {document['plan_digest']}")
+        return 0
+    if args.command == "genbutsu-activation-run":
+        summary = single_open_genbutsu_activation.run_activation(
+            args.plan, ledger_path=args.ledger, on_hanchan=_progress
+        )
+        decision = summary["gate"]["decision"] if summary["gate"] else REHEARSAL
+        print(f"{summary['status']} {decision} {summary['summary_digest']}")
+        return 0
+    verified = single_open_genbutsu_activation.verify_activation(args.plan)
+    print(json.dumps(verified, sort_keys=True, indent=2))
     return 0
 
 
