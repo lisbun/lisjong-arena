@@ -137,10 +137,32 @@ class BackendReceiptTest(unittest.TestCase):
 
 
 class R5ProbeTest(unittest.TestCase):
-    def test_wheel_required_exactly_for_rust(self):
-        for name, wheel in (("rust", None), ("python", Path("wheel"))):
-            with self.assertRaises(ShantenBackendVerificationError):
-                backend.probe_backend(name, wheel)
+    def test_rust_requires_a_wheel_and_python_is_refused(self):
+        # #531: refused before lisjong or the installed wheel are looked at.
+        with (
+            patch.object(backend, "require_shanten_backend") as require,
+            patch.object(backend, "verify_installed_native") as installed,
+        ):
+            with self.assertRaisesRegex(ShantenBackendVerificationError, "--wheel"):
+                backend.probe_backend("rust", None)
+            for name in ("python", "other"):
+                with self.subTest(name=name):
+                    with self.assertRaises(ShantenBackendVerificationError):
+                        backend.probe_backend(name, Path("wheel"))
+        require.assert_not_called()
+        installed.assert_not_called()
+
+    def test_cli_refuses_the_python_backend_with_guidance(self):
+        with (
+            patch.object(backend, "probe_backend") as probe,
+            patch("sys.stderr") as stderr,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            backend.main(["--backend", "python"])
+        self.assertEqual(2, raised.exception.code)
+        written = "".join(call.args[0] for call in stderr.write.call_args_list)
+        self.assertIn("lisjong#346", written)
+        probe.assert_not_called()
 
     def test_real_factory_must_increment_native_counter(self):
         from lisjong.policies import (
@@ -250,9 +272,16 @@ RUNNER_BOUND_ARGS=(--duration-seconds 1800)
 
     def test_invalid_rust_inputs_exit_before_any_work(self):
         cases = (
+            [],
             ["--shanten-backend", "rust"],
             ["--shanten-backend", "other"],
-            ["--native-wheel-s3-uri", "s3://bucket/wheel.whl"],
+            ["--shanten-backend", "python"],
+            [
+                "--shanten-backend",
+                "python",
+                "--native-wheel-s3-uri",
+                "s3://bucket/wheel.whl",
+            ],
             [
                 "--shanten-backend",
                 "rust",
@@ -360,10 +389,15 @@ class LauncherPreflightTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             script = Path(td) / "preflight.ps1"
             script.write_text(prefix + '\nWrite-Output "VALIDATED"\n')
+            wheel = ["-NativeWheelS3Uri", "s3://bucket/wheel.whl"]
             cases = (
-                (["-DurationSeconds", "1800", "-FailSafeHours", "2"], True),
-                (["-DurationSeconds", "7200", "-FailSafeHours", "2"], False),
+                (["-DurationSeconds", "1800", "-FailSafeHours", "2", *wheel], True),
+                (["-DurationSeconds", "7200", "-FailSafeHours", "2", *wheel], False),
+                ([], False),
                 (["-ShantenBackend", "rust"], False),
+                (["-ShantenBackend", "python"], False),
+                (["-ShantenBackend", "python", *wheel], False),
+                (["-ShantenBackend", "Rust", *wheel], False),
                 (
                     [
                         "-ShantenBackend",
@@ -373,7 +407,7 @@ class LauncherPreflightTest(unittest.TestCase):
                     ],
                     True,
                 ),
-                (["-NativeWheelS3Uri", "s3://bucket/wheel.whl"], False),
+                (wheel, True),
                 (
                     [
                         "-ShantenBackend",

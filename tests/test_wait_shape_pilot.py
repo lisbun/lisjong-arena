@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lisjong_arena.wait_shape_qualification.pilot import (
+    EXPECTED_CANONICAL_WAIT_IDENTITY,
     EXPECTED_PROTOCOL_LOCK_IDENTITY,
     F1_NOT_QUALIFIED,
     F1_QUALIFIED,
@@ -429,7 +430,17 @@ class WaitShapePilotTest(unittest.TestCase):
                     build_execution_lock(temp, max_workers=1, **kwargs)
 
     def test_raw_artifact_is_write_once_and_strict(self):
-        with tempfile.TemporaryDirectory() as temp:
+        # The frozen pilot binds the exact-wait source of its recorded lisjong
+        # revision. lisjong#346 (pin 89dd00d, #531) edited that module's
+        # docstrings, so the current runtime is refused (see the next test);
+        # this test checks write-once / strictness under the frozen identity.
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch(
+                "lisjong_arena.wait_shape_qualification.pilot.exact_wait_implementation_identity",
+                return_value=EXPECTED_CANONICAL_WAIT_IDENTITY,
+            ),
+        ):
             root = Path(temp)
             lock_root = root / "unused"
             lock_root.mkdir()
@@ -463,6 +474,37 @@ class WaitShapePilotTest(unittest.TestCase):
                     raw_path,
                     game_receipts=game_receipts((observation(0),)),
                     observations=(observation(0),),
+                    lock=lock,
+                )
+
+    def test_raw_artifact_from_another_exact_wait_source_is_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lock_root = root / "unused"
+            lock_root.mkdir()
+            with patch(
+                "lisjong_arena.wait_shape_qualification.pilot._verify_locked_environment",
+                return_value=fake_execution(),
+            ):
+                lock = build_execution_lock(
+                    lock_root,
+                    max_workers=1,
+                    repository_collision_audit_pass=True,
+                    private_collision_audit_pass=True,
+                    no_prior_result_exposure_confirmed=True,
+                )
+            records = (observation(0), observation(1))
+            with (
+                patch(
+                    "lisjong_arena.wait_shape_qualification.pilot.exact_wait_implementation_identity",
+                    return_value="0" * 64,
+                ),
+                self.assertRaisesRegex(WaitShapePilotError, "runtime binding"),
+            ):
+                write_raw_artifact(
+                    root / "raw",
+                    game_receipts=game_receipts(records),
+                    observations=records,
                     lock=lock,
                 )
 

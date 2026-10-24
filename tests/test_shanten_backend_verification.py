@@ -1,9 +1,10 @@
-"""#400 shanten backend verification: wheel identity, fail-closed backend checks,
-worker propagation and per-seed comparison.
+"""#400 / #531 shanten backend verification: wheel identity, fail-closed backend
+checks, worker propagation and per-seed comparison.
 
-The native extension is not installed in Arena CI; the rust-backend branches are
-checked with an injected stand-in module (identity / wiring failures) and the
-real extension is exercised on the target environment by the #400 bootstrap.
+Since #531 lisjong requires its native extension, and Arena CI installs a wheel
+built from the pinned lisjong revision.  Identity / wiring failures are checked
+with an injected stand-in module; ``python`` and unknown backends are refused
+before lisjong is imported.
 """
 
 import importlib.util
@@ -24,9 +25,9 @@ from lisjong_arena.shanten_backend_verification import backend, measure
 from lisjong_arena.shanten_backend_verification.__main__ import main
 
 _ROOT = Path(__file__).resolve().parents[1]
-_FAST_POLICY = (
-    "lisjong_arena.learned_policy_offline_q.p1_gate_b_comparator:PassiveTsumogiriPolicy"
-)
+# A fast catalog Policy that calls the public shanten API (the per-game check
+# requires at least one native call since #531).
+_FAST_POLICY = "two-step"
 _ENV = backend.BACKEND_ENVIRONMENT_VARIABLE
 
 
@@ -50,6 +51,13 @@ class WheelIdentityTest(unittest.TestCase):
     def test_frozen_identity_is_the_current_lisjong_pin(self) -> None:
         project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn(f"lisjong.git@{backend.EXPECTED_LISJONG_REVISION}", project)
+        # #531: CI tests run against a wheel built from the same revision.
+        workflow = (_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            f'LISJONG_NATIVE_SOURCE_REVISION: "{backend.EXPECTED_LISJONG_REVISION}"',
+            workflow,
+        )
+        self.assertEqual(workflow.count("LISJONG_NATIVE_SOURCE_REVISION: "), 1)
         self.assertRegex(backend.EXPECTED_WHEEL_SHA256, r"^[0-9a-f]{64}$")
         self.assertTrue(
             backend.EXPECTED_WHEEL_FILENAME.endswith(
@@ -84,76 +92,147 @@ class WheelIdentityTest(unittest.TestCase):
         self.assertEqual(record["file"], backend.EXPECTED_WHEEL_FILENAME)
 
 
+def _run_cli(arguments: list[str], value: str | None):
+    return subprocess.run(
+        [sys.executable, "-m", "lisjong_arena.shanten_backend_verification"]
+        + arguments,
+        capture_output=True,
+        text=True,
+        env=_environment(value),
+        timeout=120,
+    )
+
+
 class BackendSelectionTest(unittest.TestCase):
-    def test_unset_backend_is_refused(self) -> None:
-        with mock.patch.dict(os.environ, _environment(None), clear=True):
-            with self.assertRaisesRegex(
-                backend.ShantenBackendVerificationError, "explicit"
-            ):
-                backend.require_shanten_backend("python")
+    def test_new_execution_accepts_only_rust(self) -> None:
+        self.assertEqual(backend.EXECUTION_BACKENDS, ("rust",))
+        self.assertEqual(backend.RECORDED_BACKENDS, ("python", "rust"))
+        self.assertEqual(backend.require_execution_backend("rust"), "rust")
+        with self.assertRaisesRegex(
+            backend.ShantenBackendVerificationError, "lisjong#346"
+        ):
+            backend.require_execution_backend("python")
+        for name in ("cython", "Rust", "", None):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    backend.ShantenBackendVerificationError, "must be 'rust'"
+                ):
+                    backend.require_execution_backend(name)
 
-    def test_backend_other_than_the_requested_one_is_refused(self) -> None:
-        with mock.patch.dict(os.environ, _environment("python"), clear=True):
-            with self.assertRaisesRegex(
-                backend.ShantenBackendVerificationError, "explicit 'rust'"
-            ):
-                backend.require_shanten_backend("rust")
+    def test_python_or_unknown_expected_backend_is_refused_first(self) -> None:
+        # Refused before the installed revision or lisjong are looked at.
+        with (
+            mock.patch.object(backend, "_installed_lisjong_revision") as revision,
+            mock.patch.dict(os.environ, _environment(None), clear=True),
+        ):
+            for name in ("python", "cython"):
+                with self.subTest(name=name):
+                    with self.assertRaises(backend.ShantenBackendVerificationError):
+                        backend.require_shanten_backend(name)
+        revision.assert_not_called()
 
-    def test_unknown_expected_backend_is_refused(self) -> None:
-        with self.assertRaises(backend.ShantenBackendVerificationError):
-            backend.require_shanten_backend("cython")
+    def test_environment_must_be_unset_or_rust(self) -> None:
+        for value in (None, "rust"):
+            with self.subTest(value=value):
+                with mock.patch.dict(os.environ, _environment(value), clear=True):
+                    self.assertEqual(backend.require_execution_environment(), value)
+        for value, message in (
+            ("python", "lisjong#346"),
+            ("cython", "must be unset or 'rust'"),
+            ("RUST", "must be unset or 'rust'"),
+            ("", "must be unset or 'rust'"),
+        ):
+            with self.subTest(value=value):
+                with (
+                    mock.patch.dict(os.environ, _environment(value), clear=True),
+                    mock.patch.object(backend, "_installed_lisjong_revision") as rev,
+                ):
+                    with self.assertRaisesRegex(
+                        backend.ShantenBackendVerificationError, message
+                    ):
+                        backend.require_shanten_backend("rust")
+                rev.assert_not_called()
 
     def test_installed_lisjong_must_be_the_expected_revision(self) -> None:
-        with mock.patch.dict(os.environ, _environment("python"), clear=True):
+        with mock.patch.dict(os.environ, _environment(None), clear=True):
             with self.assertRaisesRegex(
                 backend.ShantenBackendVerificationError, "not the pinned"
             ):
-                backend.require_shanten_backend("python", expected_revision="0" * 40)
+                backend.require_shanten_backend("rust", expected_revision="0" * 40)
 
-    def test_python_backend_record_does_not_load_the_extension(self) -> None:
-        process = subprocess.run(
-            [sys.executable, "-m", "lisjong_arena.shanten_backend_verification"]
-            + ["probe", "--backend", "python"],
-            capture_output=True,
-            text=True,
-            env=_environment("python"),
-            timeout=120,
-        )
-        self.assertEqual(process.returncode, 0, process.stderr)
-        record = json.loads(process.stdout)
-        self.assertEqual(record["backend"], "python")
-        self.assertEqual(record["lisjong_revision"], backend.EXPECTED_LISJONG_REVISION)
-        self.assertIsNone(record["native"])
+    def test_unset_and_rust_probe_the_native_core(self) -> None:
+        if importlib.util.find_spec(backend.NATIVE_MODULE) is None:
+            self.skipTest("the native extension is not installed here")
+        for value in (None, "rust"):
+            with self.subTest(value=value):
+                process = _run_cli(["probe", "--backend", "rust"], value)
+                self.assertEqual(process.returncode, 0, process.stderr)
+                record = json.loads(process.stdout)
+                self.assertEqual(record["backend"], "rust")
+                self.assertEqual(
+                    record["lisjong_revision"], backend.EXPECTED_LISJONG_REVISION
+                )
+                native = record["native"]
+                self.assertEqual(
+                    native["source_revision"], backend.EXPECTED_LISJONG_REVISION
+                )
+                self.assertEqual(
+                    native["api_version"], backend.EXPECTED_NATIVE_API_VERSION
+                )
+                self.assertGreaterEqual(native["probe_native_calls"], 1)
 
-    def test_rust_without_the_extension_fails_before_any_game(self) -> None:
-        # Checking availability must not import Rust into this Python process:
-        # later backend checks deliberately reject an already loaded extension.
+    def test_r5_probe_reaches_the_native_core(self) -> None:
+        if importlib.util.find_spec(backend.NATIVE_MODULE) is None:
+            self.skipTest("the native extension is not installed here")
+        with mock.patch.dict(os.environ, _environment(None), clear=True):
+            backend.require_shanten_backend("rust")
+            self.assertGreaterEqual(backend.probe_r5_native(), 1)
+
+    def test_python_backend_option_is_refused_with_guidance(self) -> None:
+        for command in ("probe", "games"):
+            with self.subTest(command=command):
+                arguments = [command, "--backend", "python"]
+                if command == "games":
+                    arguments += ["--policy", "x", "--seeds", "0", "--workers", "1"]
+                    arguments += ["--out", str(Path(tempfile.mkdtemp()) / "out")]
+                process = _run_cli(arguments, None)
+                self.assertEqual(process.returncode, 2)
+                self.assertIn("lisjong#346", process.stderr)
+                self.assertIn("recorded Arena / lisjong revision", process.stderr)
+                self.assertEqual(process.stdout, "")
+
+    def test_python_environment_is_refused_before_lisjong_is_imported(self) -> None:
+        # lisjong raises ShantenBackendError at import time; Arena refuses first,
+        # while its own package is imported, so the lisjong error never appears.
+        for value in ("python", "cython"):
+            with self.subTest(value=value):
+                process = _run_cli(["probe", "--backend", "rust"], value)
+                self.assertNotEqual(process.returncode, 0)
+                self.assertIn("ShantenBackendVerificationError", process.stderr)
+                self.assertNotIn("ShantenBackendError:", process.stderr)
+                self.assertNotIn("lisjong/hand_evaluation", process.stderr)
+                self.assertEqual(process.stdout, "")
+
+    def test_startup_comparison_is_refused(self) -> None:
+        out = Path(tempfile.mkdtemp()) / "startup.json"
+        with (
+            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            code = main(["startup", "--repeat", "1", "--out", str(out)])
+        self.assertEqual(code, 2)
+        self.assertIn("lisjong#346", stderr.getvalue())
+        self.assertFalse(out.exists())
+
+    def test_missing_extension_fails_before_any_game(self) -> None:
+        # lisjong fails at import time without the extension; whichever layer
+        # reports it, the process stops without a fallback.
         if importlib.util.find_spec(backend.NATIVE_MODULE) is not None:
             self.skipTest("the native extension is installed here")
-        process = subprocess.run(
-            [sys.executable, "-m", "lisjong_arena.shanten_backend_verification"]
-            + ["probe", "--backend", "rust"],
-            capture_output=True,
-            text=True,
-            env=_environment("rust"),
-            timeout=120,
-        )
-        # lisjong itself fails closed while the Arena package imports it, before
-        # the probe runs; either way the process stops without a fallback.
+        process = _run_cli(["probe", "--backend", "rust"], None)
         self.assertNotEqual(process.returncode, 0)
-        self.assertIn("refusing to fall back", process.stderr)
+        self.assertIn("_lisjong_native", process.stderr)
         self.assertNotIn('"backend"', process.stdout)
-
-
-class StartupProbeTest(unittest.TestCase):
-    def test_child_times_the_lisjong_import_itself(self) -> None:
-        # Importing lisjong_arena in the child would import lisjong before the
-        # timer starts and hide the import cost being measured.
-        self.assertNotIn("lisjong_arena", measure._STARTUP_CHILD)
-        with mock.patch.dict(os.environ, _environment(None), clear=True):
-            sample = measure._startup_once("python")
-        self.assertEqual(sample["value"], 0)
-        self.assertGreater(sample["import_first_call_ms"], 0.0)
 
 
 _NO_ATTRIBUTE = object()
@@ -177,14 +256,14 @@ class _FakeNative(types.ModuleType):
 
     def standard_shanten_call_count(self) -> int:
         # With ``counting`` every read moves, standing in for the probe call
-        # that the python-imported lisjong core does not route here.
+        # that the real lisjong core routes to the real extension.
         if self._counting:
             self._calls += 1
         return self._calls
 
 
 class RustIdentityTest(unittest.TestCase):
-    """Rust-branch failures, with lisjong already imported under python."""
+    """Identity / wiring failures with a stand-in for the loaded extension."""
 
     def _require_rust(self, native: types.ModuleType | None) -> None:
         modules = {backend.NATIVE_MODULE: native} if native is not None else {}
@@ -195,6 +274,8 @@ class RustIdentityTest(unittest.TestCase):
                 backend.require_shanten_backend("rust")
 
     def test_rust_selected_without_a_loaded_extension_fails(self) -> None:
+        if importlib.util.find_spec(backend.NATIVE_MODULE) is None:
+            self.skipTest("lisjong cannot be imported without the extension")
         with self.assertRaisesRegex(
             backend.ShantenBackendVerificationError, "did not load"
         ):
@@ -306,17 +387,6 @@ class InstalledNativeTest(unittest.TestCase):
             ):
                 backend.verify_installed_native(self.wheel)
 
-    def test_probe_wheel_option_requires_the_rust_backend(self) -> None:
-        sys.modules.pop(backend.NATIVE_MODULE)
-        with (
-            mock.patch.dict(os.environ, _environment("python"), clear=True),
-            mock.patch("sys.stderr", new_callable=io.StringIO) as stderr,
-            mock.patch("sys.stdout", new_callable=io.StringIO),
-        ):
-            code = main(["probe", "--backend", "python", "--wheel", str(self.wheel)])
-        self.assertEqual(code, 2)
-        self.assertIn("--wheel is only valid", stderr.getvalue())
-
 
 class DecisionDigestTest(unittest.TestCase):
     def test_digest_ignores_the_order_between_seats(self) -> None:
@@ -338,15 +408,17 @@ class DecisionDigestTest(unittest.TestCase):
 class GamesAndCompareTest(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = Path(tempfile.mkdtemp())
+        if importlib.util.find_spec(backend.NATIVE_MODULE) is None:
+            self.skipTest("the native extension is not installed here")
 
     def _run(self, name: str, seeds: list[int], workers: int) -> Path:
         out = self.directory / name
-        with mock.patch.dict(os.environ, _environment("python"), clear=True):
+        with mock.patch.dict(os.environ, _environment(None), clear=True):
             measure.run_games(
                 policy=_FAST_POLICY,
                 seeds=seeds,
                 game_mode="4p-red-half",
-                backend="python",
+                backend="rust",
                 workers=workers,
                 out_dir=out,
             )
@@ -366,18 +438,20 @@ class GamesAndCompareTest(unittest.TestCase):
             .splitlines()
         ]
         for game in games:
-            self.assertEqual(game["worker"]["backend"], "python")
-            self.assertIsNone(game["worker"]["native"])
+            self.assertEqual(game["worker"]["backend"], "rust")
+            self.assertEqual(
+                game["worker"]["native"]["source_revision"],
+                backend.EXPECTED_LISJONG_REVISION,
+            )
             self.assertNotEqual(game["worker"]["pid"], summary["parent"]["pid"])
-            self.assertIsNone(game["native_calls"])
-            self.assertIsNone(game["native_discard_evaluations"])
-        self.assertIsNone(summary["native_discard_evaluations"])
+            self.assertGreaterEqual(game["native_calls"], 1)
+            self.assertGreaterEqual(game["native_discard_evaluations"], 0)
+        self.assertGreaterEqual(summary["native_calls"], 2)
         self.assertEqual(
             sum(entry["games"] for entry in summary["per_worker"].values()), 2
         )
         for entry in summary["per_worker"].values():
-            self.assertIsNone(entry["native_calls"])
-            self.assertIsNone(entry["native_discard_evaluations"])
+            self.assertGreaterEqual(entry["native_calls"], 1)
         self.assertTrue(measure.compare_games(serial, parallel)["ok"])
 
         expected = {0: games[0]["semantic_sha256"]}
@@ -401,15 +475,17 @@ class GamesAndCompareTest(unittest.TestCase):
         kinds = {mismatch["kind"] for mismatch in result["mismatches"]}
         self.assertEqual(kinds, {"seed-set", "ranks"})
 
-    def test_backend_mismatch_fails_before_workers_start(self) -> None:
+    def test_python_backend_fails_before_workers_start(self) -> None:
         out = self.directory / "refused"
-        with mock.patch.dict(os.environ, _environment("python"), clear=True):
-            with self.assertRaises(backend.ShantenBackendVerificationError):
+        with mock.patch.dict(os.environ, _environment(None), clear=True):
+            with self.assertRaisesRegex(
+                backend.ShantenBackendVerificationError, "lisjong#346"
+            ):
                 measure.run_games(
                     policy=_FAST_POLICY,
                     seeds=[0],
                     game_mode="4p-red-half",
-                    backend="rust",
+                    backend="python",
                     workers=1,
                     out_dir=out,
                 )

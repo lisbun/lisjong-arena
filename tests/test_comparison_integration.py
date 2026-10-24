@@ -115,13 +115,13 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # revisionへ、Arena #507でlisjong #316/#317（L2aの合成Policy）の
         # revisionへ、Arena #520でlisjong #330（同点数牌paijia候補）の
         # revisionへ、Arena #524でlisjong #343（単独副露者genbutsu候補）の
-        # revisionへ更新した。
+        # revisionへ、Arena #531でlisjong #346（Rust必須化）のrevisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "d2469f2519b947fb27bf8c1622a2854c200e0aae",
+            "89dd00d54d3651c1a8a720b2bea3933bb2ca0bd5",
         )
 
 

@@ -1,16 +1,16 @@
-"""Startup, multi-worker game and equivalence measurements (#400).
+"""Multi-worker game and equivalence measurements (#400).
 
-Each measurement runs one backend at a time; the backend comes from
-``LISJONG_SHANTEN_BACKEND`` in the environment of the processes that compute
-(the parent for ``games``, fresh child processes for ``startup``).  Workers are
-``spawn`` processes, so they inherit the variable, and every worker verifies
-its backend with ``require_shanten_backend()`` before it plays a game.
+``games`` runs the Rust backend only since #531 (lisjong#346 removed the Python
+backend); the #400 Python/Rust ``startup`` measurement was removed with it.
+Workers are ``spawn`` processes, so they inherit ``LISJONG_SHANTEN_BACKEND``,
+and every worker verifies its backend with ``require_shanten_backend()``
+before it plays a game.  ``compare`` still reads saved Python and Rust runs.
 
 Memory is reported per process as ``VmHWM`` (peak RSS of the process's own
 address space, KiB) and, on Linux, as system-wide used memory
 (``MemTotal - MemAvailable``) sampled by the parent.  ``ru_maxrss`` is not used:
 Linux carries the pre-exec high-water mark across ``exec``, so a spawned worker
-or startup child would report at least its parent's RSS.  Both values are
+would report at least its parent's RSS.  Both values are
 ``None`` where ``/proc`` is unavailable.
 """
 
@@ -21,7 +21,6 @@ import json
 import multiprocessing
 import os
 import statistics
-import subprocess
 import sys
 import threading
 import time
@@ -29,13 +28,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from .backend import (
-    BACKEND_ENVIRONMENT_VARIABLE,
-    BACKENDS,
     EXPECTED_LISJONG_REVISION,
     NATIVE_MODULE,
     PYTHON_BACKEND,
     ShantenBackendVerificationError,
-    _probe_tiles,
     native_call_count,
     native_discard_evaluation_count,
     require_shanten_backend,
@@ -91,89 +87,6 @@ def _distribution(values: list[float]) -> dict[str, float] | None:
         "median": statistics.median(ordered),
         "mean": statistics.fmean(ordered),
         "max": ordered[-1],
-    }
-
-
-# --------------------------------------------------------------------------
-# startup: import + first calculation in fresh processes
-
-
-# The child imports nothing from lisjong_arena: the Arena package imports
-# lisjong itself, which would move the measured import out of the timer.
-_STARTUP_CHILD = """
-import json, time
-started = time.perf_counter()
-from lisjong.hand_evaluation import calculate_shanten
-from lisjong.policy_contract.tile import Tile, TileCategory, TileType
-tiles = [Tile(TileType(TileCategory[category], rank))
-         for category, rank in {tiles!r}]
-value = calculate_shanten(tiles)
-elapsed = time.perf_counter() - started
-peak = None
-try:
-    for line in open("/proc/self/status", encoding="ascii"):
-        if line.startswith("VmHWM:"):
-            peak = int(line.split()[1])
-except OSError:
-    pass
-print(json.dumps({{"import_first_call_ms": elapsed * 1000.0, "value": value,
-                  "peak_rss_kib": peak}}))
-"""
-
-
-def _startup_once(backend: str) -> dict[str, object]:
-    environment = dict(os.environ)
-    environment[BACKEND_ENVIRONMENT_VARIABLE] = backend
-    tiles = [
-        (tile.tile_type.category.name, tile.tile_type.rank) for tile in _probe_tiles()
-    ]
-    process = subprocess.run(
-        [sys.executable, "-c", _STARTUP_CHILD.format(tiles=tiles)],
-        capture_output=True,
-        text=True,
-        env=environment,
-        timeout=120,
-    )
-    if process.returncode != 0:
-        raise ShantenBackendVerificationError(
-            f"{backend} startup probe failed: {process.stderr.strip()}"
-        )
-    return json.loads(process.stdout)
-
-
-def run_startup(repeat: int) -> dict[str, object]:
-    """Alternate python / rust fresh processes ``repeat`` times each."""
-    if type(repeat) is not int or repeat < 1:
-        raise ValueError("repeat must be an int >= 1")
-    samples: dict[str, list[dict[str, object]]] = {name: [] for name in BACKENDS}
-    for round_index in range(repeat):
-        order = BACKENDS if round_index % 2 == 0 else tuple(reversed(BACKENDS))
-        for backend in order:
-            samples[backend].append(_startup_once(backend))
-    values = {sample["value"] for items in samples.values() for sample in items}
-    if len(values) != 1:
-        raise ShantenBackendVerificationError(f"startup probe values differ: {values}")
-    return {
-        "measurement": "startup",
-        "repeat": repeat,
-        "order": "alternating, python first on even rounds",
-        "samples": samples,
-        "import_first_call_ms": {
-            backend: _distribution(
-                [sample["import_first_call_ms"] for sample in samples[backend]]
-            )
-            for backend in BACKENDS
-        },
-        "peak_rss_kib": {
-            backend: _distribution(
-                [
-                    sample["peak_rss_kib"]
-                    for sample in samples[backend]
-                    if sample["peak_rss_kib"] is not None
-                ]
-            )
-            for backend in BACKENDS
-        },
     }
 
 

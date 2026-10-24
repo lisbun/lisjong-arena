@@ -298,3 +298,55 @@ def fake_play_rust_missing_actions(task):
     return PlayedHanchan(
         _capture(task), ENVIRONMENT, os.getpid(), 1024, _actions(task)[1:]
     )
+
+
+# ---------------------------------------------------------------------------
+# #531 Rust-only gate
+# ---------------------------------------------------------------------------
+
+GATE_COUNTERS = {
+    "discard_evaluations": 30,
+    "numeric_shanten": 500,
+    "progression_evaluations": 0,
+}
+
+
+def _gate_play(task, counters):
+    return PlayedHanchan(
+        _capture(task),
+        ENVIRONMENT,
+        os.getpid(),
+        1024,
+        _actions(task),
+        native_counters=counters,
+    )
+
+
+def fake_play_gate(task):
+    return _gate_play(task, dict(GATE_COUNTERS))
+
+
+def fake_play_gate_counter_drift(task):
+    counters = dict(GATE_COUNTERS)
+    if (task.seed, task.placement) == (472_005, 2):
+        counters["numeric_shanten"] += 1
+    return _gate_play(task, counters)
+
+
+def fake_play_gate_action_drift(task):
+    return PlayedHanchan(
+        _capture(task),
+        ENVIRONMENT,
+        os.getpid(),
+        1024,
+        _actions(task, drift=True),
+        native_counters=dict(GATE_COUNTERS),
+    )
+
+
+def fake_play_gate_no_native_call(task):
+    return _gate_play(task, {**GATE_COUNTERS, "numeric_shanten": 0})
+
+
+def fake_play_gate_missing_counters(task):
+    return _gate_play(task, None)

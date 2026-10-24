@@ -635,4 +635,5 @@ Those remain separate design decisions.
 ## R5 Rust版のChampion 2bot試運転
 
 明示的なRust導入と短時間の2bot起動は [#434手順](aws-riichilab-rust-434.md) を参照。
-既存の引数を省略した場合はPython backendのまま。
+#531以降の既定は `-ShantenBackend rust` で、`-NativeWheelS3Uri` が必須になった。`python` は
+lisjong #346でbackendが削除されたため、AWS呼び出しの前に移行案内付きで拒否する。

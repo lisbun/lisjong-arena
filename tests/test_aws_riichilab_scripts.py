@@ -19,6 +19,8 @@ _MONITOR = _REPOSITORY_ROOT / "scripts" / "aws" / "ssm-monitor.ps1"
 _WATCHER = _REPOSITORY_ROOT / "scripts" / "aws" / "watch-riichilab.ps1"
 _STOPPER = _REPOSITORY_ROOT / "scripts" / "aws" / "stop-riichilab.ps1"
 _SHA = "0123456789abcdef0123456789abcdef01234567"
+# #531: the bootstrap is Rust only and requires a wheel object before other checks.
+_WHEEL = ("--native-wheel-s3-uri", "s3://bucket/wheel.whl")
 
 
 def _bash() -> str | None:
@@ -181,7 +183,14 @@ class AwsRiichiLabSpectateScriptTest(unittest.TestCase):
             with self.subTest(extra=extra):
                 try:
                     result = subprocess.run(
-                        [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *extra],
+                        [
+                            bash,
+                            str(_BOOTSTRAP),
+                            "--arena-revision",
+                            _SHA,
+                            *_WHEEL,
+                            *extra,
+                        ],
                         check=False,
                         capture_output=True,
                         text=True,
@@ -344,7 +353,7 @@ class AwsRiichiLabStopRequestScriptTest(unittest.TestCase):
             self.skipTest("bash is unavailable")
         try:
             return subprocess.run(
-                [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *extra],
+                [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *_WHEEL, *extra],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -1183,7 +1192,7 @@ class AwsRiichiLabMultiBotScriptTest(unittest.TestCase):
             self.skipTest("bash is unavailable")
         try:
             return subprocess.run(
-                [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *extra],
+                [bash, str(_BOOTSTRAP), "--arena-revision", _SHA, *_WHEEL, *extra],
                 check=False,
                 capture_output=True,
                 text=True,

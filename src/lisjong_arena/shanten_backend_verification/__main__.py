@@ -12,10 +12,13 @@ python -m lisjong_arena.shanten_backend_verification compare <dir> <dir> \\
 python -m lisjong_arena.shanten_backend_verification report <run output dir>     [--hourly-usd 0.93]
 ```
 
-``probe`` / ``games`` read the backend from ``LISJONG_SHANTEN_BACKEND`` and
-refuse to run unless it equals ``--backend``.  Every command exits non-zero on
-a verification failure or a mismatch; ``report`` exits 3 when the evidence is
-incomplete or does not match the frozen plan.
+``probe`` / ``games`` run the Rust backend only (#531): ``--backend python``
+is refused with a migration message before anything runs, and
+``LISJONG_SHANTEN_BACKEND`` must be unset or ``rust``.  ``startup`` measured
+Python against Rust (#400) and is refused for the same reason; the saved #400
+records stay readable with ``compare`` / ``report``.  Every command exits
+non-zero on a verification failure or a mismatch; ``report`` exits 3 when the
+evidence is incomplete or does not match the frozen plan.
 """
 
 from __future__ import annotations
@@ -26,14 +29,14 @@ import sys
 from pathlib import Path
 
 from .backend import (
-    BACKENDS,
-    RUST_BACKEND,
+    RETIRED_PYTHON_BACKEND_MESSAGE,
     ShantenBackendVerificationError,
+    execution_backend_argument,
     require_shanten_backend,
     verify_installed_native,
     verify_wheel_file,
 )
-from .measure import compare_games, run_games, run_startup
+from .measure import compare_games, run_games
 from .report import evaluate
 
 
@@ -47,7 +50,7 @@ def _seed_digest(value: str) -> tuple[int, str]:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m lisjong_arena.shanten_backend_verification",
-        description="Opt-in Rust shanten backend verification (#400).",
+        description="Rust shanten backend verification (#400, Rust only since #531).",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -55,12 +58,12 @@ def _parser() -> argparse.ArgumentParser:
     wheel.add_argument("wheel", type=Path)
 
     probe = commands.add_parser("probe")
-    probe.add_argument("--backend", required=True, choices=BACKENDS)
+    probe.add_argument("--backend", required=True, type=execution_backend_argument)
     probe.add_argument(
         "--wheel",
         type=Path,
         default=None,
-        help="rust only: also check the loaded extension files against this wheel",
+        help="also check the loaded extension files against this wheel",
     )
 
     startup = commands.add_parser("startup")
@@ -71,7 +74,7 @@ def _parser() -> argparse.ArgumentParser:
     games.add_argument("--policy", required=True)
     games.add_argument("--seeds", required=True, type=int, nargs="+")
     games.add_argument("--game-mode", default="4p-red-half")
-    games.add_argument("--backend", required=True, choices=BACKENDS)
+    games.add_argument("--backend", required=True, type=execution_backend_argument)
     games.add_argument("--workers", required=True, type=int)
     games.add_argument("--out", required=True, type=Path)
 
@@ -107,14 +110,14 @@ def main(argv: list[str] | None = None) -> int:
         elif arguments.command == "probe":
             record = require_shanten_backend(arguments.backend)
             if arguments.wheel is not None:
-                if arguments.backend != RUST_BACKEND:
-                    raise ShantenBackendVerificationError(
-                        "--wheel is only valid with --backend rust"
-                    )
                 record["installed_wheel"] = verify_installed_native(arguments.wheel)
             _emit(record)
         elif arguments.command == "startup":
-            _emit(run_startup(arguments.repeat), arguments.out)
+            # #400 startup alternates Python and Rust processes.
+            raise ShantenBackendVerificationError(
+                "startup compares the Python and Rust backends (#400); "
+                + RETIRED_PYTHON_BACKEND_MESSAGE
+            )
         elif arguments.command == "games":
             summary = run_games(
                 policy=arguments.policy,

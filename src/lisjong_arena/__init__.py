@@ -1,3 +1,4 @@
+# ruff: noqa: E402  (the backend environment check below must run before any import)
 """lisjong-arena package.
 
 lisjong Policyをconcrete environmentで実行・観測し、controlled /
@@ -5,6 +6,12 @@ reproducibleな条件で評価するArena。execution / observationとevaluation
 別責務として扱い、単一gameの進行は``lisjong_arena.riichienv.LocalGameRunner``
 がArena-local canonical implementationとして担当する。
 """
+
+# #531: lisjong（#346以降）は``LISJONG_SHANTEN_BACKEND=python``をimport時に拒否する。
+# 下のimportがlisjong Policyを読み込む前に、Arenaの移行案内付きで拒否する。
+from lisjong_arena._shanten_environment import require_execution_environment
+
+require_execution_environment()
 
 from lisjong_arena._parallel_execution import PolicyFactoryNotSerializableError
 from lisjong_arena.artifact import (

@@ -405,5 +405,22 @@ class RecordingNonInterferenceIntegrationTest(unittest.TestCase):
         )
 
 
+class ShantenBackendIdentityTest(unittest.TestCase):
+    """#531: lisjong#346 left only the rust backend; anything else is refused."""
+
+    def test_rust_records_the_loaded_native_extension(self):
+        import _lisjong_native
+
+        identity = binding.shanten_backend_identity()
+        self.assertEqual(identity["name"], "rust")
+        self.assertEqual(identity["native"]["api_version"], _lisjong_native.API_VERSION)
+        self.assertRegex(identity["native"]["sha256"], "^[0-9a-f]{64}$")
+
+    def test_other_backend_name_is_refused(self):
+        with patch.object(binding._shanten_backend, "BACKEND_NAME", "python"):
+            with self.assertRaisesRegex(PolicySourceRecordError, "python"):
+                binding.shanten_backend_identity()
+
+
 if __name__ == "__main__":
     unittest.main()

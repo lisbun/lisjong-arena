@@ -27,7 +27,8 @@ PLAY_REPOSITORY_URL="https://github.com/lisbun/lisjong-play.git"
 # Issue #383: run without a duration bound until the operator stop request.
 UNTIL_STOPPED=0
 DURATION_GIVEN=0
-SHANTEN_BACKEND="python"
+# Issue #531: lisjong requires the native extension; python is refused.
+SHANTEN_BACKEND="rust"
 NATIVE_WHEEL_S3_URI=""
 
 while (($#)); do
@@ -85,17 +86,17 @@ while (($#)); do
     esac
 done
 
-if [[ "$SHANTEN_BACKEND" != "python" && "$SHANTEN_BACKEND" != "rust" ]]; then
-    echo "--shanten-backend must be python or rust" >&2
+if [[ "$SHANTEN_BACKEND" == "python" ]]; then
+    echo "--shanten-backend python was removed in lisjong#346; new runs use rust (#531)." >&2
+    echo "Re-run a recorded Python-backend run only with its recorded Arena / lisjong revision, wheel and environment." >&2
     exit 2
 fi
-if [[ "$SHANTEN_BACKEND" == "rust" ]]; then
-    if [[ ! "$NATIVE_WHEEL_S3_URI" =~ ^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9/_+=.@-]+\.whl$ ]]; then
-        echo "--native-wheel-s3-uri must name an S3 wheel object for rust" >&2
-        exit 2
-    fi
-elif [[ -n "$NATIVE_WHEEL_S3_URI" ]]; then
-    echo "--native-wheel-s3-uri is only valid with rust" >&2
+if [[ "$SHANTEN_BACKEND" != "rust" ]]; then
+    echo "--shanten-backend must be rust" >&2
+    exit 2
+fi
+if [[ ! "$NATIVE_WHEEL_S3_URI" =~ ^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9/_+=.@-]+\.whl$ ]]; then
+    echo "--native-wheel-s3-uri must name an S3 wheel object for rust" >&2
     exit 2
 fi
 

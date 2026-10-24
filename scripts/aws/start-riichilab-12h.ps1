@@ -12,7 +12,8 @@ param(
     # Without -Bot the run is the single lisjong-dev bot reading -SecretId.
     [string[]]$Bot = @(),
     [string]$InstanceType = "t3.small",
-    [ValidateSet("python", "rust")][string]$ShantenBackend = "python",
+    # Issue #531: lisjong requires the native extension; python is refused.
+    [string]$ShantenBackend = "rust",
     [string]$NativeWheelS3Uri = "",
     [int]$DurationSeconds = 43200,
     [int]$FailSafeHours = 14,
@@ -33,16 +34,18 @@ $ErrorActionPreference = "Stop"
 # Safe shell interpolation and exact-object IAM preflight; no signed URL/token.
 $wheelBucket = ""
 $wheelKey = ""
-if ($ShantenBackend -ceq "rust") {
-    $wheelMatch = [regex]::Match($NativeWheelS3Uri, '^s3://([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])/([A-Za-z0-9/_+=.@-]+\.whl)$')
-    if (-not $wheelMatch.Success) {
-        throw "Rust requires -NativeWheelS3Uri naming one S3 wheel object."
-    }
-    $wheelBucket = $wheelMatch.Groups[1].Value
-    $wheelKey = $wheelMatch.Groups[2].Value
-} elseif ($ShantenBackend -cne "python" -or -not [string]::IsNullOrEmpty($NativeWheelS3Uri)) {
-    throw "Use lowercase python/rust; NativeWheelS3Uri is only valid with rust."
+if ($ShantenBackend -ceq "python") {
+    throw "The Python shanten backend was removed in lisjong#346; new runs use -ShantenBackend rust (#531). Re-run a recorded Python-backend run only with its recorded Arena / lisjong revision, wheel and environment."
 }
+if ($ShantenBackend -cne "rust") {
+    throw "-ShantenBackend must be lowercase rust."
+}
+$wheelMatch = [regex]::Match($NativeWheelS3Uri, '^s3://([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])/([A-Za-z0-9/_+=.@-]+\.whl)$')
+if (-not $wheelMatch.Success) {
+    throw "Rust requires -NativeWheelS3Uri naming one S3 wheel object."
+}
+$wheelBucket = $wheelMatch.Groups[1].Value
+$wheelKey = $wheelMatch.Groups[2].Value
 
 if ([string]::IsNullOrWhiteSpace($AwsProfile)) {
     throw "AWS profile is required. Pass -AwsProfile or set AWS_PROFILE after short-lived AWS CLI authentication."

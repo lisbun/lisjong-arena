@@ -33,7 +33,8 @@ dev-check §10.7の記録経路確認（開発用seed・別document、正式resu
 | `runner` | 正式eventの実行入口、STOP時の診断証跡 |
 | `development` | §10.7の開発用確認（plan / raw / summary / timings） |
 | `calibration` | 限定校正（#517）のplan / run / verify / report（§8） |
-| `backend_check` | 校正前のPython/Rust照合P2（#517、§8.2） |
+| `backend_check` | 校正前のPython/Rust照合P2（#517、§8.3）。#531以降は保存記録の照合だけ |
+| `rust_only_gate` | Rust必須lisjong用の新version gate（#531、§8.4）。P2の代わり |
 | `paijia_tie_plan` / `paijia_tie_worker` / `paijia_tie_activation` / `paijia_tie_screen` | #520 同点数牌paijia候補の開発比較（DEVELOPMENT、§9） |
 | `focal_mixed_plan` / `focal_mixed_worker` / `focal_mixed_compare` | #522 凍結paijia候補の混成相手focal比較（DEVELOPMENT、§10） |
 | `__main__` | `lock` / `run` / `verify` / `dev-check` / `dev-verify`、校正用の6 command（§8）、#520の6 command（§9）、#522の4 command（§10） |
@@ -160,7 +161,8 @@ J3（P2の規模）の決定でも、固定C0（J6）の代替証拠でもない
 - J6（固定C0の固定方法）は対C0 eventの計画時に決める
 - 槓・九種九牌を選ぶcandidateは、その適用・記録をcandidateごとに確認する（#472の範囲を一般化しない）
 - §10.7の確認（本Issueで開発用入力により1回）、P2 / P3の正式構成照合、校正、project #83のgate、
-  承認済みのevent計画、seed予約がそろうまで正式評価は始めない
+  承認済みのevent計画、seed予約がそろうまで正式評価は始めない。Rust必須のlisjong pin（`89dd00d`以降）では
+  P2を実行できないので、P2の代わりにRust-only gate（§8.4）のPASSを使う。P3・校正・seed予約は省略しない
 - worker数は1に固定した。並列化する場合は、worker間の環境一致を含めて別に設計する
 
 ## 8. 限定校正（#517）
@@ -241,6 +243,39 @@ LISJONG_SHANTEN_BACKEND=rust   ... backend-check --backend rust --wheel WHL --ti
   （wheel filename・bytes・SHA-256、installed native filesと wheelの一致、`SOURCE_REVISION`、
   `API_VERSION`、backend、provenance）を取り、planの値との完全一致を要求する。指定WSL構成についての
   確認であり、別のimage（AWS等）のPASSではない
+- #531以降（lisjong `89dd00d`、Python backend削除）は `backend-check --backend python` を実行前に移行案内付きで
+  拒否する。保存済みのP2記録（`backend-check-v1` / `backend-comparison-v1`）は `backend-compare` で
+  読み直せる。旧Python側の再実行は、記録が指定する旧Arena / lisjong revision・wheel・環境の組で行う。
+  P2のschema・protocol digest・#517の証拠は変更しない
+
+### 8.4 Rust-only gate（`rust-gate-*`、#531）
+
+Rust必須のlisjong pinで、P2（Python全対局比較）の代わりに使う新version gate。
+schemaは `arena-heuristic-candidate-engine-aabb-rust-only-gate-run-v1`（1回分）と
+`arena-heuristic-candidate-engine-aabb-rust-only-gate-v1`（判定）で、P2 v1・protocol v1を上書きしない。
+
+```text
+rust-gate-run --run first  --wheel WHL --timeout-seconds T --output first.json
+rust-gate-run --run second --wheel WHL --timeout-seconds T --output second.json   （別process）
+rust-gate-compare --first first.json --second second.json --output gate.json      PASSでだけ終了コード0
+rust-gate-verify  --first first.json --second second.json --gate gate.json        保存物から再導出
+```
+
+| 項目 | 内容 |
+| --- | --- |
+| 入力 | P2と同じ#472の開発用seed 472005・472006 × 6配置（12半荘）、校正の固定pair。registry外 |
+| 実行 | clean で `main` に含まれるArena revision、Rust、worker 1、1半荘timeoutはCLIで明示 |
+| P3 | 親と各workerの `environment_document` が一致し、実行時のpin・wheelが現行の固定値（`EXPECTED_*`） |
+| native counter | 各半荘でnumeric向聴のnative呼び出し ≥ 1、親で本番factory経由のR5 native呼び出し ≥ 1。打牌候補一括評価・R5の増分も記録 |
+| 記録整合性 | 第1層・第2層の局単位recordとscheduleが成り立つ（正式runと同じ検査） |
+| 決定性 | 2回のrunで局数・`end_reason`・`final_points`・`CompletedMatch` 全体・選択行動の列・native counterが全半荘で完全一致 |
+| 再導出 | `rust-gate-verify` は保存済みの2つのrun documentだけからgate documentを作り直し、完全一致を求める。engine・Policy・backend probeは呼ばない |
+
+- 仕様fixture・合法手・情報境界の回帰は、gateがbindするrevisionのlisjong CIとArena CIを正本とし、
+  gateはそれを再実行しない。強さ・過去結果との同一性・Champion昇格の根拠ではない
+- 不一致は `FAIL` として記録する。Rustを補正せず、別のbackendへ切り替えない
+- gateはその記録のlisjong revision・wheel SHA-256にだけ有効。正式eventのlockの環境と一致させる。
+  pinを変えたら新しいgateを取り直す
 
 ## 9. 同点数牌paijia候補の開発比較（#520）
 

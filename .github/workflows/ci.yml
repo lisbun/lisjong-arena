@@ -13,9 +13,19 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # #531: lisjong requires its native extension (lisjong#346), so every test job
+  # installs a wheel built from this pinned lisjong revision. It must equal the
+  # pyproject pin (checked in native-wheel). Execution environments use the
+  # hash-verified lisjong main CI wheel instead (docs/lisjong-native-wheel-current.md).
+  LISJONG_NATIVE_SOURCE_REVISION: "89dd00d54d3651c1a8a720b2bea3933bb2ca0bd5"
+
 jobs:
   static-checks:
     name: static-checks
+    # environment_verify / seed_registry import lisjong_arena, which needs the
+    # native extension since #531.
+    needs: native-wheel
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -31,6 +41,19 @@ jobs:
 
       - name: Install package and development tools
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Download the same-revision native wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: lisjong-native-ci-wheel
+          path: wheelhouse
+
+      - name: Install the same-revision native wheel (binary only, no index)
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check \
+            --only-binary=:all: --no-index --no-deps wheelhouse/*.whl
+          test "$(python -c 'import _lisjong_native; print(_lisjong_native.SOURCE_REVISION)')" = "$LISJONG_NATIVE_SOURCE_REVISION"
 
       - name: Verify internal VCS dependency identity
         run: python -m lisjong_arena.environment_verify --project pyproject.toml
@@ -55,10 +78,44 @@ jobs:
       - name: Run lint
         run: python -m ruff check .
 
+  # Builds _lisjong_native once from the pinned lisjong revision (#531). The
+  # build embeds LISJONG_NATIVE_SOURCE_REVISION as SOURCE_REVISION.
+  native-wheel:
+    name: native-wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Require the native revision to be the project pin
+        run: grep -F "lisjong.git@${LISJONG_NATIVE_SOURCE_REVISION}\"" pyproject.toml
+
+      - name: Build the same-revision native wheel
+        run: |
+          python -m pip wheel --disable-pip-version-check --no-deps --wheel-dir wheelhouse \
+            "git+https://github.com/lisbun/lisjong.git@${LISJONG_NATIVE_SOURCE_REVISION}#subdirectory=native"
+          ls -l wheelhouse
+
+      - name: Upload native wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: lisjong-native-ci-wheel
+          path: wheelhouse/
+          if-no-files-found: error
+          retention-days: 7
+
   # The full suite without the ML dependency, split so that a slow runner stays
   # inside the job limit (#467). Every test module is in exactly one shard.
   test-shards:
     name: tests-shard-${{ matrix.shard }}
+    needs: native-wheel
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -78,6 +135,19 @@ jobs:
 
       - name: Install package and development tools
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Download the same-revision native wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: lisjong-native-ci-wheel
+          path: wheelhouse
+
+      - name: Install the same-revision native wheel (binary only, no index)
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check \
+            --only-binary=:all: --no-index --no-deps wheelhouse/*.whl
+          test "$(python -c 'import _lisjong_native; print(_lisjong_native.SOURCE_REVISION)')" = "$LISJONG_NATIVE_SOURCE_REVISION"
 
       - name: Verify internal VCS dependency identity
         run: python -m lisjong_arena.environment_verify --project pyproject.toml
@@ -167,6 +237,7 @@ jobs:
 
   ml-test-shards:
     name: ml-tests-shard-${{ matrix.shard }}
+    needs: native-wheel
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -186,6 +257,19 @@ jobs:
 
       - name: Install package and development tools
         run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Download the same-revision native wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: lisjong-native-ci-wheel
+          path: wheelhouse
+
+      - name: Install the same-revision native wheel (binary only, no index)
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check \
+            --only-binary=:all: --no-index --no-deps wheelhouse/*.whl
+          test "$(python -c 'import _lisjong_native; print(_lisjong_native.SOURCE_REVISION)')" = "$LISJONG_NATIVE_SOURCE_REVISION"
 
       - name: Verify internal VCS dependency identity
         run: python -m lisjong_arena.environment_verify --project pyproject.toml
@@ -279,21 +363,30 @@ jobs:
 
   ron-source-native:
     name: ron-source-native
+    needs: native-wheel
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       LISJONG_REQUIRE_NATIVE: "1"
-      LISJONG_NATIVE_SOURCE_REVISION: "d2469f2519b947fb27bf8c1622a2854c200e0aae"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - name: Install pinned Arena and native scorer
+      - name: Install pinned Arena
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download the same-revision native wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: lisjong-native-ci-wheel
+          path: wheelhouse
+
+      - name: Install the same-revision native wheel (binary only, no index)
+        shell: bash
         run: |
-          python -m pip install --disable-pip-version-check -e .
-          python -m pip install --disable-pip-version-check "git+https://github.com/lisbun/lisjong.git@d2469f2519b947fb27bf8c1622a2854c200e0aae#subdirectory=native"
-          python -c 'import _lisjong_native; assert _lisjong_native.SOURCE_REVISION == "d2469f2519b947fb27bf8c1622a2854c200e0aae"'
+          python -m pip install --disable-pip-version-check \
+            --only-binary=:all: --no-index --no-deps wheelhouse/*.whl
+          test "$(python -c 'import _lisjong_native; print(_lisjong_native.SOURCE_REVISION)')" = "$LISJONG_NATIVE_SOURCE_REVISION"
       - name: Validate synthetic engine source with the real lisjong reader
         run: |
           python -m unittest discover -s tests -p test_ron_legal_source_producer.py -v

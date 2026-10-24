@@ -45,12 +45,12 @@ from lisjong_arena.model import (
 )
 from lisjong_arena.riichienv.local_game_runner import LocalGameResult, LocalGameRunner
 from lisjong_arena.shanten_backend_verification.backend import (
-    BACKENDS,
     NATIVE_MODULE,
     PYTHON_BACKEND,
     ShantenBackendVerificationError,
     native_call_count,
     native_discard_evaluation_count,
+    require_execution_backend,
     require_shanten_backend,
 )
 from lisjong_arena.single_round_evaluation import (
@@ -298,8 +298,9 @@ def run_benchmark_arm(
         raise ValueError("benchmark plan must use the passive tsumogiri opponent")
     if plan.max_steps != MAX_STEPS:
         raise ValueError(f"benchmark plan must use max_steps={MAX_STEPS}")
-    if shanten_backend is not None and shanten_backend not in BACKENDS:
-        raise ValueError(f"shanten_backend must be one of {BACKENDS}")
+    if shanten_backend is not None:
+        # #531: new execution is Rust only; python is refused with guidance.
+        require_execution_backend(shanten_backend)
     validate_max_workers(max_workers)
 
     total = ROTATION_COUNT * len(plan.seeds)

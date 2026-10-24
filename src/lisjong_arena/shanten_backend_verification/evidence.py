@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from . import plan
-from .backend import BACKENDS
+from .backend import RECORDED_BACKENDS as BACKENDS
 
 DIFFERENTIAL_KEYS = frozenset({"native_tests_exit", "lisjong_suite_rust_exit"})
 FAIL_CLOSED_KEYS = frozenset(

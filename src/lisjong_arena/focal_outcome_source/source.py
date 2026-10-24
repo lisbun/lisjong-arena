@@ -81,8 +81,12 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "d2469f2519b947fb27bf8c1622a2854c200e0aae"
+PINNED_LISJONG_REVISION = "89dd00d54d3651c1a8a720b2bea3933bb2ca0bd5"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #531でRust必須化（lisjong #346）の``89dd00d``へ追随した。
+``d2469f2..89dd00d``の``outcome_source.py``は不変。このproducerのschema・wire・
+明示的な拒否は変えない。
 
 Arena #524で単独副露者genbutsu候補（lisjong #343）を含む``d2469f2``へ追随した。
 ``0fff891..d2469f2``の``outcome_source.py``は不変。このproducerのschema・wire・

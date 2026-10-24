@@ -1,60 +1,76 @@
-"""Current wheel identity and per-process shanten backend checks (#400, #409, #423).
+"""Current wheel identity and per-process shanten backend checks (#400, #409, #531).
 
-lisjong selects its numeric shanten core once per process from
-``LISJONG_SHANTEN_BACKEND`` (``python`` / ``rust``) and already fails closed
-when ``rust`` is requested but ``_lisjong_native`` cannot be imported.  Arena
-adds the checks that lisjong cannot make on its own:
+Since lisjong#346 (pin ``89dd00d``) lisjong requires the native extension:
+``LISJONG_SHANTEN_BACKEND`` unset or ``rust`` loads ``_lisjong_native``, and
+``python`` or any other value raises ``ShantenBackendError`` when
+``lisjong.hand_evaluation.shanten`` is imported.  New execution in Arena is
+therefore Rust only (#531).  Arena refuses ``python`` and unknown values itself,
+with a migration message, before lisjong reads the variable, and adds the
+checks that lisjong cannot make on its own:
 
 - the wheel file is exactly the frozen ``main`` CI build (file name and
   SHA-256), checked before it is installed;
-- the backend is selected explicitly (an unset variable is refused here, so a
-  run cannot silently measure the default);
-- the installed lisjong commit is the frozen pin, and for ``rust`` the
-  extension reports the same build revision (``SOURCE_REVISION``) and native
-  entry-point set (``API_VERSION``), because the extension mirrors that lisjong
-  revision's tables and dispatch;
+- the installed lisjong commit is the frozen pin, and the extension reports the
+  same build revision (``SOURCE_REVISION``) and native entry-point set
+  (``API_VERSION``), because the extension mirrors that lisjong revision's
+  tables and dispatch;
 - the extension files that Python actually loads are the files of the frozen
-  wheel (``verify_installed_native``), because the #400 and #409 wheels share
-  one file name and package version and pip may skip reinstalling it;
-- the selected core actually runs: for ``rust`` the native call counter moves
-  on a public ``calculate_shanten()`` call; for ``python`` the extension is not
-  even imported.
+  wheel (``verify_installed_native``), because wheels of different revisions
+  share one file name and package version and pip may skip reinstalling it;
+- the native core actually runs: the native call counter moves on a public
+  ``calculate_shanten()`` call, and ``probe_r5_native`` moves the R5 counter
+  through lisjong's production factory.
 
-The ``EXPECTED_*`` values are the *current* combination (#434).  The frozen
-#400 / #406 runs used the lisjong#217 combination, which ``plan`` keeps for
-judging that evidence; those runs are reproduced from their recorded Arena
-commits, not with these values.
+``RECORDED_BACKENDS`` keeps both names for *reading* saved records (#528 D3);
+it is not a list of backends that can run.  A saved Python-backend run is
+re-executed only with its recorded Arena / lisjong revision, wheel and
+environment, never with these values.
+
+The ``EXPECTED_*`` values are the *current* combination.  The frozen #400 /
+#406 runs used the lisjong#217 combination, which ``plan`` keeps for judging
+that evidence.
 
 Every failure raises ``ShantenBackendVerificationError``.  Nothing falls back
-to the other backend.
+to another backend.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import os
 import sys
 import zipfile
 from pathlib import Path
 
+from lisjong_arena._shanten_environment import (
+    BACKEND_ENVIRONMENT_VARIABLE as BACKEND_ENVIRONMENT_VARIABLE,
+)
+from lisjong_arena._shanten_environment import (
+    PYTHON_BACKEND,
+    RETIRED_PYTHON_BACKEND_MESSAGE,
+    RUST_BACKEND,
+    ShantenBackendVerificationError,
+    require_execution_environment,
+)
 from lisjong_arena.environment_identity import (
     EnvironmentIdentityError,
     _installed_identity,
 )
 
-BACKEND_ENVIRONMENT_VARIABLE = "LISJONG_SHANTEN_BACKEND"
-PYTHON_BACKEND = "python"
-RUST_BACKEND = "rust"
-BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
+RECORDED_BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
+"""Backend names that saved records may carry (readers only, #528 D3)."""
+EXECUTION_BACKENDS = (RUST_BACKEND,)
+"""Backends that new execution accepts (#531)."""
 
-EXPECTED_LISJONG_REVISION = "d2469f2519b947fb27bf8c1622a2854c200e0aae"
-"""lisjong#343 merge (PR #345) on ``main``; the project pin and the wheel build source."""
+EXPECTED_LISJONG_REVISION = "89dd00d54d3651c1a8a720b2bea3933bb2ca0bd5"
+"""lisjong#346 merge (PR #347) on ``main``; the project pin and the wheel build source."""
 
 EXPECTED_WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 EXPECTED_WHEEL_SHA256 = (
-    "0157f3dc7fa631e834437e3f1f049cbfdab9ed1eadca1e8c73d6f8dec51d7046"
+    "65979c5cfcbbdf01db61efbf99cd5d698db1454e553c983f0eb2cfcdcb198c00"
 )
-"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 40055297032
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 40070934802
 (push to ``main``)."""
 
 EXPECTED_NATIVE_API_VERSION = 3
@@ -65,10 +81,6 @@ NATIVE_MODULE = "_lisjong_native"
 
 # 13 closed tiles; any hand works, the check only needs one public call.
 _PROBE_HAND = "123m456p789s1122z"
-
-
-class ShantenBackendVerificationError(RuntimeError):
-    """The requested shanten backend is not the frozen, working configuration."""
 
 
 def file_sha256(path: str | Path) -> str:
@@ -139,18 +151,23 @@ def verify_installed_native(path: str | Path) -> dict[str, object]:
     return {**wheel, "installed_directory": str(package_directory), "files": compared}
 
 
-def _selected_backend(expected: str) -> str:
-    if expected not in BACKENDS:
-        raise ShantenBackendVerificationError(
-            f"expected backend must be one of {BACKENDS}, got {expected!r}"
-        )
-    selected = os.environ.get(BACKEND_ENVIRONMENT_VARIABLE)
-    if selected != expected:
-        raise ShantenBackendVerificationError(
-            f"{BACKEND_ENVIRONMENT_VARIABLE}={selected!r} in this process; "
-            f"expected an explicit {expected!r}"
-        )
-    return selected
+def require_execution_backend(name: object) -> str:
+    """Accept only ``rust`` for new execution; refuse ``python`` with guidance."""
+    if name == RUST_BACKEND:
+        return RUST_BACKEND
+    if name == PYTHON_BACKEND:
+        raise ShantenBackendVerificationError(RETIRED_PYTHON_BACKEND_MESSAGE)
+    raise ShantenBackendVerificationError(
+        f"shanten backend must be {RUST_BACKEND!r} for new execution, got {name!r}"
+    )
+
+
+def execution_backend_argument(value: str) -> str:
+    """``argparse`` type for a new-execution ``--backend`` option."""
+    try:
+        return require_execution_backend(value)
+    except ShantenBackendVerificationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
 
 
 def _installed_lisjong_revision(expected_revision: str) -> str:
@@ -186,26 +203,26 @@ def _probe_tiles():
 
 
 def require_shanten_backend(
-    expected: str, *, expected_revision: str = EXPECTED_LISJONG_REVISION
+    expected: str = RUST_BACKEND, *, expected_revision: str = EXPECTED_LISJONG_REVISION
 ) -> dict[str, object]:
     """Verify this process's shanten backend and return its execution record.
 
     Call it in the parent before any game and once in every worker process
     (the workers inherit ``LISJONG_SHANTEN_BACKEND`` from the parent
-    environment under ``spawn``).
+    environment under ``spawn``).  Only ``rust`` is accepted (#531); the
+    variable may be unset or ``rust``.  Both are checked before lisjong is
+    imported.
     """
-    backend = _selected_backend(expected)
+    backend = require_execution_backend(expected)
+    require_execution_environment()
     revision = _installed_lisjong_revision(expected_revision)
-    if backend == PYTHON_BACKEND and NATIVE_MODULE in sys.modules:
-        raise ShantenBackendVerificationError(
-            f"{NATIVE_MODULE} is already imported in a python-backend process"
-        )
 
     try:
         from lisjong.hand_evaluation import calculate_shanten
     except Exception as error:
-        # lisjong raises ShantenBackendError at import time when rust is
-        # selected and the extension is missing or unusable.
+        # lisjong raises ShantenBackendError at import time when the extension
+        # is missing or its API_VERSION differs, and ShantenTableError when
+        # the table artifact is broken.
         raise ShantenBackendVerificationError(
             f"lisjong could not load the {backend} shanten backend: {error}"
         ) from error
@@ -215,19 +232,10 @@ def require_shanten_backend(
         "lisjong_revision": revision,
         "pid": os.getpid(),
     }
-    if backend == PYTHON_BACKEND:
-        calculate_shanten(_probe_tiles())
-        if NATIVE_MODULE in sys.modules:
-            raise ShantenBackendVerificationError(
-                f"the python backend imported {NATIVE_MODULE}"
-            )
-        record["native"] = None
-        return record
-
     native = sys.modules.get(NATIVE_MODULE)
     if native is None:
-        # lisjong imports the extension at import time for rust; reaching this
-        # point means the rust core was not wired in.
+        # lisjong imports the extension at import time; reaching this point
+        # means the native core was not wired in.
         raise ShantenBackendVerificationError(
             f"lisjong did not load {NATIVE_MODULE} for the rust backend"
         )
@@ -261,6 +269,32 @@ def require_shanten_backend(
     return record
 
 
+def probe_r5_native() -> int:
+    """Run one tiny R5 evaluation through lisjong's production factory.
+
+    Returns the R5 native call count delta (at least 1).  Call it after
+    ``require_shanten_backend``.  The input tests wiring, not strength or
+    latency.
+    """
+    from lisjong.policies.terminal_shanten_progression_mechanism_riichi_defense import (
+        _new_progression_evaluator,
+    )
+
+    native = sys.modules.get(NATIVE_MODULE)
+    if native is None:
+        raise ShantenBackendVerificationError(
+            f"{NATIVE_MODULE} is not imported in this process"
+        )
+    before = native.progression_evaluation_call_count()
+    hand = (1,) * 13 + (0,) * 21
+    remaining = (0,) * 13 + (3,) + (0,) * 20
+    _new_progression_evaluator().evaluate_roots((hand,), remaining, 3)
+    calls = native.progression_evaluation_call_count() - before
+    if calls < 1:
+        raise ShantenBackendVerificationError("R5 factory did not reach native")
+    return calls
+
+
 def native_call_count() -> int | None:
     """Native core call counter of this process, or ``None`` without Rust."""
     native = sys.modules.get(NATIVE_MODULE)
@@ -275,3 +309,9 @@ def native_discard_evaluation_count() -> int | None:
     """
     native = sys.modules.get(NATIVE_MODULE)
     return None if native is None else native.discard_evaluation_call_count()
+
+
+def native_progression_evaluation_count() -> int | None:
+    """R5 progression evaluation counter (lisjong#232), or ``None`` without Rust."""
+    native = sys.modules.get(NATIVE_MODULE)
+    return None if native is None else native.progression_evaluation_call_count()

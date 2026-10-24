@@ -18,7 +18,9 @@ protocol・実行（#514）
   development       §10.7の開発用記録経路確認
 校正（#517）
   calibration       CALIBRATION専用のplan / run / verify / report（強さの結果ではない）
-  backend_check     校正前のPython/Rust照合P2
+  backend_check     校正前のPython/Rust照合P2（v1。保存記録の照合を保持）
+Rust必須lisjong（#531）
+  rust_only_gate    P2に代わる新version gate（Rust 2回の決定性・P3・counter・再導出）
 #520 同点数牌paijia候補の開発比較（DEVELOPMENT）
   paijia_tie_plan        段階1・段階2・rehearsalのwrite-once plan、上限・停止・公開の実行枠
   paijia_tie_worker      worker内のPolicy観測（shadow採点、analysis・判断時間）

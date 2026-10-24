@@ -3,8 +3,9 @@
 The teacher is named by an explicit ``policy_catalog`` identity. Its class,
 factory and the exact imported lisjong source are recorded so that ``C0`` or
 ``main`` alone never identifies a teacher. The shanten backend is a process-wide
-lisjong setting (``LISJONG_SHANTEN_BACKEND``); the backend actually loaded and,
-for ``rust``, the native extension file digest are recorded as well.
+lisjong setting (``LISJONG_SHANTEN_BACKEND``); the backend actually loaded
+(``rust`` since lisjong#346) and the native extension file digest are recorded
+as well.
 """
 
 import hashlib
@@ -69,9 +70,11 @@ def teacher_identity(
 
 
 def shanten_backend_identity() -> dict[str, object]:
+    # Since lisjong#346 the only backend is rust (#531). Saved records may still
+    # carry {"name": "python", "native": None}; that is a reader concern.
     name = _shanten_backend.BACKEND_NAME
-    if name == _shanten_backend.PYTHON_BACKEND:
-        return {"name": name, "native": None}
+    if name != "rust":
+        raise PolicySourceRecordError(f"unsupported shanten backend: {name!r}")
     import _lisjong_native
 
     return {

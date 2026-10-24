@@ -3,6 +3,8 @@
 The bootstrap probes before fetching credentials; each real bot process repeats
 the check here and then runs the CLI in this same interpreter (including the
 optional viewer). The compact, allowlisted receipt survives instance collection.
+New bot processes run the Rust backend only (#531); ``--backend python`` is
+refused before lisjong is imported.
 """
 
 from __future__ import annotations
@@ -19,6 +21,9 @@ from lisjong_arena.shanten_backend_verification.backend import (
     EXPECTED_NATIVE_API_VERSION,
     EXPECTED_WHEEL_SHA256,
     ShantenBackendVerificationError,
+    execution_backend_argument,
+    probe_r5_native,
+    require_execution_backend,
     require_shanten_backend,
     verify_installed_native,
 )
@@ -36,46 +41,32 @@ _FIELDS = {
 
 
 def probe_backend(backend: str, wheel: Path | None) -> dict[str, object]:
-    if (backend == "rust") != (wheel is not None):
-        raise ShantenBackendVerificationError(
-            "rust requires --wheel; python forbids it"
-        )
+    """Probe this bot process: Rust only (#531), the frozen wheel, numeric and R5."""
+    backend = require_execution_backend(backend)
+    if wheel is None:
+        raise ShantenBackendVerificationError("--backend rust requires --wheel")
     identity = require_shanten_backend(backend)
-    record = {
+    installed = verify_installed_native(wheel)
+    # Use lisjong's real production factory, not a direct extension call.
+    calls = probe_r5_native()
+    return {
         "schema_version": 1,
         "backend": backend,
         "lisjong_revision": identity["lisjong_revision"],
-        "native_api_version": None,
-        "wheel_sha256": None,
-        "r5_probe_calls": 0,
+        "native_api_version": identity["native"]["api_version"],
+        "wheel_sha256": installed["sha256"],
+        "r5_probe_calls": calls,
         "pid": os.getpid(),
     }
-    if backend == "rust":
-        installed = verify_installed_native(wheel)
-        # Use lisjong's real production factory, not a direct extension call.
-        # This tiny structural input tests wiring, not strength or latency.
-        from lisjong.policies.terminal_shanten_progression_mechanism_riichi_defense import (
-            _new_progression_evaluator,
-        )
-
-        native = sys.modules["_lisjong_native"]
-        before = native.progression_evaluation_call_count()
-        hand = (1,) * 13 + (0,) * 21
-        remaining = (0,) * 13 + (3,) + (0,) * 20
-        _new_progression_evaluator().evaluate_roots((hand,), remaining, 3)
-        calls = native.progression_evaluation_call_count() - before
-        if calls < 1:
-            raise ShantenBackendVerificationError("R5 factory did not reach native")
-        record.update(
-            native_api_version=identity["native"]["api_version"],
-            wheel_sha256=installed["sha256"],
-            r5_probe_calls=calls,
-        )
-    return record
 
 
 def read_backend_evidence(path: Path, expected: str) -> dict[str, object]:
-    """Validate only bounded known fields; never echo untrusted file content."""
+    """Validate only bounded known fields; never echo untrusted file content.
+
+    A reader: ``python`` receipts keep their schema (#528 D3), but they must
+    still name the current pin, so old receipts are read in the old Arena
+    environment.
+    """
     try:
         if path.stat().st_size > 2048:
             raise ValueError
@@ -116,7 +107,7 @@ def read_backend_evidence(path: Path, expected: str) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", required=True, choices=("python", "rust"))
+    parser.add_argument("--backend", required=True, type=execution_backend_argument)
     parser.add_argument("--wheel", type=Path)
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--runner", choices=("continuous", "spectate"))
