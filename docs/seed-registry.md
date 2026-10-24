@@ -182,6 +182,12 @@ python -m lisjong_arena.seed_registry \
 The local CLI can mutate a supplied file for testing, but a local mutation is
 not authoritative. Production mutations go through the workflow.
 
+The registry imports only the standard library and runs without lisjong or the
+Rust native module (`lisbun/lisjong-arena#537`): importing the `lisjong_arena`
+package only checks `LISJONG_SHANTEN_BACKEND`, and its re-exports load lazily.
+The workflow therefore installs Arena without the native wheel. Modules that
+import lisjong keep the Rust requirement.
+
 ## Concurrency / freshness authority
 
 The workflow serializes normal registry operations and loads the current live

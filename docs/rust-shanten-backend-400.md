@@ -54,7 +54,7 @@ wheelは、build元と同じlisjong revisionの組み合わせでだけ検証済
 | process起動 | installed lisjong commit（`direct_url.json`）がpin `2553c1b`と一致 | exit 2 |
 | process起動（rust） | `_lisjong_native.SOURCE_REVISION`がpinと一致。公開`calculate_shanten()`の1 callでnative call counterが進む | exit 2 |
 | process起動（python） | `_lisjong_native`がimportされていない | exit 2 |
-| rustでwheelがない / 読めない | lisjongがimport時に`ShantenBackendError`（Arena package importの時点） | exit ≠ 0、Pythonへfallbackしない |
+| rustでwheelがない / 読めない | lisjongがimport時に`ShantenBackendError`（lisjongを読むArena moduleのimport時点） | exit ≠ 0、Pythonへfallbackしない |
 | 各worker（spawn） | initializerで同じ検査を行い、結果（pid、backend、revision、native identity、初期化後peak RSS）を各game recordへ残す | game開始前にrun全体が失敗 |
 | 各game（rust） | game中のnative call数 > 0。pythonではgame後も`_lisjong_native`が未import | run全体が失敗 |
 

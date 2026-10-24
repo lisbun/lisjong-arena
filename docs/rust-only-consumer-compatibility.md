@@ -19,7 +19,7 @@ Arena [#531](https://github.com/lisbun/lisjong-arena/issues/531)でRust必須の
   `--backend`で移行案内付きで拒否する。nativeの不在・不整合ではfallbackしない
 - 保存物の`backend`値`python`は読取側で受理し続ける（`RECORDED_BACKENDS`）。実行側の受理値
   （`EXECUTION_BACKENDS`）とは分けた
-- `lisjong_arena`のpackage importはlisjong Policyを読み込むため、下表の読取・verifyにも新pinのnative wheelが要る
+- 下表の読取・verifyはlisjong Policyを読み込むため、新pinのnative wheelが要る（#537以降のpackage importは環境変数の検査だけで再exportは遅延読込。lisjongを使わないseed registryはnativeなしで動く）
 - P2の代わりの新version gateは[Rust-only gate](engine-aabb-evaluation.md#84-rust-only-gaterust-gate-531)
   （schema `arena-heuristic-candidate-engine-aabb-rust-only-gate-v1`）。P2 v1・protocol v1は変更しない
 
