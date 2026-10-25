@@ -46,6 +46,13 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-plan --run-ki
 python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-verify --plan P [--output V]
 python -m lisjong_arena.heuristic_candidate_engine_aabb call-value-rehearsal-compare --observed P1 --unobserved P2 --output C
+
+#540 riichi-dama-branch-v1（#539。DEVELOPMENT診断。強さの結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-plan --run-kind R --observation O ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-verify --plan P [--output V]
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-rehearsal-compare --observed P1 --unobserved P2 --output C
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-estimate --observed P1 --unobserved P2 --output E
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -68,6 +75,8 @@ from . import (
     call_value_shadow_plan,
     focal_mixed_compare,
     focal_mixed_plan,
+    riichi_dama_branch,
+    riichi_dama_branch_plan,
     rust_only_gate,
     single_open_genbutsu_activation,
     single_open_genbutsu_plan,
@@ -312,7 +321,44 @@ def main(argv: list[str] | None = None) -> int:
     call_value_compare.add_argument("--unobserved", required=True)
     call_value_compare.add_argument("--output", required=True)
 
+    riichi = sub.add_parser(
+        "riichi-dama-plan",
+        help="#540: write a write-once riichi-dama-branch-v1 plan (seeds, limits fixed)",
+    )
+    riichi.add_argument("--run-kind", choices=RUN_KINDS, required=True)
+    riichi.add_argument(
+        "--observation", choices=riichi_dama_branch_plan.OBSERVATIONS, required=True
+    )
+    riichi.add_argument(
+        "--owner-issue",
+        required=True,
+        help="the later execution Issue lisbun/lisjong-arena#N",
+    )
+    riichi.add_argument("--allocation-identity", help="allocated only")
+    riichi.add_argument(
+        "--time-estimate", help="allocated only: the WITHIN-BUDGET estimate document"
+    )
+    riichi.add_argument("--limit-enforcement", required=True)
+    riichi.add_argument("--wheel", required=True)
+    riichi.add_argument("--run-output", required=True)
+    riichi.add_argument("--diagnostics", required=True)
+    riichi.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    riichi.add_argument("--output", required=True)
+    riichi_run = sub.add_parser("riichi-dama-run")
+    riichi_run.add_argument("--plan", required=True)
+    riichi_run.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    riichi_verify = sub.add_parser("riichi-dama-verify")
+    riichi_verify.add_argument("--plan", required=True)
+    riichi_verify.add_argument("--output", help="write-once verify document")
+    for name in ("riichi-dama-rehearsal-compare", "riichi-dama-estimate"):
+        riichi_pair = sub.add_parser(name)
+        riichi_pair.add_argument("--observed", required=True)
+        riichi_pair.add_argument("--unobserved", required=True)
+        riichi_pair.add_argument("--output", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("riichi-dama-"):
+        return _riichi_dama(args)
     if args.command.startswith("call-value-"):
         return _call_value(args)
     if args.command.startswith("genbutsu-"):
@@ -564,6 +610,47 @@ def _genbutsu(args) -> int:
     verified = single_open_genbutsu_activation.verify_activation(args.plan)
     print(json.dumps(verified, sort_keys=True, indent=2))
     return 0
+
+
+def _riichi_dama(args) -> int:
+    if args.command == "riichi-dama-plan":
+        document = riichi_dama_branch_plan.build_plan(
+            run_kind=args.run_kind,
+            observation=args.observation,
+            owner_issue=args.owner_issue,
+            allocation_identity=args.allocation_identity,
+            limit_enforcement=args.limit_enforcement,
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={"diagnostics": args.diagnostics, "output": args.run_output},
+            time_estimate_path=args.time_estimate,
+            ledger_path=args.ledger,
+        )
+        riichi_dama_branch_plan.save_plan(document, args.output)
+        print(f"{args.run_kind} {args.observation} {document['plan_digest']}")
+        return 0
+    if args.command == "riichi-dama-run":
+        summary = riichi_dama_branch.run_plan(
+            args.plan, ledger_path=args.ledger, on_task=_progress
+        )
+        decision = summary["gate"]["decision"] if summary["gate"] else REHEARSAL
+        print(f"{summary['status']} {decision} {summary['summary_digest']}")
+        return 0
+    if args.command == "riichi-dama-verify":
+        verified = riichi_dama_branch.verify_plan(args.plan, output=args.output)
+        print(json.dumps(verified, sort_keys=True, indent=2))
+        return 0
+    if args.command == "riichi-dama-rehearsal-compare":
+        compared = riichi_dama_branch.compare_rehearsals(
+            args.observed, args.unobserved, output=args.output
+        )
+        print(json.dumps(compared, sort_keys=True, indent=2))
+        return 0
+    estimate = riichi_dama_branch.estimate_budget(
+        args.observed, args.unobserved, output=args.output
+    )
+    print(json.dumps(estimate, sort_keys=True, indent=2))
+    # NOT-STARTED-BUDGETは記録を書いたうえで非0で終える（seed予約・本実行へ進まない）
+    return 0 if estimate["verdict"] == riichi_dama_branch_plan.WITHIN_BUDGET else 3
 
 
 def _call_value(args) -> int:

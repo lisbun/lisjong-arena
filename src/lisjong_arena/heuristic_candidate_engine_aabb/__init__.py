@@ -34,6 +34,12 @@ Rust必須lisjong（#531）
   call_value_shadow_plan    write-once plan（固定24 seeds・上限・判定、実行枠は#520のもの）
   call_value_shadow_worker  call意図→公開evidenceで成立/取消→直後打牌、lisjong解析の運搬
   call_value_shadow         summary・固定判定・保存contextからの再導出verify・rehearsal照合
+#540 riichi-dama-branch-v1（#539、DEVELOPMENT診断）
+  riichi_dama_branch_plan    write-once plan（固定24 seeds・上限・判定・時間見積もりgate）
+  riichi_dama_branch_worker  R（Champion×4、分岐点・宣言牌・context）とD arm（分岐席だけ
+                             lisjong wrapper、対象局の精算後に打ち切り）
+  riichi_dama_branch         R/D照合・Δ・部分集合・bootstrap・判定・2 seed再実行verify・
+                             rehearsal照合・時間見積もり
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は
