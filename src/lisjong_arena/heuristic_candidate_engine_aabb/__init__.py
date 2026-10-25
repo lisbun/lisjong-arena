@@ -40,6 +40,12 @@ Rust必須lisjong（#531）
                              lisjong wrapper、対象局の精算後に打ち切り）
   riichi_dama_branch         R/D照合・Δ・部分集合・bootstrap・判定・2 seed再実行verify・
                              rehearsal照合・時間見積もり
+#544 riichi-first-dama-branch-v1（lisjong #356のR1 pilot、DEVELOPMENT）
+  riichi_first_dama_plan     write-once plan（固定16 seeds・上限・開始条件・費用判定の固定値）
+  riichi_first_dama_worker   R（v1の観測＋全席の行動記録）とD arm（lisjong R1 wrapper、
+                             分岐点の行動・分岐後のリーチの記録）
+  riichi_first_dama          R/D照合・局収支の分散・σ_u・収集費用の一次判定・2 seed再実行verify・
+                             rehearsal照合・時間見積もり
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は
