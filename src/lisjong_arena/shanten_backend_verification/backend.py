@@ -63,14 +63,14 @@ RECORDED_BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
 EXECUTION_BACKENDS = (RUST_BACKEND,)
 """Backends that new execution accepts (#531)."""
 
-EXPECTED_LISJONG_REVISION = "a2b2dc97ff1e6657dbf34b50b29a7e8936613e11"
-"""lisjong#352 merge (PR #353) on ``main``; the project pin and the wheel build source."""
+EXPECTED_LISJONG_REVISION = "84e91932cc65428d8a5d0c3f3063ccb6911dc51d"
+"""lisjong#354 merge (PR #355) on ``main``; the project pin and the wheel build source."""
 
 EXPECTED_WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 EXPECTED_WHEEL_SHA256 = (
-    "edd8dd0e8eb00addf017daf4784e95448cafe075fdf318b9ec38dcbc8bf92e6a"
+    "ed439a9dfa194bf3fa5d4858f0066c68080cdee0901180dcc7bfc88249f1cfc6"
 )
-"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 40114544361
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 40156527731
 (push to ``main``)."""
 
 EXPECTED_NATIVE_API_VERSION = 3

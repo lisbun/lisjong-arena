@@ -438,6 +438,25 @@ def _features(decision):
     return api.analyze_riichi_decision(decision, fx.tile("1z"))
 
 
+class RedFiveFeatureTest(unittest.TestCase):
+    """#542 rehearsal-2の分岐 472006-9-1: 手に通常5pが3枚ある5p待ちはv2で解析できる。"""
+
+    def test_rehearsal_branch_is_analysed_with_the_red_five(self) -> None:
+        decision = fx.riichi_decision("123m11p333p555p67p7s")
+        record = {
+            "context": worker.encode_context(decision),
+            "declaration": encode_action(
+                DiscardAction(actor=Seat.SEAT_0, tile=fx.tile("7s"), tsumogiri=False)
+            ),
+        }
+        result = worker.branch_features(record)
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["features"]["version"], worker.FEATURES_VERSION)
+        five = [w for w in result["features"]["waits"] if w["tile_type"]["rank"] == 5]
+        self.assertEqual(five[0]["winning_tile"]["is_red"], True)
+        self.assertEqual(five[0]["riichi_ron"]["red_dora"], 1)
+
+
 class SubsetTest(unittest.TestCase):
     def test_s1_mangan_boundary(self) -> None:
         mangan = _features(fx.K9_DECISION)

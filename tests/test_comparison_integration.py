@@ -117,13 +117,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # revisionへ、Arena #524でlisjong #343（単独副露者genbutsu候補）の
         # revisionへ、Arena #531でlisjong #346（Rust必須化）のrevisionへ、
         # Arena #534でlisjong #350（鳴き採用・直後打牌の解析API）のrevisionへ、
-        # Arena #540でlisjong #352（リーチ判断の特徴API）のrevisionへ更新した。
+        # Arena #540でlisjong #352（リーチ判断の特徴API）のrevisionへ、
+        # Arena #542でlisjong #354（特徴API v2）のrevisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "a2b2dc97ff1e6657dbf34b50b29a7e8936613e11",
+            "84e91932cc65428d8a5d0c3f3063ccb6911dc51d",
         )
 
 
