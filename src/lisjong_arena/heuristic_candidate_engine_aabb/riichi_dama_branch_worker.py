@@ -55,8 +55,12 @@ from .record_store import HanchanCapture
 
 PROTOCOL_VERSION = "riichi-dama-branch-v1"
 """#539の意味定義のversion。"""
-FEATURES_VERSION = "riichi-dama-features-v1"
-"""lisjong ``RIICHI_DAMA_FEATURES_VERSION`` と一致を要求する。"""
+FEATURES_VERSION = "riichi-dama-features-v2"
+"""lisjong ``RIICHI_DAMA_FEATURES_VERSION`` と一致を要求する。
+
+v2（lisjong #354）: 通常牌の上限を超える待ちは赤牌で評価し、和了牌（``winning_tile``）と
+赤の加点（``red_dora``）を返す。赤の加点でS1の判定が変わりうるため、v1の記録とは別versionとする。
+"""
 
 
 class BranchArmSettled(Exception):  # noqa: N818 - 打ち切りの合図で、失敗ではない
@@ -75,7 +79,7 @@ class BranchObservationError(ValueError):
 
 
 def analysis_api():
-    """lisjongの特徴API・wrapper（lisjong #352、``a2b2dc9``以降）。"""
+    """lisjongの特徴API・wrapper（lisjong #352、features v2はlisjong #354以降）。"""
     from lisjong.policies import riichi_dama_branch
 
     if riichi_dama_branch.RIICHI_DAMA_FEATURES_VERSION != FEATURES_VERSION:

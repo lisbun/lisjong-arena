@@ -81,8 +81,12 @@ from .exploration_token import EXPLORATION_TOKEN_IDENTITY, exploration_token
 OUTCOME_SOURCE_SCHEMA = "arena-offense-l0.3-focal-outcome-source-v1"
 OUTCOME_SOURCE_KIND = "focal-outcome-source-record"
 FOCAL_ROTATION_RULE = "lisjong-arena-l0.3-focal-seat-game-ordinal-mod-4-v1"
-PINNED_LISJONG_REVISION = "a2b2dc97ff1e6657dbf34b50b29a7e8936613e11"
+PINNED_LISJONG_REVISION = "84e91932cc65428d8a5d0c3f3063ccb6911dc51d"
 """このproducerが準拠するlisjong consumer（project pinと一致させる）。
+
+Arena #542でriichi-dama特徴API v2（lisjong #354）を含む``84e9193``へ追随した。
+``a2b2dc9..84e9193``の``outcome_source.py``は不変。このproducerのschema・wire・
+明示的な拒否は変えない。
 
 Arena #540でリーチ判断の特徴API・D arm wrapper（lisjong #352）を含む``a2b2dc9``へ追随した。
 ``7fc1130..a2b2dc9``の``outcome_source.py``は不変。このproducerのschema・wire・

@@ -66,6 +66,7 @@ R分岐とD armは`branch_ordinal`で一対一に結ぶ（席・seedの一致も
 | 終局時の供託精算 | Δに含めず、armごとの別列（`final_riichi_stick_awards`）に記録する |
 | W_live | 見えない残り枚数が1枚以上の待ち |
 | S1 | 振聴でない、W_liveが空でない、W_liveの全ての待ちでダマのロンが`SCORED`かつ`ScoreLimit`が`MANGAN`以上 |
+| 待ちの点数（#542で改訂） | lisjong `riichi-dama-features-v2`の値をそのまま使う。和了牌は原則として通常牌で、ルール上の通常牌の上限（赤ありでは各色の5は通常3枚）を評価入力（宣言後の手牌・副露・ドラ表示牌）が超える場合だけ赤牌で評価する（lisjong #354）。評価した和了牌（`winning_tile`）と赤の加点（`red_dora`）も保存する。赤の加点でS1の満貫判定が変わりうる。見えない残り枚数は公開情報から別に数える |
 | S3 | 公開リーチ状態が`NONE`でない他家が1人以上、かつWの見えない残り枚数の合計が4枚以下 |
 | 本実行 | seeds 539000..539023（24 seeds）× 1半荘、Champion×4、配置の入替なし = 96 seat-hanchans |
 | seed authority | Seed Registryの既存engine hanchan domain、protocol `riichi-dama-branch-v1`、population `heuristic-candidate-engine-aabb-riichi-dama-branch-v1`、split DEVELOPMENT、owner = 後続の実行Issue |
@@ -101,7 +102,7 @@ C:\Dev\lisjong-artifacts\issue-<実行Issue>-riichi-dama-branch-run\
 | --- | --- | --- |
 | `hanchans.json` | `arena-riichi-dama-branch-v1-hanchans-v1` | Rの客観値: #513と同じ検査を通した局記録（`kyoku_record`。局ごとの結果・和了者・放銃者・移動・供託・本場・精算、終局）、終了理由・最終点・`CompletedMatch` digest・呼び出し数・席ごとのAction列digest・リーチが合法なのに選ばなかった判断の席ごとの件数 |
 | `branches.jsonl` | `arena-riichi-dama-branch-v1-branches-v1` | 1行目header（plan digest・protocol / features version）、以降1分岐1行: seed・round ordinal・席・分岐点のdecision index・局identity・public context・Rの行動（`riichi`と`declaration`）・Dの行動（= `declaration`をリーチせずに打つ）・分岐直前のdigest・armごとの分岐後のdigest・精算・局の結果（`r_settlement` / `d`）・Dの差し替え回数 |
-| `features.jsonl` | `arena-riichi-dama-branch-v1-features-v1` | lisjongの解析（`riichi-dama-features-v1`のJSON、またはlisjongの拒否理由）。branch idで結ぶ。客観記録とは別file |
+| `features.jsonl` | `arena-riichi-dama-branch-v1-features-v2` | lisjongの解析（`riichi-dama-features-v2`のJSON、またはlisjongの拒否理由）。branch idで結ぶ。客観記録とは別file |
 | `summary.json` | `arena-riichi-dama-branch-v1-summary-v1` | 判定・分母・分位、上の3 fileのdigest |
 | `timings.json` | `arena-riichi-dama-branch-v1-timings-v1` | taskごと（R / D / D-repeat）のwall・peak RSS、stageの経過（再導出しない計測値） |
 | `SHA256SUMS` | — | 上の全fileのSHA-256 |
@@ -198,11 +199,11 @@ completion factはengineの`project_round_completion`で作る。特徴APIとwra
 
 実行前に次を実値で揃え、planへ束縛する（本書の時点では存在しない値を捏造しない）:
 
-1. **revision**: Arena #540のmerge後main full SHAとclean checkout、lisjong pin `a2b2dc97ff1e6657dbf34b50b29a7e8936613e11`、
+1. **revision**: Arena #540のmerge後main full SHAとclean checkout、lisjong pin `84e91932cc65428d8a5d0c3f3063ccb6911dc51d`（#542でv2へ更新。旧`a2b2dc9`）、
    engine `91af75e3aa11520c3b0543719dc74bb4c517ee06`
-2. **wheel**: lisjong main CI run [40114544361](https://github.com/lisbun/lisjong/actions/runs/40114544361)の
-   `lisjong-native-wheel-a2b2dc9…`、`lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（301,070 bytes、
-   SHA-256 `edd8dd0e8eb00addf017daf4784e95448cafe075fdf318b9ec38dcbc8bf92e6a`）。実行環境で`sha256sum --strict -c SHA256SUMS`、
+2. **wheel**: lisjong main CI run [40156527731](https://github.com/lisbun/lisjong/actions/runs/40156527731)の
+   `lisjong-native-wheel-84e9193…`、`lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（301,069 bytes、
+   SHA-256 `ed439a9dfa194bf3fa5d4858f0066c68080cdee0901180dcc7bfc88249f1cfc6`）。実行環境で`sha256sum --strict -c SHA256SUMS`、
    `verify-wheel`、`aws_backend --backend rust --wheel`（SOURCE_REVISION / API 3 / numeric・R5 probe）を取り直す
 3. **Rust-only採用gate**: この新pinで[Rust-only gate](engine-aabb-evaluation.md#84-rust-only-gaterust-gate-531)をPASSさせる
    （上限1時間・1半荘300秒。過去のPASSを流用しない）
