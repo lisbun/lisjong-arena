@@ -53,6 +53,13 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-verify --plan P [--output V]
 python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-rehearsal-compare --observed P1 --unobserved P2 --output C
 python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-dama-estimate --observed P1 --unobserved P2 --output E
+
+#544 riichi-first-dama-branch-v1（lisjong #356のR1 pilot。DEVELOPMENT。強さの結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-plan --run-kind R --observation O ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-verify --plan P [--output V]
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-rehearsal-compare --observed P1 --unobserved P2 --output C
+python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-estimate --observed P1 --unobserved P2 --output E
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -77,6 +84,8 @@ from . import (
     focal_mixed_plan,
     riichi_dama_branch,
     riichi_dama_branch_plan,
+    riichi_first_dama,
+    riichi_first_dama_plan,
     rust_only_gate,
     single_open_genbutsu_activation,
     single_open_genbutsu_plan,
@@ -356,7 +365,50 @@ def main(argv: list[str] | None = None) -> int:
         riichi_pair.add_argument("--unobserved", required=True)
         riichi_pair.add_argument("--output", required=True)
 
+    first = sub.add_parser(
+        "riichi-first-plan",
+        help="#544: write a write-once riichi-first-dama-branch-v1 plan (R1 pilot)",
+    )
+    first.add_argument("--run-kind", choices=RUN_KINDS, required=True)
+    first.add_argument(
+        "--observation", choices=riichi_first_dama_plan.OBSERVATIONS, required=True
+    )
+    first.add_argument(
+        "--owner-issue",
+        required=True,
+        help="the later execution Issue lisbun/lisjong-arena#N",
+    )
+    first.add_argument("--allocation-identity", help="allocated only")
+    first.add_argument("--time-estimate", help="allocated only: the estimate document")
+    first.add_argument(
+        "--elapsed-seconds",
+        type=float,
+        help=(
+            "allocated only: measured elapsed seconds of every earlier stage "
+            "(gate, rehearsal, ...); the 4 h total is checked against it"
+        ),
+    )
+    first.add_argument("--limit-enforcement", required=True)
+    first.add_argument("--wheel", required=True)
+    first.add_argument("--run-output", required=True)
+    first.add_argument("--diagnostics", required=True)
+    first.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    first.add_argument("--output", required=True)
+    first_run = sub.add_parser("riichi-first-run")
+    first_run.add_argument("--plan", required=True)
+    first_run.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    first_verify = sub.add_parser("riichi-first-verify")
+    first_verify.add_argument("--plan", required=True)
+    first_verify.add_argument("--output", help="write-once verify document")
+    for name in ("riichi-first-rehearsal-compare", "riichi-first-estimate"):
+        first_pair = sub.add_parser(name)
+        first_pair.add_argument("--observed", required=True)
+        first_pair.add_argument("--unobserved", required=True)
+        first_pair.add_argument("--output", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("riichi-first-"):
+        return _riichi_first(args)
     if args.command.startswith("riichi-dama-"):
         return _riichi_dama(args)
     if args.command.startswith("call-value-"):
@@ -651,6 +703,55 @@ def _riichi_dama(args) -> int:
     print(json.dumps(estimate, sort_keys=True, indent=2))
     # NOT-STARTED-BUDGETは記録を書いたうえで非0で終える（seed予約・本実行へ進まない）
     return 0 if estimate["verdict"] == riichi_dama_branch_plan.WITHIN_BUDGET else 3
+
+
+def _riichi_first(args) -> int:
+    if args.command == "riichi-first-plan":
+        document = riichi_first_dama_plan.build_plan(
+            run_kind=args.run_kind,
+            observation=args.observation,
+            owner_issue=args.owner_issue,
+            allocation_identity=args.allocation_identity,
+            limit_enforcement=args.limit_enforcement,
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={"diagnostics": args.diagnostics, "output": args.run_output},
+            time_estimate_path=args.time_estimate,
+            elapsed_before_seconds=args.elapsed_seconds,
+            ledger_path=args.ledger,
+        )
+        riichi_first_dama_plan.save_plan(document, args.output)
+        print(f"{args.run_kind} {args.observation} {document['plan_digest']}")
+        return 0
+    if args.command == "riichi-first-run":
+        summary = riichi_first_dama.run_plan(
+            args.plan, ledger_path=args.ledger, on_task=_progress
+        )
+        cost = summary.get("cost_screening")
+        print(
+            f"{summary['status']} {summary['decision'] or REHEARSAL} "
+            f"{cost['verdict'] if cost else '-'} {summary['summary_digest']}"
+        )
+        return 0
+    if args.command == "riichi-first-verify":
+        verified = riichi_first_dama.verify_plan(args.plan, output=args.output)
+        print(json.dumps(verified, sort_keys=True, indent=2))
+        return 0
+    if args.command == "riichi-first-rehearsal-compare":
+        compared = riichi_first_dama.compare_rehearsals(
+            args.observed, args.unobserved, output=args.output
+        )
+        print(json.dumps(compared, sort_keys=True, indent=2))
+        return 0
+    estimate = riichi_first_dama.estimate_budget(
+        args.observed, args.unobserved, output=args.output
+    )
+    print(json.dumps(estimate, sort_keys=True, indent=2))
+    # 開始条件（3時間・全工程4時間 − 経過）はallocated planで判定する。ここでは
+    # 見積もりだけで3時間を超える場合に非0で終える（seed予約・本実行へ進まない）
+    within = (
+        estimate["projected_main_seconds"] <= riichi_first_dama_plan.MAIN_BLOCK_SECONDS
+    )
+    return 0 if within else 3
 
 
 def _call_value(args) -> int:
