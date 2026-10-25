@@ -538,3 +538,16 @@ lisbun/lisjong#350、merge `7fc1130`）。契約・CLI・引継ぎは[`call-valu
 何も公開しない）は§9の`execute_plan`を共有し、#534で追加した引数（実行順・participant・`SHA256SUMS`を書く
 finalize hook）だけを渡す。既定値では#520 / #524の動作は変わらない。半荘は4席Champion（`placement-aware-speed-call`）で、
 call意図の成立 / 取消はactor席のplayer-safe round evidence（`on_round_evidence_complete`）だけから決める。
+
+## 13. riichi-dama-branch-v1（#540）
+
+Issue: [lisbun/lisjong-arena#540](https://github.com/lisbun/lisjong-arena/issues/540)（設計#539、特徴API・D arm wrapper
+lisbun/lisjong#352、merge `a2b2dc9`）。契約・CLI・引継ぎは[`riichi-dama-branch-539.md`](riichi-dama-branch-539.md)を正本とする。
+
+> Status: **実装のみ**。rehearsal・seed予約・本実行は行っていない（実行は後続の実行Issue）。
+
+既存のplan・protocol・digestは変えず、別schemaのplan（`arena-riichi-dama-branch-v1-plan-v1`）を使う。
+D armがRの結果に依存するため、実行枠（write-once、live gate、1 worker、1半荘 / 1 arm timeout、max(monotonic, realtime)の
+wall、RSS、`STOP-INCOMPLETE`で何も公開しない）は§9の`run_tasks`を2段（R → D arm）で使う専用の枠にした。
+Rの局記録は#513の`project_row`（専用layout、placement 0・4席Champion）で検査する。D armは`run_policy_hanchan`へ
+追加した`on_delivery`の受け渡しで対象局の精算後に打ち切る（engineは変更しない。既定値では従来の呼び出しと同じ）。

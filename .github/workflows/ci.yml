@@ -18,7 +18,7 @@ env:
   # installs a wheel built from this pinned lisjong revision. It must equal the
   # pyproject pin (checked in native-wheel). Execution environments use the
   # hash-verified lisjong main CI wheel instead (docs/lisjong-native-wheel-current.md).
-  LISJONG_NATIVE_SOURCE_REVISION: "7fc1130f9a6498d0de809f8128608b753c829415"
+  LISJONG_NATIVE_SOURCE_REVISION: "a2b2dc97ff1e6657dbf34b50b29a7e8936613e11"
 
 jobs:
   static-checks:
