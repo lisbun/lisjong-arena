@@ -221,6 +221,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "38796aae42ef6d399bb20efe5ff7205638bc3b738f4fc4eeeebc4036274bcf5a",
+      "allocation_timestamp": "2026-10-25T04:31:03.479715Z",
+      "arena_revision": "a5b60982cdfde2fb114982f4fd5f1e20f957971e",
+      "owner_issue": "lisbun/lisjong-arena#542",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-riichi-dama-branch-v1",
+      "protocol": "riichi-dama-branch-v1",
+      "protocol_revision": "riichi-dama-branch-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/542#issuecomment-6393454629",
+      "purpose": "#539 riichi-dama-branch-v1 main run: Champion x4 seats, 24 hanchans x 1 placement, D arms per branch point; DEVELOPMENT diagnostic, not a strength result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 539000,
+        "kind": "range",
+        "last": 539023
+      },
+      "seed_membership_identity": "e582c8fc844cb703f470510d67cc8683fff3e254de7de114c806f89ef9aa76f6",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
