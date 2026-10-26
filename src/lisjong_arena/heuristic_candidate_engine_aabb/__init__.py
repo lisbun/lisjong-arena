@@ -45,7 +45,11 @@ Rust必須lisjong（#531）
   riichi_first_dama_worker   R（v1の観測＋全席の行動記録）とD arm（lisjong R1 wrapper、
                              分岐点の行動・分岐後のリーチの記録）
   riichi_first_dama          R/D照合・局収支の分散・σ_u・収集費用の一次判定・2 seed再実行verify・
-                             rehearsal照合・時間見積もり
+                             rehearsal照合・時間見積もり（ProtocolSpecでsourceと共有）
+#548 riichi-first-dama-source-v1（lisjong #356 / #360のR1学習source）
+  riichi_first_dama_source_plan  write-once plan（4ブロック×22 seeds・split・TESTのartifact束縛・
+                                 session 4時間と累積12時間の開始条件）
+  riichi_first_dama_source       header・summary（Δの統計なし）・ブロック／rehearsalからの見積もり
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は
