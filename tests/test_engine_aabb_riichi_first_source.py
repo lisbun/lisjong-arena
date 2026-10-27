@@ -298,18 +298,22 @@ class RehearsalTest(_Case):
 
 
 class LisjongReaderContractTest(_Case):
-    """lisjong #360のreaderが、このprotocolのblockをそのまま読めること（pin更新後に実行）。"""
+    """pinしたlisjong #360のreaderが、このprotocolのblockをそのまま読めること（契約の整合）。"""
 
     def test_block_is_readable_by_lisjong(self) -> None:
-        try:
-            from lisjong.learning import r1_value
-        except ImportError:
-            self.skipTest("the pinned lisjong does not have the #360 reader yet")
-        # lisjongは本番のseed範囲を検査するので、fixtureのseedはそのまま範囲内
+        from lisjong.learning import r1_value
+
         _, plan, _ = self.run_block()
         block = r1_value.read_source_block(plan["artifact_destinations"]["output"])
         self.assertEqual((block.block, block.split), ("TRAIN-1", "TRAIN"))
         self.assertEqual(len(block.rows), 2 * 22)
+        self.assertEqual(
+            block.allocation_identity, fx.TRAIN_RECORD["allocation_identity"]
+        )
+        self.assertEqual(r1_value.BLOCKS, plan_module.BLOCKS)
+        self.assertEqual(r1_value.SOURCE_PROTOCOL, plan_module.PROTOCOL_VERSION)
+        self.assertEqual(r1_value.BRANCHES_SCHEMA, plan_module.SCHEMAS["branches"])
+        self.assertEqual(r1_value.SUMMARY_SCHEMA, plan_module.SCHEMAS["summary"])
 
 
 class CliTest(unittest.TestCase):

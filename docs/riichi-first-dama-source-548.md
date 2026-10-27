@@ -87,12 +87,15 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-source-esti
 ブロック・split・seed・verify seed、TEST planのartifact必須とTRAINでの拒否、drift、owner、sessionと累積12時間の開始条件の境界、
 見積もり元（rehearsal / 直前ブロック）とブロック順、収集時間の下限、header・summaryの契約（Δの統計なし）とstrict verify、
 TEST blockのartifact束縛、STOP-INVALID、未完了時のstop記録、直前ブロックからの見積もり、rehearsalの照合と見積もり、
-**lisjong #360のreaderがblockを読めること**、CLI。pilot（#544）のtestは変更なしでPASS。
+**pinしたlisjong #360のreaderがblockを読めること**（schema・blockの定数の一致を含む）、CLI。pilot（#544）のtestは変更なしでPASS。
 
 ## 7. 実行Issueへの引継ぎ（未確定の実値）
 
-1. revision: 本Issueのmerge後Arena main full SHA、lisjong pin（#360のmerge）、engine `91af75e3aa11520c3b0543719dc74bb4c517ee06`、
-   同revisionのmain CI wheel（SHA-256）。新pinのRust-only gateを取り直す（過去のPASSを流用しない）
+1. revision: 本Issueのmerge後Arena main full SHA、lisjong pin `1d14c09baee554e26fcea9865eddca3944cb447f`（#360 / PR #361）、
+   engine `91af75e3aa11520c3b0543719dc74bb4c517ee06`、wheel: lisjong main CI run 40526929107の
+   `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（301,070 bytes、SHA-256
+   `b3473370042a9f6570464ded6f6e4457918395779092c429844f09bacd31477c`、[現行の組み合わせ](lisjong-native-wheel-current.md)）。
+   新pinのRust-only gateを取り直す（過去のPASSを流用しない）
 2. 環境: WSL2 Ubuntu-24.04の専用user scope（`MemoryMax=4G`・`MemorySwapMax=0`・`OOMPolicy=kill`・`RuntimeMaxSec`）と外側の
    watchdog。新規venvで同revisionのsource・wheel・install identityを確認する。クラウドの追加課金はなし
 3. 順序: 準備session（gate・rehearsal・見積もり）→ TRAIN allocationの照合・予約 → TRAIN-1 → TRAIN-2 → lisjong #360でfit・
