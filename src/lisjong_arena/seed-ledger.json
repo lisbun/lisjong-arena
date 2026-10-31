@@ -287,6 +287,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "32262589d66ffd2c34a787204a6203320e395c8c482c4773ebbfaad9a1e6fa62",
+      "allocation_timestamp": "2026-10-31T10:23:51.945045Z",
+      "arena_revision": "b7351465dcff2093748aacec5d7c1976b869f0fd",
+      "owner_issue": "lisbun/lisjong-arena#550",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-riichi-first-dama-source-v1",
+      "protocol": "riichi-first-dama-source-v1",
+      "protocol_revision": "riichi-first-dama-source-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/550#issuecomment-6542183482",
+      "purpose": "lisjong #356 / #360 R1 value learning source riichi-first-dama-source-v1: Champion x4 seats, D arms per riichi branch point; TEST split (one evaluation of frozen artifact b765c5d79734da562fea2e73b384de8727d6283ec69af497523b4eb72b41e0d3), not a strength result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 547100,
+        "kind": "range",
+        "last": 547143
+      },
+      "seed_membership_identity": "d7b0d0d455bb5d84509f5a47507afeb479d9066311d50743edb089277a1a395a",
+      "split": "TEST",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
