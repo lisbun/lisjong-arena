@@ -309,6 +309,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "ee134f08cde12b905727544470f2f23302fc041ec79ed324595233234f8ec36c",
+      "allocation_timestamp": "2026-11-01T07:16:32.512328Z",
+      "arena_revision": "32b7f78cc91784c326134798c6c1e3191a2850ab",
+      "owner_issue": "lisbun/lisjong-arena#555",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-pon-first-pass-pilot-v1",
+      "protocol": "pon-first-pass-branch-v1",
+      "protocol_revision": "pon-first-pass-branch-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/555#issuecomment-6554853479",
+      "purpose": "lisjong #362 P1 pilot pon-first-pass-branch-v1: Champion x4 seats, 24 hanchans x 1 placement, D arms per established first closed-hand Pon; DEVELOPMENT pilot (branch frequency, paired variance, cost, data quality), not a strength result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 553000,
+        "kind": "range",
+        "last": 553023
+      },
+      "seed_membership_identity": "93d4814a6956066ddb266528645fd9333aff450fef323b4f7700700fe7a3a4ee",
+      "split": "DEVELOPMENT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
