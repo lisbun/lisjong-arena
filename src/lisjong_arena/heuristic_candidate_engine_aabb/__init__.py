@@ -50,6 +50,13 @@ Rust必須lisjong（#531）
   riichi_first_dama_source_plan  write-once plan（4ブロック×22 seeds・split・TESTのartifact束縛・
                                  session 4時間と累積12時間の開始条件）
   riichi_first_dama_source       header・summary（Δの統計なし）・ブロック／rehearsalからの見積もり
+#553 pon-first-pass-branch-v1（lisjong #362のP1 pilot、DEVELOPMENT）
+  pon_first_pass_plan        write-once plan（固定24 seeds・上限・開始条件・判定の固定値）
+  pon_first_pass_worker      R（門前の最初のPon・成立 / ロン取消・全席の行動記録）とD arm
+                             （lisjong P1 wrapper、Passの適用・分岐後の鳴きの選択と成立）
+  pon_first_pass_allocation  本学習の配分判定（将来のTEST分岐見込み）とブロック開始条件
+  pon_first_pass             R/D照合・field分離・局収支の分散・配分判定・2 seed再実行verify・
+                             rehearsal照合・時間見積もり
 ```
 
 依存はprotocol・実行 → 局単位recordの一方向。API・失敗状態は

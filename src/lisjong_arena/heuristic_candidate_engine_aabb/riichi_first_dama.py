@@ -862,12 +862,17 @@ def _add(left: tuple[int, ...], right: tuple[int, ...]) -> tuple[int, ...]:
     return tuple(a + b for a, b in zip(left, right, strict=True))
 
 
-def variance_bootstrap(clusters: list[tuple[int, ...]]) -> dict:
-    """seed clusterの復元抽出（``random.Random(544)`` をsummaryごとに1回初期化）。"""
+def variance_bootstrap(
+    clusters: list[tuple[int, ...]], *, seed: int = BOOTSTRAP_SEED
+) -> dict:
+    """seed clusterの復元抽出（``random.Random(seed)`` をsummaryごとに1回初期化）。
+
+    既定のseedはR1の544。別protocol（P1 #553）は自分のseedを渡す。
+    """
     m = len(clusters)
     if m < 2:
         return {"ratio": None, "sigma_u_squared": None}
-    rng = random.Random(BOOTSTRAP_SEED)
+    rng = random.Random(seed)
     ratios: list[Fraction] = []
     sigmas: list[Fraction] = []
     defined = True
@@ -896,7 +901,9 @@ def variance_bootstrap(clusters: list[tuple[int, ...]]) -> dict:
     }
 
 
-def variance_summary(valid: list[dict]) -> dict:
+def variance_summary(
+    valid: list[dict], *, bootstrap_seed: int = BOOTSTRAP_SEED
+) -> dict:
     by_seed: dict[int, list[dict]] = {}
     for row in valid:
         by_seed.setdefault(row["seed"], []).append(row)
@@ -914,7 +921,7 @@ def variance_summary(valid: list[dict]) -> dict:
         "branch": None
         if moments is None
         else {name: _ratio(value) for name, value in sorted(moments.items())},
-        "bootstrap": variance_bootstrap(clusters),
+        "bootstrap": variance_bootstrap(clusters, seed=bootstrap_seed),
         "correlation": correlation,
         "count": len(valid),
         "ratio": None if ratio is None else _ratio(ratio),
