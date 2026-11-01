@@ -89,6 +89,8 @@ from . import (
     call_value_shadow_plan,
     focal_mixed_compare,
     focal_mixed_plan,
+    pon_first_pass,
+    pon_first_pass_plan,
     riichi_dama_branch,
     riichi_dama_branch_plan,
     riichi_first_dama,
@@ -476,7 +478,50 @@ def main(argv: list[str] | None = None) -> int:
     source_estimate.add_argument("--from-block")
     source_estimate.add_argument("--output", required=True)
 
+    pon = sub.add_parser(
+        "pon-first-plan",
+        help="#553: write a write-once pon-first-pass-branch-v1 plan (P1 pilot)",
+    )
+    pon.add_argument("--run-kind", choices=RUN_KINDS, required=True)
+    pon.add_argument(
+        "--observation", choices=pon_first_pass_plan.OBSERVATIONS, required=True
+    )
+    pon.add_argument(
+        "--owner-issue",
+        required=True,
+        help="the later execution Issue lisbun/lisjong-arena#N",
+    )
+    pon.add_argument("--allocation-identity", help="allocated only")
+    pon.add_argument("--time-estimate", help="allocated only: the estimate document")
+    pon.add_argument(
+        "--elapsed-seconds",
+        type=float,
+        help=(
+            "allocated only: measured elapsed seconds of every earlier stage "
+            "(gate, rehearsal, ...); the 4 h total is checked against it"
+        ),
+    )
+    pon.add_argument("--limit-enforcement", required=True)
+    pon.add_argument("--wheel", required=True)
+    pon.add_argument("--run-output", required=True)
+    pon.add_argument("--diagnostics", required=True)
+    pon.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    pon.add_argument("--output", required=True)
+    pon_run = sub.add_parser("pon-first-run")
+    pon_run.add_argument("--plan", required=True)
+    pon_run.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    pon_verify = sub.add_parser("pon-first-verify")
+    pon_verify.add_argument("--plan", required=True)
+    pon_verify.add_argument("--output", help="write-once verify document")
+    for name in ("pon-first-rehearsal-compare", "pon-first-estimate"):
+        pon_pair = sub.add_parser(name)
+        pon_pair.add_argument("--observed", required=True)
+        pon_pair.add_argument("--unobserved", required=True)
+        pon_pair.add_argument("--output", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("pon-first-"):
+        return _pon_first(args)
     if args.command.startswith("riichi-first-source-"):
         return _riichi_first_source(args)
     if args.command.startswith("riichi-first-"):
@@ -837,6 +882,55 @@ def _riichi_first_source(args) -> int:
     within = (
         estimate["projected_block_seconds"]
         <= riichi_first_dama_source_plan.MAIN_BLOCK_SECONDS
+    )
+    return 0 if within else 3
+
+
+def _pon_first(args) -> int:
+    if args.command == "pon-first-plan":
+        document = pon_first_pass_plan.build_plan(
+            run_kind=args.run_kind,
+            observation=args.observation,
+            owner_issue=args.owner_issue,
+            allocation_identity=args.allocation_identity,
+            limit_enforcement=args.limit_enforcement,
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={"diagnostics": args.diagnostics, "output": args.run_output},
+            time_estimate_path=args.time_estimate,
+            elapsed_before_seconds=args.elapsed_seconds,
+            ledger_path=args.ledger,
+        )
+        pon_first_pass_plan.save_plan(document, args.output)
+        print(f"{args.run_kind} {args.observation} {document['plan_digest']}")
+        return 0
+    if args.command == "pon-first-run":
+        summary = pon_first_pass.run_plan(
+            args.plan, ledger_path=args.ledger, on_task=_progress
+        )
+        support = summary.get("support")
+        print(
+            f"{summary['status']} {summary['decision'] or REHEARSAL} "
+            f"{support['verdict'] if support else '-'} {summary['summary_digest']}"
+        )
+        return 0
+    if args.command == "pon-first-verify":
+        verified = pon_first_pass.verify_plan(args.plan, output=args.output)
+        print(json.dumps(verified, sort_keys=True, indent=2))
+        return 0
+    if args.command == "pon-first-rehearsal-compare":
+        compared = pon_first_pass.compare_rehearsals(
+            args.observed, args.unobserved, output=args.output
+        )
+        print(json.dumps(compared, sort_keys=True, indent=2))
+        return 0
+    estimate = pon_first_pass.estimate_budget(
+        args.observed, args.unobserved, output=args.output
+    )
+    print(json.dumps(estimate, sort_keys=True, indent=2))
+    # 開始条件（3時間・全工程4時間 − 経過）はallocated planで判定する。ここでは
+    # 見積もりだけで3時間を超える場合に非0で終える（seed予約・本実行へ進まない）
+    within = (
+        estimate["projected_main_seconds"] <= pon_first_pass_plan.MAIN_BLOCK_SECONDS
     )
     return 0 if within else 3
 
