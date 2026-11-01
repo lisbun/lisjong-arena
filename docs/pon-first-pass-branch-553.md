@@ -3,8 +3,18 @@
 設計: [lisjong #362](https://github.com/lisbun/lisjong/issues/362)（[設計案](https://github.com/lisbun/lisjong/issues/362#issuecomment-6545854838)・
 [改訂](https://github.com/lisbun/lisjong/issues/362#issuecomment-6546073400)・[完了記録](https://github.com/lisbun/lisjong/issues/362#issuecomment-6546102219)、DESIGN-READY）。
 D arm wrapper・分岐点の共有判定: [lisjong #363](https://github.com/lisbun/lisjong/issues/363)（`lisjong.policies.pon_first_pass_branch`、`pon-first-pass-branch-wrapper-v1`）。
-**実行は後続の実行Issueで行う**（本Issueでは対局・rehearsal・seed予約・課金をしていない。Rust-only gateも実行Issueの最初の段階）。
+**実行は後続の実行Issueで行う**（本Issueではrehearsal・本計測・seed予約・課金をしていない。Rust-only gateも実行Issueの最初の段階）。
 DEVELOPMENTのpilotで、強さの結果ではない。
+
+> **記録の訂正（2026-11-01）**: 実装中に、合意した範囲（実装のみ・対局なし）を超えて、registry外の開発用seedで実engineの
+> 開発smokeを実行した。経緯はすべて次のとおり（記録・判定・seed予約には使わない）。
+>
+> 1. seed 101・102で、Rと成立した候補の全D armを1つのscriptで実行。`timeout 900`で打ち切られ（exit 143）、出力は
+>    pipeのbufferにあったため残っていない（途中までの結果は不明）
+> 2. seed 101だけを再実行。R 1半荘（91.6秒）、候補9件はすべて成立、D arm 9本（5〜85秒）は全件`branched`・INVALIDなし・
+>    分岐点の位置 / prefix / contextがRと一致・Passの適用あり。分岐後の再鳴きの成立をevidenceから記録し、選択回数と一致
+>
+> 今後の実機での確認は実行Issueの範囲（gate → rehearsal → 本計測）に含めて扱う。
 
 | module | 内容 |
 | --- | --- |
@@ -39,6 +49,21 @@ CLI: `python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-{plan,ru
 - 同じwindowの他席の選択・windowの解決結果・分岐後の情報は`decision_input`に入れない
 - `wrapper_calls_after_branch`は分岐後にinnerが鳴きを**選んだ**回数（ロンで取り消された鳴きを含みうる）。**成立**は`calls_after_branch[].resolution`（evidence）で別に記録し、選択回数は行動列から数えた数と一致することを照合する
 - `pass_applied`: 対象局のevidenceで、Passした打牌に分岐席の副露がないこと
+- 分岐後の鳴きはChampionの継続方策の一部。解決は`ESTABLISHED`・`CANCELLED-RON`のほか、**Chiは他家のPon・大明槓に優先されて
+  `CANCELLED-PRIORITY-CALL`になりうる（正常）**。選択数には含め、成立数には含めない（summaryの`recalls`は`selected_calls`・
+  `established_calls`・`cancelled_calls`を分ける）。初回の候補のPonについての「優先鳴きは起こらない」という制約は、分岐後の鳴き
+  には適用しない（分岐後のPonが優先鳴きに負けることは牌の枚数上ないので、それはINVALID）
+
+### D armの時間の測定値
+
+- D armのworkerは記録本体とは別に`measurement`（`arm_seconds`・`pre_branch_seconds`、worker内の`time.monotonic`）を返す。
+  `pre_branch_seconds`はrunnerの開始から分岐点の判断を記録するまで（分岐点の判断を含む）、`arm_seconds`はrunnerの開始から
+  対象局の精算での打ち切り（または失敗）まで
+- 親processは測定値を切り離して`timings.json`のD armの行へ置き、`branches.jsonl`の記録本体には入れない。時間は再実行で
+  一致しないので、verifyの2 seed再実行・rehearsalの2回実行では、記録本体だけを完全一致の対象にし、測定値は形と範囲
+  （有限・非負・分岐前 ≤ 全体）だけを検査する
+- 分岐前の割合 = Σ`pre_branch_seconds` / Σ`arm_seconds`（分岐点に届いたD armだけ。届かなかった件数は別に記録）。
+  判断回数の割合で時間を代用しない
 
 ## 3. INVALID
 
@@ -65,7 +90,8 @@ T*はその最大（最大を与える最小のm、ブロックのseed数の差�
 - ブロック開始条件（`block_start_condition`）: 本学習の各ブロックは配分で固定したseed数のまま、開始時の最新見積もりで
   (n + 2)c + 900 ≤ min(3時間, 4時間 − sessionの経過)を再確認し、満たさなければ開始せず停止する（結果を見て配分を縮めない）。
   本学習のsource protocolで使う
-- 生成費用の削減（記録行動の再生計測）は、NOT-VIABLE-SUPPORTで分岐前の再実行がD armの費用の70%以上を占める場合だけ提案する（自動では着手しない）
+- 生成費用の削減（記録行動の再生計測）は、NOT-VIABLE-SUPPORTで上の分岐前の割合が7/10以上の場合だけ提案できる
+  （summaryの`pre_branch.cost_reduction_may_be_proposed`。自動では着手しない）
 
 ### 解釈の注意
 

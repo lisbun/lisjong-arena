@@ -40,6 +40,7 @@ from lisjong_arena.overall_champion_aabb.lock import document_identity
 
 from . import pon_first_pass_allocation as allocation_rules
 from .call_value_shadow_worker import (
+    CANCELLED_PRIORITY_CALL,
     CANCELLED_RON,
     ESTABLISHED,
     action_sequence_digest,
@@ -102,6 +103,7 @@ from .pon_first_pass_worker import (
     play_r_observed,
     play_r_unobserved,
     rederive_call_analysis,
+    split_measurement,
     task_branch,
 )
 from .protocol import EngineAabbProtocolError
@@ -127,7 +129,8 @@ from .riichi_dama_branch import (
     require_analysis_environment,
 )
 from .riichi_dama_branch_worker import BranchTask
-from .riichi_first_dama import _TIMING_FIELDS, _TIMING_ROW_FIELDS, variance_summary
+from .riichi_first_dama import _TIMING_FIELDS, variance_summary
+from .riichi_first_dama import _TIMING_ROW_FIELDS as _R1_TIMING_ROW_FIELDS
 
 HANCHANS_FILENAME = "hanchans.json"
 ACTIONS_FILENAME = "actions.jsonl"
@@ -148,6 +151,12 @@ STOP_STATUS = (
     "STOP-INCOMPLETE; NOT A RESULT; NO FORMAL AGGREGATION OF THE COMPLETED PART"
 )
 BOOTSTRAP_SEED = 553
+PRE_BRANCH_PROPOSAL_SHARE = Fraction(7, 10)
+"""生成費用の削減を提案できる分岐前の割合の下限（NOT-VIABLE-SUPPORTのときだけ）。"""
+_TIMING_ROW_FIELDS = _R1_TIMING_ROW_FIELDS | {"arm_seconds", "pre_branch_seconds"}
+"""R1のtask行に、D armのworker内測定値（``arm_seconds``・``pre_branch_seconds``）を加える。
+
+Rの行は両方null。測定値は再実行で一致しないので、記録本体の完全一致の対象にしない。"""
 _SEAT_OUTCOMES = ("win", "deal_in", "draw", "other")
 _ROUTES = (
     "CallDecisionRoute.PARENT_DECISION",
@@ -440,7 +449,7 @@ def execute_candidates(
                 on_task=on_task,
             )
             for task, item in zip(tasks, executed, strict=True):
-                target[task.branch_ordinal] = item.policy_analysis
+                target[task.branch_ordinal] = split_measurement(item.policy_analysis)[0]
     return executed_r, candidates, d_records, repeat_records
 
 
@@ -682,8 +691,13 @@ def _calls_check(record: dict) -> str | None:
             or item["kind"] not in ("chi", "pon", "daiminkan")
         ):
             return "the calls after the branch are out of order or invalid"
-        if item["resolution"] not in (ESTABLISHED, CANCELLED_RON):
-            return f"a call after the branch was {item['resolution']}"
+        # 分岐後はChampionの継続方策なので、Chiは他家のPon・大明槓に優先されて取り消されうる
+        # （正常）。Ponが優先鳴きに負けることは牌の枚数上ない
+        allowed = (ESTABLISHED, CANCELLED_RON) + (
+            (CANCELLED_PRIORITY_CALL,) if item["kind"] == "chi" else ()
+        )
+        if item["resolution"] not in allowed:
+            return f"a {item['kind']} after the branch was {item['resolution']}"
         previous = item["decision_index"]
         turns = item["seat_decisions_after_branch"]
     if record["wrapper_calls_after_branch"] != len(calls):
@@ -838,9 +852,16 @@ def recall_summary(valid: list[dict]) -> dict:
         for row in valid
     ]
     kinds = [item["kind"] for items in established for item in items]
+    resolutions = [
+        item["resolution"] for row in valid for item in row["calls_after_branch"]
+    ]
     return {
         "branches": len(valid),
         "branches_with_established_call": sum(1 for items in established if items),
+        "cancelled_calls": {
+            "priority_call": resolutions.count(CANCELLED_PRIORITY_CALL),
+            "ron": resolutions.count(CANCELLED_RON),
+        },
         "established_calls": len(kinds),
         "established_kinds": {kind: kinds.count(kind) for kind in sorted(set(kinds))},
         "selected_calls": selected,
@@ -897,6 +918,55 @@ def support_from_timings(timings: dict, *, branches: int, seeds: int) -> dict:
     )
 
 
+def pre_branch_summary(timings: dict, decision: str | None) -> dict:
+    """D armの分岐前の再実行時間の割合（worker内のmonotonic測定値から）。
+
+    割合 = Σ pre_branch_seconds / Σ arm_seconds（全D arm、分岐点に届かなかった行は分母・分子とも
+    除いて件数を記録）。判断回数の割合で代用しない。NOT-VIABLE-SUPPORTかつ割合 ≥ 7/10のときだけ、
+    生成費用の削減（記録行動の再生計測）を提案できる（自動では着手しない）。
+    """
+    rows = [row for row in timings["tasks"] if row["arm"] == ARM_D]
+    measured = [row for row in rows if row["pre_branch_seconds"] is not None]
+    pre = sum(row["pre_branch_seconds"] for row in measured)
+    arm = sum(row["arm_seconds"] for row in measured)
+    share = None if arm <= 0 else pre / arm
+    return {
+        "arm_seconds": arm,
+        "clock": "worker-monotonic",
+        "d_arms": len(rows),
+        "d_arms_without_branch_point": len(rows) - len(measured),
+        "pre_branch_seconds": pre,
+        "proposal_share": _ratio(PRE_BRANCH_PROPOSAL_SHARE),
+        "share": share,
+        "cost_reduction_may_be_proposed": decision == NOT_VIABLE_SUPPORT
+        and share is not None
+        and share >= float(PRE_BRANCH_PROPOSAL_SHARE),
+    }
+
+
+def _require_measurement(row: dict, index: int) -> None:
+    pre, arm = row["pre_branch_seconds"], row["arm_seconds"]
+    if row["arm"] == ARM_R:
+        if pre is not None or arm is not None:
+            _fail(f"tasks[{index}]: an R row has no D arm measurement")
+        return
+    _seconds(arm, f"tasks[{index}].arm_seconds")
+    if pre is not None and _seconds(pre, f"tasks[{index}].pre_branch_seconds") > arm:
+        _fail(f"tasks[{index}]: the pre-branch time exceeds the D arm time")
+
+
+def require_measurement(measurement: object, context: str) -> dict:
+    """worker内の測定値の形と範囲（再実行で値は一致しないので、値の一致は要求しない）。"""
+    if (
+        type(measurement) is not dict
+        or set(measurement) != {"arm_seconds", "clock", "pre_branch_seconds"}
+        or measurement["clock"] != "worker-monotonic"
+    ):
+        _fail(f"{context}: the D arm measurement is missing or has another shape")
+    _require_measurement({"arm": ARM_D, **measurement}, 0)
+    return measurement
+
+
 def require_timings(
     plan: dict, timings: object, tasks: list[tuple], *, complete: bool = True
 ) -> dict:
@@ -923,6 +993,7 @@ def require_timings(
         ]
         if sum(known) * 1024 > limits["process_tree_rss_bytes"]:
             _fail("parent + worker peak RSS exceeded the process tree limit")
+        _require_measurement(row, index)
     schedule = _seconds(timings.get("schedule_wall_seconds"), "schedule_wall_seconds")
     if schedule > limits["wall_seconds"]:
         _fail("the schedule exceeded the wall limit")
@@ -1029,6 +1100,7 @@ def build_summary(
         "observation": plan["observation"],
         "plan_digest": plan["plan_digest"],
         "population": population_summary(evaluated),
+        "pre_branch": pre_branch_summary(timings, decision),
         "protocol_version": PROTOCOL_VERSION,
         "recalls": recall_summary(valid_branches),
         "rows": [dict(row) for row in evaluated],
@@ -1140,6 +1212,16 @@ def run_plan(
     def measure(arm: str):
         def record(item: ExecutedHanchan) -> None:
             parent_kib = current_peak_rss_kib()
+            measurement = {"arm_seconds": None, "pre_branch_seconds": None}
+            if arm != ARM_R:
+                found = require_measurement(
+                    split_measurement(item.policy_analysis or {})[1],
+                    f"{arm} arm of seed {item.capture.seed}",
+                )
+                measurement = {
+                    "arm_seconds": found["arm_seconds"],
+                    "pre_branch_seconds": found["pre_branch_seconds"],
+                }
             rows.append(
                 {
                     "arm": arm,
@@ -1148,6 +1230,7 @@ def run_plan(
                     "seed": item.capture.seed,
                     "wall_seconds": item.wall_seconds,
                     "worker_peak_rss_kib": item.peak_rss_kib,
+                    **measurement,
                 }
             )
             if elapsed() > limits["wall_seconds"]:
@@ -1365,7 +1448,10 @@ def replay_seeds_of(
                 on_task=None,
             )
             for (line, _), arm in zip(d_tasks, replayed, strict=True):
-                if arm.policy_analysis != line["d"]:
+                record, measurement = split_measurement(arm.policy_analysis)
+                # 測定値は再実行で一致しないので、形と範囲だけを検査する
+                require_measurement(measurement, f"replayed {line['branch_id']}")
+                if record != line["d"]:
                     _fail(
                         f"candidate {line['branch_id']}: the replayed D arm differs "
                         "(STOP-INVALID)"

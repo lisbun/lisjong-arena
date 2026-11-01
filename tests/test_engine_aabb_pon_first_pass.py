@@ -370,6 +370,15 @@ class DArmTest(unittest.TestCase):
             ],
         )
         self.assertIsNotNone(record["settlement"])
+        # 分岐前の時間は記録本体と分けた測定値（worker内のmonotonic）
+        measurement = record["measurement"]
+        self.assertEqual(measurement["clock"], worker.MEASUREMENT_CLOCK)
+        self.assertLessEqual(
+            measurement["pre_branch_seconds"], measurement["arm_seconds"]
+        )
+        body, split = worker.split_measurement(record)
+        self.assertNotIn("measurement", body)
+        self.assertEqual(split, measurement)
 
     def test_a_meld_of_the_passed_discard_is_detected(self) -> None:
         evidence = (*cvfx.established(fx.PON, fx.CALLED_ORDER),)
@@ -479,6 +488,34 @@ class EvaluateTest(unittest.TestCase):
             with self.subTest(case=name):
                 line, row = _line(9, **changes)
                 self.assertTrue(core.evaluate_line(line, row)["invalid"])
+
+    def test_a_chi_after_the_branch_may_lose_to_a_priority_call(self) -> None:
+        def calls(kind, resolution):
+            return {
+                "calls_after_branch": [
+                    {
+                        "decision_index": 41,
+                        "kind": kind,
+                        "resolution": resolution,
+                        "seat_decisions_after_branch": 1,
+                    }
+                ],
+                "wrapper_calls_after_branch": 1,
+            }
+
+        # 分岐後のChiが他家のPon・大明槓に負けるのは継続方策の正常な結果
+        line, row = _line(9, **calls("chi", "CANCELLED-PRIORITY-CALL"))
+        result = core.evaluate_line(line, row)
+        self.assertEqual(result["invalid"], [])
+        self.assertEqual(
+            result["calls_after_branch"],
+            [{"kind": "chi", "resolution": "CANCELLED-PRIORITY-CALL"}],
+        )
+        # Ponが優先鳴きに負けることは牌の枚数上ない
+        line, row = _line(9, **calls("pon", "CANCELLED-PRIORITY-CALL"))
+        self.assertTrue(core.evaluate_line(line, row)["invalid"])
+        line, row = _line(9, **calls("chi", "CANCELLED-ROUND-END"))
+        self.assertTrue(core.evaluate_line(line, row)["invalid"])
 
     def test_cancelled_candidate_without_a_ron_is_invalid(self) -> None:
         # K9は流局（ロンなし）なので、ロン取消の記録と矛盾する
@@ -655,11 +692,66 @@ class RunTest(_RunCase):
             {
                 "branches": 24,
                 "branches_with_established_call": 24,
+                "cancelled_calls": {"priority_call": 24, "ron": 24},
                 "established_calls": 24,
                 "established_kinds": {"chi": 24},
-                "selected_calls": 48,
+                "selected_calls": 72,
             },
         )
+
+    def test_pre_branch_share_is_measured_and_aggregated(self) -> None:
+        path, plan, summary = self.run_allocated(fx.fake_r_both, fx.fake_d_measured)
+        pre = summary["pre_branch"]
+        self.assertEqual(pre["d_arms"], 24)
+        self.assertEqual(pre["d_arms_without_branch_point"], 0)
+        self.assertEqual(pre["pre_branch_seconds"], 48.0)
+        self.assertEqual(pre["arm_seconds"], 60.0)
+        self.assertEqual(pre["share"], 0.8)
+        # DESIGN-POSSIBLEなので提案の条件は満たさない
+        self.assertFalse(pre["cost_reduction_may_be_proposed"])
+        timings = core.read_document(
+            Path(plan["artifact_destinations"]["output"]) / "timings.json", "timings"
+        )
+        d_rows = [row for row in timings["tasks"] if row["arm"] == "D"]
+        self.assertTrue(all(row["pre_branch_seconds"] == 2.0 for row in d_rows))
+        r_rows = [row for row in timings["tasks"] if row["arm"] == "R"]
+        self.assertTrue(all(row["pre_branch_seconds"] is None for row in r_rows))
+        # 測定値は記録本体（branches.jsonl）に入らず、再実行で値が違っても一致判定は通る
+        lines = fx.read_lines(
+            Path(plan["artifact_destinations"]["output"]) / "branches.jsonl"
+        )
+        self.assertTrue(
+            all("measurement" not in (line["d"] or {}) for line in lines[1:])
+        )
+        verified = self.verify(path, play_d=fx.fake_d_better)
+        self.assertEqual(verified["replayed"]["arms"], 2)
+
+    def test_pre_branch_proposal_rule(self) -> None:
+        def timings(pre, arm):
+            return {
+                "tasks": [
+                    {"arm": "R", "arm_seconds": None, "pre_branch_seconds": None},
+                    {"arm": "D", "arm_seconds": arm, "pre_branch_seconds": pre},
+                    {"arm": "D", "arm_seconds": 5.0, "pre_branch_seconds": None},
+                ]
+            }
+
+        high = core.pre_branch_summary(
+            timings(7.0, 10.0), plan_module.NOT_VIABLE_SUPPORT
+        )
+        self.assertEqual(high["share"], 0.7)
+        self.assertEqual(high["d_arms_without_branch_point"], 1)
+        self.assertTrue(high["cost_reduction_may_be_proposed"])
+        low = core.pre_branch_summary(
+            timings(6.9, 10.0), plan_module.NOT_VIABLE_SUPPORT
+        )
+        self.assertFalse(low["cost_reduction_may_be_proposed"])
+        other = core.pre_branch_summary(timings(9.0, 10.0), plan_module.DESIGN_POSSIBLE)
+        self.assertFalse(other["cost_reduction_may_be_proposed"])
+
+    def test_an_impossible_measurement_stops_the_run(self) -> None:
+        with self.assertRaises(EngineAabbProtocolError):
+            self.run_allocated(fx.fake_r_both, fx.fake_d_bad_measurement)
 
     def test_no_established_branch_is_not_viable_support(self) -> None:
         _, _, summary = self.run_allocated(fx.fake_r_cancelled_only, fx.fake_d_better)

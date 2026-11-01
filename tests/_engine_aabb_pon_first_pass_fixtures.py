@@ -368,15 +368,24 @@ def _r_played(task, rounds, *, observed=True, digests=None, resolutions=None):
     return PlayedHanchan(capture, ENVIRONMENT, os.getpid(), 2048, None, analysis)
 
 
-def _d_played(task, outcome, **changes):
+MEASUREMENT = {
+    "arm_seconds": 2.0,
+    "clock": "worker-monotonic",
+    "pre_branch_seconds": 1.5,
+}
+"""fake D armのworker内測定値（記録本体とは別に返る）。"""
+
+
+def _d_played(task, outcome, *, measurement=None, **changes):
     record = d_record(task.seed, task.branch_ordinal, task.branch, outcome, **changes)
+    analysis = {**record, "measurement": dict(measurement or MEASUREMENT)}
     return PlayedHanchan(
         ArmCapture(task.seed, task.branch_ordinal),
         ENVIRONMENT,
         os.getpid(),
         1024,
         None,
-        record,
+        analysis,
     )
 
 
@@ -423,7 +432,7 @@ def fake_d_varied(task):
 
 
 def fake_d_recall(task):
-    """分岐後に分岐席が鳴きを2回選び、1回成立・1回ロン取消。"""
+    """分岐後に分岐席が鳴きを3回選ぶ: Ponはロン取消、Chiは他家のPonに優先されて取消、Chiが成立。"""
     calls = [
         {
             "decision_index": 42,
@@ -434,12 +443,18 @@ def fake_d_recall(task):
         {
             "decision_index": 44,
             "kind": "chi",
-            "resolution": ESTABLISHED,
+            "resolution": "CANCELLED-PRIORITY-CALL",
             "seat_decisions_after_branch": 2,
+        },
+        {
+            "decision_index": 46,
+            "kind": "chi",
+            "resolution": ESTABLISHED,
+            "seat_decisions_after_branch": 3,
         },
     ]
     return _d_played(
-        task, "better", calls_after_branch=calls, wrapper_calls_after_branch=2
+        task, "better", calls_after_branch=calls, wrapper_calls_after_branch=3
     )
 
 
@@ -455,6 +470,32 @@ def fake_d_count_mismatch(task):
     if task.seed == plan_module.SEEDS[5]:
         return _d_played(task, "better", wrapper_calls_after_branch=1)
     return fake_d_better(task)
+
+
+def fake_d_measured(task):
+    """D armの時間の大半が分岐前の再実行（2 / 2.5 = 80%）。"""
+    return _d_played(
+        task,
+        "better",
+        measurement={
+            "arm_seconds": 2.5,
+            "clock": "worker-monotonic",
+            "pre_branch_seconds": 2.0,
+        },
+    )
+
+
+def fake_d_bad_measurement(task):
+    """分岐前の時間がD arm全体より長い（測定値として不正）。"""
+    return _d_played(
+        task,
+        "better",
+        measurement={
+            "arm_seconds": 1.0,
+            "clock": "worker-monotonic",
+            "pre_branch_seconds": 2.0,
+        },
+    )
 
 
 def fake_d_unstable(task):

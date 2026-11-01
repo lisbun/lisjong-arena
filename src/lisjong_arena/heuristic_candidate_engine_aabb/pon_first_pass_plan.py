@@ -154,6 +154,24 @@ CRITERIA = {
             "or if there is no established branch (the D arm mean is undefined)"
         ),
     },
+    "calls_after_branch": (
+        "calls chosen by the branch seat after the branch are part of the Champion "
+        "continuation: each is counted as selected; its resolution comes from the "
+        "evidence (ESTABLISHED, CANCELLED-RON, and for a Chi also "
+        "CANCELLED-PRIORITY-CALL by another player's Pon or daiminkan); only "
+        "ESTABLISHED counts as established; any other resolution is INVALID; the "
+        "wrapper count of selected calls must equal the actions"
+    ),
+    "cost_reduction_proposal": (
+        "pre-branch share = sum of pre_branch_seconds / sum of arm_seconds over the "
+        "D arms that reached the branch point, both measured in the worker with "
+        "time.monotonic (pre-branch: runner start to the recorded branch decision; "
+        "arm: runner start to the stop at the target settlement); the measurements "
+        "are timing rows, not part of the exact action / result comparison; a "
+        "decision-count share is not used; reducing the generation cost may be "
+        "proposed only if NOT-VIABLE-SUPPORT and the share >= 7/10, never started "
+        "automatically"
+    ),
     "decision": (
         "STOP-INVALID if any candidate is INVALID; STOP-INCOMPLETE if the run did "
         "not complete (no summary, no formal aggregation of the completed part); "

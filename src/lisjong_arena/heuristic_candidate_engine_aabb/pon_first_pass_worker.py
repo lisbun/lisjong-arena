@@ -27,6 +27,7 @@ D arm  同じseedで半荘の先頭から再実行し、分岐席だけlisjong `
 """
 
 import os
+import time
 from collections import Counter
 
 from lisjong_engine.round_completion import RoundCompletionFact
@@ -84,6 +85,20 @@ DECISION_INPUT_FIELDS = frozenset(
 """分岐席の判断時点の値だけ（将来の特徴入力の元）。"""
 SELECTION_FIELDS = frozenset({"called_discard_order", "resolution"})
 """標本選択・照合だけに使う値（windowの解決結果）。特徴にはしない。"""
+MEASUREMENT_KEY = "measurement"
+"""D armの時間の測定値（記録本体と分けて返す。親processが切り離してtimingsへ置く）。
+
+再実行で一致しないので、行動・結果の完全一致の比較対象に入れない。"""
+MEASUREMENT_CLOCK = "worker-monotonic"
+"""worker内の``time.monotonic``。``pre_branch_seconds``はrunnerの開始から分岐点の判断を
+記録するまで（分岐点の判断を含む）、``arm_seconds``はrunnerの開始から対象局の精算での打ち切り
+（または失敗）まで。"""
+
+
+def split_measurement(analysis: dict) -> tuple[dict, dict | None]:
+    """D armの観測を (記録本体, 測定値) に分ける。"""
+    record = {key: value for key, value in analysis.items() if key != MEASUREMENT_KEY}
+    return record, analysis.get(MEASUREMENT_KEY)
 
 
 def analysis_api():
@@ -363,6 +378,9 @@ class PonDObserver:
         self.invalid: list[str] = []
         self._calls: list[tuple[dict, int, object]] = []
         self._seat_decisions = 0
+        self.clock = time.monotonic
+        self.started: float | None = None
+        self.pre_branch_seconds: float | None = None
 
     def observe(self, seat: int, decision, action) -> None:
         was_branched = self.branch_index is not None
@@ -373,6 +391,8 @@ class PonDObserver:
             if self.wrapper.status.value != "branched":
                 return
             self.branch_index = index
+            if self.started is not None:
+                self.pre_branch_seconds = self.clock() - self.started
             self.branch_context_sha256 = canonical_digest(encode_context(decision))
             pon = self.wrapper.branch_pon
             try:
@@ -473,6 +493,7 @@ def d_arm(task: BranchTask, *, runner=run_policy_hanchan) -> dict:
     }
     invalid: list[str] = []
     settled: BranchArmSettled | None = None
+    observer.started = observer.clock()
     try:
         runner(
             policies,
@@ -487,9 +508,15 @@ def d_arm(task: BranchTask, *, runner=run_policy_hanchan) -> dict:
         invalid.append(f"D arm: {type(error).__name__}: {error}")
     else:
         invalid.append("the hanchan finished without settling the target round")
+    arm_seconds = observer.clock() - observer.started
     index = observer.branch_index
     stop = len(observer.log.entries)
     return {
+        MEASUREMENT_KEY: {
+            "arm_seconds": arm_seconds,
+            "clock": MEASUREMENT_CLOCK,
+            "pre_branch_seconds": observer.pre_branch_seconds,
+        },
         "branch_action": None if index is None else observer.log.entries[index][2],
         "branch_context_sha256": observer.branch_context_sha256,
         "branch_decision_index": index,
@@ -545,6 +572,8 @@ def play_d_arm(task: BranchTask) -> PlayedHanchan:
 __all__ = [
     "CALL_ANALYSIS",
     "DECISION_INPUT_FIELDS",
+    "MEASUREMENT_CLOCK",
+    "MEASUREMENT_KEY",
     "PROTOCOL_VERSION",
     "SELECTION_FIELDS",
     "WRAPPER_VERSION",
@@ -561,5 +590,6 @@ __all__ = [
     "play_r_unobserved",
     "r_hanchan",
     "rederive_call_analysis",
+    "split_measurement",
     "task_branch",
 ]
