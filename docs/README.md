@@ -67,6 +67,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [riichi-first-dama-branch-v1：R1 pilot](riichi-first-dama-branch-544.md) — Issue #544（設計lisjong#356、wrapper lisjong#357）。最初のリーチだけを同じ宣言牌のダマへ替え、以後はChampionへ戻すD armで、対の分散・生成時間・データ品質を測るpilotのplan・観測・strict verify・収集費用の一次判定（DEVELOPMENT、実行はIssue #546）
 - [riichi-first-dama-source-v1：R1学習のTRAIN / TEST source](riichi-first-dama-source-548.md) — Issue #548（consumer lisjong#360）。22-seedブロック×4のTRAIN / TEST生成、TESTの凍結artifact束縛、累積12時間と各session 4時間の開始条件（DEVELOPMENT、実行はIssue #550）
 - [pon-first-pass-branch-v1：P1 pilot](pon-first-pass-branch-553.md) — Issue #553（設計lisjong#362、wrapper lisjong#363）。門前の最初のPonだけPassへ替え、以後はChampionへ戻すD armで、成立 / ロン取消の分母つき記録・対の分散・1 seedの費用・データ品質を測り、本学習の配分（将来のTEST分岐見込み500以上）を判定するplan・観測・strict verify（DEVELOPMENT、実行は後続の実行Issue）
+- [pon-first-pass-source-v1：P1学習のTRAIN / TEST source](pon-first-pass-source-556.md) — Issue #556（設計lisjong#365、consumer lisjong#366）。40-seedブロック×3のTRAIN / TEST生成、TESTの凍結artifact束縛、ブロック3時間・session 4時間と累積14時間の開始条件（seed数は縮めない）、Δの統計を持たないsummary（DEVELOPMENT、実行は後続の実行Issue）
 - [L2a合成Policyの動作確認](l2a-runtime-smoke-507.md) — Issue #507（親lisjong#318）。凍結したL2a 1席 + C0 3席の16半荘で、完走・全判断の合法・推論時間・RSSを記録する（強さの比較はしない）
 - [#245 待ち確率推定器の正式test](riichi-wait-formal-245.md) — Issue #447（owner lisjong#245）の予約済み新規seed 932000..932099の生成・`select`・`test`をAWS 1台で実行する経路（actual runはmerge後のoperator作業）
 - [聴牌PUSH/FOLDの対比較source producerとpilot](tenpai-push-fold-source-476.md) — Issue #476（owner lisjong#254）。lisjong#288のwire契約どおりに押す／降りるの局の結果を対で記録する経路と、16半荘pilotの固定値（pilotの実行はmerge後のoperator作業）
