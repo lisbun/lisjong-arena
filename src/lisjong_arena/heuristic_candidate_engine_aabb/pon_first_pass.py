@@ -26,6 +26,7 @@ import datetime
 import math
 import statistics
 from collections.abc import Callable
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
@@ -93,6 +94,7 @@ from .pon_first_pass_plan import (
     plan_schedule,
     require_live_target,
 )
+from .pon_first_pass_plan import PLAN_SCHEMA as PILOT_PLAN_SCHEMA
 from .pon_first_pass_worker import (
     CALL_ANALYSIS,
     DECISION_INPUT_FIELDS,
@@ -188,6 +190,68 @@ LAYOUT = RecordLayout(
 )
 
 
+@dataclass(frozen=True)
+class ProtocolSpec:
+    """同じP1の観測・照合を使うprotocolごとのschema・plan・header・summaryの違い。
+
+    pilot（#553）とsource（#556）は別の契約で、保存物のschemaを共有しない。
+    """
+
+    plan_schema: str
+    protocol_version: str
+    schemas: dict
+    layout: RecordLayout
+    load_plan: object
+    require_live_target: object
+    complete_status: str
+    rehearsal_status: str
+    header_extra: object = None
+    summary: object = None
+    """``None``ならpilotのsummary。sourceは ``summary(plan, common, evaluated, invalid, valid)``。"""
+
+
+PILOT = ProtocolSpec(
+    plan_schema=PILOT_PLAN_SCHEMA,
+    protocol_version=PROTOCOL_VERSION,
+    schemas={
+        "actions": ACTIONS_SCHEMA,
+        "branches": BRANCHES_SCHEMA,
+        "compare": COMPARE_SCHEMA,
+        "hanchans": HANCHANS_SCHEMA,
+        "stop": STOP_SCHEMA,
+        "summary": SUMMARY_SCHEMA,
+        "timings": TIMINGS_SCHEMA,
+        "verify": VERIFY_SCHEMA,
+    },
+    layout=LAYOUT,
+    load_plan=load_plan,
+    require_live_target=require_live_target,
+    complete_status=COMPLETE_STATUS,
+    rehearsal_status=REHEARSAL_STATUS,
+)
+_PROTOCOLS = {PILOT.plan_schema: PILOT}
+
+
+def register_protocol(spec: ProtocolSpec) -> None:
+    """別protocol（#556のsource）を登録する。同じplan schemaの再登録は同じspecだけ。"""
+    existing = _PROTOCOLS.setdefault(spec.plan_schema, spec)
+    if existing is not spec:
+        _fail(f"protocol {spec.plan_schema} is already registered")
+
+
+def spec_of(plan: dict) -> ProtocolSpec:
+    try:
+        return _PROTOCOLS[plan["schema"]]
+    except KeyError, TypeError:
+        _fail("the plan belongs to no registered protocol")
+
+
+def load_any_plan(plan_path: str | Path) -> dict:
+    """保存済みplanのschemaから登録済みprotocolを選び、そのprotocolのstrict loadで読む。"""
+    raw = read_document(Path(plan_path), "plan")
+    return spec_of(raw).load_plan(plan_path)
+
+
 # ---------------------------------------------------------------------------
 # Rの局記録・行動記録
 # ---------------------------------------------------------------------------
@@ -209,7 +273,7 @@ _HANCHAN_FIELDS = frozenset(
 )
 
 
-def hanchan_row(item: ExecutedHanchan) -> dict:
+def hanchan_row(item: ExecutedHanchan, layout: RecordLayout = LAYOUT) -> dict:
     capture = item.capture
     analysis = item.policy_analysis
     record = project_row(
@@ -219,7 +283,7 @@ def hanchan_row(item: ExecutedHanchan) -> dict:
         seats=capture.seats,
         selector_call_counts=capture.selector_call_counts,
         policy_call_counts=capture.policy_call_counts,
-        layout=LAYOUT,
+        layout=layout,
     )
     return {
         **_hanchan_document(item),
@@ -233,20 +297,21 @@ def hanchans_document(
     plan: dict, executed: list[ExecutedHanchan], *, observed: bool
 ) -> dict:
     return {
-        "hanchans": [hanchan_row(item) for item in executed],
+        "hanchans": [hanchan_row(item, spec_of(plan).layout) for item in executed],
         "observation": OBSERVED if observed else UNOBSERVED,
         "plan_digest": plan["plan_digest"],
-        "schema": HANCHANS_SCHEMA,
+        "schema": spec_of(plan).schemas["hanchans"],
     }
 
 
 def require_hanchans(plan: dict, hanchans: object) -> None:
     """Rの客観recordが計画したscheduleと完全一致すること（不足・重複・順序の入替を拒否）。"""
+    spec = spec_of(plan)
     expected = [(item["seed"], item["placement"]) for item in plan_schedule(plan)]
     if (
         type(hanchans) is not dict
         or set(hanchans) != {"hanchans", "observation", "plan_digest", "schema"}
-        or hanchans["schema"] != HANCHANS_SCHEMA
+        or hanchans["schema"] != spec.schemas["hanchans"]
         or hanchans["plan_digest"] != plan["plan_digest"]
         or hanchans["observation"] != plan["observation"]
         or type(hanchans["hanchans"]) is not list
@@ -276,7 +341,7 @@ def require_hanchans(plan: dict, hanchans: object) -> None:
         ):
             _fail(f"{context}: action sequence digests are invalid")
         try:
-            record = validate_hanchan_row(row["kyoku_record"], LAYOUT)
+            record = validate_hanchan_row(row["kyoku_record"], spec.layout)
         except KyokuRecordError as error:
             raise PonFirstPassError(f"{context}: kyoku record: {error}") from error
         if (
@@ -288,19 +353,23 @@ def require_hanchans(plan: dict, hanchans: object) -> None:
             _fail(f"{context}: kyoku record differs from the hanchan row")
 
 
-def _header(plan: dict, schema: str) -> dict:
-    return {
+def _header(plan: dict, kind: str) -> dict:
+    spec = spec_of(plan)
+    header = {
         "call_analysis_version": CALL_ANALYSIS,
         "kind": "header",
         "plan_digest": plan["plan_digest"],
-        "protocol_version": PROTOCOL_VERSION,
-        "schema": schema,
+        "protocol_version": spec.protocol_version,
+        "schema": spec.schemas[kind],
         "wrapper_version": WRAPPER_VERSION,
     }
+    if spec.header_extra is not None:
+        header.update(spec.header_extra(plan))
+    return header
 
 
 def action_lines(plan: dict, executed_r: list[ExecutedHanchan]) -> list[dict]:
-    lines = [_header(plan, ACTIONS_SCHEMA)]
+    lines = [_header(plan, "actions")]
     for item in executed_r:
         lines.append(
             {
@@ -322,7 +391,7 @@ def require_action_lines(plan: dict, lines: object, hanchans: dict) -> None:
     require_hanchans(plan, hanchans)
     if type(lines) is not list or not lines:
         _fail("actions are empty")
-    if lines[0] != _header(plan, ACTIONS_SCHEMA):
+    if lines[0] != _header(plan, "actions"):
         _fail("actions header does not belong to the plan")
     rows = hanchans["hanchans"]
     if len(lines) - 1 != len(rows):
@@ -461,7 +530,7 @@ def branch_lines(
     repeat_records: dict[int, dict] | None,
 ) -> list[dict]:
     rows = {row["seed"]: row for row in hanchans["hanchans"]}
-    lines = [_header(plan, BRANCHES_SCHEMA)]
+    lines = [_header(plan, "branches")]
     for ordinal, (seed, record) in enumerate(candidates):
         lines.append(
             {
@@ -541,7 +610,7 @@ def require_branch_lines(plan: dict, lines: object, hanchans: dict) -> None:
     require_hanchans(plan, hanchans)
     if type(lines) is not list or not lines:
         _fail("branches are empty")
-    if lines[0] != _header(plan, BRANCHES_SCHEMA):
+    if lines[0] != _header(plan, "branches"):
         _fail("branches header does not belong to the plan")
     rows = {row["seed"]: row for row in hanchans["hanchans"]}
     seeds = [item["seed"] for item in plan_schedule(plan)]
@@ -998,7 +1067,10 @@ def require_timings(
     if schedule > limits["wall_seconds"]:
         _fail("the schedule exceeded the wall limit")
     if complete:
-        if set(timings) != _TIMING_FIELDS or timings["schema"] != TIMINGS_SCHEMA:
+        if (
+            set(timings) != _TIMING_FIELDS
+            or timings["schema"] != spec_of(plan).schemas["timings"]
+        ):
             _fail("timings fields do not match")
         elapsed = max(
             _seconds(timings["monotonic_elapsed_seconds"], "monotonic"),
@@ -1043,6 +1115,19 @@ def build_summary(
     ]
     invalid = [row for row in evaluated if row["invalid"]]
     valid = [row for row in evaluated if not row["invalid"]]
+    spec = spec_of(plan)
+    if spec.summary is not None:
+        common = {
+            "inputs": {
+                "actions_sha256": sha256_bytes(jsonl_text(actions).encode("utf-8")),
+                "branches_sha256": sha256_bytes(jsonl_text(branches).encode("utf-8")),
+                "hanchans_sha256": document_sha256(hanchans),
+            },
+            "hanchans": hanchans,
+            "timings": timings,
+        }
+        payload = spec.summary(plan, common, evaluated, invalid, valid)
+        return {**payload, "summary_digest": document_identity(payload)}
     valid_branches = [row for row in valid if row["status"] == "branch"]
     outcome_counts = {
         arm: {name: 0 for name in _SEAT_OUTCOMES} for arm in (ARM_R, ARM_D)
@@ -1101,11 +1186,11 @@ def build_summary(
         "plan_digest": plan["plan_digest"],
         "population": population_summary(evaluated),
         "pre_branch": pre_branch_summary(timings, decision),
-        "protocol_version": PROTOCOL_VERSION,
+        "protocol_version": spec.protocol_version,
         "recalls": recall_summary(valid_branches),
         "rows": [dict(row) for row in evaluated],
         "run_kind": plan["run_kind"],
-        "schema": SUMMARY_SCHEMA,
+        "schema": spec.schemas["summary"],
         "seat_hanchans": 4 * len(hanchans["hanchans"]),
         "status": status,
         "support": support,
@@ -1117,6 +1202,7 @@ def build_summary(
 
 
 def build_unobserved_summary(plan: dict, hanchans: dict, timings: dict) -> dict:
+    spec = spec_of(plan)
     require_hanchans(plan, hanchans)
     require_timings(plan, timings, expected_tasks(plan, None), complete=False)
     payload = {
@@ -1129,10 +1215,10 @@ def build_unobserved_summary(plan: dict, hanchans: dict, timings: dict) -> dict:
         "not_a_strength_result": True,
         "observation": UNOBSERVED,
         "plan_digest": plan["plan_digest"],
-        "protocol_version": PROTOCOL_VERSION,
+        "protocol_version": spec.protocol_version,
         "run_kind": plan["run_kind"],
-        "schema": SUMMARY_SCHEMA,
-        "status": REHEARSAL_STATUS,
+        "schema": spec.schemas["summary"],
+        "status": spec.rehearsal_status,
         "timing": _timing_summary(timings),
     }
     return {**payload, "summary_digest": document_identity(payload)}
@@ -1163,7 +1249,7 @@ def write_stop(
         "finished_at_utc": utc_now(),
         "not_a_result": True,
         "plan_digest": plan["plan_digest"],
-        "schema": STOP_SCHEMA,
+        "schema": spec_of(plan).schemas["stop"],
         "stage": plan["stage"],
         "started_at_utc": started_at,
         "status": STOP_STATUS,
@@ -1180,16 +1266,19 @@ def run_plan(
     ledger_path: str | Path = seed_registry.DEFAULT_LEDGER_PATH,
     play_r: Callable | None = None,
     play_d: Callable = play_d_arm,
-    live_gate: Callable[..., None] = require_live_target,
+    live_gate: Callable[..., None] | None = None,
     on_task: Callable[[int, int], None] | None = None,
     clock: Callable[[], float] | None = None,
     realtime: Callable[[], float] | None = None,
 ) -> dict[str, object]:
     """実行して公開する。未完了はSTOP-INCOMPLETEで、outputを作らずstop記録を残す。
 
-    ``play_r`` / ``play_d`` / ``live_gate`` / clockはtestのseam。
+    ``play_r`` / ``play_d`` / ``live_gate`` / clockはtestのseam。``live_gate`` の既定はplanの
+    protocolのlive gate。
     """
-    plan = load_plan(plan_path)
+    plan = load_any_plan(plan_path)
+    spec = spec_of(plan)
+    live_gate = live_gate or spec.require_live_target
     observed = plan["observation"] == OBSERVED
     if play_r is None:
         play_r = play_r_observed if observed else play_r_unobserved
@@ -1281,7 +1370,7 @@ def run_plan(
                 "not_rederived": True,
                 "plan_digest": plan["plan_digest"],
                 "schedule_wall_seconds": schedule_seconds,
-                "schema": TIMINGS_SCHEMA,
+                "schema": spec.schemas["timings"],
                 "started_at_utc": started_at,
                 "tasks": rows,
             }
@@ -1408,7 +1497,7 @@ def replay_seeds_of(
     )
     arms = 0
     for seed, item in zip(seeds, executed, strict=True):
-        if hanchan_row(item) != rows[seed]:
+        if hanchan_row(item, spec_of(plan).layout) != rows[seed]:
             _fail(f"seed {seed}: the replayed R differs from the record (STOP-INVALID)")
         if item.policy_analysis["actions"] != recorded_actions[seed]:
             _fail(f"seed {seed}: the replayed R actions differ (STOP-INVALID)")
@@ -1468,7 +1557,7 @@ def verified_plan(
     play_d: Callable = play_d_arm,
 ) -> tuple[dict, dict, dict, list[dict], dict]:
     """保存物を検査・再導出し、``(plan, summary, timings, files, rederived)`` を返す。"""
-    plan = load_plan(plan_path)
+    plan = load_any_plan(plan_path)
     if environment is None:
         try:
             environment = _live_environment(plan["execution"]["wheel_path"])
@@ -1548,7 +1637,7 @@ def verify_plan(
         "rederived_call_analysis": rederived["call_analysis"],
         "replayed": rederived["replay"],
         "run_kind": plan["run_kind"],
-        "schema": VERIFY_SCHEMA,
+        "schema": spec_of(plan).schemas["verify"],
         "status": summary["status"],
         "summary_digest": summary["summary_digest"],
         "support": None if support is None else support["verdict"],
@@ -1576,7 +1665,15 @@ def compare_rehearsals(
     output: str | Path | None = None,
     environment: dict | None = None,
 ) -> dict[str, object]:
-    """観測あり / なしのRの一致と、観測ありplanのD armの2回実行の一致を要求する。"""
+    """観測あり / なしのRの一致と、観測ありplanのD armの2回実行の一致を要求する。
+
+    rehearsalのplanかを保存物の検査・再実行より前に確かめる（allocatedのplanのverify seedを
+    ここから再実行させない。allocatedのverifyは各protocolのverifyだけで行う）。
+    """
+    for path, observation in ((observed_plan, OBSERVED), (unobserved_plan, UNOBSERVED)):
+        plan = load_any_plan(path)
+        if (plan["run_kind"], plan["observation"]) != (REHEARSAL, observation):
+            _fail("compare takes an observed and an unobserved rehearsal plan")
     observed, summary, _, _, _ = verified_plan(observed_plan, environment=environment)
     unobserved, _, _, _, _ = verified_plan(unobserved_plan, environment=environment)
     if (observed["run_kind"], observed["observation"]) != (REHEARSAL, OBSERVED) or (
@@ -1610,7 +1707,7 @@ def compare_rehearsals(
         "match": match,
         "observed_plan_digest": observed["plan_digest"],
         "observed_summary_digest": summary["summary_digest"],
-        "schema": COMPARE_SCHEMA,
+        "schema": spec_of(observed).schemas["compare"],
         "seeds": seeds,
         "unobserved_plan_digest": unobserved["plan_digest"],
     }
@@ -1630,7 +1727,9 @@ def estimate_budget(
     output: str | Path | None = None,
     environment: dict | None = None,
 ) -> dict[str, object]:
-    """照合済みrehearsalの実測から本実行＋verify＋回収の見積もりを作る。"""
+    """照合済みrehearsalの実測から本実行＋verify＋回収の見積もりを作る（pilotだけ）。"""
+    if spec_of(load_any_plan(observed_plan)) is not PILOT:
+        _fail("estimate_budget is the pilot estimate; use the protocol's own estimate")
     compared = compare_rehearsals(
         observed_plan, unobserved_plan, environment=environment
     )
@@ -1671,7 +1770,9 @@ __all__ = [
     "BOOTSTRAP_SEED",
     "BRANCHES_SCHEMA",
     "COMPLETE_STATUS",
+    "ProtocolSpec",
     "LAYOUT",
+    "PILOT",
     "REHEARSAL_STATUS",
     "STOP_STATUS",
     "action_lines",
@@ -1685,6 +1786,7 @@ __all__ = [
     "execute_candidates",
     "hanchan_row",
     "hanchans_document",
+    "load_any_plan",
     "mean_difference_sizing",
     "population_summary",
     "recall_summary",
@@ -1693,7 +1795,9 @@ __all__ = [
     "require_branches_match_actions",
     "require_hanchans",
     "require_timings",
+    "register_protocol",
     "run_plan",
+    "spec_of",
     "support_from_timings",
     "verify_plan",
     "write_stop",

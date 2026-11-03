@@ -67,6 +67,13 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-source-run 
 python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-source-verify --plan P [--output V]
 python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-source-rehearsal-compare --observed P1 --unobserved P2 --output C
 python -m lisjong_arena.heuristic_candidate_engine_aabb riichi-first-source-estimate (--observed P1 --unobserved P2 | --from-block P) --output E
+
+#556 pon-first-pass-source-v1（lisjong #365 / #366のP1学習source。DEVELOPMENT。強さの結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-plan --run-kind R --observation O ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-run --plan P
+python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-verify --plan P [--output V]
+python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-rehearsal-compare --observed P1 --unobserved P2 --output C
+python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-estimate (--observed P1 --unobserved P2 | --from-block P) --output E
 ```
 
 Kとtimeoutにdefaultはない。正式eventはSeed Registryのallocation、Kの根拠、
@@ -91,6 +98,8 @@ from . import (
     focal_mixed_plan,
     pon_first_pass,
     pon_first_pass_plan,
+    pon_first_pass_source,
+    pon_first_pass_source_plan,
     riichi_dama_branch,
     riichi_dama_branch_plan,
     riichi_first_dama,
@@ -519,7 +528,73 @@ def main(argv: list[str] | None = None) -> int:
         pon_pair.add_argument("--unobserved", required=True)
         pon_pair.add_argument("--output", required=True)
 
+    pon_source = sub.add_parser(
+        "pon-first-source-plan",
+        help="#556: write a write-once pon-first-pass-source-v1 plan (one block or a rehearsal)",
+    )
+    pon_source.add_argument("--run-kind", choices=RUN_KINDS, required=True)
+    pon_source.add_argument(
+        "--observation",
+        choices=pon_first_pass_source_plan.OBSERVATIONS,
+        required=True,
+    )
+    pon_source.add_argument("--owner-issue", required=True)
+    pon_source.add_argument(
+        "--block", choices=pon_first_pass_source_plan.BLOCK_ORDER, help="allocated only"
+    )
+    pon_source.add_argument(
+        "--allocation-identity", help="allocated only (the split allocation)"
+    )
+    pon_source.add_argument(
+        "--artifact-identity", help="TEST blocks only: the frozen lisjong #366 artifact"
+    )
+    pon_source.add_argument("--time-estimate", help="allocated only")
+    pon_source.add_argument(
+        "--session-elapsed-seconds",
+        type=float,
+        help="allocated only: elapsed seconds of the earlier stages of this session",
+    )
+    pon_source.add_argument(
+        "--collected-seconds",
+        type=float,
+        help="allocated only: cumulative collection seconds of the previous blocks",
+    )
+    pon_source.add_argument(
+        "--previous-plan",
+        action="append",
+        default=[],
+        help="allocated only: every completed earlier block plan, in block order",
+    )
+    pon_source.add_argument("--limit-enforcement", required=True)
+    pon_source.add_argument("--wheel", required=True)
+    pon_source.add_argument("--run-output", required=True)
+    pon_source.add_argument("--diagnostics", required=True)
+    pon_source.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    pon_source.add_argument("--output", required=True)
+    pon_source_run = sub.add_parser("pon-first-source-run")
+    pon_source_run.add_argument("--plan", required=True)
+    pon_source_run.add_argument(
+        "--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH)
+    )
+    pon_source_verify = sub.add_parser("pon-first-source-verify")
+    pon_source_verify.add_argument("--plan", required=True)
+    pon_source_verify.add_argument(
+        "--output",
+        help="rehearsal only; an allocated block writes <diagnostics>/verify.json",
+    )
+    pon_source_compare = sub.add_parser("pon-first-source-rehearsal-compare")
+    pon_source_compare.add_argument("--observed", required=True)
+    pon_source_compare.add_argument("--unobserved", required=True)
+    pon_source_compare.add_argument("--output", required=True)
+    pon_source_estimate = sub.add_parser("pon-first-source-estimate")
+    pon_source_estimate.add_argument("--observed")
+    pon_source_estimate.add_argument("--unobserved")
+    pon_source_estimate.add_argument("--from-block")
+    pon_source_estimate.add_argument("--output", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("pon-first-source-"):
+        return _pon_first_source(args)
     if args.command.startswith("pon-first-"):
         return _pon_first(args)
     if args.command.startswith("riichi-first-source-"):
@@ -886,7 +961,93 @@ def _riichi_first_source(args) -> int:
     return 0 if within else 3
 
 
+def _pon_first_source(args) -> int:
+    if args.command == "pon-first-source-plan":
+        document = pon_first_pass_source_plan.build_plan(
+            run_kind=args.run_kind,
+            observation=args.observation,
+            owner_issue=args.owner_issue,
+            block=args.block,
+            allocation_identity=args.allocation_identity,
+            artifact_identity=args.artifact_identity,
+            limit_enforcement=args.limit_enforcement,
+            wheel_path=str(Path(args.wheel).resolve()),
+            destinations={"diagnostics": args.diagnostics, "output": args.run_output},
+            time_estimate_path=args.time_estimate,
+            session_elapsed_seconds=args.session_elapsed_seconds,
+            collected_before_seconds=args.collected_seconds,
+            previous_plans=args.previous_plan,
+            ledger_path=args.ledger,
+        )
+        pon_first_pass_source_plan.save_plan(document, args.output)
+        print(f"{args.run_kind} {args.block or REHEARSAL} {document['plan_digest']}")
+        return 0
+    if args.command == "pon-first-source-run":
+        summary = pon_first_pass_source.run_plan(
+            args.plan, ledger_path=args.ledger, on_task=_progress
+        )
+        print(
+            f"{summary['status']} {summary['decision'] or REHEARSAL} "
+            f"{summary['summary_digest']}"
+        )
+        return 0
+    if args.command == "pon-first-source-verify":
+        verified = pon_first_pass_source.verify_plan(args.plan, output=args.output)
+        print(json.dumps(verified, sort_keys=True, indent=2))
+        return 0
+    if args.command == "pon-first-source-rehearsal-compare":
+        compared = pon_first_pass_source.compare_rehearsals(
+            args.observed, args.unobserved, output=args.output
+        )
+        print(json.dumps(compared, sort_keys=True, indent=2))
+        return 0
+    if args.from_block is not None:
+        if args.observed or args.unobserved:
+            print("--from-block excludes --observed / --unobserved", file=sys.stderr)
+            return 2
+        estimate = pon_first_pass_source.estimate_from_block(
+            args.from_block, output=args.output
+        )
+    else:
+        if not (args.observed and args.unobserved):
+            print("--observed and --unobserved are required", file=sys.stderr)
+            return 2
+        estimate = pon_first_pass_source.estimate_from_rehearsal(
+            args.observed, args.unobserved, output=args.output
+        )
+    print(json.dumps(estimate, sort_keys=True, indent=2))
+    # 開始条件（3時間・session 4時間・累積14時間）はallocated planで判定する。
+    # ここでは見積もりだけで3時間を超える場合に非0で終える
+    within = (
+        estimate["projected_block_seconds"]
+        <= pon_first_pass_source_plan.allocation_rules.BLOCK_LIMIT_SECONDS
+    )
+    return 0 if within else 3
+
+
+def _pilot_plans_only(args) -> bool:
+    """pilot（#553）のコマンドはpilotのplanだけを受け付ける（再実行・保存物の読取より前）。
+
+    sourceのplan（#556）はverifyの開始記録・1回だけの制約を持つので、pilotの入口から
+    verify・run・compare・estimateへ渡さない。
+    """
+    paths = [getattr(args, name, None) for name in ("plan", "observed", "unobserved")]
+    for path in (item for item in paths if item is not None):
+        plan = pon_first_pass.load_any_plan(path)
+        if pon_first_pass.spec_of(plan) is not pon_first_pass.PILOT:
+            print(
+                f"{args.command} accepts only pon-first-pass-branch-v1 plans; "
+                f"{path} is a {plan['schema']} plan (use the protocol's own command, "
+                "e.g. pon-first-source-*)",
+                file=sys.stderr,
+            )
+            return False
+    return True
+
+
 def _pon_first(args) -> int:
+    if args.command != "pon-first-plan" and not _pilot_plans_only(args):
+        return 2
     if args.command == "pon-first-plan":
         document = pon_first_pass_plan.build_plan(
             run_kind=args.run_kind,
