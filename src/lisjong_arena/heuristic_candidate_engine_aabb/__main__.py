@@ -1025,7 +1025,29 @@ def _pon_first_source(args) -> int:
     return 0 if within else 3
 
 
+def _pilot_plans_only(args) -> bool:
+    """pilot（#553）のコマンドはpilotのplanだけを受け付ける（再実行・保存物の読取より前）。
+
+    sourceのplan（#556）はverifyの開始記録・1回だけの制約を持つので、pilotの入口から
+    verify・run・compare・estimateへ渡さない。
+    """
+    paths = [getattr(args, name, None) for name in ("plan", "observed", "unobserved")]
+    for path in (item for item in paths if item is not None):
+        plan = pon_first_pass.load_any_plan(path)
+        if pon_first_pass.spec_of(plan) is not pon_first_pass.PILOT:
+            print(
+                f"{args.command} accepts only pon-first-pass-branch-v1 plans; "
+                f"{path} is a {plan['schema']} plan (use the protocol's own command, "
+                "e.g. pon-first-source-*)",
+                file=sys.stderr,
+            )
+            return False
+    return True
+
+
 def _pon_first(args) -> int:
+    if args.command != "pon-first-plan" and not _pilot_plans_only(args):
+        return 2
     if args.command == "pon-first-plan":
         document = pon_first_pass_plan.build_plan(
             run_kind=args.run_kind,

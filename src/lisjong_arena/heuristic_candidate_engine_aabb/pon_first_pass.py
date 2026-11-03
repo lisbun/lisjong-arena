@@ -1665,7 +1665,15 @@ def compare_rehearsals(
     output: str | Path | None = None,
     environment: dict | None = None,
 ) -> dict[str, object]:
-    """観測あり / なしのRの一致と、観測ありplanのD armの2回実行の一致を要求する。"""
+    """観測あり / なしのRの一致と、観測ありplanのD armの2回実行の一致を要求する。
+
+    rehearsalのplanかを保存物の検査・再実行より前に確かめる（allocatedのplanのverify seedを
+    ここから再実行させない。allocatedのverifyは各protocolのverifyだけで行う）。
+    """
+    for path, observation in ((observed_plan, OBSERVED), (unobserved_plan, UNOBSERVED)):
+        plan = load_any_plan(path)
+        if (plan["run_kind"], plan["observation"]) != (REHEARSAL, observation):
+            _fail("compare takes an observed and an unobserved rehearsal plan")
     observed, summary, _, _, _ = verified_plan(observed_plan, environment=environment)
     unobserved, _, _, _, _ = verified_plan(unobserved_plan, environment=environment)
     if (observed["run_kind"], observed["observation"]) != (REHEARSAL, OBSERVED) or (

@@ -5,11 +5,14 @@ field分離・測定値の再利用部分のregressionはpilotのtest（test_eng
 ここではsourceの差分だけを確かめる。
 """
 
+import contextlib
+import io
 import json
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import _engine_aabb_pon_first_source_fixtures as fx
 
@@ -644,6 +647,83 @@ class LisjongReaderContractTest(_Case):
         self.assertEqual(p1_value.BRANCHES_SCHEMA, plan_module.SCHEMAS["branches"])
         self.assertEqual(p1_value.SUMMARY_SCHEMA, plan_module.SCHEMAS["summary"])
         self.assertEqual(p1_value.SOURCE_COMPLETE, plan_module.SOURCE_COMPLETE)
+
+
+class PilotEntryTest(_Case):
+    """sourceのallocated planを、pilotの入口からverify seedの再実行へ渡さない。"""
+
+    def _counted(self):
+        calls = {"execute": 0, "verified_plan": 0}
+        execute, verified = pon_first_pass._execute, pon_first_pass.verified_plan
+
+        def counting_execute(*args, **kwargs):
+            calls["execute"] += 1
+            return execute(*args, **kwargs)
+
+        def counting_verified(*args, **kwargs):
+            calls["verified_plan"] += 1
+            return verified(*args, **kwargs)
+
+        patches = contextlib.ExitStack()
+        patches.enter_context(
+            mock.patch.object(pon_first_pass, "_execute", counting_execute)
+        )
+        patches.enter_context(
+            mock.patch.object(pon_first_pass, "verified_plan", counting_verified)
+        )
+        return calls, patches
+
+    def test_pilot_commands_reject_a_source_plan_before_replay(self) -> None:
+        from lisjong_arena.heuristic_candidate_engine_aabb import __main__ as cli
+
+        path, plan, _ = self.run_block(name="t1")
+        diagnostics = Path(plan["artifact_destinations"]["diagnostics"])
+        commands = (
+            ["pon-first-verify", "--plan", str(path)],
+            ["pon-first-run", "--plan", str(path)],
+            [
+                "pon-first-rehearsal-compare",
+                "--observed",
+                str(path),
+                "--unobserved",
+                str(path),
+                "--output",
+                str(self.tmp / "c.json"),
+            ],
+            [
+                "pon-first-estimate",
+                "--observed",
+                str(path),
+                "--unobserved",
+                str(path),
+                "--output",
+                str(self.tmp / "e.json"),
+            ],
+        )
+        calls, patches = self._counted()
+        with patches:
+            for command in commands:
+                with self.subTest(command=command[0]):
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr):
+                        self.assertEqual(cli.main(command), 2)
+                    self.assertIn("pon-first-pass-branch-v1 plans", stderr.getvalue())
+        self.assertEqual(calls, {"execute": 0, "verified_plan": 0})
+        self.assertFalse((diagnostics / plan_module.VERIFY_START_FILENAME).exists())
+        self.assertFalse((self.tmp / "c.json").exists())
+        # 正規のsourceのverifyは開始記録を取って1回だけ行える
+        self.assertEqual(self.verify(path)["decision"], plan_module.SOURCE_COMPLETE)
+
+    def test_compare_rejects_an_allocated_plan_before_replay(self) -> None:
+        path, _, _ = self.run_block(name="t1")
+        calls, patches = self._counted()
+        for compare in (source.compare_rehearsals, pon_first_pass.compare_rehearsals):
+            with self.subTest(compare=compare.__module__), patches:
+                with self.assertRaisesRegex(EngineAabbProtocolError, "rehearsal plan"):
+                    compare(path, path, environment=fx.ENVIRONMENT)
+        self.assertEqual(calls, {"execute": 0, "verified_plan": 0})
+        with self.assertRaisesRegex(EngineAabbProtocolError, "rehearsal plan"):
+            source.estimate_from_rehearsal(path, path, environment=fx.ENVIRONMENT)
 
 
 class CliTest(unittest.TestCase):

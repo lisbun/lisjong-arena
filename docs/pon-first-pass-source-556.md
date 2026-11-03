@@ -42,6 +42,7 @@ protocolごとに切り替え（schema・plan・header・summary）、pilotの�
      出力file・summary・verify seed・実行上限との不一致、verifyの失敗記録（`verify-failed.json`）のいずれでも次のplanを作らない
 - allocated blockのverifyは1回だけ: 開始記録`verify-started.json`を排他的に作ってから行う。成功なら`verify.json`、最小・最大seedの
   再実行の不一致・保存物の不整合・run + verifyの上限超過なら`verify-failed.json`を残して止まり、再実行しない（結果を見て救済しない）
+- pilotの入口（`pon-first-run`・`pon-first-verify`・`pon-first-rehearsal-compare`・`pon-first-estimate`）はpilotのplanだけを受け付け、sourceのplanは保存物の読取・再実行より前に拒否する（exit 2）。rehearsalの照合（両protocolの`*-rehearsal-compare`・`pon-first-source-estimate --observed`）もrehearsalのplanかを再実行より前に確かめる。allocated blockのverify seedを再実行できるのは`pon-first-source-verify`だけ
 - TESTのplanは`--artifact-identity`（lisjong #366で凍結したartifactのidentity）を必須にし、headerへ束縛する。TRAINのplanは
   artifactを持たない。**TEST-2・TEST-3はTEST-1と同じartifact**を要求する（先行ブロックの記録が引き継ぐidentityと照合し、
   違えばplanを作らない）
