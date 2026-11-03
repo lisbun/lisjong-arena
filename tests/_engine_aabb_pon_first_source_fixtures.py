@@ -158,3 +158,8 @@ def fake_d_not_passed(task):
     if task.seed == plan_module.BLOCKS["TRAIN-1"][1][0]:
         return pilot._d_played(task, "better", pass_applied=False)
     return fake_d_better(task)
+
+
+def fake_d_worse(task):
+    """verifyの再実行で、D armの結果が記録と違う（再実行の不一致）。"""
+    return pilot._d_played(task, "worse")

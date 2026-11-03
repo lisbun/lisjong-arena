@@ -15,6 +15,10 @@ TEST         lisjong #366で凍結したartifactのidentityを束縛しないと
              NOT-STARTED-BUDGET。seed数を縮めない）
              1. (40 + 2)c + 900 ≤ min(3時間, 4時間 − sessionの経過)（#553のblock_start_condition）
              2. 累積の収集時間 + 1の見積もり ≤ 14時間
+             実行上限（生成・verify・回収の合計）= min(3時間, session残り, 累積14時間の残り)
+先行ブロック 各ブロックのplanは、先行する全ブロックのrun出力（SOURCE-COMPLETE・SHA256SUMS一致）と
+             そのplan・出力に対応するstrict verifyの成功記録（diagnosticsの``verify.json``）を要求する。
+             TEST-2・TEST-3はTEST-1と同じ凍結artifactに束縛する
 rehearsal    472005・472006（registry外、動作確認だけ）
 ```
 
@@ -144,6 +148,15 @@ SOURCE_COMPLETE = "SOURCE-COMPLETE"
 STOP_INVALID = "STOP-INVALID"
 STOP_INCOMPLETE = "STOP-INCOMPLETE"
 ESTIMATE_BASES = ("rehearsal", "block")
+VERIFY_FILENAME = "verify.json"
+VERIFY_START_FILENAME = "verify-started.json"
+VERIFY_FAILED_FILENAME = "verify-failed.json"
+"""allocated blockのstrict verifyの記録（planのdiagnostics directoryに置く。write-once）。
+
+開始記録を排他的に作ってからverifyし、成功なら ``verify.json`` 、失敗・上限超過なら
+``verify-failed.json`` を残す。開始記録があるblockのverifyは再実行しない（結果を見て救済しない）。"""
+VERIFY_START_SCHEMA = "arena-pon-first-pass-source-v1-verify-start-v1"
+VERIFY_FAILED_SCHEMA = "arena-pon-first-pass-source-v1-verify-failed-v1"
 
 CRITERIA = {
     "decision": (
@@ -168,7 +181,16 @@ CRITERIA = {
         "session elapsed) and collected + projected <= 14 h, c = mean R wall + r mean "
         "D wall, r = 4 max(branches / seat-hanchans, 116/96); the estimate comes from "
         "the rehearsal for TRAIN-1 and from the immediately previous block after; "
-        "otherwise NOT-STARTED-BUDGET and the block is not shrunk"
+        "otherwise NOT-STARTED-BUDGET and the block is not shrunk; the run + verify + "
+        "recovery limit is min(3 h, 4 h - session elapsed, 14 h - collected)"
+    ),
+    "previous_blocks": (
+        "every earlier block in order with its SOURCE-COMPLETE output (SHA256SUMS) and "
+        "the strict verify success record of that plan and output (replay of the "
+        "minimum and maximum seed matched, run + verify within the plan limit); a "
+        "missing, failed or foreign verify record stops the next plan; collected >= "
+        "the recorded run + verify seconds; TEST-2 and TEST-3 use the artifact of "
+        "TEST-1"
     ),
 }
 
@@ -230,6 +252,8 @@ _START_FIELDS = frozenset(
         "block_condition",
         "collected_before_seconds",
         "collection_budget_seconds",
+        "collection_remaining_seconds",
+        "limit_seconds",
         "previous_blocks",
         "projected_block_seconds",
         "time_estimate",
@@ -257,8 +281,38 @@ _ESTIMATE_FIELDS = frozenset(
     }
 )
 _PREVIOUS_FIELDS = frozenset(
-    {"block", "plan_digest", "run_elapsed_seconds", "summary_digest"}
+    {
+        "artifact_identity",
+        "block",
+        "plan_digest",
+        "run_elapsed_seconds",
+        "summary_digest",
+        "verify_digest",
+        "verify_elapsed_seconds",
+    }
 )
+VERIFY_RECORD_FIELDS = frozenset(
+    {
+        "clocks",
+        "decision",
+        "files",
+        "observation",
+        "output_bytes",
+        "plan_digest",
+        "rederived_call_analysis",
+        "replayed",
+        "run_elapsed_seconds",
+        "run_kind",
+        "schema",
+        "status",
+        "summary_digest",
+        "support",
+        "verify_digest",
+        "verify_elapsed_seconds",
+        "wall_seconds",
+    }
+)
+"""``verify.json``: pilotのverify documentのfieldに、run・verifyの経過、planの実行上限、digestを加える。"""
 
 
 class PonFirstSourceError(EngineAabbProtocolError):
@@ -470,8 +524,61 @@ def load_time_estimate(path: str | Path) -> dict:
     return parse_time_estimate(document)
 
 
+def run_elapsed_of(timings: dict) -> float:
+    return float(
+        max(timings["monotonic_elapsed_seconds"], timings["realtime_elapsed_seconds"])
+    )
+
+
+def verify_record_path(plan: dict) -> Path:
+    return Path(plan["artifact_destinations"]["diagnostics"]) / VERIFY_FILENAME
+
+
+def _require_verify_record(plan: dict, summary: dict, run_elapsed: float) -> dict:
+    """planと出力に対応するstrict verifyの成功記録（欠落・失敗・別plan・不一致を拒否）。"""
+    name = plan["block"]
+    diagnostics = Path(plan["artifact_destinations"]["diagnostics"])
+    if (diagnostics / VERIFY_FAILED_FILENAME).exists():
+        _fail(f"block {name}: the strict verify failed; do not continue")
+    try:
+        record = read_json_document(diagnostics / VERIFY_FILENAME)
+    except (ArtifactValidationError, OSError, ValueError) as error:
+        raise PonFirstSourceError(
+            f"block {name}: no strict verify success record: {error}"
+        ) from error
+    if type(record) is not dict or set(record) != VERIFY_RECORD_FIELDS:
+        _fail(f"block {name}: verify record fields do not match")
+    output = Path(plan["artifact_destinations"]["output"])
+    payload = {key: item for key, item in record.items() if key != "verify_digest"}
+    if (
+        record["schema"] != SCHEMAS["verify"]
+        or record["verify_digest"] != document_identity(payload)
+        or record["plan_digest"] != plan["plan_digest"]
+        or record["run_kind"] != ALLOCATED
+        or record["decision"] != SOURCE_COMPLETE
+        or record["summary_digest"] != summary["summary_digest"]
+        or record["files"] != output_files(output)
+        or type(record["replayed"]) is not dict
+        or record["replayed"].get("seeds") != plan["verify_replay_seeds"]
+        or record["run_elapsed_seconds"] != run_elapsed
+        or record["wall_seconds"] != plan["resource_limits"]["wall_seconds"]
+    ):
+        _fail(
+            f"block {name}: the verify record belongs to another plan or output, or "
+            "the replay did not match"
+        )
+    verify_elapsed = record["verify_elapsed_seconds"]
+    if (
+        not _finite(verify_elapsed)
+        or run_elapsed + verify_elapsed > (record["wall_seconds"])
+    ):
+        _fail(f"block {name}: run + verify exceeded the plan limit")
+    return record
+
+
 def completed_block(plan: dict) -> dict:
-    """ブロックのoutputがSOURCE-COMPLETEで、SHA256SUMSと実fileが一致することを確かめる。"""
+    """ブロックのoutputがSOURCE-COMPLETE・SHA256SUMS一致で、そのplan・出力のstrict verifyが
+    成功していることを確かめる。"""
     output = Path(plan["artifact_destinations"]["output"])
     try:
         recorded = (output / "SHA256SUMS").read_bytes().decode("utf-8")
@@ -492,14 +599,16 @@ def completed_block(plan: dict) -> dict:
         or summary.get("plan_digest") != plan["plan_digest"]
     ):
         _fail(f"block {plan['block']} is not SOURCE-COMPLETE")
-    run_elapsed = max(
-        timings["monotonic_elapsed_seconds"], timings["realtime_elapsed_seconds"]
-    )
+    run_elapsed = run_elapsed_of(timings)
+    record = _require_verify_record(plan, summary, run_elapsed)
     return {
+        "artifact_identity": plan["artifact_identity"],
         "block": plan["block"],
         "plan_digest": plan["plan_digest"],
-        "run_elapsed_seconds": float(run_elapsed),
+        "run_elapsed_seconds": run_elapsed,
         "summary_digest": summary["summary_digest"],
+        "verify_digest": record["verify_digest"],
+        "verify_elapsed_seconds": record["verify_elapsed_seconds"],
     }
 
 
@@ -510,8 +619,12 @@ def start_condition(
     session_elapsed_seconds: object,
     collected_before_seconds: object,
     previous_blocks: list[dict],
+    artifact_identity: str | None = None,
 ) -> dict:
-    """ブロックの開始条件（seed数40のまま）。判定値を返し、拒否はcallerが行う。"""
+    """ブロックの開始条件（seed数40のまま）。判定値を返し、拒否はcallerが行う。
+
+    ``artifact_identity`` はこのブロックのplanの値。TESTの先行ブロックの値と一致を要求する。
+    """
     parsed = parse_time_estimate(estimate)
     if block not in BLOCK_ORDER:
         _fail(f"block must be one of {BLOCK_ORDER}")
@@ -520,6 +633,7 @@ def start_condition(
         type(item) is not dict
         or set(item) != _PREVIOUS_FIELDS
         or not _finite(item["run_elapsed_seconds"])
+        or not _finite(item["verify_elapsed_seconds"])
         for item in previous_blocks
     ):
         _fail("previous block records are invalid")
@@ -527,6 +641,16 @@ def start_condition(
         _fail(
             f"{block} needs the completed blocks {list(BLOCK_ORDER[:index])} in order"
         )
+    for item in previous_blocks:
+        if BLOCKS[item["block"]][0] == TRAIN and item["artifact_identity"] is not None:
+            _fail(f"previous block {item['block']} is a TRAIN block with an artifact")
+        if BLOCKS[item["block"]][0] == TEST and (
+            item["artifact_identity"] != artifact_identity
+        ):
+            _fail(
+                f"{block} must use the frozen artifact of {item['block']} "
+                f"({item['artifact_identity']}), not {artifact_identity}"
+            )
     basis = parsed["basis"]
     if index == 0 and basis["kind"] != "rehearsal":
         _fail("TRAIN-1 uses the rehearsal estimate")
@@ -541,22 +665,29 @@ def start_condition(
     ):
         if not _finite(value):
             _fail(f"{name} must be a finite non-negative float")
-    lower = math.fsum(item["run_elapsed_seconds"] for item in previous_blocks)
+    lower = math.fsum(
+        item["run_elapsed_seconds"] + item["verify_elapsed_seconds"]
+        for item in previous_blocks
+    )
     if collected_before_seconds < lower:
         _fail(
-            "collected_before_seconds is smaller than the recorded runs of the "
-            "previous blocks"
+            "collected_before_seconds is smaller than the recorded runs and verifies "
+            "of the previous blocks"
         )
     condition = _block_condition(parsed, session_elapsed_seconds)
     projected = condition["projected_seconds"]
+    remaining = COLLECTION_BUDGET_SECONDS - collected_before_seconds
+    limit = min(condition["limit_seconds"], remaining)
     within = (
         condition["verdict"] == allocation_rules.BLOCK_WITHIN_LIMITS
-        and collected_before_seconds + projected <= COLLECTION_BUDGET_SECONDS
+        and projected <= remaining
     )
     return {
         "block_condition": condition,
         "collected_before_seconds": collected_before_seconds,
         "collection_budget_seconds": COLLECTION_BUDGET_SECONDS,
+        "collection_remaining_seconds": remaining,
+        "limit_seconds": limit,
         "previous_blocks": previous_blocks,
         "projected_block_seconds": projected,
         "time_estimate": parsed,
@@ -576,6 +707,7 @@ def _require_start(plan_like: dict, value: object) -> dict:
         session_elapsed_seconds=condition.get("session_elapsed_seconds"),
         collected_before_seconds=value["collected_before_seconds"],
         previous_blocks=value["previous_blocks"],
+        artifact_identity=plan_like["artifact_identity"],
     )
     if value != expected:
         _fail("start_condition does not re-derive")
@@ -664,6 +796,7 @@ def assemble_plan(
             )
         condition = _require_start(
             {
+                "artifact_identity": artifact_identity,
                 "block": block,
                 "environment_digest": environment_digest,
                 "execution_target": target,
@@ -674,6 +807,7 @@ def assemble_plan(
                 session_elapsed_seconds=session_elapsed_seconds,
                 collected_before_seconds=collected_before_seconds,
                 previous_blocks=previous_blocks or [],
+                artifact_identity=artifact_identity,
             ),
         )
         binding = require_stage_seeds(ledger, allocation_binding, owner_issue, split)
@@ -687,7 +821,7 @@ def assemble_plan(
             "seed_domain": SEED_DOMAIN,
             "split": split,
         }
-        wall = condition["block_condition"]["limit_seconds"]
+        wall = condition["limit_seconds"]
     else:
         if (
             allocation_binding is not None
@@ -839,7 +973,7 @@ def _parse_plan(value: object) -> dict[str, object]:
         if binding["seed_domain"] != SEED_DOMAIN:
             _fail("allocation binding is outside the engine hanchan domain")
         condition = _require_start(value, value["start_condition"])
-        wall = condition["block_condition"]["limit_seconds"]
+        wall = condition["limit_seconds"]
     else:
         if (
             value["split"] is not None
@@ -1056,6 +1190,12 @@ __all__ = [
     "TEST",
     "TRAIN",
     "UNOBSERVED",
+    "VERIFY_FAILED_FILENAME",
+    "VERIFY_FAILED_SCHEMA",
+    "VERIFY_FILENAME",
+    "VERIFY_RECORD_FIELDS",
+    "VERIFY_START_FILENAME",
+    "VERIFY_START_SCHEMA",
     "WITHIN_BUDGET",
     "PonFirstSourceError",
     "assemble_plan",
@@ -1071,6 +1211,8 @@ __all__ = [
     "replay_seeds",
     "require_live_target",
     "require_stage_seeds",
+    "run_elapsed_of",
     "save_plan",
     "start_condition",
+    "verify_record_path",
 ]

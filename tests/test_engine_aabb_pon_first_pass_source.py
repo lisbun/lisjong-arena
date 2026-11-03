@@ -6,6 +6,7 @@ field分離・測定値の再利用部分のregressionはpilotのtest（test_eng
 """
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,17 +34,26 @@ from lisjong_arena.heuristic_candidate_engine_aabb.protocol import (
 TRAIN_1 = tuple(range(556_000, 556_040))
 
 
-def previous_records(*blocks):
+def previous_records(*blocks, artifact=fx.ARTIFACT):
     """先行ブロックの完了記録（開始条件の入力。TEST blockを直接作るため）。"""
     return [
         {
+            "artifact_identity": artifact if name.startswith("TEST") else None,
             "block": name,
             "plan_digest": f"{index + 1:x}" * 64,
             "run_elapsed_seconds": 3000.0,
             "summary_digest": "d" * 64,
+            "verify_digest": "e" * 64,
+            "verify_elapsed_seconds": 300.0,
         }
         for index, name in enumerate(blocks)
     ]
+
+
+def block_estimate_after(records):
+    return fx.time_estimate(
+        basis={"kind": "block", "plan_digests": [records[-1]["plan_digest"]]}
+    )
 
 
 def _keys(value):
@@ -80,6 +90,21 @@ class _Case(unittest.TestCase):
             live_gate=fx.gate,
         )
         return path, plan, summary
+
+    def verify(self, path, play_d=fx.fake_d_better, **kwargs):
+        return source.verify_plan(
+            path,
+            environment=fx.ENVIRONMENT,
+            play_r=fx.fake_r_both,
+            play_d=play_d,
+            **kwargs,
+        )
+
+    def completed(self, **kwargs):
+        """runとstrict verifyを済ませたブロック（次のplanの先行ブロック）。"""
+        path, plan, _ = self.run_block(**kwargs)
+        self.verify(path)
+        return path, plan, plan_module.completed_block(plan)
 
 
 class PlanTest(_Case):
@@ -137,7 +162,7 @@ class PlanTest(_Case):
             "block": "TEST-1",
             "previous_blocks": records,
             "time_estimate": estimate,
-            "collected_before_seconds": 9000.0,
+            "collected_before_seconds": 9900.0,
         }
         with self.assertRaisesRegex(EngineAabbProtocolError, "artifact_identity"):
             fx.plan_document(self.tmp, artifact_identity=None, **arguments)
@@ -255,9 +280,36 @@ class StartConditionTest(_Case):
         self.assertEqual(condition["verdict"], plan_module.NOT_STARTED_BUDGET)
         self.assertEqual(condition["block_condition"]["block_seeds"], 40)
 
+    def test_run_limit_includes_the_collection_remainder(self) -> None:
+        # 累積11時間45分の後: 残り2時間15分。新しいsession（経過0）でも上限は3時間ではない
+        collected = 11 * 3600 + 45 * 60.0
+        projected = fx.time_estimate()["projected_block_seconds"]
+        self.assertLess(projected, 2 * 3600 + 15 * 60)
+        plan = fx.plan_document(
+            self.tmp, session_elapsed_seconds=0.0, collected_before_seconds=collected
+        )
+        condition = plan["start_condition"]
+        self.assertEqual(condition["block_condition"]["limit_seconds"], 10_800.0)
+        self.assertEqual(condition["collection_remaining_seconds"], 8_100.0)
+        self.assertEqual(condition["limit_seconds"], 8_100.0)
+        self.assertEqual(plan["resource_limits"]["wall_seconds"], 8_100.0)
+        # session側が小さければそちら
+        late = fx.plan_document(
+            self.tmp,
+            name="late",
+            session_elapsed_seconds=14_400.0 - 7_900.0,
+            collected_before_seconds=collected,
+        )
+        self.assertEqual(late["resource_limits"]["wall_seconds"], 7_900.0)
+        drifted = {
+            **plan,
+            "resource_limits": {**plan["resource_limits"], "wall_seconds": 10_800.0},
+        }
+        with self.assertRaises(EngineAabbProtocolError):
+            plan_module.parse_plan(drifted)
+
     def test_estimate_basis_and_block_order(self) -> None:
-        _, first, _ = self.run_block(name="t1")
-        record = plan_module.completed_block(first)
+        _, first, record = self.completed(name="t1")
         with self.assertRaisesRegex(EngineAabbProtocolError, "rehearsal estimate"):
             fx.plan_document(self.tmp, name="x", time_estimate=fx.block_estimate(first))
         with self.assertRaisesRegex(EngineAabbProtocolError, "completed blocks"):
@@ -286,7 +338,7 @@ class StartConditionTest(_Case):
                 name="w",
                 previous_blocks=[record],
                 time_estimate=fx.block_estimate(first),
-                collected_before_seconds=record["run_elapsed_seconds"] / 2,
+                collected_before_seconds=record["run_elapsed_seconds"],
             )
         second = fx.plan_document(
             self.tmp,
@@ -294,12 +346,13 @@ class StartConditionTest(_Case):
             name="ok",
             previous_blocks=[record],
             time_estimate=fx.block_estimate(first),
-            collected_before_seconds=record["run_elapsed_seconds"] + 100.0,
+            collected_before_seconds=record["run_elapsed_seconds"]
+            + record["verify_elapsed_seconds"],
         )
         self.assertEqual(second["start_condition"]["previous_blocks"], [record])
 
     def test_previous_plans_are_bound_to_their_outputs(self) -> None:
-        path, first, _ = self.run_block(name="t1")
+        path, first, _ = self.completed(name="t1")
         environment = first["environment_digest"]
         target = first["execution_target"]
         records = plan_module.previous_block_records(
@@ -314,6 +367,114 @@ class StartConditionTest(_Case):
         (output / "summary.json").write_text("{}", encoding="utf-8")
         with self.assertRaisesRegex(EngineAabbProtocolError, "SHA256SUMS"):
             plan_module.completed_block(first)
+
+
+class PreviousBlockTest(_Case):
+    def test_next_plan_needs_the_strict_verify_record(self) -> None:
+        path, first, _ = self.run_block(name="t1")
+        with self.assertRaisesRegex(
+            EngineAabbProtocolError, "no strict verify success record"
+        ):
+            plan_module.completed_block(first)
+        record = self.verify(path)
+        self.assertEqual(record["plan_digest"], first["plan_digest"])
+        self.assertEqual(record["replayed"]["seeds"], [556_000, 556_039])
+        self.assertEqual(
+            record["wall_seconds"], first["resource_limits"]["wall_seconds"]
+        )
+        stored = plan_module.verify_record_path(first)
+        self.assertEqual(json.loads(stored.read_text(encoding="utf-8")), record)
+        self.assertEqual(
+            plan_module.completed_block(first)["verify_digest"],
+            record["verify_digest"],
+        )
+        # verifyは1回だけ（結果を見て再実行しない）
+        with self.assertRaisesRegex(EngineAabbProtocolError, "already been started"):
+            self.verify(path)
+        with self.assertRaisesRegex(EngineAabbProtocolError, "plan diagnostics"):
+            source.verify_plan(path, output=self.tmp / "v.json")
+
+    def test_a_verify_record_of_another_plan_is_rejected(self) -> None:
+        _, first, _ = self.run_block(name="t1")
+        other_path, other, _ = self.run_block(name="t1-other")
+        self.verify(other_path)
+        destination = plan_module.verify_record_path(first)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(plan_module.verify_record_path(other), destination)
+        with self.assertRaisesRegex(EngineAabbProtocolError, "another plan"):
+            plan_module.completed_block(first)
+
+    def test_a_replay_mismatch_stops_the_next_plan(self) -> None:
+        path, first, _ = self.run_block(name="t1")
+        with self.assertRaisesRegex(EngineAabbProtocolError, "STOP-INVALID"):
+            self.verify(path, play_d=fx.fake_d_worse)
+        diagnostics = Path(first["artifact_destinations"]["diagnostics"])
+        failed = json.loads(
+            (diagnostics / plan_module.VERIFY_FAILED_FILENAME).read_text()
+        )
+        self.assertEqual(failed["schema"], plan_module.VERIFY_FAILED_SCHEMA)
+        self.assertFalse((diagnostics / plan_module.VERIFY_FILENAME).exists())
+        with self.assertRaisesRegex(EngineAabbProtocolError, "verify failed"):
+            plan_module.completed_block(first)
+        with self.assertRaisesRegex(EngineAabbProtocolError, "already been started"):
+            self.verify(path)
+
+    def test_run_and_verify_over_the_plan_limit_fail(self) -> None:
+        path, first, _ = self.run_block(name="t1")
+        ticks = iter([0.0, 1e6, 1e6, 1e6])
+        with self.assertRaisesRegex(EngineAabbProtocolError, "exceeded the plan limit"):
+            self.verify(path, clock=lambda: next(ticks), realtime=lambda: 0.0)
+        with self.assertRaisesRegex(EngineAabbProtocolError, "verify failed"):
+            plan_module.completed_block(first)
+
+    def test_test_blocks_share_the_frozen_artifact(self) -> None:
+        records = previous_records("TRAIN-1", "TRAIN-2", "TRAIN-3", "TEST-1")
+        arguments = {
+            "block": "TEST-2",
+            "previous_blocks": records,
+            "time_estimate": block_estimate_after(records),
+            "collected_before_seconds": 13_200.0,
+        }
+        plan = fx.plan_document(self.tmp, name="same", **arguments)
+        self.assertEqual(plan["artifact_identity"], fx.ARTIFACT)
+        with self.assertRaisesRegex(EngineAabbProtocolError, "frozen artifact"):
+            fx.plan_document(
+                self.tmp, name="other", artifact_identity="b" * 64, **arguments
+            )
+        tampered = previous_records("TRAIN-1", "TRAIN-2", "TRAIN-3")
+        tampered[0]["artifact_identity"] = fx.ARTIFACT
+        with self.assertRaisesRegex(EngineAabbProtocolError, "TRAIN block"):
+            fx.plan_document(
+                self.tmp,
+                name="train",
+                block="TEST-1",
+                previous_blocks=tampered,
+                time_estimate=block_estimate_after(tampered),
+                collected_before_seconds=9_900.0,
+            )
+
+    def test_completed_test_block_record_carries_the_artifact(self) -> None:
+        records = previous_records("TRAIN-1", "TRAIN-2", "TRAIN-3")
+        _, plan, record = self.completed(
+            name="e1",
+            block="TEST-1",
+            previous_blocks=records,
+            time_estimate=block_estimate_after(records),
+            collected_before_seconds=9_900.0,
+        )
+        self.assertEqual(record["artifact_identity"], fx.ARTIFACT)
+        chained = [*records, record]
+        later = {
+            "block": "TEST-2",
+            "previous_blocks": chained,
+            "time_estimate": fx.block_estimate(plan),
+            "collected_before_seconds": 9_900.0
+            + record["run_elapsed_seconds"]
+            + record["verify_elapsed_seconds"],
+        }
+        fx.plan_document(self.tmp, name="a-a", **later)
+        with self.assertRaisesRegex(EngineAabbProtocolError, "frozen artifact"):
+            fx.plan_document(self.tmp, name="a-b", artifact_identity="b" * 64, **later)
 
 
 class RunTest(_Case):
@@ -381,10 +542,8 @@ class RunTest(_Case):
             name="e1",
             block="TEST-1",
             previous_blocks=records,
-            time_estimate=fx.time_estimate(
-                basis={"kind": "block", "plan_digests": [records[-1]["plan_digest"]]}
-            ),
-            collected_before_seconds=9000.0,
+            time_estimate=block_estimate_after(records),
+            collected_before_seconds=9900.0,
         )
         self.assertEqual(summary["decision"], plan_module.SOURCE_COMPLETE)
         self.assertEqual(summary["split"], "TEST")
@@ -419,7 +578,7 @@ class RunTest(_Case):
         self.assertEqual([row["seed"] for row in document["tasks"]], [556_000, 556_001])
 
     def test_estimate_from_the_previous_block(self) -> None:
-        path, plan, _ = self.run_block(name="t1")
+        path, plan, _ = self.completed(name="t1")
         estimate = source.estimate_from_block(path, output=self.tmp / "estimate.json")
         self.assertEqual(
             estimate["basis"], {"kind": "block", "plan_digests": [plan["plan_digest"]]}

@@ -8,8 +8,12 @@
 - summaryはΔの統計・分散・平均・分岐ごとのΔ・配分判定を出さない。判定はSOURCE-COMPLETE /
   STOP-INVALID（未完了はSTOP-INCOMPLETEのstop記録だけ）
 - 見積もりは、TRAIN-1はrehearsal、以後は直前ブロックの実測から作る
+- allocated blockのstrict verifyはplanのdiagnosticsへ開始記録を排他的に作ってから行い、成功記録
+  ``verify.json`` （または失敗記録）を残す。次のブロックのplanはこの成功記録を要求する
 """
 
+import datetime
+from collections.abc import Callable
 from pathlib import Path
 
 from lisjong_arena._artifact_io import (
@@ -22,7 +26,7 @@ from lisjong_arena.overall_champion_aabb.lock import document_identity
 
 from . import pon_first_pass as core
 from .kyoku_record import PROTOCOL_ID, RecordLayout
-from .paijia_tie_plan import ALLOCATED, memory_summary
+from .paijia_tie_plan import ALLOCATED, default_clocks, memory_summary
 from .pon_first_pass_source_plan import (
     ESTIMATE_SCHEMA,
     EVALUATION_KIND,
@@ -32,14 +36,20 @@ from .pon_first_pass_source_plan import (
     SCHEMAS,
     SOURCE_COMPLETE,
     STOP_INVALID,
+    VERIFY_FAILED_FILENAME,
+    VERIFY_FAILED_SCHEMA,
+    VERIFY_FILENAME,
+    VERIFY_START_FILENAME,
+    VERIFY_START_SCHEMA,
     PonFirstSourceError,
     completed_block,
     estimate_values,
     load_plan,
     parse_time_estimate,
     require_live_target,
+    run_elapsed_of,
 )
-from .pon_first_pass_worker import WRAPPER_VERSION
+from .pon_first_pass_worker import WRAPPER_VERSION, play_d_arm, play_r_observed
 from .riichi_dama_branch import (
     ARM_D,
     ARM_R,
@@ -155,8 +165,109 @@ SOURCE = core.ProtocolSpec(
 core.register_protocol(SOURCE)
 
 run_plan = core.run_plan
-verify_plan = core.verify_plan
 compare_rehearsals = core.compare_rehearsals
+
+
+def _utc_now() -> str:
+    return datetime.datetime.now(datetime.UTC).isoformat()
+
+
+def verify_plan(
+    plan_path,
+    *,
+    output=None,
+    environment=None,
+    play_r: Callable = play_r_observed,
+    play_d: Callable = play_d_arm,
+    clock: Callable[[], float] | None = None,
+    realtime: Callable[[], float] | None = None,
+) -> dict:
+    """strict verify。allocated blockは記録先をplanのdiagnosticsに固定し、1回だけ行う。
+
+    rehearsalはpilotと同じ（``output`` は任意）。allocated blockは開始記録
+    ``verify-started.json`` を排他的に作り（既存なら再実行しない）、成功なら ``verify.json`` 、
+    再実行の不一致・保存物の不整合・run + verifyの上限超過なら ``verify-failed.json`` を残して止まる。
+    """
+    plan = load_plan(plan_path)
+    if plan["run_kind"] != ALLOCATED:
+        return core.verify_plan(
+            plan_path,
+            output=output,
+            environment=environment,
+            play_r=play_r,
+            play_d=play_d,
+        )
+    if output is not None:
+        _fail("an allocated block writes its verify record to the plan diagnostics")
+    default_clock, default_realtime = default_clocks()
+    clock = clock or default_clock
+    realtime = realtime or default_realtime
+    diagnostics = Path(plan["artifact_destinations"]["diagnostics"])
+    diagnostics.mkdir(parents=True, exist_ok=True)
+    started_at = _utc_now()
+    try:
+        write_new_artifact_file(
+            diagnostics / VERIFY_START_FILENAME,
+            canonical_json_text(
+                {
+                    "plan_digest": plan["plan_digest"],
+                    "schema": VERIFY_START_SCHEMA,
+                    "started_at_utc": started_at,
+                }
+            ),
+        )
+    except (FileExistsError, ArtifactValidationError, OSError) as error:
+        raise PonFirstSourceError(
+            f"pon-first-pass-source-v1: the strict verify of block {plan['block']} "
+            f"has already been started; it is not re-run: {error}"
+        ) from error
+    started, started_real = clock(), realtime()
+
+    def elapsed() -> float:
+        return max(clock() - started, realtime() - started_real)
+
+    try:
+        document = core.verify_plan(
+            plan_path, environment=environment, play_r=play_r, play_d=play_d
+        )
+        timings = read_json_document(
+            Path(plan["artifact_destinations"]["output"]) / "timings.json"
+        )
+        run_elapsed = run_elapsed_of(timings)
+        verify_elapsed = float(elapsed())
+        wall = plan["resource_limits"]["wall_seconds"]
+        if run_elapsed + verify_elapsed > wall:
+            _fail(
+                f"run {run_elapsed:.0f} s + verify {verify_elapsed:.0f} s exceeded the "
+                f"plan limit of {wall:.0f} s"
+            )
+        payload = {
+            **document,
+            "run_elapsed_seconds": run_elapsed,
+            "verify_elapsed_seconds": verify_elapsed,
+            "wall_seconds": wall,
+        }
+        record = {**payload, "verify_digest": document_identity(payload)}
+        write_new_artifact_file(
+            diagnostics / VERIFY_FILENAME, canonical_json_text(record)
+        )
+    except BaseException as error:
+        write_new_artifact_file(
+            diagnostics / VERIFY_FAILED_FILENAME,
+            canonical_json_text(
+                {
+                    "elapsed_seconds": float(elapsed()),
+                    "error": f"{type(error).__name__}: {error}",
+                    "finished_at_utc": _utc_now(),
+                    "not_a_result": True,
+                    "plan_digest": plan["plan_digest"],
+                    "schema": VERIFY_FAILED_SCHEMA,
+                    "started_at_utc": started_at,
+                }
+            ),
+        )
+        raise
+    return record
 
 
 def _write_once(output: str | Path | None, document: dict) -> None:

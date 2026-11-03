@@ -36,9 +36,15 @@ protocolごとに切り替え（schema・plan・header・summary）、pilotの�
   protocol `pon-first-pass-source-v1`、population `heuristic-candidate-engine-aabb-pon-first-pass-source-v1`、split `TRAIN` / `TEST`。
   予約直前に全domainのallocationと照合し、重複があれば開始しない（別seedへ移さない）
 - **順序**: TRAIN-1 → TRAIN-2 → TRAIN-3 → （lisjong #366でfit・artifact凍結）→ TEST-1 → TEST-2 → TEST-3。各ブロックのplanは、
-  先行する全ブロックのplanを順に渡し、同じ環境・revisionでSOURCE-COMPLETE（SHA256SUMS一致）であることを要求する
+  先行する全ブロックのplanを順に渡し、同じ環境・revisionで次の両方を満たすことを要求する
+  1. runの出力がSOURCE-COMPLETE（SHA256SUMS一致）
+  2. そのplan・出力に対応する**strict verifyの成功記録**（planのdiagnosticsの`verify.json`）がある。記録の欠落、別planの記録、
+     出力file・summary・verify seed・実行上限との不一致、verifyの失敗記録（`verify-failed.json`）のいずれでも次のplanを作らない
+- allocated blockのverifyは1回だけ: 開始記録`verify-started.json`を排他的に作ってから行う。成功なら`verify.json`、最小・最大seedの
+  再実行の不一致・保存物の不整合・run + verifyの上限超過なら`verify-failed.json`を残して止まり、再実行しない（結果を見て救済しない）
 - TESTのplanは`--artifact-identity`（lisjong #366で凍結したartifactのidentity）を必須にし、headerへ束縛する。TRAINのplanは
-  artifactを持たない
+  artifactを持たない。**TEST-2・TEST-3はTEST-1と同じartifact**を要求する（先行ブロックの記録が引き継ぐidentityと照合し、
+  違えばplanを作らない）
 - rehearsalは472005 / 472006（registry外、動作確認だけ）
 
 ## 3. 時間・開始条件
@@ -49,8 +55,9 @@ protocolごとに切り替え（schema・plan・header・summary）、pilotの�
 | 率の下限 | 116/96はP1 pilot（#555）の成立率。rehearsal（2 seeds）の少ない分岐で時間を過小に見積もらないため |
 | 見積もり元 | TRAIN-1はrehearsal（`pon-first-source-estimate --observed --unobserved`）。以後は**直前ブロック**の実測（`--from-block`） |
 | ブロック・session | 見積もり ≤ min(3時間, 4時間 − そのsessionの経過)（#553の`block_start_condition`、`--session-elapsed-seconds`） |
-| 累積 | 先行ブロックの収集時間の合計（`--collected-seconds`、watchdog記録の和）＋ 見積もり ≤ **14時間**（50,400秒）。合計は先行ブロックのtimingsのrun経過の和以上でなければ拒否 |
-| 判定 | 満たさなければNOT-STARTED-BUDGETでplanを作らない。**seed数（40）を縮めない**。planの`resource_limits.wall_seconds`はブロック・sessionの上限 |
+| 累積 | 先行ブロックの収集時間の合計（`--collected-seconds`、watchdog記録の和）＋ 見積もり ≤ **14時間**（50,400秒）。合計は先行ブロックのrun経過＋verify経過（記録値）の和以上でなければ拒否 |
+| 判定 | 満たさなければNOT-STARTED-BUDGETでplanを作らない。**seed数（40）を縮めない** |
+| 実行上限 | 生成・verify・回収を合わせた上限 = **min(3時間, 4時間 − sessionの経過, 14時間 − 累積)**（planの`start_condition.limit_seconds`・`resource_limits.wall_seconds`）。例: 累積11時間45分なら、新しいsessionでも上限は2時間15分。runはこの上限で止まり、verifyはrun経過＋verify経過がこの上限を超えたら失敗記録を残す |
 | 費用の記録 | gate・rehearsalは準備費用として別に記録する。累積の記録はplanの`start_condition`（先行ブロックのplan digest・run経過・合計）にwrite-onceで残る |
 
 ## 4. 保存物（ブロックごと、write-once）
@@ -82,7 +89,7 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-plan \
   --limit-enforcement "<OS / process treeの強制方法>" --wheel W \
   --run-output <dir>/output --diagnostics <dir>/diagnostics --output <dir>/plan.json
 python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-run --plan P
-python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-verify --plan P --output V
+python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-verify --plan P   # allocatedはdiagnostics/verify.jsonへ。rehearsalは[--output V]
 python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-rehearsal-compare --observed P1 --unobserved P2 --output C
 python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-estimate \
   (--observed P1 --unobserved P2 | --from-block P) --output E
@@ -92,8 +99,10 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb pon-first-source-estimat
 
 [test_engine_aabb_pon_first_pass_source.py](../tests/test_engine_aabb_pon_first_pass_source.py)（実engineの対局は使わない。#553のfake play）:
 6ブロックの固定値（seed範囲・各40 seeds・verify seed）、splitのallocation、TEST planのartifact必須とTRAINでの拒否、drift、owner、
-率の下限と見積もりの再導出、3時間・session 4時間・累積14時間のそれぞれの境界とseed数を縮めないこと、見積もり元（rehearsal /
-直前ブロック）とブロック順、収集時間の下限、先行planとoutputの束縛、header・summaryの契約（Δの統計なし）とstrict verify、
+率の下限と見積もりの再導出、3時間・session 4時間・累積14時間のそれぞれの境界とseed数を縮めないこと、実行上限への累積残りの反映
+（累積11時間45分で2時間15分）、見積もり元（rehearsal / 直前ブロック）とブロック順、収集時間の下限（run＋verify）、先行planとoutputの束縛、
+先行ブロックのverify成功記録（欠落・別planの記録・再実行不一致・上限超過で拒否、verifyの再実行拒否）、TEST-2・TEST-3のartifact一致
+（A→A受理、A→B拒否）、header・summaryの契約（Δの統計なし）とstrict verify、
 TEST blockのartifact束縛、STOP-INVALID、未完了時のstop記録、直前ブロックからの見積もり、rehearsalの照合と見積もり（pilotの
 見積もりはsourceのplanを拒否）、**pinしたlisjong #366のreaderがblockを読めること**（schema・block・seedの定数の一致を含む）、CLI。
 

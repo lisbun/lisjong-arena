@@ -578,7 +578,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     pon_source_verify = sub.add_parser("pon-first-source-verify")
     pon_source_verify.add_argument("--plan", required=True)
-    pon_source_verify.add_argument("--output", help="write-once verify document")
+    pon_source_verify.add_argument(
+        "--output",
+        help="rehearsal only; an allocated block writes <diagnostics>/verify.json",
+    )
     pon_source_compare = sub.add_parser("pon-first-source-rehearsal-compare")
     pon_source_compare.add_argument("--observed", required=True)
     pon_source_compare.add_argument("--unobserved", required=True)
