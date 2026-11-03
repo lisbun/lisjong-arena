@@ -99,8 +99,8 @@ TEST blockのartifact束縛、STOP-INVALID、未完了時のstop記録、直前�
 
 ## 7. 実行Issueへの引継ぎ（未確定の実値）
 
-1. revision: 本Issueのmerge後Arena main full SHA、lisjong pin（#366のmerge、[現行の組み合わせ](lisjong-native-wheel-current.md)）、
-   同revisionのwheel。新pinのRust-only gateを取り直す（過去のPASSを流用しない）
+1. revision: 本Issueのmerge後Arena main full SHA、lisjong pin `a341257f199e284a3519e17b458e06ced9f04c67`（#366 / PR #367）、wheel: lisjong main CI run 41655510786の
+   `lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl`（SHA-256 `01d2476cf433f1a3be3d336679366364929d84299f439b19a83f07a087ebd1d5`、[現行の組み合わせ](lisjong-native-wheel-current.md)）。新pinのRust-only gateを取り直す（過去のPASSを流用しない）
 2. 環境: WSL2 Ubuntu-24.04の専用user scope（`MemoryMax=4G`・`MemorySwapMax=0`・`OOMPolicy=kill`・`RuntimeMaxSec`）と外側の
    watchdog。新規venvで同revisionのsource・wheel・install identityを確認する。クラウドの追加課金はなし
 3. 順序: 準備session（gate・rehearsal・見積もり）→ TRAIN allocationの照合・予約 → TRAIN-1 → TRAIN-2 → TRAIN-3 → lisjong #366で
