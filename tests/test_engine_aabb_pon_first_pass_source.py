@@ -232,25 +232,34 @@ class StartConditionTest(_Case):
         with self.assertRaisesRegex(EngineAabbProtocolError, "re-derive"):
             plan_module.parse_time_estimate(tampered)
 
-    def test_block_limit_of_three_hours(self) -> None:
-        # c = 210 + 29/6 x 2 > (10800 - 900) / 42 なので、session 0でも3時間を超える
-        estimate = fx.time_estimate(r_wall=230.0, d_wall=2.0)
-        self.assertGreater(
-            estimate["projected_block_seconds"], allocation_rules.BLOCK_LIMIT_SECONDS
+    def test_block_limit_of_four_hours(self) -> None:
+        # #558: sourceのブロック上限は4時間（pilotの3時間は変えない）
+        self.assertEqual(plan_module.BLOCK_LIMIT_SECONDS, 14_400)
+        self.assertEqual(allocation_rules.BLOCK_LIMIT_SECONDS, 10_800)
+        # c = 230 + 29/6 x 2: 3時間は超えるが4時間に収まるので、session 0なら作れる
+        within = fx.time_estimate(r_wall=230.0, d_wall=2.0)
+        self.assertGreater(within["projected_block_seconds"], 10_800)
+        self.assertLess(within["projected_block_seconds"], 14_400)
+        plan = fx.plan_document(
+            self.tmp, time_estimate=within, session_elapsed_seconds=0.0
         )
-        self.assertLess(
-            estimate["projected_block_seconds"],
-            allocation_rules.SESSION_LIMIT_SECONDS,
-        )
+        self.assertEqual(plan["resource_limits"]["wall_seconds"], 14_400.0)
+        self.assertEqual(plan["population"]["k"], 40)
+        # c = 320 + 29/6 x 2 > (14400 - 900) / 42 なので、session 0でも4時間を超える
+        over = fx.time_estimate(r_wall=320.0, d_wall=2.0)
+        self.assertGreater(over["projected_block_seconds"], 14_400)
         with self.assertRaisesRegex(EngineAabbProtocolError, "NOT-STARTED"):
             fx.plan_document(
-                self.tmp, time_estimate=estimate, session_elapsed_seconds=0.0
+                self.tmp,
+                name="over",
+                time_estimate=over,
+                session_elapsed_seconds=0.0,
             )
 
     def test_session_limit_of_four_hours(self) -> None:
         estimate = fx.time_estimate()
         projected = estimate["projected_block_seconds"]
-        self.assertLess(projected, allocation_rules.BLOCK_LIMIT_SECONDS)
+        self.assertLess(projected, plan_module.BLOCK_LIMIT_SECONDS)
         session = allocation_rules.SESSION_LIMIT_SECONDS - projected
         plan = fx.plan_document(self.tmp, session_elapsed_seconds=session - 1.0)
         self.assertAlmostEqual(plan["resource_limits"]["wall_seconds"], projected + 1.0)
@@ -260,15 +269,15 @@ class StartConditionTest(_Case):
                 self.tmp, name="late", session_elapsed_seconds=session + 1.0
             )
 
-    def test_cumulative_collection_of_fourteen_hours(self) -> None:
-        self.assertEqual(plan_module.COLLECTION_BUDGET_SECONDS, 50_400)
+    def test_cumulative_collection_of_twenty_two_hours(self) -> None:
+        self.assertEqual(plan_module.COLLECTION_BUDGET_SECONDS, 79_200)
         projected = fx.time_estimate()["projected_block_seconds"]
         collected = plan_module.COLLECTION_BUDGET_SECONDS - projected
         plan = fx.plan_document(
             self.tmp, name="edge", collected_before_seconds=collected - 1.0
         )
         self.assertEqual(plan["start_condition"]["verdict"], plan_module.WITHIN_BUDGET)
-        with self.assertRaisesRegex(EngineAabbProtocolError, "14 h collection"):
+        with self.assertRaisesRegex(EngineAabbProtocolError, "22 h collection"):
             fx.plan_document(
                 self.tmp, name="over", collected_before_seconds=collected + 1.0
             )
@@ -284,15 +293,15 @@ class StartConditionTest(_Case):
         self.assertEqual(condition["block_condition"]["block_seeds"], 40)
 
     def test_run_limit_includes_the_collection_remainder(self) -> None:
-        # 累積11時間45分の後: 残り2時間15分。新しいsession（経過0）でも上限は3時間ではない
-        collected = 11 * 3600 + 45 * 60.0
+        # 累積19時間45分の後: 残り2時間15分。新しいsession（経過0）でも上限は4時間ではない
+        collected = 19 * 3600 + 45 * 60.0
         projected = fx.time_estimate()["projected_block_seconds"]
         self.assertLess(projected, 2 * 3600 + 15 * 60)
         plan = fx.plan_document(
             self.tmp, session_elapsed_seconds=0.0, collected_before_seconds=collected
         )
         condition = plan["start_condition"]
-        self.assertEqual(condition["block_condition"]["limit_seconds"], 10_800.0)
+        self.assertEqual(condition["block_condition"]["limit_seconds"], 14_400.0)
         self.assertEqual(condition["collection_remaining_seconds"], 8_100.0)
         self.assertEqual(condition["limit_seconds"], 8_100.0)
         self.assertEqual(plan["resource_limits"]["wall_seconds"], 8_100.0)
@@ -306,7 +315,7 @@ class StartConditionTest(_Case):
         self.assertEqual(late["resource_limits"]["wall_seconds"], 7_900.0)
         drifted = {
             **plan,
-            "resource_limits": {**plan["resource_limits"], "wall_seconds": 10_800.0},
+            "resource_limits": {**plan["resource_limits"], "wall_seconds": 14_400.0},
         }
         with self.assertRaises(EngineAabbProtocolError):
             plan_module.parse_plan(drifted)

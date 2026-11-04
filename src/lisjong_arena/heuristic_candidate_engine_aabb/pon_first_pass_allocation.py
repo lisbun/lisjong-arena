@@ -172,11 +172,13 @@ def block_start_condition(
     d_mean: float,
     rate: Fraction,
     session_elapsed_seconds: float,
+    block_limit_seconds: int = BLOCK_LIMIT_SECONDS,
 ) -> dict:
     """本学習の1ブロックの開始条件（seed数は配分で固定したまま、最新の見積もりで再確認する）。
 
-    見積もり = n·c + 2c + 900 ≤ min(3時間, 4時間 − そのsessionの経過)。満たさなければ
-    BLOCK-NOT-STARTED（開始せず停止する。seed数を縮めて開始しない）。
+    見積もり = n·c + 2c + 900 ≤ min(ブロック上限（既定3時間）, 4時間 − そのsessionの経過)。
+    満たさなければBLOCK-NOT-STARTED（開始せず停止する。seed数を縮めて開始しない）。
+    ``block_limit_seconds`` はprotocolごとの固定値（#558でsourceだけ4時間）。
     """
     if type(block_seeds) is not int or block_seeds < MINIMUM_BLOCK_SEEDS:
         raise ValueError("block_seeds must be an int of at least 2")
@@ -191,7 +193,7 @@ def block_start_condition(
     cost = seed_cost(r_mean, d_mean, rate)
     projected = (block_seeds + VERIFY_SEEDS_PER_BLOCK) * cost + RECOVERY_SECONDS
     limit = min(
-        float(BLOCK_LIMIT_SECONDS), SESSION_LIMIT_SECONDS - session_elapsed_seconds
+        float(block_limit_seconds), SESSION_LIMIT_SECONDS - session_elapsed_seconds
     )
     return {
         "block_seeds": block_seeds,
