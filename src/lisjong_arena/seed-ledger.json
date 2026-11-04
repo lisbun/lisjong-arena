@@ -331,6 +331,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "978c1e41372c1e30818514936832c62da824fc9b5b7a96650776f87a7e98fe8c",
+      "allocation_timestamp": "2026-11-04T15:07:58.996492Z",
+      "arena_revision": "51b1378489477087e7b7b544eeb97fbc8b9e3707",
+      "owner_issue": "lisbun/lisjong-arena#558",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-pon-first-pass-source-v1",
+      "protocol": "pon-first-pass-source-v1",
+      "protocol_revision": "pon-first-pass-source-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/558#issuecomment-6616893485",
+      "purpose": "lisjong #365/#366 P1 value learning source pon-first-pass-source-v1 (TRAIN, 3 blocks x 40 seeds): Champion x4 seats, D arm = Pass on the first closed-hand Pon; DEVELOPMENT source for one fit / one TEST evaluation (E2), not a strength result",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 556000,
+        "kind": "range",
+        "last": 556119
+      },
+      "seed_membership_identity": "7639a0b228b36c3a59c3841735dae4a2f0f7ea3e18bd937a863cb2fea60ca93a",
+      "split": "TRAIN",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
