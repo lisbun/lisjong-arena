@@ -1016,11 +1016,11 @@ def _pon_first_source(args) -> int:
             args.observed, args.unobserved, output=args.output
         )
     print(json.dumps(estimate, sort_keys=True, indent=2))
-    # 開始条件（3時間・session 4時間・累積14時間）はallocated planで判定する。
-    # ここでは見積もりだけで3時間を超える場合に非0で終える
+    # 開始条件（ブロック4時間・session 4時間・累積22時間、#558）はallocated planで判定する。
+    # ここでは見積もりだけでブロック上限を超える場合に非0で終える
     within = (
         estimate["projected_block_seconds"]
-        <= pon_first_pass_source_plan.allocation_rules.BLOCK_LIMIT_SECONDS
+        <= pon_first_pass_source_plan.BLOCK_LIMIT_SECONDS
     )
     return 0 if within else 3
 

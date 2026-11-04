@@ -13,9 +13,10 @@ block        TRAIN-1 556000..556039 → TRAIN-2 556040..556079 → TRAIN-3 55608
 TEST         lisjong #366で凍結したartifactのidentityを束縛しないとplanを作れない
 開始条件     seed数40のまま、最新の見積もりで次の両方を満たすときだけ作れる（満たさなければ
              NOT-STARTED-BUDGET。seed数を縮めない）
-             1. (40 + 2)c + 900 ≤ min(3時間, 4時間 − sessionの経過)（#553のblock_start_condition）
-             2. 累積の収集時間 + 1の見積もり ≤ 14時間
-             実行上限（生成・verify・回収の合計）= min(3時間, session残り, 累積14時間の残り)
+             1. (40 + 2)c + 900 ≤ min(4時間, 4時間 − sessionの経過)（#553のblock_start_condition。
+                ブロック上限は#558で3時間から4時間へ変更）
+             2. 累積の収集時間 + 1の見積もり ≤ 22時間（#558で14時間から変更）
+             実行上限（生成・verify・回収の合計）= min(4時間, session残り, 累積22時間の残り)
 先行ブロック 各ブロックのplanは、先行する全ブロックのrun出力（SOURCE-COMPLETE・SHA256SUMS一致）と
              そのplan・出力に対応するstrict verifyの成功記録（diagnosticsの``verify.json``）を要求する。
              TEST-2・TEST-3はTEST-1と同じ凍結artifactに束縛する
@@ -135,8 +136,12 @@ PURPOSE = (
 TIMEOUT_SECONDS = 600
 RSS_LIMIT_BYTES = 4 * 1024**3
 REHEARSAL_WALL_SECONDS = 3600
-COLLECTION_BUDGET_SECONDS = 14 * 3600
-"""収集・verify・回収の累積上限（#365の決定、worker 1換算14時間）。gate・rehearsalは別枠の準備費用。"""
+BLOCK_LIMIT_SECONDS = 4 * 3600
+"""1ブロック（生成・verify・回収）の上限。#558のrehearsal（c ≈ 300秒/seed、ブロック13,490秒）を受け、
+全体を24時間以内に終える条件でユーザーが3時間から変更した（sessionの4時間は変えない）。"""
+COLLECTION_BUDGET_SECONDS = 22 * 3600
+"""収集・verify・回収の累積上限。#365の14時間を、#558で全体24時間以内（準備・fit・評価の余裕を残す）の
+条件でユーザーが22時間へ変更した。gate・rehearsalは別枠の準備費用。"""
 MINIMUM_BRANCH_RATE = Fraction(116, 96)
 """見積もりの分岐率（seat-hanchanあたり）の下限: P1 pilot（#555）の成立116 / 96 seat-hanchans。
 
@@ -177,12 +182,12 @@ CRITERIA = {
         "cancelled by another player's ron are counted and are not branches"
     ),
     "start": (
-        "with the block size fixed at 40 seeds: (40 + 2) c + 900 <= min(3 h, 4 h - "
-        "session elapsed) and collected + projected <= 14 h, c = mean R wall + r mean "
+        "with the block size fixed at 40 seeds: (40 + 2) c + 900 <= min(4 h, 4 h - "
+        "session elapsed) and collected + projected <= 22 h, c = mean R wall + r mean "
         "D wall, r = 4 max(branches / seat-hanchans, 116/96); the estimate comes from "
         "the rehearsal for TRAIN-1 and from the immediately previous block after; "
         "otherwise NOT-STARTED-BUDGET and the block is not shrunk; the run + verify + "
-        "recovery limit is min(3 h, 4 h - session elapsed, 14 h - collected)"
+        "recovery limit is min(4 h, 4 h - session elapsed, 22 h - collected)"
     ),
     "previous_blocks": (
         "every earlier block in order with its SOURCE-COMPLETE output (SHA256SUMS) and "
@@ -421,7 +426,7 @@ def _per_seed(rate: Fraction) -> Fraction:
 
 
 def _block_condition(estimate: dict, session_elapsed_seconds: float) -> dict:
-    """#553の ``block_start_condition``（(n + 2)c + 900 ≤ min(3時間, 4時間 − 経過)）。"""
+    """#553の ``block_start_condition``（(n + 2)c + 900 ≤ min(4時間, 4時間 − 経過)、#558）。"""
     try:
         return allocation_rules.block_start_condition(
             block_seeds=BLOCK_SEEDS,
@@ -429,6 +434,7 @@ def _block_condition(estimate: dict, session_elapsed_seconds: float) -> dict:
             d_mean=estimate["d_mean_wall_seconds"],
             rate=_parse_ratio(estimate["branches_per_seed"], "branches_per_seed"),
             session_elapsed_seconds=session_elapsed_seconds,
+            block_limit_seconds=BLOCK_LIMIT_SECONDS,
         )
     except ValueError as error:
         raise PonFirstSourceError(f"pon-first-pass-source-v1: {error}") from error
@@ -715,8 +721,8 @@ def _require_start(plan_like: dict, value: object) -> dict:
         block = expected["block_condition"]
         _fail(
             f"{NOT_STARTED_BUDGET}: the projected block of "
-            f"{expected['projected_block_seconds']:.0f} s does not fit min(3 h, 4 h - "
-            f"{block['session_elapsed_seconds']:.0f} s) or the 14 h collection with "
+            f"{expected['projected_block_seconds']:.0f} s does not fit min(4 h, 4 h - "
+            f"{block['session_elapsed_seconds']:.0f} s) or the 22 h collection with "
             f"{expected['collected_before_seconds']:.0f} s already collected; do not "
             "start and do not shrink the block"
         )
@@ -1167,6 +1173,7 @@ def require_live_target(
 __all__ = [
     "ALLOCATION_PROTOCOL",
     "BLOCKS",
+    "BLOCK_LIMIT_SECONDS",
     "BLOCK_ORDER",
     "BLOCK_SEEDS",
     "COLLECTION_BUDGET_SECONDS",

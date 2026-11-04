@@ -55,10 +55,11 @@ protocolごとに切り替え（schema・plan・header・summary）、pilotの�
 | 見積もり | c = R̄ + r̂·D̄、r̂ = 4 × max(見積もり元の成立分岐 / seat-hanchan, 116/96)。ブロック = (40 + 2)c + 900秒（本実行40 seeds＋verify 2 seeds＋回収） |
 | 率の下限 | 116/96はP1 pilot（#555）の成立率。rehearsal（2 seeds）の少ない分岐で時間を過小に見積もらないため |
 | 見積もり元 | TRAIN-1はrehearsal（`pon-first-source-estimate --observed --unobserved`）。以後は**直前ブロック**の実測（`--from-block`） |
-| ブロック・session | 見積もり ≤ min(3時間, 4時間 − そのsessionの経過)（#553の`block_start_condition`、`--session-elapsed-seconds`） |
-| 累積 | 先行ブロックの収集時間の合計（`--collected-seconds`、watchdog記録の和）＋ 見積もり ≤ **14時間**（50,400秒）。合計は先行ブロックのrun経過＋verify経過（記録値）の和以上でなければ拒否 |
+| ブロック・session | 見積もり ≤ min(**4時間**, 4時間 − そのsessionの経過)（#553の`block_start_condition`、`--session-elapsed-seconds`）。ブロック上限は#558で3時間から変更（下記） |
+| 累積 | 先行ブロックの収集時間の合計（`--collected-seconds`、watchdog記録の和）＋ 見積もり ≤ **22時間**（79,200秒、#558で14時間から変更）。合計は先行ブロックのrun経過＋verify経過（記録値）の和以上でなければ拒否 |
 | 判定 | 満たさなければNOT-STARTED-BUDGETでplanを作らない。**seed数（40）を縮めない** |
-| 実行上限 | 生成・verify・回収を合わせた上限 = **min(3時間, 4時間 − sessionの経過, 14時間 − 累積)**（planの`start_condition.limit_seconds`・`resource_limits.wall_seconds`）。例: 累積11時間45分なら、新しいsessionでも上限は2時間15分。runはこの上限で止まり、verifyはrun経過＋verify経過がこの上限を超えたら失敗記録を残す |
+| 変更（#558） | 実行Issue #558のrehearsal（c ≈ 300秒/seed、ブロック13,490秒）で3時間・累積14時間に収まらず停止したため、ユーザーが「全体24時間以内に完了する見込みなら継続」と判断し、sourceのブロック上限を4時間・累積を22時間へ変更した（session 4時間・率の下限・seed数・ブロック構成・判定は変えない。pilot `pon-first-pass-branch-v1`の3時間も変えない） |
+| 実行上限 | 生成・verify・回収を合わせた上限 = **min(4時間, 4時間 − sessionの経過, 22時間 − 累積)**（planの`start_condition.limit_seconds`・`resource_limits.wall_seconds`）。例: 累積19時間45分なら、新しいsessionでも上限は2時間15分。runはこの上限で止まり、verifyはrun経過＋verify経過がこの上限を超えたら失敗記録を残す |
 | 費用の記録 | gate・rehearsalは準備費用として別に記録する。累積の記録はplanの`start_condition`（先行ブロックのplan digest・run経過・合計）にwrite-onceで残る |
 
 ## 4. 保存物（ブロックごと、write-once）
