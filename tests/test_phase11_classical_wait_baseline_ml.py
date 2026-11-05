@@ -56,10 +56,17 @@ def _train_record(seed: int, candidate_unseen: int, positive_tile: int):
 @unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")
 class RuntimeContractTest(unittest.TestCase):
     def test_runtime_normalizes_torch_version_to_plain_string(self):
-        runtime = _runtime()
+        # #560 moved the project pin to 0.4.11; the #222 lock stays on 0.4.10,
+        # so only the RiichiEnv value is replaced by the locked one here.
+        runtime = {**_runtime(), "riichienv": "0.4.10"}
         self.assertIs(type(runtime["torch"]), str)
         self.assertTrue(runtime["torch"].startswith("2.13.0"))
         self.assertIs(validate_runtime(runtime), runtime)
+
+    def test_current_riichienv_pin_is_rejected_by_the_lock(self):
+        runtime = {**_runtime(), "riichienv": "0.4.11"}
+        with self.assertRaisesRegex(ClassicalWaitError, "RiichiEnv version"):
+            validate_runtime(runtime)
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "requires the ml extra")
