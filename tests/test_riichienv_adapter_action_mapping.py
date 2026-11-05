@@ -304,7 +304,7 @@ class RiichiConversionTest(unittest.TestCase):
 
 
 class CallTargetVersionCompatibilityTest(unittest.TestCase):
-    """RiichiEnv 0.4.8 / 0.4.10 の last_discard semantic drift を固定する。"""
+    """RiichiEnv 0.4.8 / 0.4.10 / 0.4.11 の last_discard semantic drift を固定する。"""
 
     def test_0_4_8_treats_last_discard_as_player_index(self) -> None:
         action = make_action(
@@ -322,7 +322,7 @@ class CallTargetVersionCompatibilityTest(unittest.TestCase):
 
         self.assertEqual(mapping.candidates[0].target, Seat.SEAT_3)
 
-    def test_0_4_10_treats_last_discard_as_physical_tile_id(self) -> None:
+    def test_0_4_10_and_0_4_11_treat_last_discard_as_physical_tile_id(self) -> None:
         action = make_action(
             ActionType.PON, tile=119, consume_tiles=[116, 117], actor=2
         )
@@ -333,10 +333,12 @@ class CallTargetVersionCompatibilityTest(unittest.TestCase):
             last_discard=119,
         )
 
-        with mock.patch.object(action_mapping, "_RIICHIENV_VERSION", "0.4.10"):
-            mapping = _build_mapping(obs)
+        for version in ("0.4.10", "0.4.11"):
+            with self.subTest(version=version):
+                with mock.patch.object(action_mapping, "_RIICHIENV_VERSION", version):
+                    mapping = _build_mapping(obs)
 
-        self.assertEqual(mapping.candidates[0].target, Seat.SEAT_3)
+                self.assertEqual(mapping.candidates[0].target, Seat.SEAT_3)
 
     def test_0_4_8_rejects_physical_tile_shaped_last_discard(self) -> None:
         obs = make_observation(
