@@ -79,7 +79,9 @@ game mode、`max_steps`、seat 0..3のPolicy identity、最終点・順位、局
 照合の不一致で許容するのは、[#364](https://github.com/lisbun/lisjong-arena/issues/364)
 （upstream smly/RiichiEnv#247）の既知署名だけである。RiichiEnv 0.4.10は全員聴牌の通常荒牌流局で、
 `reach_accepted`で既に記録した供託を`ryukyoku.deltas`にも重複して含む。実際の点数と供託の推移は
-正しいため、主評価の最終点には影響しない。
+正しいため、主評価の最終点には影響しない。RiichiEnv 0.4.11（upstream smly/RiichiEnv#249、
+Arena #560）ではこの`deltas`が`[0, 0, 0, 0]`になり、署名は出現しない。0.4.10の記録を読むために
+署名の許容は残す。
 
 - 署名：`reason == "exhaustive_draw"`、その局で`reach_accepted`があり、`deltas`が「その局で
   `reach_accepted`した各seatにちょうど−1000、それ以外0」であること。

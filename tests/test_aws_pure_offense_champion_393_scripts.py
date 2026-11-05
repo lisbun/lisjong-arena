@@ -35,12 +35,11 @@ class BootstrapTest(unittest.TestCase):
         # pyproject does not pin this revision, so it keeps running from its own merged
         # revision. #400 moved the current pin to lisjong 2553c1b; this test checks the
         # locked value instead of following the current pin.
-        project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
         revision = _shell_value(self.text, "FROZEN_LISJONG_REVISION")
         self.assertEqual(revision, "2a9debebdbbe4d10841fa4371a6cf6bf19ce9de1")
         self.assertIn('grep -q "lisjong.git@$FROZEN_LISJONG_REVISION"', self.text)
-        riichienv = _shell_value(self.text, "FROZEN_RIICHIENV_VERSION")
-        self.assertIn(f'"riichienv=={riichienv}"', project)
+        # #560 moved the project pin to 0.4.11; this locked run stays on 0.4.10.
+        self.assertEqual(_shell_value(self.text, "FROZEN_RIICHIENV_VERSION"), "0.4.10")
 
     def test_focal_is_the_curated_champion_binding(self) -> None:
         focal = _shell_value(self.text, "FOCAL")

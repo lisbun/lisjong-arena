@@ -1,7 +1,8 @@
-"""Small real-backend characterization for the current RiichiEnv pin (#228).
+"""Small real-backend characterization for the current RiichiEnv pin.
 
-These tests inspect upstream decisions without passing call candidates through
-Arena's #227 target resolver. That separate bug remains an explicit blocker.
+The call / kan / ron and seed checks were introduced for 0.4.10 (#228) and
+re-run unchanged on 0.4.11 (#560). They inspect upstream decisions without
+passing call candidates through Arena's target resolver.
 """
 
 import importlib.metadata
@@ -15,6 +16,7 @@ from riichienv import (
     MeldType,
     Observation,
     RiichiEnv,
+    calculate_shanten,
 )
 
 _CALL_PRIORITY = (
@@ -54,9 +56,9 @@ def _seek_legal_action(seed: int, target: ActionType):
     raise AssertionError(f"{target} was not found in seed {seed}")
 
 
-class RiichiEnv0410CompatibilityTest(unittest.TestCase):
+class RiichiEnvCompatibilityTest(unittest.TestCase):
     def test_runtime_identity_and_observation_serialization(self) -> None:
-        self.assertEqual(importlib.metadata.version("riichienv"), "0.4.10")
+        self.assertEqual(importlib.metadata.version("riichienv"), "0.4.11")
         env = RiichiEnv(seed=7, game_mode="4p-red-single")
         observation = env.reset()[0]
         self.assertIsInstance(observation, Observation)
@@ -174,3 +176,82 @@ class RiichiEnv0410CompatibilityTest(unittest.TestCase):
             )
         else:
             self.fail("seed 10 did not expose a Ron response")
+
+
+def _tenpai_seeking_choice(observation, rng):
+    """Never win or call; always riichi; otherwise discard to the lowest shanten."""
+    legal = observation.legal_actions()
+    for action in legal:
+        if action.action_type == ActionType.RIICHI:
+            return action
+    discards = [a for a in legal if a.action_type == ActionType.DISCARD]
+    if discards:
+        hand = list(observation.hand)
+
+        def shanten_after(action):
+            rest = list(hand)
+            rest.remove(action.tile)
+            return calculate_shanten(rest)
+
+        scored = [(shanten_after(a), rng.random(), a) for a in discards]
+        return min(scored, key=lambda item: item[:2])[2]
+    for action in legal:
+        if action.action_type == ActionType.PASS:
+            return action
+    return legal[0]
+
+
+class ExhaustiveDrawDeltasTest(unittest.TestCase):
+    """#560: 0.4.11 (upstream smly/RiichiEnv#249) no longer repeats accepted
+    riichi deposits in ``ryukyoku.deltas`` on an all-four-tenpai exhaustive draw
+    (the #364 / smly/RiichiEnv#247 pattern on 0.4.10).
+
+    Seed 3 with this tenpai-seeking play reaches that pattern at E4 honba 3
+    (riichi by seats 0, 3 and 2). The seed is diagnostic only.
+    """
+
+    def test_every_draw_conserves_points_with_accepted_riichi(self) -> None:
+        env = RiichiEnv(seed=3, game_mode="4p-red-half")
+        observations = env.reset()
+        rng = random.Random(3)
+        while not env.done():
+            observations = env.step(
+                {
+                    player_id: _tenpai_seeking_choice(observation, rng)
+                    for player_id, observation in sorted(observations.items())
+                }
+            )
+
+        checked = 0
+        all_tenpai_with_riichi = 0
+        start = None
+        reachers: list[int] = []
+        draw = None
+        for event in env.mjai_log:
+            kind = event["type"]
+            if kind == "start_kyoku":
+                if draw is not None:
+                    expected = [
+                        score - (1000 if seat in reachers else 0) + delta
+                        for seat, (score, delta) in enumerate(
+                            zip(start["scores"], draw["deltas"])
+                        )
+                    ]
+                    self.assertEqual(event["scores"], expected)
+                    checked += 1
+                    if (
+                        draw["reason"] == "exhaustive_draw"
+                        and len(reachers) == 3
+                        and draw["deltas"] == [0, 0, 0, 0]
+                    ):
+                        all_tenpai_with_riichi += 1
+                start, reachers, draw = event, [], None
+            elif kind == "reach_accepted":
+                reachers.append(event["actor"])
+            elif kind == "ryukyoku":
+                draw = event
+            elif kind == "hora":
+                draw = None
+
+        self.assertGreater(checked, 0)
+        self.assertGreaterEqual(all_tenpai_with_riichi, 1)

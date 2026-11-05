@@ -594,16 +594,30 @@ class LockedRuntimeTests(unittest.TestCase):
         ):
             self._run()
 
-    def test_locked_runtime_is_accepted(self):
-        with (
+    def _locked_runtime(self, riichienv_version):
+        return (
             mock.patch.object(
                 analysis_module,
                 "_runtime_lisjong_revision",
                 return_value=analysis_module.LISJONG_REVISION,
             ),
             mock.patch.dict(os.environ, {"LISJONG_SHANTEN_BACKEND": "rust"}),
-        ):
+            mock.patch.object(
+                analysis_module, "version", return_value=riichienv_version
+            ),
+        )
+
+    def test_locked_runtime_is_accepted(self):
+        lisjong, backend, riichienv = self._locked_runtime("0.4.10")
+        with lisjong, backend, riichienv:
             self.assertEqual(analysis_module._require_locked_runtime(), "0.4.10")
+
+    def test_newer_riichienv_runtime_fails_closed(self):
+        # #560: the Arena pin moved to 0.4.11; this locked diagnostic stays 0.4.10.
+        lisjong, backend, riichienv = self._locked_runtime("0.4.11")
+        with lisjong, backend, riichienv:
+            with self.assertRaises(DiagnosticInvalidError):
+                analysis_module._require_locked_runtime()
 
 
 if __name__ == "__main__":

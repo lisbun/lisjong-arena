@@ -181,7 +181,7 @@ The next table is exhaustive for `test*.py` at the audited revision. Representat
 | `test_policy_performance_profile_cli.py` | U | model, policy_catalog + related contracts | candidate and baseline choices are first party only; report shows all rows when top n covers every stat | KEEP |
 | `test_policy_reference.py` | U | policy_catalog, policy_reference + related contracts | existing catalog alias resolves to existing spec; explicit reference cannot reuse mechanism identity on either side | KEEP |
 | `test_progress_reporting.py` | U | _parallel_execution, model + related contracts | formats completed elapsed and eta on one rewritten line; failure with progress does not print partial success summary | KEEP |
-| `test_riichienv_0410_compatibility.py` | I | RiichiEnv 0.4.10 runtime | runtime identity and observation serialization; call kan and ron candidates use physical tiles | KEEP |
+| `test_riichienv_0411_compatibility.py` | I | RiichiEnv 0.4.11 runtime | runtime identity and observation serialization; call kan and ron candidates use physical tiles; every draw conserves points with accepted riichi | KEEP |
 | `test_riichienv_adapter_action_mapping.py` | U | riichienv | matches riichienv 0 4 8 full scan; many real decisions never raise adapter error | KEEP |
 | `test_riichienv_adapter_integration.py` | I | riichienv | builds policy input across multiple kyoku without failure; mapping rejects cross seat and unmapped policy results | KEEP |
 | `test_riichienv_adapter_materialized_state.py` | U | riichienv | rejects non seat; trackers for different seats do not share mutable state | KEEP |

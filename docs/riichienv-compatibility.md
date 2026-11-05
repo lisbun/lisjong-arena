@@ -9,7 +9,7 @@
 Current Arena dependency:
 
 ```text
-riichienv == 0.4.10
+riichienv == 0.4.11
 ```
 
 このversion identityはevaluation / training artifactのprovenanceと合わせて扱う。RiichiEnvをupgradeした場合、本書に記録したobserved behaviorを新versionへ機械的に持ち越さない。
@@ -131,6 +131,29 @@ PR #225（Issue #211）は本preflight時点ではopenであり、その未マ�
 上記は#228単独preflight時点の記録である。その後、#227を独立PR #230として実装・レビューし、`issue-228-riichienv-0410` branchへsquash mergeした。current branchではcall-target resolverが0.4.10のphysical tile `last_discard` contractへ適合し、通常discardは相手の最新捨て牌、chankan Ronはactive Kakan meldからtargetをexactly one opponentとして解決する。physical tile id `119`と`0..3`の回帰、Chi / Pon / Daiminkan / Ron、kakan/chankan、ambiguity fail-closedを固定している。
 
 PR #230 headではLinux CIの`quality` / `phase6-ml`がともに成功した。#230をstackへ取り込んだ後の#229 headでも同じcanonical CI gateを再実行し、greenをmerge条件とする。preflightで記録したWindows `/tmp` 9 errorsとsame-process PyTorch 2 failuresは#227 / #228と無関係であり、このupgradeのlanding blockerとはしない。live RiichiLab rankedはまだ再実行していない。
+
+## 0.4.11 preflight (#560, 2026-11-05)
+
+RiichiLabの2026-10-28更新（[smly/RiichiEnv Discussion #252](https://github.com/smly/RiichiEnv/discussions/252)）の前日、2026-10-27に0.4.11が公開された。[v0.4.10...v0.4.11](https://github.com/smly/RiichiEnv/compare/v0.4.10...v0.4.11)のgame engine変更はsmly/RiichiEnv#249（`fix(core): exclude riichi deposits from exhaustive draw deltas`）だけである。これは#364で特定したupstream smly/RiichiEnv#247の修正にあたる。残りの変更はreplay viewer（#243 / #248）とlicense表記で、Arenaは使用しない。
+
+Linux CPython 3.14.6で、0.4.10と0.4.11を別venvに導入し、同じ入力で比較した（diagnostic only、評価seedは不使用）。
+
+- random legal-action play: `4p-red-single` / `4p-red-east` / `4p-red-half`、seed 0..39の計120対局。初期base64 Observation、全step、mjai event列、各decisionのlegal actions、`last_discard`、最終scores / ranksが完全に一致した。`Observation` / `Action` / `RiichiEnv`のpublic属性集合も一致した。
+- 和了しない聴牌志向の打ち方（必ず立直、向聴数最小の打牌、和了・鳴きはPass）: `4p-red-half`、seed 0..299の計300半荘、流局6,722件。2つのversionで`ryukyoku`が異なったのは78件で、すべてが#364の既知署名（`exhaustive_draw`、立直したseatに−1000、他は0）だった。0.4.11ではいずれも`[0, 0, 0, 0]`になり、0.4.11での#364署名は0件。その他のevent列と最終scoresは一致した。
+
+Upgrade gateの各項目の結果は次のとおり。
+
+| 項目 | 結果 |
+| --- | --- |
+| constructor seed determinism / reset semantics | fresh instanceの同一seed一致と、同一instanceの`reset(seed=...)`不一致はいずれも0.4.10と同じ（`tests/test_riichienv_0411_compatibility.py`） |
+| single-round / hanchan progression | 上記の比較で、#249の`deltas`以外は全event列が一致 |
+| mode / rule identity | mode presetとdefault ruleの変更なし。実際の点数・供託の推移は変わらない |
+| adapter-sensitive behavior | `last_discard`はphysical tile idのままで、Chi / Pon / Daiminkan / Kakan / Ron candidateの形も同じ。Adapterの`_resolve_call_target()`は0.4.11を0.4.10と同じcontractとして受け入れ、未知versionは引き続きfail closedする |
+| provenance | 新しいrunは`importlib.metadata.version("riichienv") == "0.4.11"`を記録する。0.4.10をexact値として固定した過去のlock / protocolは書き換えず、0.4.11環境では従来どおりfail closedする |
+
+`ryukyoku.deltas`の意味の変化: 0.4.11では、全員聴牌の荒牌流局でも`deltas`が`reach_accepted`済みの供託を含まず、局ごとの保存則がそのまま成り立つ。`focal_outcome_source`はこの局を保存則違反としてrejectしなくなる。`aabb_kyoku_diagnostic`は#364既知署名を許容せず、通常経路で処理する。どちらも0.4.10で生成した過去記録の読み込みのため、既存の扱いを残す。`durable_local_game_record`は`deltas`をそのまま保存するので、0.4.11以降の記録では値が正しくなる。
+
+RiichiLab serverが0.4.11で稼働しているかは、#560の時点ではriichi.devへ接続できず確認していない。live RiichiLab rankedは再実行していない。
 
 ## Relationship to other work
 

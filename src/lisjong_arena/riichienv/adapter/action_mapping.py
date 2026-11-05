@@ -224,9 +224,10 @@ def _resolve_call_target(
     """Chi/Pon/Daiminkan/Ronのtargetをinstalled RiichiEnv contractで解決する。
 
     Published RiichiEnv 0.4.8は`Observation.last_discard`をdiscarding player
-    indexとして公開し、0.4.10はphysical tile idとして公開する。値域から推測
-    せず、installed distribution versionで既知contractを選ぶ。未知versionは
-    fail closedする。
+    indexとして公開し、0.4.10 / 0.4.11はphysical tile idとして公開する
+    （0.4.11は#560のpreflightで0.4.10と同じcontractを確認した）。値域から
+    推測せず、installed distribution versionで既知contractを選ぶ。未知version
+    はfail closedする。
     """
     if type(physical_tile_id) is not int or not 0 <= physical_tile_id <= 135:
         raise ContextResolutionError("called/winning tile must be a physical tile id")
@@ -238,7 +239,7 @@ def _resolve_call_target(
             physical_tile_id,
             allow_kakan=allow_kakan,
         )
-    if _RIICHIENV_VERSION == "0.4.10":
+    if _RIICHIENV_VERSION in ("0.4.10", "0.4.11"):
         return _resolve_call_target_0_4_10(
             observation,
             actor,
