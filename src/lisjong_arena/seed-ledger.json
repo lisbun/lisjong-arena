@@ -350,7 +350,7 @@
       },
       "seed_membership_identity": "7639a0b228b36c3a59c3841735dae4a2f0f7ea3e18bd937a863cb2fea60ca93a",
       "split": "TRAIN",
-      "state": "RESERVED"
+      "state": "COMMITTED"
     },
     {
       "allocation_identity": "74b028d99464126731571345d3c0f26127f9a7116a55cef4f7ba9f4be8edf26b",
