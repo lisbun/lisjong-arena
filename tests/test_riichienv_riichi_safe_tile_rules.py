@@ -149,7 +149,7 @@ class RiichiMissedWinFuritenTest(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        self.assertEqual(version("riichienv"), "0.4.10")
+        self.assertEqual(version("riichienv"), "0.4.11")
 
     def _log(self, *discards):
         events = []
@@ -220,7 +220,7 @@ class RiichiMissedWinFuritenTest(unittest.TestCase):
 
 class RiichiAnkanWaitInvarianceTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.assertEqual(version("riichienv"), "0.4.10")
+        self.assertEqual(version("riichienv"), "0.4.11")
 
     def _decision_after_drawing(self, hand, drawn):
         log = _riichi_log(
