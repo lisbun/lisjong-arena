@@ -43,8 +43,8 @@ class BootstrapTest(unittest.TestCase):
         self.assertNotEqual(revision, backend.EXPECTED_LISJONG_REVISION)
         self.assertNotIn(f"lisjong.git@{revision}", project)
         self.assertIn('grep -q "lisjong.git@$FROZEN_LISJONG_REVISION"', self.text)
-        riichienv = _shell_value(self.text, "FROZEN_RIICHIENV_VERSION")
-        self.assertIn(f'"riichienv=={riichienv}"', project)
+        # #560 moved the project pin to 0.4.11; this locked run stays on 0.4.10.
+        self.assertEqual(_shell_value(self.text, "FROZEN_RIICHIENV_VERSION"), "0.4.10")
         self.assertEqual(_shell_value(self.text, "WHEEL_FILE"), plan.WHEEL_FILENAME)
         self.assertEqual(_shell_value(self.text, "WHEEL_SHA256"), plan.WHEEL_SHA256)
         self.assertIn("--only-binary=:all: --no-index --no-deps", self.text)

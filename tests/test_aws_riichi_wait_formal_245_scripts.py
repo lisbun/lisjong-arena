@@ -720,9 +720,8 @@ class BootstrapTest(unittest.TestCase):
         subprocess.run([bash, "-n", str(_BOOTSTRAP)], check=True)
 
     def test_pins_match_the_project(self) -> None:
-        project = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        riichienv = _shell_value(self.text, "FROZEN_RIICHIENV_VERSION")
-        self.assertIn(f'"riichienv=={riichienv}"', project)
+        # #560 moved the project pin to 0.4.11; this locked run stays on 0.4.10.
+        self.assertEqual(_shell_value(self.text, "FROZEN_RIICHIENV_VERSION"), "0.4.10")
         self.assertEqual(
             _shell_value(self.text, "WHEEL_FILE"), backend.EXPECTED_WHEEL_FILENAME
         )
