@@ -11,6 +11,7 @@ lock          実行前lock、Seed Registry照合、live gate
 result        正式result・観測値（時間 / RSS）・offline verify
 limits        資源上限の強制（OS scopeの照合、全体wall、親 + workerのメモリ、#565）
 runner        正式eventの実行入口（STOP時の診断証跡）
+development   開発準備入口（固定18半荘・保存物verify・再現比較、#567）。正式resultではない
 ```
 
 局精算record・副指標・executorは ``heuristic_candidate_engine_aabb`` の部品を再利用し、

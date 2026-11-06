@@ -31,7 +31,6 @@ from pathlib import Path
 from lisjong_arena import seed_registry
 from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_file
 from lisjong_arena.heuristic_candidate_engine_aabb.executor import (
-    ExecutedHanchan,
     RunStopped,
     current_peak_rss_kib,
     run_tasks,
@@ -47,7 +46,7 @@ from lisjong_arena.heuristic_candidate_engine_aabb.record_store import (
     write_kyoku_records,
 )
 
-from .limits import EventBudget, probe_os_limits, require_memory, require_os_limits
+from .limits import EventBudget, ResourceGuard, probe_os_limits, require_os_limits
 from .lock import LearningEngineAabbLockError, load_lock, require_live_target
 from .protocol import LAYOUT, expected_schedule, schedule_document
 from .result import (
@@ -94,34 +93,6 @@ def schedule_tasks(lock: dict) -> list[LearningHanchanTask]:
         )
         for item in schedule_document(lock["population"]["ordered_seeds"])["hanchans"]
     ]
-
-
-class _Limits:
-    """全体wallと親 + workerのpeak RSSの上限を確かめる（超えたらevent全体を止める）。"""
-
-    def __init__(
-        self,
-        limits: dict,
-        budget: EventBudget,
-        parent_peak_rss_kib: Callable[[], int | None],
-    ) -> None:
-        self._limits = limits
-        self._budget = budget
-        self._parent = parent_peak_rss_kib
-
-    def __call__(self, item: ExecutedHanchan) -> None:
-        """1半荘ごと（``run_tasks`` の ``on_executed``）。"""
-        self._budget.check("after a hanchan")
-        require_memory(
-            self._limits, self._parent(), item.peak_rss_kib, "after a hanchan"
-        )
-
-    def before_publish(self, executed) -> None:
-        """公開（rename）の直前。保存・集計を含めた全体wallと親のpeak RSSを確かめる。"""
-        self._budget.check("before publishing")
-        peaks = [item.peak_rss_kib for item in executed]
-        worker = None if None in peaks else max(peaks, default=0)
-        require_memory(self._limits, self._parent(), worker, "before publishing")
 
 
 def _publish(
@@ -199,7 +170,7 @@ def run_formal_event(
     budget = EventBudget(
         limits["wall_seconds"], clock=clock, realtime=realtime, started=started
     )
-    guard = _Limits(limits, budget, parent_peak_rss_kib)
+    guard = ResourceGuard(limits, budget, parent_peak_rss_kib)
     destinations = {
         name: Path(value) for name, value in lock["artifact_destinations"].items()
     }

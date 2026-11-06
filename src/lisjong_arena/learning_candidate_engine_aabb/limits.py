@@ -182,8 +182,40 @@ def require_memory(
         )
 
 
+class ResourceGuard:
+    """全体wallと親 + workerのpeak RSSの上限を確かめる（超えたらevent全体を止める）。
+
+    正式run（#562）と開発準備入口（#567）が同じものを使う。
+    """
+
+    def __init__(
+        self,
+        limits: dict,
+        budget: EventBudget,
+        parent_peak_rss_kib: Callable[[], int | None],
+    ) -> None:
+        self._limits = limits
+        self._budget = budget
+        self._parent = parent_peak_rss_kib
+
+    def __call__(self, item) -> None:
+        """1半荘ごと（``run_tasks`` の ``on_executed``）。"""
+        self._budget.check("after a hanchan")
+        require_memory(
+            self._limits, self._parent(), item.peak_rss_kib, "after a hanchan"
+        )
+
+    def before_publish(self, executed) -> None:
+        """公開（rename）の直前。保存・集計を含めた全体wallと親のpeak RSSを確かめる。"""
+        self._budget.check("before publishing")
+        peaks = [item.peak_rss_kib for item in executed]
+        worker = None if None in peaks else max(peaks, default=0)
+        require_memory(self._limits, self._parent(), worker, "before publishing")
+
+
 __all__ = [
     "EventBudget",
+    "ResourceGuard",
     "parse_systemd_timespan",
     "probe_os_limits",
     "require_memory",
