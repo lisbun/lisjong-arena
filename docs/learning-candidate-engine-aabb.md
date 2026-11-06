@@ -210,7 +210,11 @@ python -m lisjong_arena.learning_candidate_engine_aabb dev-verify --output-dir <
 | plan.json | planのcopy |
 | development/、repeat/ | `raw/`（局record、正式rawとは別schemaで正式rawとして読めない）、`actions.json`、`SHA256SUMS` |
 | observations.json | 半荘ごとのwall・worker peak RSS・判断回数 / 時間、親のpeak RSS、段階ごとの経過秒、run別の出力bytes（決定的再導出の対象外） |
-| report.json | runごとの件数・第2層状態・raw / 行動のhash・副指標、再現比較、観測値のSHA-256 |
+| report.json | runごとの件数・第2層状態・raw / 行動のhash、局指標の事実、再現比較、観測値のSHA-256 |
+
+局指標は正式resultと同じ関数（`summarize_seat_groups`）で数え、seedごと・roleごとの分子 / 分母 / 率
+（和了率・放銃率等）、role別の条件付き値（平均和了打点・平均放銃失点等）、局精算の点数分解だけを
+射影する。**A − Bの差、平均順位・順位分布、最終点、SD・区間は出さない**。
 | SHA256SUMS | top（下位の`SHA256SUMS`を含む全file） |
 
 ## 7. testの範囲

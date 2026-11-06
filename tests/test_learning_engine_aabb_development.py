@@ -226,6 +226,55 @@ class SuccessfulRunTest(unittest.TestCase):
         metrics = report["runs"][dev.DEVELOPMENT]["secondary_metrics"]
         self.assertEqual(metrics["schema"], dev.SECONDARY_METRICS_SCHEMA)
 
+    def test_no_rank_statistic_difference_or_interval_anywhere(self):
+        """ネストした出力まで、平均順位・順位・A − Bの差・SD・区間・分類を持たない。"""
+        forbidden = {
+            "classification",
+            "difference",
+            "interval",
+            "lower",
+            "mean_difference",
+            "sd",
+            "statistic",
+            "upper",
+        }
+
+        def keys(value, path="report"):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    yield key, f"{path}.{key}"
+                    yield from keys(item, f"{path}.{key}")
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    yield from keys(item, f"{path}[{index}]")
+
+        stored = json.loads((self.source / "report.json").read_text("utf-8"))
+        for document in (self.report, stored):
+            for key, path in keys(document):
+                self.assertNotIn(key, forbidden, path)
+                self.assertNotIn("rank", key, path)
+                self.assertNotIn("final_points", key, path)
+
+    def test_the_four_kyoku_metrics_are_kept_per_role(self):
+        for run in dev.RUNS:
+            metrics = self.report["runs"][run]["secondary_metrics"]["kyoku_metrics"]
+            for name in ("win_rate", "deal_in_rate"):
+                rows = metrics["rates"][name]["per_seed"]
+                self.assertEqual(
+                    [row["seed"] for row in rows], list(dev.RUN_SEEDS[run])
+                )
+                for row in rows:
+                    for role in ("A", "B"):
+                        self.assertEqual(
+                            set(row[role]), {"denominator", "numerator", "rate"}
+                        )
+            for name in ("win_hand_points_per_win", "deal_in_payment_per_deal_in"):
+                item = metrics["conditional"][name]
+                for role in ("A", "B"):
+                    self.assertEqual(
+                        set(item[role]), {"denominator", "numerator", "value"}
+                    )
+
     def test_stored_files_and_sums(self):
         names = sorted(
             path.relative_to(self.source).as_posix()

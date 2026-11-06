@@ -75,6 +75,7 @@ from lisjong_arena.heuristic_candidate_engine_aabb.record_store import (
     write_kyoku_records,
 )
 from lisjong_arena.heuristic_candidate_engine_aabb.secondary_metrics import (
+    DECOMPOSITION_COMPONENTS,
     summarize_seat_groups,
 )
 from lisjong_arena.overall_champion_aabb.lock import document_identity
@@ -111,7 +112,7 @@ OBSERVATIONS_SCHEMA = "arena-learning-candidate-engine-aabb-development-observat
 ACTIONS_SCHEMA = "arena-learning-candidate-engine-aabb-development-actions-v1"
 STOP_SCHEMA = "arena-learning-candidate-engine-aabb-development-stop-v1"
 SECONDARY_METRICS_SCHEMA = (
-    "arena-learning-candidate-engine-aabb-development-secondary-metrics-v1"
+    "arena-learning-candidate-engine-aabb-development-secondary-facts-v1"
 )
 EVALUATION_KIND = "DEVELOPMENT"
 OWNER_ISSUE = "lisbun/lisjong-arena#564"
@@ -584,16 +585,69 @@ def parse_actions(
     return value
 
 
+_ROLES = (ROLE_CANDIDATE, ROLE_INCUMBENT)
+EXCLUDED_RATES = frozenset({"mean_rank"})
+"""平均順位は正式protocolの主指標の材料なので、開発reportには出さない。"""
+POINT_COMPONENTS = tuple(name for name, _ in DECOMPOSITION_COMPONENTS)
+"""点数分解のうち局の精算（和了収入・放銃支払等）だけ。最終点・順位点は出さない。"""
+
+
+def _rates(paired: dict) -> dict[str, object]:
+    """seedごと・roleごとの分子 / 分母 / 率だけ（A − Bの差・SD・区間は落とす）。"""
+    return {
+        name: {
+            "denominator": item["denominator"],
+            "numerator": item["numerator"],
+            "per_seed": [
+                {"seed": row["seed"], **{role: row[role] for role in _ROLES}}
+                for row in item["per_seed"]
+            ],
+        }
+        for name, item in paired.items()
+        if name not in EXCLUDED_RATES
+    }
+
+
+def _metrics_facts(layer: dict | None) -> dict[str, object] | None:
+    if layer is None:
+        return None
+    # conditionalはrole別の分子 / 分母 / 値だけで、差・区間を持たない
+    return {"conditional": layer["conditional"], "rates": _rates(layer["paired"])}
+
+
 def secondary_metrics(records: VerifiedKyokuRecords) -> dict[str, object]:
-    """正式resultと同じ定義の副指標（局4指標・点数分解）。全seatをroleどおりに数える。"""
+    """正式resultと同じ定義・同じ関数で数えた局指標の、role別の事実だけ（#567）。
+
+    共有部品 ``summarize_seat_groups`` の出力から、seedごと・roleごとの分子 / 分母 / 率と
+    局精算の点数分解だけを射影する。A − Bの差、平均順位・順位分布、最終点、SD・区間は
+    出さない（開発reportは主統計・区間・classificationを持たない）。
+    """
     groups: dict[int, list] = {}
     for index, row in enumerate(records.hanchans):
         groups.setdefault(row["seed"], []).extend(
             (index, seat, row["seats"][seat]["role"]) for seat in range(SEAT_COUNT)
         )
-    return summarize_seat_groups(
+    summary = summarize_seat_groups(
         records, list(groups.items()), layout=LAYOUT, schema=SECONDARY_METRICS_SCHEMA
     )
+    return {
+        "event_fact_metrics": _metrics_facts(summary["event_fact_metrics"]),
+        "event_fact_status": summary["event_fact_status"],
+        "facts_only": True,
+        "kyoku_metrics": _metrics_facts(summary["kyoku_metrics"]),
+        "point_components": [
+            {
+                "seed": item["seed"],
+                **{
+                    role: {name: item[role][name] for name in POINT_COMPONENTS}
+                    for role in _ROLES
+                },
+            }
+            for item in summary["point_decomposition"]
+        ],
+        "schema": SECONDARY_METRICS_SCHEMA,
+        "seeds": summary["seeds"],
+    }
 
 
 def reproduction(
