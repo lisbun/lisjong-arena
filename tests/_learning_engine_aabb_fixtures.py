@@ -228,6 +228,23 @@ def gate(lock, *, ledger):
     )
 
 
+PARENT_PEAK_RSS_KIB = 1024
+
+
+def os_limits(limits=LIMITS):
+    """lockの上限どおりに設定したscopeのOS上限（#565）。"""
+    return {
+        "memory_max_bytes": limits["peak_rss_kib"] * 1024,
+        "memory_swap_max_bytes": 0,
+        "runtime_max_seconds": float(limits["wall_seconds"]),
+        "unit": "run-u565.scope",
+    }
+
+
+def parent_peak_rss_kib():
+    return PARENT_PEAK_RSS_KIB
+
+
 # ---------------------------------------------------------------------------
 # captures（in-processでも、spawn workerでも使う）
 # ---------------------------------------------------------------------------

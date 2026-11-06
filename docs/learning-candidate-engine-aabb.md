@@ -102,6 +102,31 @@ STOP / INVALIDとし、raw・result・observationsを公開しない（`diagnost
 だけを残す。resultではない）。第2層（event facts）だけの失敗は第2層をINVALIDにして
 続け、主指標は第1層で判断する。
 
+### 資源上限（#565）
+
+lockの `wall_seconds` と `peak_rss_kib` は、`run` の開始から公開までの**event全体**の上限で、
+既存の開発実験（#520 / #524 / #539等）と同じ三重方式で強制する。
+
+1. **OS（process tree）**: `run` を専用のuser scopeの中で起動する。spawn workerも同じcgroupに入る。
+
+   ```text
+   systemd-run --user --scope -p MemoryMax=<peak_rss_kib>K -p MemorySwapMax=0 \
+     -p OOMPolicy=kill -p RuntimeMaxSec=<wall_seconds> \
+     python -m lisjong_arena.learning_candidate_engine_aabb run --lock <lock.json>
+   ```
+
+   `run` は最初（live gateより前）に、自processのcgroup v2の `memory.max` = `peak_rss_kib` × 1024、
+   `memory.swap.max` = 0、unitの `RuntimeMaxUSec` = `wall_seconds` を確かめる。scopeの外・値の不一致・
+   読めない場合はSTOP（fail closed）。live gateのモデルload等、codeが割り込めない同期処理の間は
+   このOS上限が正本である
+2. **外側のrealtime watchdog**（operator手順）: `RuntimeMaxSec` はWSL VMの停止中に進まない可能性が
+   あるので（#517）、scopeの外で実時間を見て、開始 + `wall_seconds` を過ぎたら
+   `systemctl --user stop <unit>` で止める。codeからは確認できないので、実行Issueに手順と記録を残す
+3. **code**: 全体wallを `run` の開始直後（lock読込み前）から、monotonicとrealtimeの大きい方で計る。
+   各半荘の待ち時間は `min(timeout_seconds, 全体wallの残り)`。半荘ごと・live gate後・書込前検査後・
+   公開のrename直前に全体wallを、半荘ごとと公開直前に「親 + workerのpeak RSS」の和を確かめる。
+   公開直前に超えていればstagingを捨て、resultを公開しない
+
 保存物:
 
 | 保存先 | 内容 |
@@ -154,4 +179,7 @@ lisjong#368の正式実行開始gateを本実装の完了で通過扱いしな�
 - `test_learning_engine_aabb_secondary_metrics`: #513の手計算fixtureでHeuristicと同じ値
 - `test_learning_engine_aabb_runner`: spawn workerでの600半荘、STOP（worker失敗・
   timeout・環境不一致・RSS / wall超過・live gate）、公開失敗の巻き戻し、別process verify、
-  result・raw・observations・lockの改ざん拒否
+  result・raw・observations・lockの改ざん拒否。#565: 全体wallの残りによる半荘の打切り、
+  実行後live gate・保存中のwall / 親メモリ超過で公開しないこと、親RSSの算入、OS上限の不一致でSTOP
+- `test_learning_engine_aabb_limits`（#565）: cgroup v2・systemctlの読取り（一時directoryで差替え）、
+  無制限・読めない値のfail closed、lockとの一致、親 + workerのメモリ、monotonic / realtimeの大きい方

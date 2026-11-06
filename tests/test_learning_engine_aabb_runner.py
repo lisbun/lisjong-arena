@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -41,6 +42,16 @@ from lisjong_arena.learning_candidate_engine_aabb.result import (
 from lisjong_arena.learning_candidate_engine_aabb.runner import run_formal_event
 
 
+class _Clock:
+    """testから進める時計。"""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
 class _EventCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -51,11 +62,15 @@ class _EventCase(unittest.TestCase):
         self.lock_path = save_lock(self.lock, self.tmp / "lock.json")
 
     def run_event(self, play=fx.fake_play, **kwargs):
+        kwargs.setdefault("live_gate", fx.gate)
+        kwargs.setdefault(
+            "os_limits", lambda: fx.os_limits(self.lock["execution"]["limits"])
+        )
+        kwargs.setdefault("parent_peak_rss_kib", fx.parent_peak_rss_kib)
         return run_formal_event(
             self.lock_path,
             ledger_path=self.ledger_path,
             play=play,
-            live_gate=fx.gate,
             **kwargs,
         )
 
@@ -92,15 +107,10 @@ class StopTest(_EventCase):
 
     def test_timeout_stops_the_event(self):
         limits = {**fx.LIMITS, "timeout_seconds": 3}
-        lock = fx.lock_document(self.tmp, limits=limits)
-        path = save_lock(lock, self.tmp / "short-lock.json")
-        with self.assertRaisesRegex(RunStopped, "timeout"):
-            run_formal_event(
-                path,
-                ledger_path=self.ledger_path,
-                play=fx.fake_play_slow,
-                live_gate=fx.gate,
-            )
+        self.lock = fx.lock_document(self.tmp, limits=limits)
+        self.lock_path = save_lock(self.lock, self.tmp / "short-lock.json")
+        with self.assertRaisesRegex(RunStopped, "locked timeout"):
+            self.run_event(fx.fake_play_slow)
         self.assertFalse((self.tmp / "result.json").exists())
         self.assertFalse((self.tmp / "raw").exists())
 
@@ -110,21 +120,117 @@ class StopTest(_EventCase):
         stop = self.assert_no_result()
         self.assertEqual(stop["completed_hanchans"], 4)
 
+    def test_parent_peak_rss_counts_toward_the_limit(self):
+        parent = fx.LIMITS["peak_rss_kib"] - 2048 + 1
+        with self.assertRaisesRegex(RunStopped, r"peak RSS .*parent"):
+            self.run_event(parent_peak_rss_kib=lambda: parent)
+        stop = self.assert_no_result()
+        self.assertEqual(stop["completed_hanchans"], 0)
+
     def test_wall_limit_stops_the_event(self):
-        ticks = iter(range(0, 10**9, 2_000))
+        ticks = iter(range(0, 10**9, 1_000))
         with self.assertRaisesRegex(RunStopped, "wall time"):
-            self.run_event(clock=lambda: next(ticks))
+            self.run_event(clock=lambda: next(ticks), realtime=lambda: 0.0)
         stop = self.assert_no_result()
         self.assertEqual(stop["completed_hanchans"], 1)
+
+    def test_realtime_also_counts_toward_the_wall(self):
+        ticks = iter(range(0, 10**9, 1_000))
+        with self.assertRaisesRegex(RunStopped, "wall time"):
+            self.run_event(clock=lambda: 0.0, realtime=lambda: next(ticks))
+        self.assertEqual(self.assert_no_result()["completed_hanchans"], 1)
+
+    def test_remaining_wall_bounds_the_wait_for_a_hanchan(self):
+        """locked timeout（60 s）より先に、全体wallの残り（2 s）で半荘の待ちを打ち切る。"""
+        clock = _Clock()
+
+        def gate(lock, *, ledger):
+            fx.gate(lock, ledger=ledger)
+            clock.now = fx.LIMITS["wall_seconds"] - 2
+
+        started = time.monotonic()
+        with self.assertRaisesRegex(RunStopped, "wall time limit was reached during"):
+            self.run_event(
+                fx.fake_play_slow, live_gate=gate, clock=clock, realtime=lambda: 0.0
+            )
+        self.assertLess(time.monotonic() - started, 25)
+        self.assertEqual(self.assert_no_result()["completed_hanchans"], 1)
+
+    def test_wall_limit_in_the_post_run_live_gate_publishes_nothing(self):
+        """全半荘は上限内でも、実行後のlive gateで超えたらresultを公開しない（#565）。"""
+        clock = _Clock()
+        calls = []
+
+        def gate(lock, *, ledger):
+            fx.gate(lock, ledger=ledger)
+            calls.append(1)
+            if len(calls) == 2:
+                clock.now = fx.LIMITS["wall_seconds"] + 50
+
+        with self.assertRaisesRegex(RunStopped, "post-run live gate"):
+            self.run_event(live_gate=gate, clock=clock, realtime=lambda: 0.0)
+        self.assertEqual(self.assert_no_result()["completed_hanchans"], 600)
+
+    def test_limits_while_saving_publish_nothing(self):
+        """保存中に全体wall・親のメモリが上限を超えたら、公開直前で止めて巻き戻す（#565）。"""
+        clock = _Clock()
+        original = runner.build_result
+
+        def slow_build_result(*args, **kwargs):
+            clock.now = fx.LIMITS["wall_seconds"] + 1
+            return original(*args, **kwargs)
+
+        with mock.patch.object(runner, "build_result", side_effect=slow_build_result):
+            with self.assertRaisesRegex(RunStopped, r"wall time .*before publishing"):
+                self.run_event(clock=clock, realtime=lambda: 0.0)
+        self.assertEqual(self.assert_no_result()["completed_hanchans"], 600)
+
+        parent_calls = []
+
+        def parent():
+            parent_calls.append(1)
+            # 600半荘の間は小さく、保存中（601回目）に上限を超える
+            return 1024 if len(parent_calls) <= 600 else fx.LIMITS["peak_rss_kib"]
+
+        with self.assertRaisesRegex(RunStopped, r"peak RSS .*before publishing"):
+            self.run_event(parent_peak_rss_kib=parent)
+        self.assertEqual(self.assert_no_result()["completed_hanchans"], 600)
+
+    def test_os_limits_must_match_the_lock(self):
+        expected = fx.os_limits()
+        for field, value, pattern in (
+            ("memory_max_bytes", None, "memory.max"),
+            ("memory_max_bytes", expected["memory_max_bytes"] * 2, "memory.max"),
+            ("memory_swap_max_bytes", None, "memory.swap.max"),
+            ("memory_swap_max_bytes", 1024, "memory.swap.max"),
+            ("runtime_max_seconds", None, "RuntimeMaxSec"),
+            ("runtime_max_seconds", 7_200.0, "RuntimeMaxSec"),
+        ):
+            with self.subTest(field=field, value=value):
+                gate_calls = []
+                observed = {**expected, field: value}
+                with self.assertRaisesRegex(RunStopped, pattern):
+                    self.run_event(
+                        live_gate=lambda lock, ledger: gate_calls.append(1),
+                        os_limits=lambda observed=observed: observed,
+                    )
+                self.assertEqual(gate_calls, [])
+                self.assertEqual(self.assert_no_result()["completed_hanchans"], 0)
+
+    def test_unreadable_os_limits_stop_the_event(self):
+        def probe():
+            raise RunStopped("the process is not in a single cgroup v2 hierarchy")
+
+        with self.assertRaisesRegex(RunStopped, "cgroup v2"):
+            self.run_event(os_limits=probe)
+        self.assertEqual(self.assert_no_result()["completed_hanchans"], 0)
 
     def test_live_gate_failure_stops_before_any_hanchan(self):
         def gate(lock, *, ledger):
             raise LearningEngineAabbLockError("live binding differs")
 
         with self.assertRaisesRegex(LearningEngineAabbLockError, "live binding"):
-            run_formal_event(
-                self.lock_path, ledger_path=self.ledger_path, live_gate=gate
-            )
+            self.run_event(live_gate=gate)
         stop = self.assert_no_result()
         self.assertEqual(stop["completed_hanchans"], 0)
 
