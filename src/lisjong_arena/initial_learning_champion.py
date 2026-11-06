@@ -81,6 +81,15 @@ def _runtime() -> SourcePilotRuntime:
     return create_serving_runtime(ARM_Y, _loaded_checkpoint())
 
 
+def initial_learning_champion_runtime() -> SourcePilotRuntime:
+    """factoryが使うprocess内のserving runtime（checkpointと実測したML条件を持つ）。
+
+    Learning昇格評価（#562）が、実際にloadしたcheckpointのidentityとML条件を
+    lockへ照合するために使う。factoryと同じcacheを返し、別のruntimeを作らない。
+    """
+    return _runtime()
+
+
 def create_initial_learning_champion_policy() -> SourcePilotServingPolicy:
     """Overall participant factory: game / seatごとにfresh Policyを返す。"""
     return _runtime().create_policy()
@@ -102,5 +111,6 @@ __all__ = [
     "POLICY_IDENTITY",
     "InitialLearningChampionBindingError",
     "create_initial_learning_champion_policy",
+    "initial_learning_champion_runtime",
     "served_initial_learning_champion_checkpoint",
 ]
