@@ -1,13 +1,18 @@
 """正式eventの実行入口（#562）。
 
 ```text
-load lock -> raw / result / observationsが未作成であることを確認
-  -> live gate（HEAD・環境・3 artifactのbinding・ledger）
-  -> run_tasks（600半荘、1 worker、各半荘timeout、全体wall・peak RSS上限）
-  -> live gate（実行後に再照合）
-  -> 第1層・schedule・主統計を書込前に検査
-  -> raw record・observations・resultをstagingへ書き、全部そろってから公開
+全体wallの計測開始 -> load lock -> raw / result / observationsが未作成であることを確認
+  -> OS上限（cgroup memory.max・memory.swap.max・RuntimeMaxSec）がlockと一致するか確認
+  -> live gate（HEAD・環境・3 artifactのbinding・ledger） -> 全体wall
+  -> run_tasks（600半荘、1 worker、各半荘timeout = min(lock, 全体wallの残り)、
+     半荘ごとに全体wall・親 + workerのpeak RSS）
+  -> live gate（実行後に再照合） -> 全体wall
+  -> 第1層・schedule・主統計を書込前に検査 -> 全体wall
+  -> raw record・observations・resultをstagingへ書く
+  -> 全体wall・親 + workerのpeak RSSを確かめてから、全部そろって公開
 ```
+
+- 資源上限は ``limits`` の三重方式（OS scope ＋ 外側のrealtime watchdog ＋ code、#565）
 
 - 1つでも失敗・timeout・上限超過があればevent全体をSTOP / INVALIDとし、result・raw・
   observationsを公開しない。診断証跡は ``diagnostics`` へ ``stop-<UTC時刻>.json`` として
@@ -28,6 +33,7 @@ from lisjong_arena._artifact_io import canonical_json_text, write_new_artifact_f
 from lisjong_arena.heuristic_candidate_engine_aabb.executor import (
     ExecutedHanchan,
     RunStopped,
+    current_peak_rss_kib,
     run_tasks,
 )
 from lisjong_arena.heuristic_candidate_engine_aabb.kyoku_record import (
@@ -41,6 +47,7 @@ from lisjong_arena.heuristic_candidate_engine_aabb.record_store import (
     write_kyoku_records,
 )
 
+from .limits import EventBudget, probe_os_limits, require_memory, require_os_limits
 from .lock import LearningEngineAabbLockError, load_lock, require_live_target
 from .protocol import LAYOUT, expected_schedule, schedule_document
 from .result import (
@@ -90,31 +97,41 @@ def schedule_tasks(lock: dict) -> list[LearningHanchanTask]:
 
 
 class _Limits:
-    """1半荘ごとに全体wall・peak RSSの上限を確かめる（超えたらevent全体を止める）。"""
+    """全体wallと親 + workerのpeak RSSの上限を確かめる（超えたらevent全体を止める）。"""
 
-    def __init__(self, limits: dict, clock: Callable[[], float]) -> None:
+    def __init__(
+        self,
+        limits: dict,
+        budget: EventBudget,
+        parent_peak_rss_kib: Callable[[], int | None],
+    ) -> None:
         self._limits = limits
-        self._clock = clock
-        self._started = clock()
+        self._budget = budget
+        self._parent = parent_peak_rss_kib
 
     def __call__(self, item: ExecutedHanchan) -> None:
-        elapsed = self._clock() - self._started
-        if elapsed > self._limits["wall_seconds"]:
-            raise RunStopped(
-                f"wall time {elapsed:.0f} s exceeded the locked "
-                f"{self._limits['wall_seconds']} s"
-            )
-        if item.peak_rss_kib is None:
-            raise RunStopped("peak RSS cannot be measured on this platform")
-        if item.peak_rss_kib > self._limits["peak_rss_kib"]:
-            raise RunStopped(
-                f"peak RSS {item.peak_rss_kib} KiB exceeded the locked "
-                f"{self._limits['peak_rss_kib']} KiB"
-            )
+        """1半荘ごと（``run_tasks`` の ``on_executed``）。"""
+        self._budget.check("after a hanchan")
+        require_memory(
+            self._limits, self._parent(), item.peak_rss_kib, "after a hanchan"
+        )
+
+    def before_publish(self, executed) -> None:
+        """公開（rename）の直前。保存・集計を含めた全体wallと親のpeak RSSを確かめる。"""
+        self._budget.check("before publishing")
+        peaks = [item.peak_rss_kib for item in executed]
+        worker = None if None in peaks else max(peaks, default=0)
+        require_memory(self._limits, self._parent(), worker, "before publishing")
 
 
-def _publish(lock: dict, executed, destinations: dict, revision: str) -> dict:
-    """raw・observations・resultをstagingへ書き、全部そろってから公開する。"""
+def _publish(
+    lock: dict,
+    executed,
+    destinations: dict,
+    revision: str,
+    before_publish: Callable[[], None],
+) -> dict:
+    """raw・observations・resultをstagingへ書き、上限を確かめ、全部そろってから公開する。"""
     token = uuid.uuid4().hex
     names = ("raw", "observations", "result")
     staging = {
@@ -144,6 +161,7 @@ def _publish(lock: dict, executed, destinations: dict, revision: str) -> dict:
         save_document(result, staging["result"])
         if any(destinations[name].exists() for name in names):
             raise FileExistsError("a destination appeared during the run")
+        before_publish()
         for name in names:
             staging[name].rename(destinations[name])
             published.append(name)
@@ -165,13 +183,23 @@ def run_formal_event(
     live_gate: Callable[..., None] = require_live_target,
     on_hanchan: Callable[[int, int], None] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    realtime: Callable[[], float] = time.time,
+    os_limits: Callable[[], dict] = probe_os_limits,
+    parent_peak_rss_kib: Callable[[], int | None] = current_peak_rss_kib,
 ) -> dict[str, object]:
     """lockしたeventを実行し、保存したresult documentを返す。
 
-    ``play`` / ``live_gate`` / ``clock`` はtestで実行境界・live照合・時計を差し替える
+    ``play`` / ``live_gate`` / ``clock`` / ``realtime`` / ``os_limits`` /
+    ``parent_peak_rss_kib`` はtestで実行境界・live照合・時計・OS上限・親RSSを差し替える
     seamで、正式実行では渡さない。``play``はspawn workerへ渡すためmodule-levelの関数。
     """
+    started = (clock(), realtime())
     lock = load_lock(lock_path)
+    limits = lock["execution"]["limits"]
+    budget = EventBudget(
+        limits["wall_seconds"], clock=clock, realtime=realtime, started=started
+    )
+    guard = _Limits(limits, budget, parent_peak_rss_kib)
     destinations = {
         name: Path(value) for name, value in lock["artifact_destinations"].items()
     }
@@ -189,8 +217,9 @@ def run_formal_event(
             on_hanchan(done, total)
 
     try:
+        require_os_limits(limits, os_limits())
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
-        limits = lock["execution"]["limits"]
+        budget.check("after the pre-run live gate")
         executed = run_tasks(
             schedule_tasks(lock),
             key_fields=("placement",),
@@ -198,9 +227,11 @@ def run_formal_event(
             expected_environment=lock["environment"],
             play=play,
             on_hanchan=count,
-            on_executed=_Limits(limits, clock),
+            on_executed=guard,
+            remaining_seconds=budget.remaining,
         )
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
+        budget.check("after the post-run live gate")
         # 書込前に、第1層・schedule・主統計が成り立つことを確かめる（失敗時は何も書かない）
         hanchans, _, _ = build_records(
             [item.capture for item in executed],
@@ -217,8 +248,15 @@ def run_formal_event(
         summarize_rank_blocks(
             [block["difference_ranks"] for block in block_rank_totals(hanchans)]
         )
+        budget.check("after the pre-write checks")
         revision = lock["execution_target"]["revision"]
-        result = _publish(lock, executed, destinations, revision)
+        result = _publish(
+            lock,
+            executed,
+            destinations,
+            revision,
+            lambda: guard.before_publish(executed),
+        )
     except BaseException as error:
         _write_stop(destinations["diagnostics"], lock, error, progress["done"])
         if not isinstance(error, Exception) or isinstance(

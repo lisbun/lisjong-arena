@@ -9,6 +9,7 @@ runtime       worker内のML条件・3 artifactのload・1半荘実行（新し�
 statistics    R_A / R_B、D、区間、classification、final_points差（副指標）
 lock          実行前lock、Seed Registry照合、live gate
 result        正式result・観測値（時間 / RSS）・offline verify
+limits        資源上限の強制（OS scopeの照合、全体wall、親 + workerのメモリ、#565）
 runner        正式eventの実行入口（STOP時の診断証跡）
 ```
 

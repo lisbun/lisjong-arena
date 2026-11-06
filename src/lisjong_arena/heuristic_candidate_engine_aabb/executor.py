@@ -271,12 +271,16 @@ def run_tasks(
     play: Callable,
     on_hanchan: Callable[[int, int], None] | None = None,
     on_executed: Callable[[ExecutedHanchan], None] | None = None,
+    remaining_seconds: Callable[[], float] | None = None,
 ) -> list[ExecutedHanchan]:
     """1半荘ずつのtaskを1 workerで順に実行する（``run_schedule`` の本体）。
 
     taskとcaptureは ``seed`` と ``key_fields`` の属性を持ち、workerが別の半荘を
     返したら止める。#522の混成focal比較はAABBの配置ではなく
     ``("rotation", "condition")`` で半荘を識別し、同じ停止・timeout・環境照合を使う。
+    ``remaining_seconds`` はevent全体の残り時間を返すoptionalなhook（#565）。渡すと
+    各半荘の待ち時間を ``min(timeout_seconds, 残り時間)`` にし、残りがなければ止める。
+    ``None`` なら従来どおり固定timeoutだけ。
     """
     if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise RunStopped("timeout_seconds must be a positive int taken from the lock")
@@ -292,11 +296,24 @@ def run_tasks(
         for index, task in enumerate(tasks):
             key = tuple(getattr(task, name) for name in names)
             label = " ".join(f"{name} {value}" for name, value in zip(names, key))
+            wait = float(timeout_seconds)
+            wall_bound = False
+            if remaining_seconds is not None:
+                remaining = remaining_seconds()
+                if remaining <= 0:
+                    raise RunStopped(f"{label}: the event wall time limit was reached")
+                if remaining < wait:
+                    wait, wall_bound = remaining, True
             started = time.perf_counter()
             future = pool.submit(_guarded, play, task, label)
             try:
-                played = future.result(timeout=timeout_seconds)
+                played = future.result(timeout=wait)
             except FutureTimeout:
+                if wall_bound:
+                    raise RunStopped(
+                        f"{label}: the event wall time limit was reached during "
+                        "the hanchan"
+                    ) from None
                 raise RunStopped(
                     f"{label}: hanchan exceeded the locked timeout of "
                     f"{timeout_seconds} s"
