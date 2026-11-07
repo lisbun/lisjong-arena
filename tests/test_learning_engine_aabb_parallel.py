@@ -108,7 +108,7 @@ class ParallelTasksTest(unittest.TestCase):
             observations_path=root / "observations.json",
         )
         self.assertEqual(result["result_digest"], verified["result_digest"])
-        self.assertEqual(result["population"]["k"], 100)
+        self.assertEqual(result["statistic"]["k"], 100)
 
     def test_parallel_and_serial_payloads_are_equal(self):
         serial = run_tasks(
