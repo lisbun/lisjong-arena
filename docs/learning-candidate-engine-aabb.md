@@ -166,6 +166,13 @@ lisjong#368の正式実行開始gateを本実装の完了で通過扱いしな�
 
 ### 6.1 開発準備入口（#567、準備計画#564 §C）
 
+#573の並列準備では `dev-plan --workers 8` を指定できる（範囲1..8、既定1）。
+worker数はplan digestへ固定し、run時に変更できない。2以上では正式runnerと同じ
+bounded spawn executorと親＋worker PID別peak RSSの合計監視を使う。
+固定12＋再現6半荘、保存schema、別process verify、再現比較は共通であり、
+正式result・強さの判定にはしない。旧readerはworkers>1のplanをfail closedで拒否する。
+実行計画と上限は [#573計画](learning-formal-573-aws.md) を参照する。
+
 gate 3・4のための入口。正式protocolのK = 100を小さくして使い回さず、別のplan / report kind
 （`arena-learning-candidate-engine-aabb-development-v1`）で扱う。**強さの結果ではない**
 （`not_a_strength_result = true`。主統計・区間・classificationを出さない）。

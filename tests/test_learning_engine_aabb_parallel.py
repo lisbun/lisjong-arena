@@ -8,6 +8,7 @@ import os
 import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import _learning_engine_aabb_fixtures as fx
 
@@ -19,6 +20,7 @@ from lisjong_arena.heuristic_candidate_engine_aabb.executor import (
 from lisjong_arena.learning_candidate_engine_aabb.limits import EventBudget
 from lisjong_arena.learning_candidate_engine_aabb.parallel import (
     ParallelResourceGuard,
+    _stop_pool,
     require_workers,
     run_parallel_tasks,
 )
@@ -51,6 +53,52 @@ def _overlap_fake_play(task):
 
 
 class ParallelTasksTest(unittest.TestCase):
+    def test_shutdown_waits_for_os_exit_without_racing_manager_reaping(self):
+        process = multiprocessing.get_context("spawn").Process(
+            target=time.sleep, args=(60,)
+        )
+        process.start()
+        try:
+            pool = SimpleNamespace(
+                _processes={process.pid: process}, kill_workers=process.kill
+            )
+            with (
+                mock.patch.object(
+                    process, "join", side_effect=AssertionError("manager owns reaping")
+                ),
+                mock.patch.object(
+                    process, "is_alive", side_effect=AssertionError("racy waitpid")
+                ),
+            ):
+                _stop_pool(pool)
+            process.join(timeout=3)
+            self.assertFalse(process.is_alive())
+        finally:
+            if process.is_alive():
+                process.kill()
+            process.join()
+
+    def test_unconfirmed_shutdown_remains_fail_closed(self):
+        pool = SimpleNamespace(
+            _processes={1: SimpleNamespace(sentinel=42)}, kill_workers=mock.Mock()
+        )
+        with mock.patch(
+            "lisjong_arena.learning_candidate_engine_aabb.parallel.wait_processes",
+            return_value=[],
+        ):
+            with self.assertRaisesRegex(RunStopped, "did not exit"):
+                _stop_pool(pool)
+        pool.kill_workers.assert_called_once()
+
+    def test_manager_shutdown_must_finish_before_returning(self):
+        manager = SimpleNamespace(join=mock.Mock(), is_alive=lambda: True)
+        pool = SimpleNamespace(
+            _processes={}, kill_workers=mock.Mock(), _executor_manager_thread=manager
+        )
+        with self.assertRaisesRegex(RunStopped, "manager did not exit"):
+            _stop_pool(pool)
+        manager.join.assert_called_once()
+
     def setUp(self):
         # Existing synthetic fixture identity, never a formal seed allocation.
         self.tasks = [

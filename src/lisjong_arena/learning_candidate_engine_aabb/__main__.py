@@ -57,6 +57,9 @@ def _parser() -> argparse.ArgumentParser:
         "dev-plan", help="write the plan of the fixed 18-hanchan preparation check"
     )
     dev_plan.add_argument("--timeout-seconds", type=int, required=True)
+    dev_plan.add_argument(
+        "--workers", type=int, default=1, help="preparation workers (1..8)"
+    )
     dev_plan.add_argument("--wall-seconds", type=int, required=True)
     dev_plan.add_argument("--peak-rss-kib", type=int, required=True)
     dev_plan.add_argument("--wheel", required=True)
@@ -84,6 +87,7 @@ def _development(args) -> int:
 
     if args.command == "dev-plan":
         document = development.build_plan(
+            workers=args.workers,
             limits={
                 "peak_rss_kib": args.peak_rss_kib,
                 "timeout_seconds": args.timeout_seconds,
