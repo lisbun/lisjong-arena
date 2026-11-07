@@ -110,6 +110,36 @@ class ParallelTasksTest(unittest.TestCase):
         self.assertEqual(result["result_digest"], verified["result_digest"])
         self.assertEqual(result["statistic"]["k"], 100)
 
+    def test_formal_parallel_failure_never_publishes_partial_artifacts(self):
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from lisjong_arena import seed_registry
+        from lisjong_arena.learning_candidate_engine_aabb.lock import save_lock
+        from lisjong_arena.learning_candidate_engine_aabb.runner import (
+            run_formal_event,
+        )
+
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        ledger_path = root / "ledger.json"
+        seed_registry.write_ledger(ledger_path, fx.ledger())
+        lock = fx.lock_document(root, workers=3)
+        lock_path = save_lock(lock, root / "lock.json")
+        with self.assertRaisesRegex(RunStopped, "synthetic Policy failure"):
+            run_formal_event(
+                lock_path,
+                ledger_path=ledger_path,
+                play=fx.fake_play_policy_error,
+                live_gate=fx.gate,
+                os_limits=lambda: fx.os_limits(lock["execution"]["limits"]),
+                parent_peak_rss_kib=fx.parent_peak_rss_kib,
+            )
+        for name in ("raw", "observations.json", "result.json"):
+            self.assertFalse((root / name).exists())
+        self.assertEqual(len(list((root / "diagnostics").glob("stop-*.json"))), 1)
+
     def test_parallel_and_serial_payloads_are_equal(self):
         serial = run_tasks(
             self.tasks,
