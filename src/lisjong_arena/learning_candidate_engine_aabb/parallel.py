@@ -167,9 +167,17 @@ def run_parallel_tasks(
             for _ in range(min(len(ready), len(tasks) - next_index)):
                 submit_one()
     except BaseException:
-        # Fail closed even when a worker ignores SIGTERM. Python 3.14's
-        # kill_workers uses SIGKILL and shuts down the spawn pool.
+        # CPython 3.14 kill_workers() signals processes after
+        # shutdown(wait=False), so it may return before workers exit.
+        # Take the process snapshot first: shutdown clears _processes.
+        # This is intentionally tied to our pinned CPython 3.14 runtime.
+        processes = list((pool._processes or {}).values())
         pool.kill_workers()
+        deadline = time.monotonic() + 3.0
+        for process in processes:
+            process.join(timeout=max(0.0, deadline - time.monotonic()))
+        if any(process.is_alive() for process in processes):
+            raise RunStopped("parallel workers did not exit after SIGKILL")
         raise
     pool.shutdown(wait=True)
     if any(item is None for item in output):
