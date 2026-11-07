@@ -1,9 +1,14 @@
-"""Bounded spawn execution for the Learning formal event (#574).
+"""Bounded spawn execution for the Learning formal event (#574, #578).
 
 Only the Learning protocol opts in. The shared Heuristic/Overall executor remains serial.
 At most `workers` tasks are submitted, so an executor backlog cannot consume a
-hanchan timeout while waiting for an available worker. Results are returned in the
-pre-locked schedule order, regardless of completion order.
+hanchan timeout while waiting for an available worker.
+
+- ``stream_parallel_tasks`` hands each verified result to the caller by schedule
+  index and keeps none of them (the formal event, #578). ``max_ahead`` bounds how
+  far submission may run ahead of the first unfinished task.
+- ``run_parallel_tasks`` keeps every result and returns them in the pre-locked
+  schedule order (the #567 development entry).
 """
 
 import multiprocessing
@@ -68,7 +73,53 @@ def run_parallel_tasks(
     on_executed: Callable[[ExecutedHanchan], None] | None = None,
     remaining_seconds: Callable[[], float] | None = None,
 ) -> list[ExecutedHanchan]:
+    """Run bounded tasks and return every result in schedule order.
+
+    Keeps every ``ExecutedHanchan`` (the #567 development entry needs them all).
+    The formal event uses ``stream_parallel_tasks`` instead (#578).
+    """
+    tasks = list(tasks)
+    output: list[ExecutedHanchan | None] = [None] * len(tasks)
+
+    def keep(index: int, item: ExecutedHanchan) -> None:
+        output[index] = item
+        if on_executed is not None:
+            on_executed(item)
+
+    stream_parallel_tasks(
+        tasks,
+        workers=workers,
+        timeout_seconds=timeout_seconds,
+        expected_environment=expected_environment,
+        play=play,
+        on_result=keep,
+        on_hanchan=on_hanchan,
+        remaining_seconds=remaining_seconds,
+    )
+    if any(item is None for item in output):
+        raise RunStopped("the parallel schedule is incomplete")
+    return [item for item in output if item is not None]
+
+
+def stream_parallel_tasks(
+    tasks: Sequence,
+    *,
+    workers: int,
+    timeout_seconds: int,
+    expected_environment: dict,
+    play: Callable,
+    on_result: Callable[[int, ExecutedHanchan], None],
+    on_hanchan: Callable[[int, int], None] | None = None,
+    remaining_seconds: Callable[[], float] | None = None,
+    max_ahead: int | None = None,
+) -> None:
     """Run bounded Learning tasks; fail the entire event on the first error.
+
+    Each verified result goes to ``on_result(schedule index, item)`` in completion
+    order and is not kept here. ``on_result`` may raise to stop the event. With
+    ``max_ahead``, a task is submitted only while its index is below the first
+    unfinished index + ``max_ahead``, so a slow early task bounds how many later
+    results a caller must buffer to restore schedule order.
 
     A task's deadline begins when submitted into a free worker slot (including
     process startup), never when added to an unbounded queue. An absolute event
@@ -80,17 +131,25 @@ def run_parallel_tasks(
         raise RunStopped("parallel executor requires at least two workers")
     if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise RunStopped("timeout_seconds must be a positive locked integer")
+    if max_ahead is not None and (type(max_ahead) is not int or max_ahead < workers):
+        raise RunStopped("max_ahead must be an integer of at least workers")
     tasks = list(tasks)
     if not tasks:
         raise RunStopped("the schedule is empty")
 
-    output: list[ExecutedHanchan | None] = [None] * len(tasks)
     pending: dict[Future, _Pending] = {}
+    finished: set[int] = set()
     next_index = 0
+    first_unfinished = 0
     completed = 0
     pool = ProcessPoolExecutor(
         max_workers=workers, mp_context=multiprocessing.get_context("spawn")
     )
+
+    def can_submit() -> bool:
+        if next_index >= len(tasks) or len(pending) >= workers:
+            return False
+        return max_ahead is None or next_index < first_unfinished + max_ahead
 
     def submit_one() -> None:
         nonlocal next_index
@@ -106,7 +165,7 @@ def run_parallel_tasks(
         pending[future] = _Pending(index, task, start)
 
     try:
-        for _ in range(min(workers, len(tasks))):
+        while can_submit():
             submit_one()
 
         while pending:
@@ -116,13 +175,9 @@ def run_parallel_tasks(
                 if remaining <= 0:
                     raise RunStopped("event wall time limit was reached")
             now = time.monotonic()
-            unfinished = [
-                (future, info) for future, info in pending.items() if not future.done()
-            ]
+            unfinished = [info for future, info in pending.items() if not future.done()]
             expired = [
-                info
-                for _, info in unfinished
-                if now - info.submitted >= timeout_seconds
+                info for info in unfinished if now - info.submitted >= timeout_seconds
             ]
             if expired:
                 info = min(expired, key=lambda item: item.index)
@@ -131,7 +186,7 @@ def run_parallel_tasks(
                     f"hanchan exceeded the locked timeout of {timeout_seconds} s"
                 )
             task_wait = min(
-                (info.submitted + timeout_seconds - now for _, info in unfinished),
+                (info.submitted + timeout_seconds - now for info in unfinished),
                 default=float("inf"),
             )
             ready, _ = wait(
@@ -143,57 +198,66 @@ def run_parallel_tasks(
                 # Next iteration checks deadlines and the remaining overall wall.
                 continue
 
-            # Stable error selection and stable in-memory indexing, even if several
-            # futures complete at once. Completion order is never output order.
-            for future in sorted(ready, key=lambda f: pending[f].index):
+            # Stable error selection, even if several futures complete at once.
+            # Completion order is never output order.
+            ordered = sorted(ready, key=lambda f: pending[f].index)
+            del ready
+            for future in ordered:
                 info = pending.pop(future)
-                key = (info.task.seed, info.task.placement)
-                label = f"seed {key[0]} placement {key[1]}"
-                try:
-                    played = future.result()
-                except RunStopped:
-                    raise
-                except Exception as error:
-                    raise RunStopped(
-                        f"{label}: worker failed: {type(error).__name__}: {error}"
-                    ) from None
-                if played.environment != expected_environment:
-                    raise RunStopped(
-                        f"{label}: worker environment differs from the lock"
-                    )
-                capture = played.capture
-                if (capture.seed, capture.placement) != key:
-                    raise RunStopped(f"{label}: worker returned a different hanchan")
-                if not isinstance(played.worker_pid, int) or played.worker_pid <= 0:
-                    raise RunStopped(f"{label}: invalid worker process identity")
-                if played.peak_rss_kib is None:
-                    raise RunStopped(f"{label}: worker peak RSS is unavailable")
-                result = ExecutedHanchan(
-                    capture,
-                    time.monotonic() - info.submitted,
-                    played.peak_rss_kib,
-                    played.selected_actions,
-                    played.policy_analysis,
-                    played.native_counters,
-                    worker_pid=played.worker_pid,
-                )
-                output[info.index] = result
-                if on_executed is not None:
-                    on_executed(result)
+                on_result(info.index, _verified(future, info, expected_environment))
+                finished.add(info.index)
+                while first_unfinished in finished:
+                    finished.remove(first_unfinished)
+                    first_unfinished += 1
                 completed += 1
                 if on_hanchan is not None:
                     on_hanchan(completed, len(tasks))
+            # The finished futures still hold their worker results (#578).
+            del ordered, future
             # Verify every finished task before starting replacements. A failed
             # task must not cause fresh tasks to be submitted in this iteration.
-            for _ in range(min(len(ready), len(tasks) - next_index)):
+            while can_submit():
                 submit_one()
     except BaseException:
         _stop_pool(pool)
         raise
     pool.shutdown(wait=True)
-    if any(item is None for item in output):
+    if completed != len(tasks):
         raise RunStopped("the parallel schedule is incomplete")
-    return [item for item in output if item is not None]
+
+
+def _verified(
+    future: Future, info: _Pending, expected_environment: dict
+) -> ExecutedHanchan:
+    """Check one finished task against the lock and wrap its measurements."""
+    key = (info.task.seed, info.task.placement)
+    label = f"seed {key[0]} placement {key[1]}"
+    try:
+        played = future.result()
+    except RunStopped:
+        raise
+    except Exception as error:
+        raise RunStopped(
+            f"{label}: worker failed: {type(error).__name__}: {error}"
+        ) from None
+    if played.environment != expected_environment:
+        raise RunStopped(f"{label}: worker environment differs from the lock")
+    capture = played.capture
+    if (capture.seed, capture.placement) != key:
+        raise RunStopped(f"{label}: worker returned a different hanchan")
+    if not isinstance(played.worker_pid, int) or played.worker_pid <= 0:
+        raise RunStopped(f"{label}: invalid worker process identity")
+    if played.peak_rss_kib is None:
+        raise RunStopped(f"{label}: worker peak RSS is unavailable")
+    return ExecutedHanchan(
+        capture,
+        time.monotonic() - info.submitted,
+        played.peak_rss_kib,
+        played.selected_actions,
+        played.policy_analysis,
+        played.native_counters,
+        worker_pid=played.worker_pid,
+    )
 
 
 class ParallelResourceGuard:

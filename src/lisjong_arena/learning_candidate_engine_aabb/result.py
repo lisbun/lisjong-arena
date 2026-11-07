@@ -188,21 +188,26 @@ def summarize_observations(hanchans: list[dict]) -> dict[str, object]:
     }
 
 
+def observation_row(item) -> dict[str, object]:
+    """1半荘の計測値（``ExecutedHanchan``）から観測documentの1行を作る（captureを持たない）。"""
+    analysis = item.policy_analysis or {}
+    return {
+        "decision_seconds": analysis.get("decision_seconds"),
+        "decisions": analysis.get("decisions"),
+        "peak_rss_kib": item.peak_rss_kib,
+        "placement": item.capture.placement,
+        "seed": item.capture.seed,
+        "wall_seconds": item.wall_seconds,
+    }
+
+
 def build_observations(lock: dict, executed) -> dict[str, object]:
     """実行した全半荘の計測値から観測document（resultではない）を作る。"""
-    hanchans = []
-    for item in executed:
-        analysis = item.policy_analysis or {}
-        hanchans.append(
-            {
-                "decision_seconds": analysis.get("decision_seconds"),
-                "decisions": analysis.get("decisions"),
-                "peak_rss_kib": item.peak_rss_kib,
-                "placement": item.capture.placement,
-                "seed": item.capture.seed,
-                "wall_seconds": item.wall_seconds,
-            }
-        )
+    return observations_document(lock, [observation_row(item) for item in executed])
+
+
+def observations_document(lock: dict, hanchans: list[dict]) -> dict[str, object]:
+    """schedule順の観測行（``observation_row``）から観測documentを作る。"""
     document = {
         "hanchans": hanchans,
         "lock_digest": lock["lock_digest"],
@@ -352,6 +357,8 @@ __all__ = [
     "LearningEngineAabbResultError",
     "build_observations",
     "build_result",
+    "observation_row",
+    "observations_document",
     "observations_sha256",
     "parse_observations",
     "record_bindings",

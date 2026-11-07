@@ -102,6 +102,16 @@ STOP / INVALIDとし、raw・result・observationsを公開しない（`diagnost
 だけを残す。resultではない）。第2層（event facts）だけの失敗は第2層をINVALIDにして
 続け、主指標は第1層で判断する。
 
+親の保持（#578）: 半荘が完了するごとに、親はその半荘を第1層・第2層の行へ射影して
+`HanchanCapture`（`CompletedMatch`・局evidence）を手放し、seed順→placement順でraw
+stagingの `kyoku-records.jsonl` / `event-facts.jsonl` へ追記する。順番待ちで持つのは射影済みの
+行だけで、並列ではsubmitを「先頭の未完了半荘 + 4 × worker数」未満のindexに限るので、
+その件数は4 × worker数以下になる。完走後にmanifestを書き、保存bytesを読込と同じ検査に
+かけてから、schedule・主統計の検査、observations・resultの作成、公開へ進む。保存形式・
+digest・集計の意味は変えていない（変更前の全件保持の保存とbytes一致をtestで固定）。
+これは親のPython保持を減らす変更で、下の「親 + worker PIDごとのpeak RSSの和」によるSTOPの
+契約は変えていない。600半荘が4 GiBの上限で完走することの保証ではない。
+
 ### 資源上限（#565）
 
 lockの `wall_seconds` と `peak_rss_kib` は、`run` の開始から公開までの**event全体**の上限で、
@@ -249,3 +259,8 @@ python -m lisjong_arena.learning_candidate_engine_aabb dev-verify --output-dir <
   SHA256SUMSまで書き直した改ざんの再導出での拒否、再現比較（行動・局精算の差、時間 / RSSは無視）、
   STOP（worker失敗・行動未記録・timeout・repeat中のメモリ・実行後live gate / 保存中のwall・
   公開直前の親メモリ・書込失敗・OS上限・live gate）で何も公開しないこと
+- `test_learning_engine_aabb_bounded_retention`（#578）: 合成600半荘で、完了順を入れ替えても
+  変更前の全件保持の保存とraw・resultのbytesが一致すること（1 / 3 worker）、第2層の最初の失敗・
+  書込失敗、第1層の失敗、先頭が遅いときのsubmit上限、親で生きている `HanchanCapture` 数が
+  worker数 + 2以下、worker失敗・crash・RSS超過・raw書込失敗・rename失敗で何も公開せずstagingも
+  残さないこと。親の保持量の計測は `scripts/diagnose_learning_bounded_retention_578.py`（合成fixture）
