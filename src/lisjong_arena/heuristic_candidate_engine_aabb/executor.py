@@ -273,6 +273,7 @@ def run_tasks(
     on_hanchan: Callable[[int, int], None] | None = None,
     on_executed: Callable[[ExecutedHanchan], None] | None = None,
     remaining_seconds: Callable[[], float] | None = None,
+    retain_results: bool = True,
 ) -> list[ExecutedHanchan]:
     """1半荘ずつのtaskを1 workerで順に実行する（``run_schedule`` の本体）。
 
@@ -282,6 +283,8 @@ def run_tasks(
     ``remaining_seconds`` はevent全体の残り時間を返すoptionalなhook（#565）。渡すと
     各半荘の待ち時間を ``min(timeout_seconds, 残り時間)`` にし、残りがなければ止める。
     ``None`` なら従来どおり固定timeoutだけ。
+    ``retain_results=False`` では結果を溜めずに空listを返し、各半荘は
+    ``on_executed`` だけが受け取る（Learning正式runのbounded保持、#578）。
     """
     if type(timeout_seconds) is not int or timeout_seconds <= 0:
         raise RunStopped("timeout_seconds must be a positive int taken from the lock")
@@ -338,9 +341,11 @@ def run_tasks(
                 played.policy_analysis,
                 played.native_counters,
             )
-            executed.append(item_result)
+            if retain_results:
+                executed.append(item_result)
             if on_executed is not None:
                 on_executed(item_result)
+            del played, capture, item_result, future
             if on_hanchan is not None:
                 on_hanchan(index + 1, len(tasks))
     except BaseException:

@@ -283,30 +283,13 @@ def write_kyoku_records(
         layout.kyoku_record_schema, KYOKU_RECORD_FILENAME, kyoku_text, len(hanchans)
     )
     event_text = None if events is None else _payload_text(events)
-
-    def manifest_text(current: EventFactStatus) -> str:
-        if current.valid:
-            event_payload = {
-                **_payload_info(
-                    layout.event_fact_schema,
-                    EVENT_FACT_FILENAME,
-                    event_text,
-                    len(events),
-                ),
-                "status": EVENT_FACTS_VALID,
-            }
-        else:
-            event_payload = current.to_value()
-        return canonical_json_text(
-            _build_manifest(
-                layout=layout,
-                producer_revision=producer_revision,
-                bindings=bindings,
-                hanchan_count=len(hanchans),
-                kyoku_payload=kyoku_payload,
-                event_facts=event_payload,
-            )
+    event_payload = (
+        None
+        if events is None
+        else _payload_info(
+            layout.event_fact_schema, EVENT_FACT_FILENAME, event_text, len(events)
         )
+    )
 
     with staged_artifact_directory(destination) as staging:
         event_path = staging / EVENT_FACT_FILENAME
@@ -320,32 +303,257 @@ def write_kyoku_records(
                     raise
                 # 第2層だけの保存失敗: 第2層全体をINVALIDにし、第1層は残す
                 event_path.unlink(missing_ok=True)
-                status = EventFactStatus(
-                    EVENT_FACTS_INVALID,
-                    f"event fact write failed: {type(error).__name__}: {error}",
-                )
+                status = _event_write_failed(error)
+        verified = _seal_staging(
+            staging,
+            status,
+            layout=layout,
+            producer_revision=producer_revision,
+            bindings=bindings,
+            hanchan_count=len(hanchans),
+            kyoku_payload=kyoku_payload,
+            event_payload=event_payload,
+            event_facts_required=event_facts_required,
+        )
+    return verified
+
+
+def _event_write_failed(error: BaseException) -> EventFactStatus:
+    return EventFactStatus(
+        EVENT_FACTS_INVALID,
+        f"event fact write failed: {type(error).__name__}: {error}",
+    )
+
+
+def _seal_staging(
+    staging: Path,
+    status: EventFactStatus,
+    *,
+    layout: RecordLayout,
+    producer_revision: str,
+    bindings: RecordBindings,
+    hanchan_count: int,
+    kyoku_payload: dict,
+    event_payload: dict | None,
+    event_facts_required: bool,
+) -> VerifiedKyokuRecords:
+    """payloadを書いたstagingへmanifestを書き、読込と同じ検査を保存bytesへ行う。
+
+    ``event_payload`` は第2層fileの ``_payload_info``（第2層がINVALIDなら使わない）。
+    """
+
+    def manifest_text(current: EventFactStatus) -> str:
+        if current.valid:
+            event_facts = {**event_payload, "status": EVENT_FACTS_VALID}
+        else:
+            event_facts = current.to_value()
+        return canonical_json_text(
+            _build_manifest(
+                layout=layout,
+                producer_revision=producer_revision,
+                bindings=bindings,
+                hanchan_count=hanchan_count,
+                kyoku_payload=kyoku_payload,
+                event_facts=event_facts,
+            )
+        )
+
+    event_path = staging / EVENT_FACT_FILENAME
+    write_new_artifact_file(staging / MANIFEST_FILENAME, manifest_text(status))
+    # 公開前に、読込と同じ検査を保存bytesに対して行う（renameはbytesを変えない）
+    verified = read_kyoku_records(
+        staging, event_facts_required=event_facts_required, layout=layout
+    )
+    if status.valid and not verified.event_fact_status.valid:
+        # 第2層だけの公開前検査失敗（event_facts_required=Falseでだけ到達する）。
+        # 第2層fileを外し、INVALIDと理由を記録したmanifestで第1層を公開する
+        # 公開前検査が第2層fileの欠落をINVALIDにした場合もここへ来る
+        event_path.unlink(missing_ok=True)
+        (staging / MANIFEST_FILENAME).unlink()
+        status = EventFactStatus(
+            EVENT_FACTS_INVALID,
+            f"pre-publication check failed: {verified.event_fact_status.reason}",
+        )
         write_new_artifact_file(staging / MANIFEST_FILENAME, manifest_text(status))
-        # 公開前に、読込と同じ検査を保存bytesに対して行う（renameはbytesを変えない）
         verified = read_kyoku_records(
             staging, event_facts_required=event_facts_required, layout=layout
         )
-        if status.valid and not verified.event_fact_status.valid:
-            # 第2層だけの公開前検査失敗（event_facts_required=Falseでだけ到達する）。
-            # 第2層fileを外し、INVALIDと理由を記録したmanifestで第1層を公開する
-            # 公開前検査が第2層fileの欠落をINVALIDにした場合もここへ来る
-            event_path.unlink(missing_ok=True)
-            (staging / MANIFEST_FILENAME).unlink()
-            status = EventFactStatus(
-                EVENT_FACTS_INVALID,
-                f"pre-publication check failed: {verified.event_fact_status.reason}",
-            )
-            write_new_artifact_file(staging / MANIFEST_FILENAME, manifest_text(status))
-            verified = read_kyoku_records(
-                staging, event_facts_required=event_facts_required, layout=layout
-            )
-        if verified.event_fact_status != status:
-            raise KyokuRecordError("event fact status changed on readback")
+    if verified.event_fact_status != status:
+        raise KyokuRecordError("event fact status changed on readback")
     return verified
+
+
+# ---------------------------------------------------------------------------
+# create（1半荘ずつ、#578）
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedHanchan:
+    """1半荘を ``build_records`` と同じ射影にかけた結果（captureを持たない）。
+
+    ``event_error`` は第2層の射影で出た例外。canonical順でまだ第2層が有効な
+    ときだけ意味を持つ（``build_records`` は最初の失敗以降の第2層を射影しない）。
+    """
+
+    row: dict
+    event_row: dict | None
+    event_error: Exception | None
+
+
+class _PayloadFile:
+    """write-onceの新規fileへ1行ずつ追記し、bytes・行数・SHA-256を数える。"""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.rows = 0
+        self.bytes = 0
+        self._hash = hashlib.sha256()
+        self._stream = path.open("x", encoding="utf-8", newline="\n")
+
+    def write(self, line: str) -> None:
+        data = line.encode("utf-8")
+        self._stream.write(line)
+        self._hash.update(data)
+        self.bytes += len(data)
+        self.rows += 1
+
+    def close(self) -> None:
+        if not self._stream.closed:
+            self._stream.close()
+
+    def info(self, schema: str) -> dict:
+        return {
+            "bytes": self.bytes,
+            "file": self.path.name,
+            "rows": self.rows,
+            "schema": schema,
+            "sha256": self._hash.hexdigest(),
+        }
+
+
+class KyokuRecordStream:
+    """局単位recordを1半荘ずつstaging directoryへ書く（#578）。
+
+    ``write_kyoku_records`` と同じ射影・検査・manifest・保存bytesになる。違いは
+    全半荘のcaptureを受け取らず、``project`` で1半荘ずつrowへ変えてcaptureを
+    手放せること。``project`` は完了順に呼んでよく、``append`` はcanonical順に呼ぶ。
+
+    stagingの作成・公開（rename）・失敗時の削除はcallerが持つ。``finish`` は
+    manifestを書いて保存bytesを読込と同じ検査にかけ、検査済みrecordを返す。
+    """
+
+    def __init__(
+        self,
+        staging: str | Path,
+        *,
+        producer_revision: str,
+        event_facts_required: bool,
+        bindings: RecordBindings = RecordBindings(),
+        layout: RecordLayout = AABB_LAYOUT,
+        capture_type: type = HanchanCapture,
+    ) -> None:
+        self._revision = _require_revision(producer_revision)
+        self._bindings = _require_bindings(bindings)
+        self._required = event_facts_required
+        self._layout = layout
+        self._capture_type = capture_type
+        self._staging = Path(staging)
+        self._staging.mkdir()
+        self._kyoku = _PayloadFile(self._staging / KYOKU_RECORD_FILENAME)
+        self._events: _PayloadFile | None = _PayloadFile(
+            self._staging / EVENT_FACT_FILENAME
+        )
+        self._status = EventFactStatus(EVENT_FACTS_VALID)
+        self._finished = False
+
+    @property
+    def rows(self) -> int:
+        return self._kyoku.rows
+
+    def project(self, capture: HanchanCapture) -> ProjectedHanchan:
+        """1半荘を射影・検査する（I/Oなし、順序に依存しない）。第1層の失敗は例外。"""
+        if not isinstance(capture, self._capture_type):
+            raise KyokuRecordError(
+                f"captures must contain {self._capture_type.__name__} values"
+            )
+        layout = self._layout
+        row = project_row(
+            capture.match,
+            seed=capture.seed,
+            keys={key: getattr(capture, key) for key in layout.key_fields},
+            seats=capture.seats,
+            selector_call_counts=capture.selector_call_counts,
+            policy_call_counts=capture.policy_call_counts,
+            layout=layout,
+        )
+        try:
+            return ProjectedHanchan(
+                row, project_event_facts(capture.round_evidence, row, layout), None
+            )
+        except Exception as error:
+            # tracebackのframeはcaptureを参照し続けるので外す（理由の文字列は残る）
+            cause = error
+            while cause is not None:
+                cause.__traceback__ = None
+                cause = cause.__cause__ or cause.__context__
+            return ProjectedHanchan(row, None, error)
+
+    def append(self, projected: ProjectedHanchan) -> None:
+        """canonical順の次の半荘として追記する。"""
+        if self._finished:
+            raise KyokuRecordError("the record stream is already finished")
+        if self._events is not None:
+            error = projected.event_error
+            if error is not None:
+                if self._required or not isinstance(error, EventFactError):
+                    raise error
+                self._drop_events(EventFactStatus(EVENT_FACTS_INVALID, str(error)))
+        # 第1層の保存失敗は、どのmodeでも停止する（何も公開しない）
+        self._kyoku.write(canonical_line(projected.row))
+        if self._events is not None:
+            try:
+                self._events.write(canonical_line(projected.event_row))
+            except Exception as error:
+                if self._required:
+                    raise
+                # 第2層だけの保存失敗: 第2層全体をINVALIDにし、第1層は残す
+                self._drop_events(_event_write_failed(error))
+
+    def _drop_events(self, status: EventFactStatus) -> None:
+        self._events.close()
+        self._events.path.unlink(missing_ok=True)
+        self._events = None
+        self._status = status
+
+    def finish(self) -> VerifiedKyokuRecords:
+        """manifestを書き、保存bytesを読込と同じ検査にかけて返す。"""
+        if self._finished:
+            raise KyokuRecordError("the record stream is already finished")
+        self._finished = True
+        self.close()
+        if self._kyoku.rows == 0:
+            raise KyokuRecordError("a kyoku record needs at least one hanchan")
+        layout = self._layout
+        return _seal_staging(
+            self._staging,
+            self._status,
+            layout=layout,
+            producer_revision=self._revision,
+            bindings=self._bindings,
+            hanchan_count=self._kyoku.rows,
+            kyoku_payload=self._kyoku.info(layout.kyoku_record_schema),
+            event_payload=None
+            if self._events is None
+            else self._events.info(layout.event_fact_schema),
+            event_facts_required=self._required,
+        )
+
+    def close(self) -> None:
+        """開いているfileを閉じる（失敗時のcleanup前にも呼ぶ）。"""
+        self._kyoku.close()
+        if self._events is not None:
+            self._events.close()
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +758,8 @@ __all__ = [
     "MANIFEST_SCHEMA",
     "EventFactStatus",
     "HanchanCapture",
+    "KyokuRecordStream",
+    "ProjectedHanchan",
     "RecordBindings",
     "VerifiedKyokuRecords",
     "build_records",

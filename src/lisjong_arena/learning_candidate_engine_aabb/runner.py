@@ -1,22 +1,29 @@
-"""正式eventの実行入口（#562）。
+"""正式eventの実行入口（#562、#578）。
 
 ```text
 全体wallの計測開始 -> load lock -> raw / result / observationsが未作成であることを確認
   -> OS上限（cgroup memory.max・memory.swap.max・RuntimeMaxSec）がlockと一致するか確認
   -> live gate（HEAD・環境・3 artifactのbinding・ledger） -> 全体wall
-  -> run_tasks（600半荘、1 worker、各半荘timeout = min(lock, 全体wallの残り)、
-     半荘ごとに全体wall・親 + workerのpeak RSS）
+  -> 600半荘（1 workerは run_tasks、2..8 workerは stream_parallel_tasks）
+     各半荘timeout = min(lock, 全体wallの残り)
+     半荘の完了ごとに: 全体wall・親 + workerのpeak RSS
+                       -> 第1層・第2層へ射影（captureはここで手放す）
+                       -> canonical順（seed昇順 x placement 0..5）でraw stagingへ追記
   -> live gate（実行後に再照合） -> 全体wall
-  -> 第1層・schedule・主統計を書込前に検査 -> 全体wall
-  -> raw record・observations・resultをstagingへ書く
+  -> raw manifestを書き、保存bytesを読込と同じ検査にかける
+  -> schedule・主統計を検査 -> 全体wall
+  -> observations・resultをstagingへ書く
   -> 全体wall・親 + workerのpeak RSSを確かめてから、全部そろって公開
 ```
 
+- 親が実行中に持つのは、判定・射影中のcapture（並列では完了したworker結果だけ）、
+  canonical順を待つ射影済みrow（``REORDER_AHEAD_PER_WORKER`` x workers 以下）、
+  半荘ごとの計測値だけ。全半荘のcaptureは持たない（#578）
 - 資源上限は ``limits`` の三重方式（OS scope ＋ 外側のrealtime watchdog ＋ code、#565）
 
 - 1つでも失敗・timeout・上限超過があればevent全体をSTOP / INVALIDとし、result・raw・
-  observationsを公開しない。診断証跡は ``diagnostics`` へ ``stop-<UTC時刻>.json`` として
-  別に残す（resultではない）。STOP後の再開は自動化しない
+  observationsを公開しない（stagingは消す）。診断証跡は ``diagnostics`` へ
+  ``stop-<UTC時刻>.json`` として別に残す（resultではない）。STOP後の再開は自動化しない
 - 第2層（event facts）だけの失敗は第2層をINVALIDにして続け、主指標は第1層で判断する
 - seedの差し替え・skip・再試行・fallback行動・成功分だけの集計はしない
 """
@@ -26,6 +33,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from lisjong_arena import seed_registry
@@ -42,18 +50,19 @@ from lisjong_arena.heuristic_candidate_engine_aabb.kyoku_record import (
 )
 from lisjong_arena.heuristic_candidate_engine_aabb.record_store import (
     HanchanCapture,
-    build_records,
-    write_kyoku_records,
+    KyokuRecordStream,
+    ProjectedHanchan,
 )
 
 from .limits import EventBudget, ResourceGuard, probe_os_limits, require_os_limits
 from .lock import LearningEngineAabbLockError, load_lock, require_live_target
-from .parallel import ParallelResourceGuard, run_parallel_tasks
+from .parallel import ParallelResourceGuard, stream_parallel_tasks
 from .protocol import LAYOUT, expected_schedule, schedule_document
 from .result import (
-    build_observations,
     build_result,
     locked_identities,
+    observation_row,
+    observations_document,
     observations_sha256,
     record_bindings,
     save_document,
@@ -96,34 +105,79 @@ def schedule_tasks(lock: dict) -> list[LearningHanchanTask]:
     ]
 
 
+REORDER_AHEAD_PER_WORKER = 4
+"""並列実行で、先頭の未完了半荘からいくつ先までsubmitしてよいか（workerあたり）。"""
+
+
+@dataclass(frozen=True, slots=True)
+class _Measured:
+    """1半荘の計測値（captureを持たない）。観測documentと公開直前のRSS検査に使う。"""
+
+    peak_rss_kib: int | None
+    observation: dict
+
+
+class _CanonicalSink:
+    """完了した半荘をその場で射影し、canonical順でrecord streamへ書く（#578）。
+
+    captureは射影したら手放す。canonical順を待つ間に持つのは射影済みrowと
+    計測値だけで、その件数は並列実行の ``max_ahead`` で上が決まる。
+    """
+
+    def __init__(self, stream: KyokuRecordStream) -> None:
+        self._stream = stream
+        self._buffer: dict[int, tuple[ProjectedHanchan, _Measured]] = {}
+        self.measured: list[_Measured] = []
+        self.max_buffered = 0
+
+    def __call__(self, index: int, item) -> None:
+        if index < len(self.measured) or index in self._buffer:
+            raise RunStopped(f"schedule index {index} was delivered twice")
+        projected = self._stream.project(item.capture)
+        measured = _Measured(item.peak_rss_kib, observation_row(item))
+        self._buffer[index] = (projected, measured)
+        self.max_buffered = max(self.max_buffered, len(self._buffer))
+        while len(self.measured) in self._buffer:
+            projected, measured = self._buffer.pop(len(self.measured))
+            self._stream.append(projected)
+            self.measured.append(measured)
+
+    def require_complete(self, total: int) -> None:
+        if self._buffer or len(self.measured) != total or self._stream.rows != total:
+            raise RunStopped("the schedule is incomplete")
+
+    @property
+    def observations(self) -> list[dict]:
+        return [item.observation for item in self.measured]
+
+
 def _publish(
     lock: dict,
-    executed,
+    records,
+    raw_staging: Path,
+    observation_rows: list[dict],
     destinations: dict,
     revision: str,
     before_publish: Callable[[], None],
 ) -> dict:
-    """raw・observations・resultをstagingへ書き、上限を確かめ、全部そろってから公開する。"""
+    """observations・resultをstagingへ書き、上限を確かめ、rawと全部そろって公開する。
+
+    raw（``raw_staging``）は検査済み。失敗時にrawのstagingを消すのはcaller。
+    """
     token = uuid.uuid4().hex
     names = ("raw", "observations", "result")
     staging = {
         name: destinations[name].with_name(
             f".{destinations[name].name}.staging-{token}"
         )
-        for name in names
+        for name in ("observations", "result")
     }
+    staging["raw"] = raw_staging
     published: list[str] = []
     try:
-        records = write_kyoku_records(
-            staging["raw"],
-            [item.capture for item in executed],
-            producer_revision=revision,
-            event_facts_required=False,
-            bindings=record_bindings(lock),
-            layout=LAYOUT,
-            capture_type=HanchanCapture,
+        save_document(
+            observations_document(lock, observation_rows), staging["observations"]
         )
-        save_document(build_observations(lock, executed), staging["observations"])
         result = build_result(
             lock,
             records,
@@ -140,7 +194,6 @@ def _publish(
     except BaseException:
         for name in published:
             destinations[name].rename(staging[name])
-        shutil.rmtree(staging["raw"], ignore_errors=True)
         staging["observations"].unlink(missing_ok=True)
         staging["result"].unlink(missing_ok=True)
         raise
@@ -186,7 +239,11 @@ def run_formal_event(
                 f"{name} destination already exists; outputs are write-once and a "
                 "written result is never re-run"
             )
+    raw_staging = destinations["raw"].with_name(
+        f".{destinations['raw'].name}.staging-{uuid.uuid4().hex}"
+    )
     progress = {"done": 0}
+    stream: KyokuRecordStream | None = None
 
     def count(done: int, total: int) -> None:
         progress["done"] = done
@@ -198,56 +255,80 @@ def run_formal_event(
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
         budget.check("after the pre-run live gate")
         tasks = schedule_tasks(lock)
+        revision = lock["execution_target"]["revision"]
+        stream = KyokuRecordStream(
+            raw_staging,
+            producer_revision=revision,
+            event_facts_required=False,
+            bindings=record_bindings(lock),
+            layout=LAYOUT,
+            capture_type=HanchanCapture,
+        )
+        sink = _CanonicalSink(stream)
         if workers == 1:
-            executed = run_tasks(
+
+            def accept_next(item) -> None:
+                guard(item)
+                sink(len(sink.measured), item)
+
+            run_tasks(
                 tasks,
                 key_fields=("placement",),
                 timeout_seconds=limits["timeout_seconds"],
                 expected_environment=lock["environment"],
                 play=play,
                 on_hanchan=count,
-                on_executed=guard,
+                on_executed=accept_next,
                 remaining_seconds=budget.remaining,
+                retain_results=False,
             )
         else:
-            executed = run_parallel_tasks(
+
+            def accept(index: int, item) -> None:
+                guard(item)
+                sink(index, item)
+
+            stream_parallel_tasks(
                 tasks,
                 workers=workers,
                 timeout_seconds=limits["timeout_seconds"],
                 expected_environment=lock["environment"],
                 play=play,
+                on_result=accept,
                 on_hanchan=count,
-                on_executed=guard,
                 remaining_seconds=budget.remaining,
+                max_ahead=REORDER_AHEAD_PER_WORKER * workers,
             )
+        sink.require_complete(len(tasks))
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
         budget.check("after the post-run live gate")
-        # 書込前に、第1層・schedule・主統計が成り立つことを確かめる（失敗時は何も書かない）
-        hanchans, _, _ = build_records(
-            [item.capture for item in executed],
-            event_facts_required=False,
-            layout=LAYOUT,
-        )
+        # manifestを書き、保存bytesを読込と同じ検査にかける（まだ公開しない）
+        records = stream.finish()
+        # 公開前に、第1層・schedule・主統計が成り立つことを確かめる
         seeds = lock["population"]["ordered_seeds"]
         verify_schedule(
-            hanchans,
+            records.hanchans,
             expected_schedule(
                 schedule_document(seeds)["hanchans"], *locked_identities(lock)
             ),
         )
         summarize_rank_blocks(
-            [block["difference_ranks"] for block in block_rank_totals(hanchans)]
+            [block["difference_ranks"] for block in block_rank_totals(records.hanchans)]
         )
         budget.check("after the pre-write checks")
-        revision = lock["execution_target"]["revision"]
         result = _publish(
             lock,
-            executed,
+            records,
+            raw_staging,
+            sink.observations,
             destinations,
             revision,
-            lambda: guard.before_publish(executed),
+            lambda: guard.before_publish(sink.measured),
         )
     except BaseException as error:
+        if stream is not None:
+            stream.close()
+        shutil.rmtree(raw_staging, ignore_errors=True)
         _write_stop(destinations["diagnostics"], lock, error, progress["done"])
         if not isinstance(error, Exception) or isinstance(
             error, (RunStopped, LearningEngineAabbLockError)
