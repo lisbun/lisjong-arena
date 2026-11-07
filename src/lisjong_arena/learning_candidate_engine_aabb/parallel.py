@@ -163,9 +163,9 @@ def run_parallel_tasks(
             for _ in range(min(len(ready), len(tasks) - next_index)):
                 submit_one()
     except BaseException:
-        # No partial raw, observations or result may escape. Python 3.14's
-        # terminate_workers shuts down all spawn workers on any failure.
-        pool.terminate_workers()
+        # Fail closed even when a worker ignores SIGTERM. Python 3.14's
+        # kill_workers uses SIGKILL and shuts down the spawn pool.
+        pool.kill_workers()
         raise
     pool.shutdown(wait=True)
     if any(item is None for item in output):
