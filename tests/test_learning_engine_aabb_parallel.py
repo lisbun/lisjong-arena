@@ -36,6 +36,20 @@ def _crashing_fake_play(task):
     return fx.fake_play(task)
 
 
+def _overlap_fake_play(task):
+    """A task must see the other worker start before either may complete."""
+    from pathlib import Path
+
+    marker = Path(task.marker_dir)
+    (marker / f"started-{task.placement}").touch()
+    deadline = time.monotonic() + 10.0
+    while len(list(marker.glob("started-*"))) < 2:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("two workers did not overlap")
+        time.sleep(0.02)
+    return fx.fake_play(task)
+
+
 class ParallelTasksTest(unittest.TestCase):
     def setUp(self):
         # Existing synthetic fixture identity, never a formal seed allocation.
@@ -73,6 +87,28 @@ class ParallelTasksTest(unittest.TestCase):
         )
         self.assertEqual(observed, [(index, 6) for index in range(1, 7)])
         self.assertTrue(all(item.worker_pid for item in result))
+
+    def test_two_workers_actually_overlap(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as marker:
+            tasks = [
+                SimpleNamespace(
+                    seed=fx.SEEDS[0],
+                    placement=placement,
+                    marker_dir=marker,
+                )
+                for placement in range(2)
+            ]
+            results = run_parallel_tasks(
+                tasks,
+                workers=2,
+                timeout_seconds=30,
+                expected_environment=fx.ENVIRONMENT,
+                play=_overlap_fake_play,
+            )
+            self.assertEqual(len(results), 2)
+            self.assertEqual(len({item.worker_pid for item in results}), 2)
 
     def test_formal_synthetic_parallel_bundle_and_verify(self):
         """K=100 synthetic schedule, no real Policy or new seed reservation."""
