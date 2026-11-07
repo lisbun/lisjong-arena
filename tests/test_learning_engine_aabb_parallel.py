@@ -74,6 +74,42 @@ class ParallelTasksTest(unittest.TestCase):
         self.assertEqual(observed, [(index, 6) for index in range(1, 7)])
         self.assertTrue(all(item.worker_pid for item in result))
 
+    def test_formal_synthetic_parallel_bundle_and_verify(self):
+        """K=100 synthetic schedule, no real Policy or new seed reservation."""
+        import shutil
+        import tempfile
+        from pathlib import Path
+
+        from lisjong_arena import seed_registry
+        from lisjong_arena.learning_candidate_engine_aabb.lock import save_lock
+        from lisjong_arena.learning_candidate_engine_aabb.result import verify_result
+        from lisjong_arena.learning_candidate_engine_aabb.runner import (
+            run_formal_event,
+        )
+
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        ledger_path = root / "ledger.json"
+        seed_registry.write_ledger(ledger_path, fx.ledger())
+        lock = fx.lock_document(root, workers=3)
+        lock_path = save_lock(lock, root / "lock.json")
+        result = run_formal_event(
+            lock_path,
+            ledger_path=ledger_path,
+            play=fx.fake_play,
+            live_gate=fx.gate,
+            os_limits=lambda: fx.os_limits(lock["execution"]["limits"]),
+            parent_peak_rss_kib=fx.parent_peak_rss_kib,
+        )
+        verified = verify_result(
+            lock_path=lock_path,
+            raw_path=root / "raw",
+            result_path=root / "result.json",
+            observations_path=root / "observations.json",
+        )
+        self.assertEqual(result["result_digest"], verified["result_digest"])
+        self.assertEqual(result["population"]["k"], 100)
+
     def test_parallel_and_serial_payloads_are_equal(self):
         serial = run_tasks(
             self.tasks,
