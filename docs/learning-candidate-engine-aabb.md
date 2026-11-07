@@ -164,6 +164,59 @@ lisjong#368の正式実行開始gateを本実装の完了で通過扱いしな�
 
 承認は既定で2段階（準備計画 → 本実行計画）。Learning Championの更新は結果後に別承認。
 
+### 6.1 開発準備入口（#567、準備計画#564 §C）
+
+gate 3・4のための入口。正式protocolのK = 100を小さくして使い回さず、別のplan / report kind
+（`arena-learning-candidate-engine-aabb-development-v1`）で扱う。**強さの結果ではない**
+（`not_a_strength_result = true`。主統計・区間・classificationを出さない）。
+
+| 区分 | 半荘 |
+| --- | --- |
+| development | seed 472005・472006（#472の開発用、registry外）× placement 0..5 = 12 |
+| repeat | seed 472005 × placement 0..5 をもう一度 = 6（独立標本・性能見積りの追加標本にしない） |
+
+scheduleは定数で、CLI・APIのどこからもseed・配置・件数を変えられない。plan作成時と実行前後の
+live gateで、seedがSeed Registryのどのallocation（全domain）とも重ならないことを確かめる。
+台帳には予約・変更をしない。
+
+```text
+python -m lisjong_arena.learning_candidate_engine_aabb dev-plan \
+  --timeout-seconds … --wall-seconds … --peak-rss-kib … --wheel … \
+  --discard-artifact … --reaction-artifact … --champion-checkpoint … \
+  --output-dir <未作成のdir> --diagnostics <未作成のdir> --plan <plan.json>
+systemd-run --user --scope -p MemoryMax=<peak_rss_kib>K -p MemorySwapMax=0 \
+  -p OOMPolicy=kill -p RuntimeMaxSec=<wall_seconds> \
+  python -m lisjong_arena.learning_candidate_engine_aabb dev-run --plan <plan.json>
+python -m lisjong_arena.learning_candidate_engine_aabb dev-verify --output-dir <dir>
+```
+
+- `dev-plan`: 正式`lock`と同じlive値（clean merged HEAD、環境、3 artifactを実際にloadした
+  binding）。Arm Yは `LISJONG_ARENA_INITIAL_LEARNING_CHAMPION_CHECKPOINT` で指定する
+- `dev-run`: 正式runと同じ部品（worker runtime、`run_tasks`、§4の資源上限、局record）。
+  developmentとrepeatはそれぞれ新しいspawn workerで実行する。workerは各seatの選択行動も
+  記録する（正式runでは記録しない）。失敗・timeout・上限超過・binding不一致は全体STOPで、
+  outputを公開しない（`diagnostics/stop-*.json` だけ）。全部をstagingに書き、上限を確かめてから
+  1回のrenameで公開する
+- `dev-verify`: 保存物だけ（engine・Policyを起動しない）。全directoryの `SHA256SUMS`
+  （過不足・変更）、plan、schedule・binding、行動数 = Policy呼び出し数、観測値のschema・summary、
+  reportの完全一致（4指標を含む副指標、再現比較）を再導出で確かめる
+- 再現比較: repeatの6半荘を、developmentの同じseed・配置と、局record（局精算・最終点・
+  rank・呼び出し数）、第2層、選択行動の列で比べる。時間・RSS・path・timestampは比べない。
+  差は `MISMATCH` としてreportに記録し（STOPではない）、終了codeは3。準備の出口判定
+  （`PREPARATION-PASS` 等）は実行Issueで行う
+
+| 保存物 | 内容 |
+| --- | --- |
+| plan.json | planのcopy |
+| development/、repeat/ | `raw/`（局record、正式rawとは別schemaで正式rawとして読めない）、`actions.json`、`SHA256SUMS` |
+| observations.json | 半荘ごとのwall・worker peak RSS・判断回数 / 時間、親のpeak RSS、段階ごとの経過秒、run別の出力bytes（決定的再導出の対象外） |
+| report.json | runごとの件数・第2層状態・raw / 行動のhash、局指標の事実、再現比較、観測値のSHA-256 |
+
+局指標は正式resultと同じ関数（`summarize_seat_groups`）で数え、seedごと・roleごとの分子 / 分母 / 率
+（和了率・放銃率等）、role別の条件付き値（平均和了打点・平均放銃失点等）、局精算の点数分解だけを
+射影する。**A − Bの差、平均順位・順位分布、最終点、SD・区間は出さない**。
+| SHA256SUMS | top（下位の`SHA256SUMS`を含む全file） |
+
 ## 7. testの範囲
 
 合成・固定fixtureだけで、実artifact・実対局は使わない。
@@ -183,3 +236,9 @@ lisjong#368の正式実行開始gateを本実装の完了で通過扱いしな�
   実行後live gate・保存中のwall / 親メモリ超過で公開しないこと、親RSSの算入、OS上限の不一致でSTOP
 - `test_learning_engine_aabb_limits`（#565）: cgroup v2・systemctlの読取り（一時directoryで差替え）、
   無制限・読めない値のfail closed、lockとの一致、親 + workerのメモリ、monotonic / realtimeの大きい方
+- `test_learning_engine_aabb_development`（#567）: 固定18半荘（引数で変えられない、変えたplanの拒否）、
+  Seed Registryとの照合と台帳非変更、formal lockとして読めないこと、spawn workerでの完走、
+  別process verify、verifyがengine / Policyを起動しないこと、SHA256SUMSの過不足・変更、
+  SHA256SUMSまで書き直した改ざんの再導出での拒否、再現比較（行動・局精算の差、時間 / RSSは無視）、
+  STOP（worker失敗・行動未記録・timeout・repeat中のメモリ・実行後live gate / 保存中のwall・
+  公開直前の親メモリ・書込失敗・OS上限・live gate）で何も公開しないこと

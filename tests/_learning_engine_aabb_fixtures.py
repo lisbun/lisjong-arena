@@ -257,8 +257,8 @@ def script_for(seed, placement):
     return SCRIPT_X if (seed in X_SEEDS and placement == 0) else SCRIPT_Y
 
 
-def capture(seed, placement, *, evidence=True, counts=COUNTS):
-    script = script_for(seed, placement)
+def capture(seed, placement, *, evidence=True, counts=COUNTS, script=None):
+    script = script_for(seed, placement) if script is None else script
     match = play(seed, script)
     identities = {"A": CANDIDATE["policy_identity"], "B": INCUMBENT["policy_identity"]}
     return HanchanCapture(
@@ -333,3 +333,111 @@ def fake_play_wrong_placement(task):
     if (task.seed, task.placement) == (SEEDS[0], 1):
         return replace(played, capture=replace(played.capture, placement=2))
     return played
+
+
+# ---------------------------------------------------------------------------
+# 開発準備入口（#567）
+# ---------------------------------------------------------------------------
+
+DEVELOPMENT_SEEDS = (472_005, 472_006)
+SEAT_NAMES = ("EAST", "SOUTH", "WEST", "NORTH")
+MARKER_ENV = "LISJONG_ARENA_TEST_DEVELOPMENT_MARKERS"
+"""再実行（2回目）の半荘だけ結果を変えるfakeが、1回目を覚えておくdirectory。"""
+
+
+def fake_actions(seed, placement, counts=COUNTS):
+    """seatごとにPolicy呼び出し数と同じ数の、決定的な合成行動。"""
+    return tuple(
+        [name, {"__type": "SyntheticAction", "index": index, "seed": seed}]
+        for name, count in zip(SEAT_NAMES, counts, strict=True)
+        for index in range(count)
+    )
+
+
+def fake_dev_play(task):
+    played = fake_play(task)
+    return replace(played, selected_actions=fake_actions(task.seed, task.placement))
+
+
+def _second_time(task):
+    """同じ(seed, placement)を2回目に実行したときだけTrue（spawn workerをまたぐ）。"""
+    marker = os.path.join(os.environ[MARKER_ENV], f"{task.seed}-{task.placement}.seen")
+    if os.path.exists(marker):
+        return True
+    with open(marker, "w", encoding="utf-8") as handle:
+        handle.write("seen")
+    return False
+
+
+def fake_dev_play_action_drift(task):
+    played = fake_dev_play(task)
+    if (task.seed, task.placement) == (472_005, 2) and _second_time(task):
+        actions = list(played.selected_actions)
+        actions[0] = ["EAST", {"__type": "SyntheticAction", "index": -1, "seed": 0}]
+        return replace(played, selected_actions=tuple(actions))
+    return played
+
+
+def fake_dev_play_record_drift(task):
+    played = fake_dev_play(task)
+    if (task.seed, task.placement) == (472_005, 0) and _second_time(task):
+        drifted = capture(task.seed, task.placement, script=SCRIPT_X)
+        return replace(played, capture=drifted)
+    return played
+
+
+def fake_dev_play_without_actions(task):
+    return fake_play(task)
+
+
+def fake_dev_play_error(task):
+    if (task.seed, task.placement) == (472_006, 3):
+        raise RuntimeError("synthetic Policy failure")
+    return fake_dev_play(task)
+
+
+def fake_dev_play_slow(task):
+    if (task.seed, task.placement) == (472_006, 1):
+        time.sleep(30)
+    return fake_dev_play(task)
+
+
+def fake_dev_play_large_rss(task):
+    played = fake_dev_play(task)
+    if (task.seed, task.placement) == (472_005, 4) and _second_time(task):
+        return replace(played, peak_rss_kib=LIMITS["peak_rss_kib"] + 1)
+    return played
+
+
+def development_plan(tmp, **overrides):
+    from lisjong_arena.learning_candidate_engine_aabb.development import (
+        assemble_plan,
+    )
+
+    arguments = {
+        "candidate": CANDIDATE,
+        "incumbent": INCUMBENT,
+        "limits": LIMITS,
+        "wheel_path": WHEEL_PATH,
+        "artifact_paths": ARTIFACT_PATHS,
+        "output_dir": str(tmp / "output"),
+        "diagnostics_dir": str(tmp / "diagnostics"),
+        "environment": ENVIRONMENT,
+        "arena_revision": ARENA_REVISION,
+        "ledger": ledger(),
+    }
+    arguments.update(overrides)
+    return assemble_plan(**arguments)
+
+
+def development_gate(plan, *, ledger):
+    from lisjong_arena.learning_candidate_engine_aabb.development import (
+        require_live_development,
+    )
+
+    require_live_development(
+        plan,
+        ledger=ledger,
+        live=(ENVIRONMENT, CANDIDATE, INCUMBENT),
+        head=ARENA_REVISION,
+    )

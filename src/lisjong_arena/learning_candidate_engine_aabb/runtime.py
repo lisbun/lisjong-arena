@@ -244,34 +244,55 @@ class LearningHanchanTask:
     incumbent: dict
     artifact_paths: dict
     wheel_path: str
+    record_actions: bool = False
+    """開発準備入口（#567）の再現比較だけが ``True`` にし、選択行動の列を返させる。
+    正式runは ``False``（従来どおり ``selected_actions = None``）。"""
 
 
 class _TimedPolicy:
-    """``choose_action`` の呼び出し数と所要時間を数えるproxy。判断には触れない。"""
+    """``choose_action`` の呼び出し数と所要時間を数えるproxy。判断には触れない。
 
-    __slots__ = ("_policy", "_counts", "_seconds", "_seat")
+    ``actions`` を渡すと、返した行動を正規化して ``[seat名, 値]`` で追記する（観測だけ）。
+    """
 
-    def __init__(self, policy, counts: Counter, seconds: dict, seat: EngineSeat):
+    __slots__ = ("_policy", "_counts", "_seconds", "_seat", "_actions")
+
+    def __init__(
+        self, policy, counts: Counter, seconds: dict, seat: EngineSeat, actions=None
+    ):
         self._policy = policy
         self._counts = counts
         self._seconds = seconds
         self._seat = seat
+        self._actions = actions
 
     def choose_action(self, decision):
         self._counts[self._seat] += 1
         started = time.perf_counter()
         try:
-            return self._policy.choose_action(decision)
+            action = self._policy.choose_action(decision)
         finally:
             self._seconds[self._seat] += time.perf_counter() - started
+        if self._actions is not None:
+            from lisjong_arena.heuristic_candidate_engine_aabb.backend_check import (
+                canonical_engine_value,
+            )
+
+            self._actions.append([self._seat.name, canonical_engine_value(action)])
+        return action
 
 
 def play_loaded(
     task: LearningHanchanTask,
     factories: Mapping[str, Callable[[], object]],
     identities: Mapping[str, str],
+    *,
+    actions: list | None = None,
 ) -> tuple[HanchanCapture, dict]:
-    """roleごとのfactoryから、seatごとに新しいPolicyを作って1半荘を実行する。"""
+    """roleごとのfactoryから、seatごとに新しいPolicyを作って1半荘を実行する。
+
+    ``actions`` を渡すと、全seatの選択行動を判断順に追記する（#567の再現比較）。
+    """
     roles = placement_roles(task.placement)
     counts: Counter = Counter()
     seconds = dict.fromkeys(EngineSeat, 0.0)
@@ -281,7 +302,7 @@ def play_loaded(
     for index, seat in enumerate(EngineSeat):
         policy = factories[roles[index]]()
         created.append(policy)
-        policies[seat] = _TimedPolicy(policy, counts, seconds, seat)
+        policies[seat] = _TimedPolicy(policy, counts, seconds, seat, actions)
     if len({id(policy) for policy in created}) != len(created):
         raise LearningRuntimeError("a Policy instance was shared between seats")
     completions = []
@@ -326,6 +347,7 @@ def play_learning_hanchan(task: LearningHanchanTask) -> PlayedHanchan:
         raise ParticipantBindingError("loaded participants differ from the lock")
     if loaded.ml != environment["ml"]:
         raise LearningRuntimeError("ML conditions differ from the participant load")
+    actions = [] if task.record_actions else None
     capture, analysis = play_loaded(
         task,
         {
@@ -336,6 +358,7 @@ def play_learning_hanchan(task: LearningHanchanTask) -> PlayedHanchan:
             ROLE_CANDIDATE: loaded.candidate["policy_identity"],
             "B": loaded.incumbent["policy_identity"],
         },
+        actions=actions,
     )
     if measured_ml_runtime() != loaded.ml:
         raise LearningRuntimeError("ML conditions changed during the hanchan")
@@ -344,6 +367,7 @@ def play_learning_hanchan(task: LearningHanchanTask) -> PlayedHanchan:
         environment,
         os.getpid(),
         current_peak_rss_kib(),
+        selected_actions=None if actions is None else tuple(actions),
         policy_analysis=analysis,
     )
 
