@@ -72,7 +72,8 @@ def measured_ml_runtime() -> dict[str, object]:
         "device": "cpu",
         "python_version": platform.python_version(),
         "torch_threads": torch.get_num_threads(),
-        "torch_version": torch.__version__,
+        # torch.__version__ is a str subclass (TorchVersion); record the plain string (#569)
+        "torch_version": str(torch.__version__),
     }
 
 
