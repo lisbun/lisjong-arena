@@ -159,6 +159,44 @@ class MlRuntimeTest(unittest.TestCase):
         with self.assertRaises(LearningRuntimeError):
             require_ml_runtime({k: v for k, v in fx.ML.items() if k != "device"})
 
+    def test_torch_version_str_subclass_is_measured_as_a_plain_str(self):
+        """実torchの ``__version__`` はstrのsubclass（TorchVersion）。平のstrとして記録する（#569）。"""
+
+        class TorchVersionLike(str):
+            pass
+
+        fake_torch = SimpleNamespace(
+            __version__=TorchVersionLike("2.13.0+cpu"),
+            cuda=SimpleNamespace(is_available=lambda: False),
+            are_deterministic_algorithms_enabled=lambda: True,
+            get_num_threads=lambda: 1,
+        )
+        with mock.patch.dict("sys.modules", {"torch": fake_torch}):
+            measured = runtime.measured_ml_runtime()
+        self.assertIs(type(measured["torch_version"]), str)
+        self.assertEqual(measured["torch_version"], "2.13.0+cpu")
+        self.assertEqual(require_ml_runtime(measured), measured)
+        with self.assertRaises(LearningRuntimeError):
+            require_ml_runtime(
+                {**measured, "torch_version": TorchVersionLike("2.13.0")}
+            )
+
+    @unittest.skipUnless(
+        __import__("importlib").util.find_spec("torch"), "requires torch"
+    )
+    def test_real_torch_conditions_pass_the_check(self):
+        import torch
+
+        threads = torch.get_num_threads()
+        deterministic = torch.are_deterministic_algorithms_enabled()
+        self.addCleanup(torch.set_num_threads, threads)
+        self.addCleanup(torch.use_deterministic_algorithms, deterministic)
+        torch.set_num_threads(1)
+        torch.use_deterministic_algorithms(True)
+        measured = runtime.measured_ml_runtime()
+        self.assertIs(type(measured["torch_version"]), str)
+        self.assertEqual(require_ml_runtime(measured), measured)
+
 
 class LoadParticipantsTest(unittest.TestCase):
     """ML条件を先に固定し、L2a -> Arm Yの順にloadして、条件が変わらないことを要求する。"""
