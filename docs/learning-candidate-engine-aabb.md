@@ -20,7 +20,7 @@ result・strict verifyと実行入口である。
 
 既存のHeuristic / Overallのprotocol・lock・artifact schema・過去結果は変更しない。
 本protocolはengine・rules・6配置の固定値、局精算record（第1層・第2層）、副指標、
-1 workerの逐次executorを部品として再利用し、record・resultには独自のschema名を持つ
+1 workerの逐次executorと、#574で追加したLearning正式専用のbounded並列executorを使い、record・resultには独自のschema名を持つ
 （Heuristicのrecordを本protocolの読込で受理しない、逆も同じ）。
 
 ## 2. 評価契約（protocol invariant）
@@ -96,7 +96,7 @@ allocation identity、1半荘timeout・全体wall秒・peak RSS（KiB）の上�
   registry外の既知seedに重ならないこと
 - 保存先が未作成であること（write-once）
 
-実行（`run`）: 1 worker（spawn）で600半荘を順に実行する。1半荘でも例外・timeout・
+実行（`run`）: lockに固定した **1〜8 worker**（spawn、CLI `lock --workers N`、既定1）で600半荘を実行する。1 workerは従来の逐次経路。2以上はLearning正式専用のbounded並列経路で、完了順にかかわらずseed順→placement順に収めて保存する。1半荘でも例外・timeout・
 環境 / binding不一致・全体wall超過・peak RSS超過・call数不一致があればevent全体を
 STOP / INVALIDとし、raw・result・observationsを公開しない（`diagnostics/stop-*.json`
 だけを残す。resultではない）。第2層（event facts）だけの失敗は第2層をINVALIDにして
@@ -123,8 +123,8 @@ lockの `wall_seconds` と `peak_rss_kib` は、`run` の開始から公開ま�
    あるので（#517）、scopeの外で実時間を見て、開始 + `wall_seconds` を過ぎたら
    `systemctl --user stop <unit>` で止める。codeからは確認できないので、実行Issueに手順と記録を残す
 3. **code**: 全体wallを `run` の開始直後（lock読込み前）から、monotonicとrealtimeの大きい方で計る。
-   各半荘の待ち時間は `min(timeout_seconds, 全体wallの残り)`。半荘ごと・live gate後・書込前検査後・
-   公開のrename直前に全体wallを、半荘ごとと公開直前に「親 + workerのpeak RSS」の和を確かめる。
+   各半荘の待ち時間は `min(timeout_seconds, 全体wallの残り)`。並列時もキュー滞留でtimeoutを消費させないようin-flightをworker数以内に制限する。半荘ごと・live gate後・書込前検査後・
+   公開のrename直前に全体wallを、半荘ごとと公開直前にメモリを確かめる。並列時は「親 + worker PIDごとのpeak RSSの和」を保守的な上限として使い、OS cgroup MemoryMaxが全workerとpage cacheの合計を強制する。
    公開直前に超えていればstagingを捨て、resultを公開しない
 
 保存物:

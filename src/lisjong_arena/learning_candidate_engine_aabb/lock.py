@@ -199,8 +199,11 @@ def assemble_lock_document(
     environment: dict,
     arena_revision: str,
     ledger: object,
+    workers: int = 1,
 ) -> dict[str, object]:
     """入力を検査してlock documentを作る（live値はcallerが渡す）。"""
+    if type(workers) is not int or not 1 <= workers <= 8:
+        raise LearningEngineAabbLockError("formal workers must be an integer 1..8")
     seeds = require_formal_seeds(ordered_seeds)
     candidate = parse_candidate(candidate)
     incumbent = parse_incumbent(incumbent)
@@ -223,7 +226,7 @@ def assemble_lock_document(
             "backend": BACKEND,
             "limits": dict(require_limits(limits)),
             "wheel_path": wheel_path,
-            "workers": 1,
+            "workers": workers,
         },
         "execution_target": {"branch": EXECUTION_BRANCH, "revision": arena_revision},
         "no_rescue_boundary": list(NO_RESCUE_BOUNDARY),
@@ -327,8 +330,10 @@ def _parse_lock(value: object) -> dict[str, object]:
         raise LearningEngineAabbLockError(
             "lock execution fields do not match the schema"
         )
-    if execution["backend"] != BACKEND or execution["workers"] != 1:
-        raise LearningEngineAabbLockError("lock execution must be one rust worker")
+    if execution["backend"] != BACKEND:
+        raise LearningEngineAabbLockError("lock execution backend must be rust")
+    if type(execution["workers"]) is not int or not 1 <= execution["workers"] <= 8:
+        raise LearningEngineAabbLockError("lock formal workers must be an integer 1..8")
     require_limits(execution["limits"])
     require_artifact_paths(execution["artifact_paths"])
     if type(execution["wheel_path"]) is not str or not execution["wheel_path"]:
@@ -412,6 +417,7 @@ def build_lock(
     artifact_paths: dict,
     destinations: dict,
     ledger_path: str | Path = seed_registry.DEFAULT_LEDGER_PATH,
+    workers: int = 1,
 ) -> dict[str, object]:
     """live値を集めてlockを作る（保存はしない）。participantは実際にloadして作る。"""
     try:
@@ -444,6 +450,7 @@ def build_lock(
         environment=environment,
         arena_revision=head,
         ledger=ledger,
+        workers=workers,
     )
 
 

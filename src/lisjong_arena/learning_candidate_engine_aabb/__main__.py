@@ -28,6 +28,7 @@ def _parser() -> argparse.ArgumentParser:
 
     lock = sub.add_parser("lock", help="write the pre-execution lock")
     lock.add_argument("--event", type=int, required=True, help="owner Issue number")
+    lock.add_argument("--workers", type=int, default=1, help="formal workers (1..8)")
     lock.add_argument("--seeds", required=True, help="100 seeds, comma separated")
     lock.add_argument("--allocation-identity", required=True)
     lock.add_argument("--timeout-seconds", type=int, required=True)
@@ -146,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                 "result": str(Path(args.result).resolve()),
             },
             ledger_path=args.ledger,
+            workers=args.workers,
         )
         save_lock(document, args.output)
         print(json.dumps({"lock_digest": document["lock_digest"]}))

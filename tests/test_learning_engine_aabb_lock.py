@@ -159,6 +159,13 @@ class LockTest(unittest.TestCase):
         self.assertEqual(lock["execution"]["workers"], 1)
         path = save_lock(lock, self.tmp / "lock.json")
         self.assertEqual(load_lock(path), lock)
+        parallel = fx.lock_document(self.tmp, workers=6)
+        self.assertEqual(parallel["execution"]["workers"], 6)
+        self.assertNotEqual(parallel["lock_digest"], lock["lock_digest"])
+        with self.assertRaises(LearningEngineAabbLockError):
+            fx.lock_document(self.tmp, workers=True)
+        with self.assertRaises(LearningEngineAabbLockError):
+            fx.lock_document(self.tmp, workers=9)
         with self.assertRaises(FileExistsError):
             save_lock(lock, path)
 
@@ -256,7 +263,7 @@ class LockTest(unittest.TestCase):
                 lambda v: v["population"].update(schedule_digest="0" * 64)
             ),
             "split": changed(lambda v: v["population"].update(split="DEVELOPMENT")),
-            "workers": changed(lambda v: v["execution"].update(workers=2)),
+            "workers": changed(lambda v: v["execution"].update(workers=9)),
             "participant head": changed(
                 lambda v: v["participants"]["A"]["artifacts"]["discard"].update(
                     head="call"
