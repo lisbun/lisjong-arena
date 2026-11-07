@@ -94,12 +94,11 @@ def run_parallel_tasks(
                     raise RunStopped("event wall time limit was reached")
             now = time.monotonic()
             unfinished = [
-                (future, info)
-                for future, info in pending.items()
-                if not future.done()
+                (future, info) for future, info in pending.items() if not future.done()
             ]
             expired = [
-                info for _, info in unfinished
+                info
+                for _, info in unfinished
                 if now - info.submitted >= timeout_seconds
             ]
             if expired:
@@ -113,7 +112,8 @@ def run_parallel_tasks(
                 default=float("inf"),
             )
             ready, _ = wait(
-                pending, timeout=max(0.0, min(remaining, task_wait)),
+                pending,
+                timeout=max(0.0, min(remaining, task_wait)),
                 return_when=FIRST_COMPLETED,
             )
             if not ready:
@@ -135,7 +135,9 @@ def run_parallel_tasks(
                         f"{label}: worker failed: {type(error).__name__}: {error}"
                     ) from None
                 if played.environment != expected_environment:
-                    raise RunStopped(f"{label}: worker environment differs from the lock")
+                    raise RunStopped(
+                        f"{label}: worker environment differs from the lock"
+                    )
                 capture = played.capture
                 if (capture.seed, capture.placement) != key:
                     raise RunStopped(f"{label}: worker returned a different hanchan")
