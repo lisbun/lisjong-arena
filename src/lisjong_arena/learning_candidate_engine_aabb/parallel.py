@@ -158,8 +158,10 @@ def run_parallel_tasks(
                 completed += 1
                 if on_hanchan is not None:
                     on_hanchan(completed, len(tasks))
-                if next_index < len(tasks):
-                    submit_one()
+            # Verify every finished task before starting replacements. A failed
+            # task must not cause fresh tasks to be submitted in this iteration.
+            for _ in range(min(len(ready), len(tasks) - next_index)):
+                submit_one()
     except BaseException:
         # No partial raw, observations or result may escape. Python 3.14's
         # terminate_workers shuts down all spawn workers on any failure.
