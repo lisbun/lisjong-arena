@@ -104,6 +104,46 @@ class FixedScheduleTest(_Case):
         )
         self.assertEqual(self.plan["schedule"], dev.schedule_document())
 
+    def test_workers_are_locked_bounded_and_strictly_typed(self):
+        for workers in (True, 0, 9, 8.0, "8"):
+            with self.subTest(workers=workers), self.assertRaises(RunStopped):
+                fx.development_plan(self.tmp, workers=workers)
+        parallel = fx.development_plan(self.tmp, workers=8)
+        self.assertEqual(parallel["execution"]["workers"], 8)
+        self.assertNotEqual(parallel["plan_digest"], self.plan["plan_digest"])
+        self.assertEqual(parallel["schedule"], self.plan["schedule"])
+
+    def test_parallel_preparation_round_trip_and_reproduction(self):
+        self.plan = fx.development_plan(self.tmp, workers=8)
+        self.plan_path.unlink()
+        dev.save_plan(self.plan, self.plan_path)
+        guards = []
+        original_guard = dev.ParallelResourceGuard
+
+        def make_guard(*args):
+            guard = original_guard(*args)
+            guards.append(guard)
+            return guard
+
+        with mock.patch.object(dev, "ParallelResourceGuard", side_effect=make_guard):
+            report = self.run_dev()
+        self.assertEqual(
+            len(guards), 2, "successive pools have separate RSS accounting"
+        )
+        self.assertIsNot(guards[0], guards[1])
+        self.assertEqual(report["reproduction"]["status"], dev.MATCH)
+        self.assertEqual(dev.verify_development(self.output), report)
+        saved = json.loads((self.output / "plan.json").read_text())
+        self.assertEqual(saved["execution"]["workers"], 8)
+
+    def test_parallel_failure_publishes_no_partial_preparation(self):
+        self.plan = fx.development_plan(self.tmp, workers=8)
+        self.plan_path.unlink()
+        dev.save_plan(self.plan, self.plan_path)
+        with self.assertRaises(RunStopped):
+            self.run_dev(fx.fake_dev_play_error)
+        self.assert_nothing_published()
+
     def test_no_entry_point_takes_seeds_or_counts(self):
         for function in (dev.assemble_plan, dev.build_plan, dev.run_development):
             parameters = set(inspect.signature(function).parameters)

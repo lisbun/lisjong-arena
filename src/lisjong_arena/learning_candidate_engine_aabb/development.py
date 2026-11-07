@@ -10,7 +10,7 @@ schedule（定数。callerは変えられない）
   repeat        seed 472005 × placement 0..5（同じ6半荘の再実行）  6半荘
 plan（write-once）  固定schedule・3 artifactのbinding・環境・Arena revision・上限・出力先
 run                 全体wallの計測開始 -> OS上限の照合 -> live gate
-                    -> development（spawn worker 1） -> repeat（新しいspawn worker 1）
+                    -> development -> repeat（それぞれ新しいspawn pool、lockした1..8 workers）
                     -> live gate -> 書込前検査 -> staging -> 上限確認 -> 1回のrenameで公開
 <output>/           plan.json、observations.json、report.json、SHA256SUMS
   development/      raw/（局record 第1層・第2層、manifest）、actions.json、SHA256SUMS
@@ -88,6 +88,7 @@ from .lock import (
     require_environment,
     require_limits,
 )
+from .parallel import ParallelResourceGuard, require_workers, run_parallel_tasks
 from .participants import parse_candidate, parse_incumbent, require_pair
 from .protocol import (
     BACKEND,
@@ -241,6 +242,7 @@ def assemble_plan(
     environment: dict,
     arena_revision: str,
     ledger: object,
+    workers: int = 1,
 ) -> dict[str, object]:
     """入力を検査してplanを作る（live値はcallerが渡す）。scheduleは定数。"""
     require_unallocated_seeds(ledger)
@@ -255,7 +257,7 @@ def assemble_plan(
             "backend": BACKEND,
             "limits": dict(require_limits(limits)),
             "wheel_path": wheel_path,
-            "workers": 1,
+            "workers": require_workers(workers),
         },
         "execution_target": {"branch": EXECUTION_BRANCH, "revision": arena_revision},
         "implementation_issue": IMPLEMENTATION_ISSUE,
@@ -328,8 +330,9 @@ def _parse_plan(value: object) -> dict[str, object]:
     execution = value["execution"]
     if type(execution) is not dict or set(execution) != _EXECUTION_FIELDS:
         raise LearningDevelopmentError("plan execution fields do not match the schema")
-    if execution["backend"] != BACKEND or execution["workers"] != 1:
-        raise LearningDevelopmentError("plan execution must be one rust worker")
+    if execution["backend"] != BACKEND:
+        raise LearningDevelopmentError("plan execution must use rust")
+    require_workers(execution["workers"])
     require_limits(execution["limits"])
     require_artifact_paths(execution["artifact_paths"])
     if (
@@ -379,6 +382,7 @@ def build_plan(
     output_dir: str,
     diagnostics_dir: str,
     ledger_path: str | Path = seed_registry.DEFAULT_LEDGER_PATH,
+    workers: int = 1,
 ) -> dict[str, object]:
     """live値（clean merged HEAD、環境、3 artifactを実際にloadしたbinding）でplanを作る。"""
     try:
@@ -411,6 +415,7 @@ def build_plan(
         environment=environment,
         arena_revision=head,
         ledger=ledger,
+        workers=workers,
     )
 
 
@@ -1012,6 +1017,7 @@ def run_development(
     budget = EventBudget(
         limits["wall_seconds"], clock=clock, realtime=realtime, started=started
     )
+    workers = plan["execution"]["workers"]
     guard = ResourceGuard(limits, budget, parent_peak_rss_kib)
     output = Path(plan["output_dir"])
     if output.exists():
@@ -1021,6 +1027,7 @@ def run_development(
     progress = {"done": 0}
     phases: dict[str, float] = {}
     executed: dict[str, list] = {}
+    parallel_guards = {}
 
     def gate() -> None:
         live_gate(plan, ledger=seed_registry.load_ledger(ledger_path))
@@ -1031,6 +1038,11 @@ def run_development(
         budget.check("after the pre-run live gate")
         phases["pre_run_gate"] = budget.elapsed()
         for run in RUNS:
+            if workers > 1:
+                # These pools run consecutively. Summing PIDs across retired
+                # pools would falsely count 8+6 workers as concurrent memory.
+                guard = ParallelResourceGuard(limits, budget, parent_peak_rss_kib)
+                parallel_guards[run] = guard
             offset = progress["done"]
 
             def count(done: int, total: int, offset=offset) -> None:
@@ -1038,9 +1050,13 @@ def run_development(
                 if on_hanchan is not None:
                     on_hanchan(offset + done, HANCHAN_TOTAL)
 
-            executed[run] = run_tasks(
+            execute = run_tasks if workers == 1 else run_parallel_tasks
+            options = (
+                {"key_fields": ("placement",)} if workers == 1 else {"workers": workers}
+            )
+            executed[run] = execute(
                 _tasks(plan, run),
-                key_fields=("placement",),
+                **options,
                 timeout_seconds=limits["timeout_seconds"],
                 expected_environment=plan["environment"],
                 play=play,
@@ -1067,6 +1083,14 @@ def run_development(
         budget.check("after the pre-write checks")
         phases["pre_write_checks"] = budget.elapsed()
         everything = [item for run in RUNS for item in executed[run]]
+
+        def before_publish():
+            if workers == 1:
+                guard.before_publish(everything)
+            else:
+                for run in RUNS:
+                    parallel_guards[run].before_publish(executed[run])
+
         report = _publish(
             plan,
             executed,
@@ -1074,7 +1098,7 @@ def run_development(
             phases=phases,
             budget=budget,
             parent_peak_rss_kib=parent_peak_rss_kib,
-            before_publish=lambda: guard.before_publish(everything),
+            before_publish=before_publish,
         )
     except BaseException as error:
         _write_stop(plan, error, progress["done"])
