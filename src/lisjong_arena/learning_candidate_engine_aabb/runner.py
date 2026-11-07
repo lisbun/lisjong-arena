@@ -48,6 +48,7 @@ from lisjong_arena.heuristic_candidate_engine_aabb.record_store import (
 
 from .limits import EventBudget, ResourceGuard, probe_os_limits, require_os_limits
 from .lock import LearningEngineAabbLockError, load_lock, require_live_target
+from .parallel import ParallelResourceGuard, run_parallel_tasks
 from .protocol import LAYOUT, expected_schedule, schedule_document
 from .result import (
     build_observations,
@@ -170,7 +171,12 @@ def run_formal_event(
     budget = EventBudget(
         limits["wall_seconds"], clock=clock, realtime=realtime, started=started
     )
-    guard = ResourceGuard(limits, budget, parent_peak_rss_kib)
+    workers = lock["execution"]["workers"]
+    guard = (
+        ResourceGuard(limits, budget, parent_peak_rss_kib)
+        if workers == 1
+        else ParallelResourceGuard(limits, budget, parent_peak_rss_kib)
+    )
     destinations = {
         name: Path(value) for name, value in lock["artifact_destinations"].items()
     }
@@ -191,16 +197,29 @@ def run_formal_event(
         require_os_limits(limits, os_limits())
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
         budget.check("after the pre-run live gate")
-        executed = run_tasks(
-            schedule_tasks(lock),
-            key_fields=("placement",),
-            timeout_seconds=limits["timeout_seconds"],
-            expected_environment=lock["environment"],
-            play=play,
-            on_hanchan=count,
-            on_executed=guard,
-            remaining_seconds=budget.remaining,
-        )
+        tasks = schedule_tasks(lock)
+        if workers == 1:
+            executed = run_tasks(
+                tasks,
+                key_fields=("placement",),
+                timeout_seconds=limits["timeout_seconds"],
+                expected_environment=lock["environment"],
+                play=play,
+                on_hanchan=count,
+                on_executed=guard,
+                remaining_seconds=budget.remaining,
+            )
+        else:
+            executed = run_parallel_tasks(
+                tasks,
+                workers=workers,
+                timeout_seconds=limits["timeout_seconds"],
+                expected_environment=lock["environment"],
+                play=play,
+                on_hanchan=count,
+                on_executed=guard,
+                remaining_seconds=budget.remaining,
+            )
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
         budget.check("after the post-run live gate")
         # 書込前に、第1層・schedule・主統計が成り立つことを確かめる（失敗時は何も書かない）
