@@ -26,14 +26,17 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m " + __package__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    lock = sub.add_parser("lock", help="write the pre-execution lock")
+    lock = sub.add_parser(
+        "lock", help="write the pre-execution lock (v2: cgroup memory guard, #580)"
+    )
     lock.add_argument("--event", type=int, required=True, help="owner Issue number")
-    lock.add_argument("--workers", type=int, default=1, help="formal workers (1..8)")
+    lock.add_argument(
+        "--workers", type=int, default=8, help="formal workers (v2 requires 8)"
+    )
     lock.add_argument("--seeds", required=True, help="100 seeds, comma separated")
     lock.add_argument("--allocation-identity", required=True)
     lock.add_argument("--timeout-seconds", type=int, required=True)
     lock.add_argument("--wall-seconds", type=int, required=True)
-    lock.add_argument("--peak-rss-kib", type=int, required=True)
     lock.add_argument("--wheel", required=True)
     lock.add_argument("--discard-artifact", required=True)
     lock.add_argument("--reaction-artifact", required=True)
@@ -134,7 +137,6 @@ def main(argv: list[str] | None = None) -> int:
             ordered_seeds=_seeds(args.seeds),
             allocation_identity=args.allocation_identity,
             limits={
-                "peak_rss_kib": args.peak_rss_kib,
                 "timeout_seconds": args.timeout_seconds,
                 "wall_seconds": args.wall_seconds,
             },

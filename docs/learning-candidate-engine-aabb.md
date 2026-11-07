@@ -84,8 +84,10 @@ python -m lisjong_arena.learning_candidate_engine_aabb verify --lock <lock.json>
 ```
 
 `lock` の入力（defaultなし）: owner Issue番号、100 seeds（順序つき）とSeed Registryの
-allocation identity、1半荘timeout・全体wall秒・peak RSS（KiB）の上限、native wheel、
+allocation identity、1半荘timeout・全体wall秒の上限、native wheel、
 3 artifactのpath、4つの保存先（raw・result・observations・diagnostics）。
+CLI `lock` は#580以降、lock v2（cgroup memory guard、8 worker）だけを書く（下の「メモリ契約v2」）。
+v1 lock（#573まで、`peak_rss_kib`）の読込・実行の意味は変えていない。
 
 開始前検査（`build_lock` / `require_live_target`）:
 
@@ -136,6 +138,60 @@ lockの `wall_seconds` と `peak_rss_kib` は、`run` の開始から公開ま�
    各半荘の待ち時間は `min(timeout_seconds, 全体wallの残り)`。並列時もキュー滞留でtimeoutを消費させないようin-flightをworker数以内に制限する。半荘ごと・live gate後・書込前検査後・
    公開のrename直前に全体wallを、半荘ごとと公開直前にメモリを確かめる。並列時は「親 + worker PIDごとのpeak RSSの和」を保守的な上限として使い、OS cgroup MemoryMaxが全workerとpage cacheの合計を強制する。
    公開直前に超えていればstagingを捨て、resultを公開しない
+
+上の `peak_rss_kib` とRSS和によるSTOPはlock v1（#573まで）の契約である。
+
+### メモリ契約v2（#580）
+
+lock schema `arena-learning-candidate-engine-aabb-lock-v2` は `execution.limits` に
+`timeout_seconds` / `wall_seconds` だけを持ち、メモリは `execution.memory_guard`
+（`cgroup_peak_v1`、`lock_digest` に含む）で固定する。値はcodeの定数と完全一致を要求し、
+worker数は8だけを許す。
+
+| 項目 | 値 |
+| --- | --- |
+| soft STOP | runnerが属するexact scopeの `memory.peak > 6,442,450,944` bytes（6 GiB。ちょうど同じ値はSTOPしない） |
+| hard cap | `memory.max = 8,589,934,592`（8 GiB）、`memory.swap.max = 0`。systemd `MemoryMax=8G` / `MemorySwapMax=0` / `OOMPolicy=kill` / `RuntimeMaxSec = wall_seconds` を照合 |
+| OOM | `memory.events` の `oom` / `oom_kill` / `oom_group_kill` の開始時からの増分でSTOP。`max` の増分は警告として記録だけ |
+| 異常 | scope外・`.service`・別unit・`ControlGroup` 不一致・scope消滅 / 置換（inode）・limit変化・読めない値・非整数・counterやpeakの減少でSTOP |
+| RSS和 | `parent ru_maxrss + sum(worker PID peak)` は診断として記録し、STOPに使わない |
+
+判定の時点: 開始時（live gateより前）、pre-run live gate後、並列実行中の周期poll（main loopが
+`poll_seconds = 5` 秒以内に起きる）、各半荘の完了時、post-run live gate後、保存 / strict verify後、
+公開前検査後、公開rename直前、公開rename後の最終readback（失敗なら公開を巻き戻す）。
+model load・600件のstrict verify等の同期処理の途中はrunnerから割り込めないので、外側watchdogが
+同じscopeを1秒周期で監視する。check間の一時的なピークは `memory.peak` が次の判定で捕捉するが、
+6 GiBを超えない保証ではなく、最終保護はOSの8 GiBである。
+
+外側watchdog（`scripts/aws/learning-573-watchdog.py`）の追加option:
+
+```text
+learning-573-watchdog.py run --stage formal --unit-prefix <prefix> --memory-max 8G \
+  --memory-soft-peak-bytes 6442450944 --runtime-max <wall_seconds> --wall <wall_seconds> \
+  --guard-output <raw> --guard-output <result.json> --guard-output <observations.json> \
+  ... -- python -m lisjong_arena.learning_candidate_engine_aabb run --lock <lock.json>
+```
+
+- `--memory-soft-peak-bytes`: `memory.peak` がこれを超えたら（final readbackでも）scopeを止める
+  （`stopped_by = "memory-soft"`）。`memory.events` のOOM系counterの増分やscopeの `oom-kill` 終了は
+  `"memory-oom"`
+- `--guard-output`: stageが成功（exit 0）以外で終わったら、そのpathと隣の `.NAME.staging-*` を
+  `<log dir>/<stage>.quarantine/` へ移す。runnerがSIGKILL / OOMで片付けられない場合の部分公開防止
+- runnerはSIGTERM（`systemctl stop`）を `RunStopped` として通常のSTOP経路で片付ける
+  （pool停止・staging削除・公開途中なら巻き戻し・`stop-*.json`）
+
+STOPでも成功でも `diagnostics/memory-<UTC>.json`（schema `arena-learning-candidate-engine-aabb-memory-v1`、
+`not_a_result`）を書く: memory_guard、scope identity（path・unit・inode）、baselineと最終sample、
+stage別checkpoint（時刻・peak・current・events・`memory.stat` のanon / file / kernel）、
+半荘・pollのsample数、最大peak、`max` 増分、RSS和の診断。result・raw・observationsの
+schemaと内容は変えない。
+
+OS上の確認は `scripts/aws/check-learning-cgroup-guard.py <未作成のdirectory>`（Linux、cgroup v2、
+systemd user manager、`PYTHONPATH=src:tests`。対局・model・評価seedなし）。親子dummyの実accounting、
+check間ピークの捕捉、watchdogのsoft停止とquarantine、実OOM、scope外 / 4G scopeの拒否、合成fixtureの
+v2 runner（8 worker）の完走とwall停止（SIGTERM）を確かめる。soft停止とOOMは小さい閾値で
+OSの挙動だけを確かめ、lockの値（6 GiB / 8 GiB）は変えない。実モデル8 workerのメモリ量は
+この確認の対象外で、別の承認済み実測で確かめる。
 
 保存物:
 
@@ -264,3 +320,12 @@ python -m lisjong_arena.learning_candidate_engine_aabb dev-verify --output-dir <
   書込失敗、第1層の失敗、先頭が遅いときのsubmit上限、親で生きている `HanchanCapture` 数が
   worker数 + 2以下、worker失敗・crash・RSS超過・raw書込失敗・rename失敗で何も公開せずstagingも
   残さないこと。親の保持量の計測は `scripts/diagnose_learning_bounded_retention_578.py`（合成fixture）
+- `test_learning_engine_aabb_memory_guard`（#580）: lock v2のschema・digest・定数との完全一致
+  （型違い・workers・v1 limitsの拒否）とv1の不変、一時directoryのcgroup v2 fileでexact scope・
+  systemd値・8 GiB / swap 0の照合、scope spoof / `.service` / 移動 / 置換 / 消滅・malformed値の
+  fail closed、6 GiB境界（= はPASS、+1でSTOP）、OOM eventsの増分とbaseline、`max` は警告だけ、
+  counter / peakの減少、RSS和がSTOPに使われないこと。spawn 8 workerの合成600半荘で、保存物bytesと
+  verify、memory診断、poll・各半荘・実行後の各checkpoint・公開後readbackでのSTOPで何も公開せず
+  stagingも残さないこと、SIGTERMでのSTOP（Linuxのみ）、v1 lockがcgroup guardを使わないこと
+- `test_learning_573_watchdog`: 上に加え、memory guard modeのsoft境界・OOM・malformed events・
+  quarantine

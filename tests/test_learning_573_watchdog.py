@@ -18,13 +18,30 @@ watchdog = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(watchdog)
 
 
+ZERO_EVENTS = "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+MIB = 1024 * 1024
+
+
 class WatchdogTests(unittest.TestCase):
-    def run_stage(self, directory, *, peak_error=False):
+    def run_stage(
+        self,
+        directory,
+        *,
+        peak_error=False,
+        soft=None,
+        peak_bytes=134217728,
+        events=ZERO_EVENTS,
+        guard_output=(),
+        scope_state=None,
+    ):
         directory = Path(directory)
         start = directory / "start.json"
         start.write_text(json.dumps({"limit_seconds": 60}))
-        peak = directory / "memory.peak"
-        peak.write_text("134217728")
+        scope = directory / "scope"
+        scope.mkdir()
+        peak = scope / "memory.peak"
+        peak.write_text(str(peak_bytes))
+        (scope / "memory.events").write_text(events)
         args = argparse.Namespace(
             log_dir=str(directory),
             start_file=str(start),
@@ -37,9 +54,16 @@ class WatchdogTests(unittest.TestCase):
             watch=[str(directory)],
             watch_optional=[],
             command=["dummy"],
+            memory_soft_peak_bytes=soft,
+            guard_output=[str(path) for path in guard_output],
+            unit_prefix="lp573",
         )
         with ExitStack() as stack:
-            for name, value in (("_cumulative", 0), ("_du", 0), ("_scope_state", {})):
+            for name, value in (
+                ("_cumulative", 0),
+                ("_du", 0),
+                ("_scope_state", scope_state or {}),
+            ):
                 stack.enter_context(patch.object(watchdog, name, return_value=value))
             resolver = stack.enter_context(
                 patch.object(watchdog, "_scope_peak_path", return_value=peak)
@@ -72,6 +96,69 @@ class WatchdogTests(unittest.TestCase):
             self.assertTrue(record["final_peak_recorded"])
             self.assertTrue((Path(tmp) / "test.release").exists())
             self.assertEqual(record["memory_peak_bytes"], 134217728)
+
+    def test_memory_guard_mode_passes_at_the_exact_soft_peak(self):
+        """#580: memory.peak == soft is not a STOP; outputs stay in place."""
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "result.json"
+            output.write_text("{}")
+            code, record = self.run_stage(
+                tmp, soft=128 * MIB, peak_bytes=128 * MIB, guard_output=[output]
+            )
+            self.assertEqual(code, 0)
+            self.assertIsNone(record["stopped_by"])
+            self.assertEqual(record["memory_events_baseline"]["oom_kill"], 0)
+            self.assertEqual(record["memory_max_events_delta"], 0)
+            self.assertEqual(record["quarantined"], [])
+            self.assertTrue(output.exists())
+
+    def test_soft_peak_exceeded_stops_and_quarantines_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = [Path(tmp) / "raw", Path(tmp) / "result.json"]
+            outputs[0].mkdir()
+            outputs[1].write_text("{}")
+            staging = Path(tmp) / ".raw.staging-abc"
+            staging.mkdir()
+            code, record = self.run_stage(
+                tmp,
+                soft=128 * MIB,
+                peak_bytes=128 * MIB + 1,
+                guard_output=[*outputs, Path(tmp) / "observations.json"],
+            )
+            self.assertEqual(code, 124)
+            self.assertEqual(record["stopped_by"], "memory-soft")
+            self.assertEqual(
+                sorted(Path(item["from"]).name for item in record["quarantined"]),
+                [".raw.staging-abc", "raw", "result.json"],
+            )
+            for path in (*outputs, staging):
+                self.assertFalse(path.exists())
+            self.assertEqual(len(list((Path(tmp) / "test.quarantine").iterdir())), 3)
+
+    def test_oom_events_and_oom_kill_result_stop(self):
+        for name, options in (
+            ("oom at scope start", {"events": ZERO_EVENTS.replace("oom 0", "oom 1")}),
+            ("oom-kill result", {"scope_state": {"Result": "oom-kill"}}),
+        ):
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                code, record = self.run_stage(tmp, soft=256 * MIB, **options)
+                self.assertEqual(code, 124)
+                self.assertEqual(record["stopped_by"], "memory-oom")
+
+    def test_malformed_events_fail_closed(self):
+        for events in ("oom 0\n", "oom x\n", ZERO_EVENTS + "oom 0\n"):
+            with self.subTest(events=events), tempfile.TemporaryDirectory() as tmp:
+                code, record = self.run_stage(tmp, soft=256 * MIB, events=events)
+                self.assertEqual(code, 124)
+                self.assertEqual(record["stopped_by"], "watchdog-error")
+
+    def test_event_increase_and_decrease(self):
+        baseline = {key: 0 for key in ("max", "oom", "oom_kill", "oom_group_kill")}
+        self.assertFalse(watchdog._event_stop(baseline, {**baseline, "max": 5}))
+        for key in watchdog.STOP_EVENTS:
+            self.assertTrue(watchdog._event_stop(baseline, {**baseline, key: 1}))
+        with self.assertRaisesRegex(RuntimeError, "decreased"):
+            watchdog._event_stop({**baseline, "max": 2}, {**baseline, "max": 1})
 
     def test_failed_scope_read_stops_even_if_launcher_returns_zero(self):
         with tempfile.TemporaryDirectory() as tmp:

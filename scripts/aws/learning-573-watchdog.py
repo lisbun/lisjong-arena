@@ -20,6 +20,16 @@ and stops the scope (SIGTERM, SIGKILL after 3 s; SIGKILL again if still active 5
 The kernel (MemoryMax, OOMPolicy=kill) and systemd (RuntimeMaxSec) may also end the scope;
 then stopped_by is null and the scope state is recorded.
 
+Memory guard mode (#580), enabled by --memory-soft-peak-bytes N:
+  - the scope's memory.peak > N (polled, and again at the final readback)  stopped_by = "memory-soft"
+  - oom / oom_kill / oom_group_kill in the scope's memory.events rose above
+    the value read when the scope was found, or the scope ended as oom-kill stopped_by = "memory-oom"
+  The increase of the "max" event is recorded only (reclaim can succeed after it).
+--guard-output PATH (repeatable): when the stage does not succeed (exit code != 0), PATH and its
+sibling staging entries (.NAME.staging-*) are moved to LOG_DIR/NAME.quarantine, so a runner that
+was killed (SIGKILL / OOM) cannot leave a published or half-published output behind.
+--unit-prefix (default lp573) names the scope PREFIX-NAME.scope.
+
 Each run writes LOG_DIR/NAME.watchdog.json (write-once; a stage never runs twice) and appends
 the same record to LOG_DIR/watchdog.jsonl. Exit code: 0 only when the command exited 0 and the
 watchdog did not stop it; 124 when the watchdog stopped it; otherwise the command's code
@@ -29,6 +39,7 @@ watchdog did not stop it; 124 when the watchdog stopped it; otherwise the comman
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -139,6 +150,45 @@ def _read_peak(path: Path) -> int:
     return int(value)
 
 
+STOP_EVENTS = ("oom", "oom_group_kill", "oom_kill")
+
+
+def _read_events(path: Path) -> dict[str, int]:
+    """memory.events; a malformed file or a missing stop key is an error."""
+    events = {}
+    for line in path.read_text().splitlines():
+        fields = line.split()
+        if len(fields) != 2 or not fields[1].isdecimal() or fields[0] in events:
+            raise RuntimeError(f"scope memory.events is malformed: {line!r}")
+        events[fields[0]] = int(fields[1])
+    if any(key not in events for key in (*STOP_EVENTS, "max")):
+        raise RuntimeError("scope memory.events lacks oom/oom_kill/oom_group_kill/max")
+    return events
+
+
+def _event_stop(baseline: dict, events: dict) -> bool:
+    for key in baseline:
+        if events.get(key, -1) < baseline[key]:
+            raise RuntimeError(f"scope memory.events {key} decreased")
+    return any(events[key] > baseline[key] for key in STOP_EVENTS)
+
+
+def _quarantine(paths: list[str], target: Path) -> list[dict]:
+    """Move each existing output and its hidden staging siblings out of place."""
+    moved = []
+    for text in paths:
+        path = Path(text)
+        candidates = [path] if os.path.lexists(path) else []
+        if path.parent.is_dir():
+            candidates += sorted(path.parent.glob(f".{path.name}.staging-*"))
+        for source in candidates:
+            target.mkdir(parents=True, exist_ok=True)
+            destination = target / f"{len(moved):03d}-{source.name}"
+            shutil.move(str(source), str(destination))
+            moved.append({"from": str(source), "to": str(destination)})
+    return moved
+
+
 def _execute_barrier(done: Path, release: Path, command: list[str]) -> int:
     """Keep the scope alive after command exit until its final peak is recorded."""
     code = subprocess.call(command)
@@ -182,7 +232,8 @@ def run(args) -> int:
         return 2
     start = json.loads(Path(args.start_file).read_text())
     remaining = start["limit_seconds"] - _cumulative(start)
-    unit = f"lp573-{args.stage}"
+    unit = f"{args.unit_prefix}-{args.stage}"
+    soft = args.memory_soft_peak_bytes
     done = log_dir.resolve() / f"{args.stage}.command-done.json"
     release = log_dir.resolve() / f"{args.stage}.release"
     if done.exists() or release.exists():
@@ -216,7 +267,9 @@ def run(args) -> int:
         "cumulative_remaining_at_start": remaining,
         "disk_limit_bytes": args.disk_limit_bytes,
         "disk_poll_seconds": args.disk_poll,
+        "guard_output": args.guard_output,
         "memory_max": args.memory_max,
+        "memory_soft_peak_bytes": soft,
         "runtime_max_seconds": args.runtime_max,
         "stage": args.stage,
         "started_at": _now(),
@@ -244,6 +297,23 @@ def run(args) -> int:
     watchdog_error = None
     peak_path = None
     final_peak_recorded = False
+    events_baseline = None
+    events_last = None
+
+    def guard_memory() -> str | None:
+        """Memory guard mode: the reason to stop, or None (raises OSError if unreadable)."""
+        nonlocal events_baseline, events_last
+        events = _read_events(peak_path.with_name("memory.events"))
+        if events_baseline is None:
+            events_baseline = events
+            if any(events[key] for key in STOP_EVENTS):
+                return "memory-oom"
+        events_last = events
+        if _event_stop(events_baseline, events):
+            return "memory-oom"
+        if memory_peak > soft:
+            return "memory-soft"
+        return None
 
     def stop_scope() -> float:
         t0 = time.monotonic()
@@ -278,21 +348,30 @@ def run(args) -> int:
                         break
                     raise
                 memory_peak = max(memory_peak or 0, peak)
+                if soft is not None:
+                    try:
+                        stopped_by = guard_memory()
+                    except OSError:
+                        if proc.poll() not in (None, 0):
+                            break
+                        raise
             if done.exists() and not final_peak_recorded:
                 if peak_path is None:
                     raise RuntimeError("command ended without a verified scope")
                 memory_peak = max(memory_peak or 0, _read_peak(peak_path))
+                if soft is not None:
+                    stopped_by = stopped_by or guard_memory()
                 final_peak_recorded = True
                 release.touch(exist_ok=False)
             if elapsed >= next_disk:
                 disk = _du(args.watch, args.watch_optional)
                 next_disk = elapsed + args.disk_poll
                 if disk is None:
-                    stopped_by = "disk-unreadable"
+                    stopped_by = stopped_by or "disk-unreadable"
                 else:
                     disk_max = max(disk_max, disk)
                     if disk > args.disk_limit_bytes:
-                        stopped_by = "disk"
+                        stopped_by = stopped_by or "disk"
             if stopped_by is None and elapsed > args.wall:
                 stopped_by = "wall"
             if stopped_by is None and _cumulative(start) > start["limit_seconds"]:
@@ -317,7 +396,18 @@ def run(args) -> int:
         stopped_by = stopped_by or "disk-unreadable"
     elif disk_at_end > args.disk_limit_bytes:
         stopped_by = stopped_by or "disk"
+    scope = _scope_state(f"{unit}.scope")
+    if soft is not None and scope.get("Result") == "oom-kill":
+        stopped_by = stopped_by or "memory-oom"
     exit_code = 124 if stopped_by else (128 - code if code < 0 else code)
+    quarantined, quarantine_error = [], None
+    if exit_code != 0 and args.guard_output:
+        try:
+            quarantined = _quarantine(
+                args.guard_output, log_dir.resolve() / f"{args.stage}.quarantine"
+            )
+        except OSError as error:
+            quarantine_error = f"{type(error).__name__}: {error}"
     record.update(
         command_returncode=code,
         cumulative_elapsed_at_end=_cumulative(start),
@@ -330,8 +420,17 @@ def run(args) -> int:
         finished_at=_now(),
         memory_peak_bytes=memory_peak,
         memory_peak_path=str(peak_path) if peak_path else None,
+        memory_events_baseline=events_baseline,
+        memory_events_last=events_last,
+        memory_max_events_delta=(
+            events_last["max"] - events_baseline["max"]
+            if events_last and events_baseline
+            else None
+        ),
         final_peak_recorded=final_peak_recorded,
-        scope=_scope_state(f"{unit}.scope"),
+        quarantined=quarantined,
+        quarantine_error=quarantine_error,
+        scope=scope,
         stop_seconds=stop_seconds,
         stopped_by=stopped_by,
     )
@@ -363,6 +462,9 @@ def main() -> int:
     stage.add_argument("--watch", action="append", default=[])
     stage.add_argument("--watch-optional", action="append", default=[])
     stage.add_argument("--disk-poll", type=int, required=True)
+    stage.add_argument("--memory-soft-peak-bytes", type=int, default=None)
+    stage.add_argument("--guard-output", action="append", default=[])
+    stage.add_argument("--unit-prefix", default="lp573")
     stage.add_argument("--start-file", required=True)
     stage.add_argument("--log-dir", required=True)
     stage.add_argument("command", nargs=argparse.REMAINDER)
@@ -375,6 +477,10 @@ def main() -> int:
         parser.error("a command is required after --")
     if not args.watch and not args.watch_optional:
         parser.error("at least one --watch or --watch-optional directory is required")
+    if args.memory_soft_peak_bytes is not None and args.memory_soft_peak_bytes <= 0:
+        parser.error("--memory-soft-peak-bytes must be positive")
+    if not args.unit_prefix.replace("-", "").replace("_", "").isalnum():
+        parser.error("--unit-prefix must be letters, digits, '-' or '_'")
     return run(args)
 
 
