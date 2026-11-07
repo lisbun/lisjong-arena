@@ -28,6 +28,7 @@ def _stop_pool(pool) -> None:
     # as still alive. OS exit sentinels can be waited without reaping the process.
     processes = list((pool._processes or {}).values())
     sentinels = [process.sentinel for process in processes]
+    manager = getattr(pool, "_executor_manager_thread", None)
     pool.kill_workers()
     deadline = time.monotonic() + 3.0
     while sentinels:
@@ -35,6 +36,10 @@ def _stop_pool(pool) -> None:
         if not ready:
             raise RunStopped("parallel workers did not exit after SIGKILL")
         sentinels = [sentinel for sentinel in sentinels if sentinel not in ready]
+    if manager is not None:
+        manager.join(timeout=max(0.0, deadline - time.monotonic()))
+        if manager.is_alive():
+            raise RunStopped("parallel manager did not exit after worker shutdown")
 
 
 @dataclass(frozen=True, slots=True)

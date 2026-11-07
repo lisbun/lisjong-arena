@@ -90,6 +90,15 @@ class ParallelTasksTest(unittest.TestCase):
                 _stop_pool(pool)
         pool.kill_workers.assert_called_once()
 
+    def test_manager_shutdown_must_finish_before_returning(self):
+        manager = SimpleNamespace(join=mock.Mock(), is_alive=lambda: True)
+        pool = SimpleNamespace(
+            _processes={}, kill_workers=mock.Mock(), _executor_manager_thread=manager
+        )
+        with self.assertRaisesRegex(RunStopped, "manager did not exit"):
+            _stop_pool(pool)
+        manager.join.assert_called_once()
+
     def setUp(self):
         # Existing synthetic fixture identity, never a formal seed allocation.
         self.tasks = [
