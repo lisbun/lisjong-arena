@@ -88,6 +88,7 @@ class ExecutedHanchan:
     selected_actions: tuple | None = None
     policy_analysis: dict | None = None
     native_counters: dict | None = None
+    worker_pid: int | None = None
 
 
 def current_peak_rss_kib() -> int | None:
