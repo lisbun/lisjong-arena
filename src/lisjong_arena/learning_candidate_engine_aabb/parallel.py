@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from dataclasses import dataclass
+from multiprocessing.connection import wait as wait_processes
 
 from lisjong_arena.heuristic_candidate_engine_aabb.executor import (
     ExecutedHanchan,
@@ -19,6 +20,21 @@ from lisjong_arena.heuristic_candidate_engine_aabb.executor import (
 )
 
 MAX_FORMAL_WORKERS = 8
+
+
+def _stop_pool(pool) -> None:
+    # The executor's manager thread owns waitpid/reaping. Concurrent Process.join
+    # from this thread races that reaping on POSIX and can report a killed worker
+    # as still alive. OS exit sentinels can be waited without reaping the process.
+    processes = list((pool._processes or {}).values())
+    sentinels = [process.sentinel for process in processes]
+    pool.kill_workers()
+    deadline = time.monotonic() + 3.0
+    while sentinels:
+        ready = wait_processes(sentinels, timeout=max(0.0, deadline - time.monotonic()))
+        if not ready:
+            raise RunStopped("parallel workers did not exit after SIGKILL")
+        sentinels = [sentinel for sentinel in sentinels if sentinel not in ready]
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,17 +183,7 @@ def run_parallel_tasks(
             for _ in range(min(len(ready), len(tasks) - next_index)):
                 submit_one()
     except BaseException:
-        # CPython 3.14 kill_workers() signals processes after
-        # shutdown(wait=False), so it may return before workers exit.
-        # Take the process snapshot first: shutdown clears _processes.
-        # This is intentionally tied to our pinned CPython 3.14 runtime.
-        processes = list((pool._processes or {}).values())
-        pool.kill_workers()
-        deadline = time.monotonic() + 3.0
-        for process in processes:
-            process.join(timeout=max(0.0, deadline - time.monotonic()))
-        if any(process.is_alive() for process in processes):
-            raise RunStopped("parallel workers did not exit after SIGKILL")
+        _stop_pool(pool)
         raise
     pool.shutdown(wait=True)
     if any(item is None for item in output):
