@@ -73,6 +73,8 @@ def run_parallel_tasks(
 
     def submit_one() -> None:
         nonlocal next_index
+        if remaining_seconds is not None and remaining_seconds() <= 0:
+            raise RunStopped("event wall time limit was reached")
         index = next_index
         next_index += 1
         task = tasks[index]
