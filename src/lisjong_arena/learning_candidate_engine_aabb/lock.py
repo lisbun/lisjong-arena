@@ -13,7 +13,11 @@ parse_lock_document()     保存済みlockの厳密な読込（offline verifyも
 ```
 
 - K・protocol条件はprotocol invariantで、callerは変えられない
-- timeout（1半荘）・全体wall・peak RSSの上限はcallerが明示する。defaultを持たない
+- timeout（1半荘）・全体wallの上限はcallerが明示する。defaultを持たない
+- schema v2（#580）: メモリは ``execution.memory_guard``（``cgroup_peak_v1``、exact scopeの
+  ``memory.peak > 6 GiB`` でSTOP、``memory.max = 8 GiB``）で、worker数は8。新しいlockはv2だけを作る
+- schema v1（#562〜#573）: ``limits.peak_rss_kib`` を親 + workerのpeak RSS和の上限とする従来の意味。
+  保存済みv1 lockの読込・実行の意味は変えない（遡及変更しない）
 - seedは全domainの他allocationと、registry外で使った既知seedと重なれば拒否する
 - factory・callable・任意codeは保存しない。artifactのpathは実行の値として持ち、
   identity・hashはparticipant bindingで照合する
@@ -41,6 +45,11 @@ from lisjong_arena.heuristic_candidate_engine_aabb.kyoku_record import (
 from lisjong_arena.heuristic_candidate_engine_aabb.lock import require_allocated_seeds
 from lisjong_arena.overall_champion_aabb.lock import document_identity
 
+from .memory_guard import (
+    FORMAL_WORKERS,
+    is_memory_guard_document,
+    memory_guard_document,
+)
 from .participants import parse_candidate, parse_incumbent, require_pair
 from .protocol import (
     BACKEND,
@@ -61,10 +70,14 @@ from .protocol import (
 )
 from .runtime import require_artifact_paths, require_ml_runtime
 
-LOCK_SCHEMA = "arena-learning-candidate-engine-aabb-lock-v1"
+LOCK_SCHEMA_V1 = "arena-learning-candidate-engine-aabb-lock-v1"
+LOCK_SCHEMA_V2 = "arena-learning-candidate-engine-aabb-lock-v2"
+LOCK_SCHEMA = LOCK_SCHEMA_V1
+"""v1の名前（互換）。新しいlockは ``LOCK_SCHEMA_V2``。"""
 EXECUTION_BRANCH = "main"
 DESTINATIONS = ("diagnostics", "observations", "raw", "result")
 LIMIT_FIELDS = ("peak_rss_kib", "timeout_seconds", "wall_seconds")
+LIMIT_FIELDS_V2 = ("timeout_seconds", "wall_seconds")
 
 _LOCK_FIELDS = frozenset(
     {
@@ -100,6 +113,7 @@ _POPULATION_FIELDS = frozenset(
 _EXECUTION_FIELDS = frozenset(
     {"artifact_paths", "backend", "limits", "wheel_path", "workers"}
 )
+_EXECUTION_FIELDS_V2 = _EXECUTION_FIELDS | {"memory_guard"}
 _ENVIRONMENT_FIELDS = frozenset(
     {"ml", "native", "provenance", "python", "shanten_backend"}
 )
@@ -135,10 +149,12 @@ def require_population_seeds(
         raise LearningEngineAabbLockError(str(error)) from error
 
 
-def require_limits(value: object) -> dict[str, int]:
-    """1半荘timeout・全体wall・peak RSS（KiB）の明示的な正の整数上限。"""
-    if type(value) is not dict or set(value) != set(LIMIT_FIELDS):
-        raise LearningEngineAabbLockError(f"limits must be exactly {LIMIT_FIELDS}")
+def require_limits(
+    value: object, fields: tuple[str, ...] = LIMIT_FIELDS
+) -> dict[str, int]:
+    """明示的な正の整数上限。v1は1半荘timeout・全体wall・peak RSS（KiB）、v2はpeak RSSなし。"""
+    if type(value) is not dict or set(value) != set(fields):
+        raise LearningEngineAabbLockError(f"limits must be exactly {fields}")
     for name, item in value.items():
         if type(item) is not int or item <= 0:
             raise LearningEngineAabbLockError(f"limit {name} must be a positive int")
@@ -200,10 +216,16 @@ def assemble_lock_document(
     arena_revision: str,
     ledger: object,
     workers: int = 1,
+    memory_guard: object = None,
 ) -> dict[str, object]:
-    """入力を検査してlock documentを作る（live値はcallerが渡す）。"""
+    """入力を検査してlock documentを作る（live値はcallerが渡す）。
+
+    ``memory_guard`` を渡すとv2（#580）、``None`` は従来のv1。
+    """
     if type(workers) is not int or not 1 <= workers <= 8:
         raise LearningEngineAabbLockError("formal workers must be an integer 1..8")
+    if memory_guard is not None:
+        _require_v2_memory(memory_guard, workers)
     seeds = require_formal_seeds(ordered_seeds)
     candidate = parse_candidate(candidate)
     incumbent = parse_incumbent(incumbent)
@@ -224,7 +246,11 @@ def assemble_lock_document(
         "execution": {
             "artifact_paths": dict(require_artifact_paths(artifact_paths)),
             "backend": BACKEND,
-            "limits": dict(require_limits(limits)),
+            "limits": dict(
+                require_limits(
+                    limits, LIMIT_FIELDS if memory_guard is None else LIMIT_FIELDS_V2
+                )
+            ),
             "wheel_path": wheel_path,
             "workers": workers,
         },
@@ -246,10 +272,28 @@ def assemble_lock_document(
         "result_exposed": False,
         "rules": dict(EXPECTED_RULES),
         "rules_digest": RULES_DIGEST,
-        "schema": LOCK_SCHEMA,
+        "schema": LOCK_SCHEMA_V1,
     }
+    if memory_guard is not None:
+        payload["execution"]["memory_guard"] = dict(memory_guard)
+        payload["schema"] = LOCK_SCHEMA_V2
     document = {**payload, "lock_digest": document_identity(payload)}
     return parse_lock_document(document)
+
+
+def _require_v2_memory(memory_guard: object, workers: object) -> None:
+    if not is_memory_guard_document(memory_guard):
+        raise LearningEngineAabbLockError(
+            "memory_guard must be exactly the cgroup_peak_v1 contract of #580"
+        )
+    if workers != FORMAL_WORKERS or type(workers) is not int:
+        raise LearningEngineAabbLockError(
+            f"a cgroup_peak_v1 lock requires exactly {FORMAL_WORKERS} workers"
+        )
+
+
+def is_v2_lock(lock: dict) -> bool:
+    return lock["schema"] == LOCK_SCHEMA_V2
 
 
 def parse_lock_document(value: object) -> dict[str, object]:
@@ -267,8 +311,12 @@ def parse_lock_document(value: object) -> dict[str, object]:
 
 
 def _parse_lock(value: object) -> dict[str, object]:
-    if type(value) is not dict or value.get("schema") != LOCK_SCHEMA:
+    if type(value) is not dict or value.get("schema") not in (
+        LOCK_SCHEMA_V1,
+        LOCK_SCHEMA_V2,
+    ):
         raise LearningEngineAabbLockError("unsupported lock schema")
+    v2 = value["schema"] == LOCK_SCHEMA_V2
     if set(value) != _LOCK_FIELDS:
         raise LearningEngineAabbLockError("lock fields do not match the schema")
     if value["result_exposed"] is not False:
@@ -326,7 +374,9 @@ def _parse_lock(value: object) -> dict[str, object]:
             f"lock allocation binding invalid: {error}"
         ) from error
     execution = value["execution"]
-    if type(execution) is not dict or set(execution) != _EXECUTION_FIELDS:
+    if type(execution) is not dict or set(execution) != (
+        _EXECUTION_FIELDS_V2 if v2 else _EXECUTION_FIELDS
+    ):
         raise LearningEngineAabbLockError(
             "lock execution fields do not match the schema"
         )
@@ -334,7 +384,9 @@ def _parse_lock(value: object) -> dict[str, object]:
         raise LearningEngineAabbLockError("lock execution backend must be rust")
     if type(execution["workers"]) is not int or not 1 <= execution["workers"] <= 8:
         raise LearningEngineAabbLockError("lock formal workers must be an integer 1..8")
-    require_limits(execution["limits"])
+    require_limits(execution["limits"], LIMIT_FIELDS_V2 if v2 else LIMIT_FIELDS)
+    if v2:
+        _require_v2_memory(execution["memory_guard"], execution["workers"])
     require_artifact_paths(execution["artifact_paths"])
     if type(execution["wheel_path"]) is not str or not execution["wheel_path"]:
         raise LearningEngineAabbLockError("lock wheel_path is invalid")
@@ -417,9 +469,12 @@ def build_lock(
     artifact_paths: dict,
     destinations: dict,
     ledger_path: str | Path = seed_registry.DEFAULT_LEDGER_PATH,
-    workers: int = 1,
+    workers: int = FORMAL_WORKERS,
 ) -> dict[str, object]:
-    """live値を集めてlockを作る（保存はしない）。participantは実際にloadして作る。"""
+    """live値を集めてv2 lockを作る（保存はしない）。participantは実際にloadして作る。
+
+    新しい正式lockは常にv2（#580）。``limits`` は ``timeout_seconds`` / ``wall_seconds``。
+    """
     try:
         ledger = seed_registry.load_ledger(ledger_path)
         binding = seed_registry.allocation_binding(ledger, allocation_identity)
@@ -451,6 +506,7 @@ def build_lock(
         arena_revision=head,
         ledger=ledger,
         workers=workers,
+        memory_guard=memory_guard_document(),
     )
 
 
@@ -518,10 +574,14 @@ def require_live_target(
 __all__ = [
     "DESTINATIONS",
     "LIMIT_FIELDS",
+    "LIMIT_FIELDS_V2",
     "LOCK_SCHEMA",
+    "LOCK_SCHEMA_V1",
+    "LOCK_SCHEMA_V2",
     "LearningEngineAabbLockError",
     "assemble_lock_document",
     "build_lock",
+    "is_v2_lock",
     "load_lock",
     "locked_event",
     "parse_lock_document",
