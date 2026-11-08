@@ -21,13 +21,15 @@ class CurrentLearningChampionTest(unittest.TestCase):
     def setUp(self) -> None:
         champion._runtime.cache_clear()
         self.addCleanup(champion._runtime.cache_clear)
+        self.m1 = (Path.cwd() / ".test-artifacts" / "m1").resolve()
+        self.r1 = (Path.cwd() / ".test-artifacts" / "r1").resolve()
 
     def _configure(self):
         return mock.patch.dict(
             os.environ,
             {
-                champion.DISCARD_ARTIFACT_ENV: str(Path("/artifacts/m1")),
-                champion.REACTION_ARTIFACT_ENV: str(Path("/artifacts/r1")),
+                champion.DISCARD_ARTIFACT_ENV: str(self.m1),
+                champion.REACTION_ARTIFACT_ENV: str(self.r1),
             },
         )
 
@@ -48,8 +50,8 @@ class CurrentLearningChampionTest(unittest.TestCase):
 
     def test_relative_or_identical_paths_fail_closed(self) -> None:
         for discard, reaction, expected in (
-            ("relative", "/artifacts/r1", "absolute"),
-            ("/artifacts/m1", "/artifacts/m1", "must differ"),
+            ("relative", str(self.r1), "absolute"),
+            (str(self.m1), str(self.m1), "must differ"),
         ):
             with self.subTest(discard=discard, reaction=reaction):
                 champion._runtime.cache_clear()
@@ -91,7 +93,7 @@ class CurrentLearningChampionTest(unittest.TestCase):
             self.assertIs(champion.current_learning_champion_runtime(), runtime)
             configure.assert_called_once_with()
             loader.assert_called_once_with(
-                Path("/artifacts/m1"), Path("/artifacts/r1")
+                self.m1, self.r1
             )
 
     def test_wrong_artifact_pair_is_rejected_after_loading(self) -> None:
