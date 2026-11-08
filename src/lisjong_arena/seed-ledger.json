@@ -397,6 +397,28 @@
       "state": "RETIRED"
     },
     {
+      "allocation_identity": "ea94f34c07a37b54c3e303d9d876340febe425fdfcedf6bb44f34ee23fe803fb",
+      "allocation_timestamp": "2026-11-08T12:30:54.820889Z",
+      "arena_revision": "eae69ba5b80c4c2e00ad24b5dafac687ed183274",
+      "owner_issue": "lisbun/lisjong-arena#582",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "learning-candidate-engine-aabb-582",
+      "protocol": "arena-learning-candidate-engine-aabb-v1",
+      "protocol_revision": "arena-learning-candidate-engine-aabb-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/582#issuecomment-6721002886",
+      "purpose": "#582 L2a M1+R1 vs Arm Y new one-shot formal K100 (v2 6/8GiB, 8 workers)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 582000,
+        "kind": "range",
+        "last": 582099
+      },
+      "seed_membership_identity": "99dc67809e34580ffe066794c86d831b8d044eca75b805c4dd8a82fa84dd0527",
+      "split": "FORMAL-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
