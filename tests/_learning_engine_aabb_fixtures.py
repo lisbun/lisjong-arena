@@ -32,6 +32,9 @@ from lisjong_arena.learning_candidate_engine_aabb.lock import (
     assemble_lock_document,
     require_live_target,
 )
+from lisjong_arena.learning_candidate_engine_aabb.memory_guard import (
+    memory_guard_document,
+)
 from lisjong_arena.learning_candidate_engine_aabb.participants import (
     candidate_policy_identity,
 )
@@ -216,6 +219,17 @@ def lock_document(tmp, **overrides):
     }
     arguments.update(overrides)
     return assemble_lock_document(**arguments)
+
+
+LIMITS_V2 = {"timeout_seconds": 60, "wall_seconds": 3_600}
+
+
+def lock_document_v2(tmp, **overrides):
+    """#580のlock v2（cgroup memory guard、8 worker）。"""
+    overrides.setdefault("limits", LIMITS_V2)
+    overrides.setdefault("workers", 8)
+    overrides.setdefault("memory_guard", memory_guard_document())
+    return lock_document(tmp, **overrides)
 
 
 def gate(lock, *, ledger):

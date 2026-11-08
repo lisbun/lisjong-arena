@@ -20,6 +20,12 @@
   canonical順を待つ射影済みrow（``REORDER_AHEAD_PER_WORKER`` x workers 以下）、
   半荘ごとの計測値だけ。全半荘のcaptureは持たない（#578）
 - 資源上限は ``limits`` の三重方式（OS scope ＋ 外側のrealtime watchdog ＋ code、#565）
+- lock v2（#580）ではメモリのSTOP判定をexact scopeのcgroup ``memory.peak`` /
+  ``memory.events`` とし（``memory_guard``）、開始時・並列実行中の周期poll・各半荘・
+  実行後live gate後・保存 / strict verify後・公開前検査後・公開直前・公開rename後に判定する。
+  公開後の判定が失敗したら公開を巻き戻す。peak RSSの和は診断として記録するだけ。
+  SIGTERM（外側watchdogの停止）は ``RunStopped`` として同じSTOP経路で片付ける。
+  STOPでも成功でも ``diagnostics/memory-<UTC時刻>.json`` を残す（resultではない）
 
 - 1つでも失敗・timeout・上限超過があればevent全体をSTOP / INVALIDとし、result・raw・
   observationsを公開しない（stagingは消す）。診断証跡は ``diagnostics`` へ
@@ -28,11 +34,14 @@
 - seedの差し替え・skip・再試行・fallback行動・成功分だけの集計はしない
 """
 
+import contextlib
 import datetime
 import shutil
+import signal
+import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,7 +64,13 @@ from lisjong_arena.heuristic_candidate_engine_aabb.record_store import (
 )
 
 from .limits import EventBudget, ResourceGuard, probe_os_limits, require_os_limits
-from .lock import LearningEngineAabbLockError, load_lock, require_live_target
+from .lock import (
+    LearningEngineAabbLockError,
+    is_v2_lock,
+    load_lock,
+    require_live_target,
+)
+from .memory_guard import CgroupMemoryGuard, CgroupScope, write_memory_diagnostic
 from .parallel import ParallelResourceGuard, stream_parallel_tasks
 from .protocol import LAYOUT, expected_schedule, schedule_document
 from .result import (
@@ -87,6 +102,29 @@ def _write_stop(diagnostics: Path, lock: dict, error: BaseException, done: int):
     write_new_artifact_file(
         diagnostics / f"stop-{stamp}.json", canonical_json_text(document)
     )
+
+
+@contextlib.contextmanager
+def _sigterm_stops() -> Iterator[None]:
+    """SIGTERMを ``RunStopped`` にする（2回目以降は無視し、片付けを中断させない）。"""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def stop(signum, frame) -> None:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        raise RunStopped("terminated by SIGTERM (external stop)")
+
+    previous = signal.signal(signal.SIGTERM, stop)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _ignore_sigterm() -> None:
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 
 def schedule_tasks(lock: dict) -> list[LearningHanchanTask]:
@@ -159,10 +197,12 @@ def _publish(
     destinations: dict,
     revision: str,
     before_publish: Callable[[], None],
+    after_publish: Callable[[], None] | None = None,
 ) -> dict:
     """observations・resultをstagingへ書き、上限を確かめ、rawと全部そろって公開する。
 
     raw（``raw_staging``）は検査済み。失敗時にrawのstagingを消すのはcaller。
+    ``after_publish`` が失敗したら公開を巻き戻す。
     """
     token = uuid.uuid4().hex
     names = ("raw", "observations", "result")
@@ -191,6 +231,8 @@ def _publish(
         for name in names:
             staging[name].rename(destinations[name])
             published.append(name)
+        if after_publish is not None:
+            after_publish()
     except BaseException:
         for name in published:
             destinations[name].rename(staging[name])
@@ -211,25 +253,78 @@ def run_formal_event(
     realtime: Callable[[], float] = time.time,
     os_limits: Callable[[], dict] = probe_os_limits,
     parent_peak_rss_kib: Callable[[], int | None] = current_peak_rss_kib,
+    memory_scope: Callable[[], object] = CgroupScope,
 ) -> dict[str, object]:
     """lockしたeventを実行し、保存したresult documentを返す。
 
     ``play`` / ``live_gate`` / ``clock`` / ``realtime`` / ``os_limits`` /
-    ``parent_peak_rss_kib`` はtestで実行境界・live照合・時計・OS上限・親RSSを差し替える
-    seamで、正式実行では渡さない。``play``はspawn workerへ渡すためmodule-levelの関数。
+    ``parent_peak_rss_kib`` / ``memory_scope`` はtestで実行境界・live照合・時計・OS上限
+    （v1）・親RSS・cgroup scope（v2）を差し替えるseamで、正式実行では渡さない。
+    ``play``はspawn workerへ渡すためmodule-levelの関数。
     """
     started = (clock(), realtime())
     lock = load_lock(lock_path)
+    arguments = {
+        "ledger_path": ledger_path,
+        "play": play,
+        "live_gate": live_gate,
+        "on_hanchan": on_hanchan,
+        "clock": clock,
+        "realtime": realtime,
+        "os_limits": os_limits,
+        "parent_peak_rss_kib": parent_peak_rss_kib,
+    }
+    if not is_v2_lock(lock):
+        return _run_locked(lock, started, memory_scope=None, **arguments)
+    with _sigterm_stops():
+        return _run_locked(lock, started, memory_scope=memory_scope, **arguments)
+
+
+def _run_locked(
+    lock: dict,
+    started: tuple[float, float],
+    *,
+    ledger_path,
+    play,
+    live_gate,
+    on_hanchan,
+    clock,
+    realtime,
+    os_limits,
+    parent_peak_rss_kib,
+    memory_scope,
+) -> dict[str, object]:
     limits = lock["execution"]["limits"]
     budget = EventBudget(
         limits["wall_seconds"], clock=clock, realtime=realtime, started=started
     )
     workers = lock["execution"]["workers"]
-    guard = (
-        ResourceGuard(limits, budget, parent_peak_rss_kib)
-        if workers == 1
-        else ParallelResourceGuard(limits, budget, parent_peak_rss_kib)
-    )
+    memory_guard = None
+    if memory_scope is not None:
+        guard = memory_guard = CgroupMemoryGuard(
+            lock["execution"]["memory_guard"],
+            limits,
+            budget,
+            scope=memory_scope(),
+            parent_peak_rss_kib=parent_peak_rss_kib,
+        )
+    elif workers == 1:
+        guard = ResourceGuard(limits, budget, parent_peak_rss_kib)
+    else:
+        guard = ParallelResourceGuard(limits, budget, parent_peak_rss_kib)
+
+    def checkpoint(stage: str) -> None:
+        budget.check(stage)
+        if memory_guard is not None:
+            memory_guard.check(stage)
+
+    def after_publish() -> None:
+        memory_guard.after_publish()
+        write_memory_diagnostic(
+            destinations["diagnostics"],
+            memory_guard.diagnostic(lock_digest=lock["lock_digest"], error=None),
+        )
+
     destinations = {
         name: Path(value) for name, value in lock["artifact_destinations"].items()
     }
@@ -251,9 +346,12 @@ def run_formal_event(
             on_hanchan(done, total)
 
     try:
-        require_os_limits(limits, os_limits())
+        if memory_guard is None:
+            require_os_limits(limits, os_limits())
+        else:
+            memory_guard.start()
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
-        budget.check("after the pre-run live gate")
+        checkpoint("after the pre-run live gate")
         tasks = schedule_tasks(lock)
         revision = lock["execution_target"]["revision"]
         stream = KyokuRecordStream(
@@ -298,12 +396,24 @@ def run_formal_event(
                 on_hanchan=count,
                 remaining_seconds=budget.remaining,
                 max_ahead=REORDER_AHEAD_PER_WORKER * workers,
+                **(
+                    {}
+                    if memory_guard is None
+                    else {
+                        "poll": memory_guard.poll,
+                        "poll_seconds": lock["execution"]["memory_guard"][
+                            "poll_seconds"
+                        ],
+                    }
+                ),
             )
         sink.require_complete(len(tasks))
         live_gate(lock, ledger=seed_registry.load_ledger(ledger_path))
-        budget.check("after the post-run live gate")
+        checkpoint("after the post-run live gate")
         # manifestを書き、保存bytesを読込と同じ検査にかける（まだ公開しない）
         records = stream.finish()
+        if memory_guard is not None:
+            memory_guard.check("after the strict verify of the raw records")
         # 公開前に、第1層・schedule・主統計が成り立つことを確かめる
         seeds = lock["population"]["ordered_seeds"]
         verify_schedule(
@@ -315,7 +425,7 @@ def run_formal_event(
         summarize_rank_blocks(
             [block["difference_ranks"] for block in block_rank_totals(records.hanchans)]
         )
-        budget.check("after the pre-write checks")
+        checkpoint("after the pre-write checks")
         result = _publish(
             lock,
             records,
@@ -324,12 +434,24 @@ def run_formal_event(
             destinations,
             revision,
             lambda: guard.before_publish(sink.measured),
+            None if memory_guard is None else after_publish,
         )
     except BaseException as error:
+        if memory_guard is not None:
+            _ignore_sigterm()  # 片付けをSIGTERMで中断させない（SIGKILLはwatchdogが扱う）
         if stream is not None:
             stream.close()
         shutil.rmtree(raw_staging, ignore_errors=True)
         _write_stop(destinations["diagnostics"], lock, error, progress["done"])
+        if memory_guard is not None:
+            # STOPは既に確定している。診断の書込み失敗で元の理由を隠さない
+            with contextlib.suppress(Exception):
+                write_memory_diagnostic(
+                    destinations["diagnostics"],
+                    memory_guard.diagnostic(
+                        lock_digest=lock["lock_digest"], error=error
+                    ),
+                )
         if not isinstance(error, Exception) or isinstance(
             error, (RunStopped, LearningEngineAabbLockError)
         ):

@@ -112,6 +112,8 @@ def stream_parallel_tasks(
     on_hanchan: Callable[[int, int], None] | None = None,
     remaining_seconds: Callable[[], float] | None = None,
     max_ahead: int | None = None,
+    poll: Callable[[], None] | None = None,
+    poll_seconds: float | None = None,
 ) -> None:
     """Run bounded Learning tasks; fail the entire event on the first error.
 
@@ -125,6 +127,10 @@ def stream_parallel_tasks(
     process startup), never when added to an unbounded queue. An absolute event
     deadline may shorten all waits. OS cgroup limits and the separate external
     watchdog cover subprocesses if the parent itself is killed.
+
+    ``poll`` (with ``poll_seconds``) runs on every loop iteration, and the loop
+    never sleeps longer than ``poll_seconds``; it may raise to stop the event
+    (the cgroup memory guard of #580).
     """
     require_workers(workers)
     if workers < 2:
@@ -133,6 +139,10 @@ def stream_parallel_tasks(
         raise RunStopped("timeout_seconds must be a positive locked integer")
     if max_ahead is not None and (type(max_ahead) is not int or max_ahead < workers):
         raise RunStopped("max_ahead must be an integer of at least workers")
+    if (poll is None) != (poll_seconds is None) or (
+        poll_seconds is not None and not poll_seconds > 0
+    ):
+        raise RunStopped("poll and a positive poll_seconds go together")
     tasks = list(tasks)
     if not tasks:
         raise RunStopped("the schedule is empty")
@@ -169,6 +179,8 @@ def stream_parallel_tasks(
             submit_one()
 
         while pending:
+            if poll is not None:
+                poll()
             remaining = float("inf")
             if remaining_seconds is not None:
                 remaining = remaining_seconds()
@@ -191,7 +203,10 @@ def stream_parallel_tasks(
             )
             ready, _ = wait(
                 pending,
-                timeout=max(0.0, min(remaining, task_wait)),
+                timeout=max(
+                    0.0,
+                    min(remaining, task_wait, poll_seconds or float("inf")),
+                ),
                 return_when=FIRST_COMPLETED,
             )
             if not ready:
