@@ -42,9 +42,7 @@ class CurrentLearningChampionTest(unittest.TestCase):
                     champion.REACTION_ARTIFACT_ENV: "",
                 },
             ),
-            self.assertRaisesRegex(
-                champion.LearningChampionBindingError, "must point"
-            ),
+            self.assertRaisesRegex(champion.LearningChampionBindingError, "must point"),
         ):
             champion.create_current_learning_champion_policy()
 
@@ -92,9 +90,7 @@ class CurrentLearningChampionTest(unittest.TestCase):
             self.assertIs(champion.create_current_learning_champion_policy(), second)
             self.assertIs(champion.current_learning_champion_runtime(), runtime)
             configure.assert_called_once_with()
-            loader.assert_called_once_with(
-                self.m1, self.r1
-            )
+            loader.assert_called_once_with(self.m1, self.r1)
 
     def test_wrong_artifact_pair_is_rejected_after_loading(self) -> None:
         runtime = mock.Mock()
@@ -130,8 +126,7 @@ class CurrentLearningChampionTest(unittest.TestCase):
         self.assertIs(resolve_binding_callable(binding), factory)
         self.assertEqual(
             champion.POLICY_IDENTITY,
-            f"lisjong-l2a:{champion.DISCARD_IDENTITY}:"
-            f"{champion.REACTION_IDENTITY}",
+            f"lisjong-l2a:{champion.DISCARD_IDENTITY}:{champion.REACTION_IDENTITY}",
         )
 
 
