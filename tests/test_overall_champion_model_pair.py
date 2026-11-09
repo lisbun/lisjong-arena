@@ -80,7 +80,8 @@ class ModelPairBindingTest(unittest.TestCase):
 
     def test_live_attestation_is_rechecked_not_caller_trusted(self) -> None:
         with mock.patch.object(
-            model_pair, "resolve_binding_callable",
+            model_pair,
+            "resolve_binding_callable",
             return_value=lambda: copy.deepcopy(EXPECTED_COMPONENTS),
         ):
             require_live_pair(_pair())
@@ -120,10 +121,9 @@ class OverallV2LockTest(unittest.TestCase):
 
     def test_v1_historical_lock_still_has_exact_schema(self) -> None:
         from _overall_champion_aabb_fixtures import install_checkpoint, lock_document
+
         install_checkpoint(self.path)
-        self.addCleanup(
-            __import__("_overall_champion_aabb_fixtures").clear_checkpoint
-        )
+        self.addCleanup(__import__("_overall_champion_aabb_fixtures").clear_checkpoint)
         doc = lock_document(self.path)
         self.assertEqual(parse_lock_document(doc), doc)
         self.assertEqual(doc["lock_version"], 1)
@@ -136,7 +136,9 @@ class OverallV2LockTest(unittest.TestCase):
         self.assertEqual(parse_lock_document(doc), doc)
         out = self.path / "overall-lock.json"
         save_lock_document(doc, out)
-        self.assertEqual(parse_lock_document(__import__("json").loads(out.read_text())), doc)
+        self.assertEqual(
+            parse_lock_document(__import__("json").loads(out.read_text())), doc
+        )
 
     def test_malformed_pair_rejected_even_if_lock_digest_recomputed(self) -> None:
         for field in ("manifest_sha256", "weights_sha256"):
@@ -188,8 +190,14 @@ class OverallV2LockTest(unittest.TestCase):
         doc = self._build()
         with (
             merged_main_execution(),
-            mock.patch.object(lock_module, "collect_ml_runtime", return_value={"torch": "2.13.0+cpu"}),
-            mock.patch.object(lock_module, "require_live_pair", side_effect=OverallModelPairError("changed")),
+            mock.patch.object(
+                lock_module, "collect_ml_runtime", return_value={"torch": "2.13.0+cpu"}
+            ),
+            mock.patch.object(
+                lock_module,
+                "require_live_pair",
+                side_effect=OverallModelPairError("changed"),
+            ),
         ):
             with self.assertRaisesRegex(OverallChampionLockError, "changed"):
                 require_live_execution_target(doc)
