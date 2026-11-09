@@ -7,7 +7,7 @@ weights digests for both heads. Never collapse the pair into one checkpoint.
 
 from __future__ import annotations
 
-from .protocol import OverallChampionProtocolError, resolve_binding_callable
+from .protocol import resolve_binding_callable
 
 BINDING = (
     "lisjong_arena.current_learning_champion:"
