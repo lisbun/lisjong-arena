@@ -12,6 +12,8 @@ from _overall_champion_aabb_fixtures import (
     learning_binding,
     merged_main_execution,
     seeds,
+    synthetic_kyoku_records,
+    v2_destinations,
 )
 
 import lisjong_arena.overall_champion_aabb.lock as lock_module
@@ -110,7 +112,7 @@ class OverallV2LockTest(unittest.TestCase):
             mock.patch.object(lock_module, "live_pair_document", return_value=_pair()),
         ):
             return build_lock_document(
-                destinations=destinations(self.path),
+                destinations=v2_destinations(self.path),
                 heuristic=heuristic_binding(),
                 learning=_l2a_binding(),
                 seeds=seeds(),
@@ -149,6 +151,10 @@ class OverallV2LockTest(unittest.TestCase):
             uniform_profile,
         )
 
+        from lisjong_arena.overall_champion_aabb.kyoku import (
+            save_kyoku_files,
+            summarize_kyoku_records,
+        )
         from lisjong_arena.overall_champion_aabb.result import (
             build_overall_result,
             load_bundle_comparison,
@@ -174,10 +180,30 @@ class OverallV2LockTest(unittest.TestCase):
             comparison_artifact_path=comparison_path,
         )
         save_overall_result(result, result_path)
+        with self.assertRaisesRegex(Exception, "kyoku"):
+            verify_overall_bundle(
+                lock_path=lock_path,
+                comparison_path=comparison_path,
+                result_path=result_path,
+            )
+        records = synthetic_kyoku_records(synthetic.seat_results)
+        save_kyoku_files(
+            records=records,
+            summary=summarize_kyoku_records(
+                records,
+                heuristic_identity=HEURISTIC_IDENTITY,
+                learning_identity=POLICY_IDENTITY,
+            ),
+            lock_identity=doc["lock_identity"],
+            records_path=self.path / "kyoku-records.json",
+            summary_path=self.path / "kyoku-summary.json",
+        )
         reread = verify_overall_bundle(
             lock_path=lock_path,
             comparison_path=comparison_path,
             result_path=result_path,
+            kyoku_records_path=self.path / "kyoku-records.json",
+            kyoku_summary_path=self.path / "kyoku-summary.json",
         )
         self.assertEqual(reread["lock_identity"], doc["lock_identity"])
         self.assertEqual(
@@ -303,7 +329,7 @@ class OverallV2LockTest(unittest.TestCase):
         ):
             with self.assertRaisesRegex(OverallChampionLockError, "torch"):
                 build_lock_document(
-                    destinations=destinations(self.path),
+                    destinations=v2_destinations(self.path),
                     heuristic=heuristic_binding(),
                     learning=_l2a_binding(),
                     seeds=seeds(),
@@ -313,7 +339,7 @@ class OverallV2LockTest(unittest.TestCase):
         with merged_main_execution():
             with self.assertRaises(OverallChampionLockError):
                 build_lock_document(
-                    destinations=destinations(self.path),
+                    destinations=v2_destinations(self.path),
                     heuristic=heuristic_binding(),
                     learning=_l2a_binding(),
                     seeds=seeds(),

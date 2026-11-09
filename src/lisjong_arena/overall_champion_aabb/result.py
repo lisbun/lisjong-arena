@@ -45,7 +45,9 @@ from lisjong_arena.artifact import (
 )
 from lisjong_arena.paired_evaluation import PairedSummary, artifact_file_digest
 
+from .kyoku import OverallKyokuRecordError, verify_kyoku_files
 from .lock import (
+    LOCK_VERSION_V2,
     OverallChampionLockError,
     document_identity,
     load_lock_document,
@@ -458,8 +460,13 @@ def verify_overall_bundle(
     lock_path: str | Path,
     comparison_path: str | Path,
     result_path: str | Path,
+    kyoku_records_path: str | Path | None = None,
+    kyoku_summary_path: str | Path | None = None,
 ) -> dict[str, object]:
     """bundle全体をstrictに検証する。
+
+    lock v2では局単位記録の2 file（#586）を必須とし、記録の整合と集計の再導出
+    一致も検査する。v1では2 fileを受け付けない。
 
     ```text
     lock strict read
@@ -502,6 +509,29 @@ def verify_overall_bundle(
             "overall result differs from the value re-derived from the locked "
             "comparison evidence"
         )
+
+    kyoku_given = (kyoku_records_path is not None, kyoku_summary_path is not None)
+    if lock["lock_version"] != LOCK_VERSION_V2:
+        if any(kyoku_given):
+            raise OverallChampionResultError("a v1 bundle has no kyoku records")
+        return document
+    if not all(kyoku_given):
+        raise OverallChampionResultError(
+            "a v2 bundle requires both kyoku records and kyoku summary"
+        )
+    heuristic, learning = locked_participants(lock)
+    try:
+        verify_kyoku_files(
+            records_path=kyoku_records_path,  # type: ignore[arg-type]
+            summary_path=kyoku_summary_path,  # type: ignore[arg-type]
+            lock_identity=str(lock["lock_identity"]),
+            seeds=locked_seeds(lock),
+            heuristic_identity=heuristic.policy_identity,
+            learning_identity=learning.policy_identity,
+            seat_results=comparison.seat_results,
+        )
+    except OverallKyokuRecordError as exc:
+        raise OverallChampionResultError(str(exc)) from exc
     return document
 
 

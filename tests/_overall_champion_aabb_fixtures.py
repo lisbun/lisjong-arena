@@ -353,6 +353,99 @@ def destinations(directory: Path) -> dict[str, Path]:
     }
 
 
+def v2_destinations(directory: Path) -> dict[str, Path]:
+    """lock v2（#586）は局単位記録の2 destinationも要求する。"""
+    return {
+        **destinations(directory),
+        "kyoku_records": directory / "kyoku-records.json",
+        "kyoku_summary": directory / "kyoku-summary.json",
+    }
+
+
+def synthetic_kyoku_records(
+    rows: tuple[SeatResult, ...],
+) -> tuple[dict[str, object], ...]:
+    """comparison seat rowsと整合する1局だけのsynthetic局記録（#432 schema）。
+
+    1位seatが和了、4位seatが放銃し、残りの点数変化は流局精算として持つ。
+    実RiichiEnvは起動しない。
+    """
+    import dataclasses
+
+    from lisjong_arena.aabb_kyoku_diagnostic.accounting import (
+        KyokuRecord,
+        SeatKyoku,
+    )
+    from lisjong_arena.overall_champion_aabb.kyoku import to_json_native
+
+    by_game: dict[tuple[int, int], list[SeatResult]] = {}
+    for row in rows:
+        by_game.setdefault((row.seed, row.rotation), []).append(row)
+    records = []
+    for (seed, rotation), game in by_game.items():
+        game = sorted(game, key=lambda r: int(r.seat))
+        seats = []
+        for row in game:
+            change = row.score - 25_000
+            won = row.rank == 1 and change > 0
+            dealt = row.rank == 4 and change < 0
+            seats.append(
+                SeatKyoku(
+                    seat=int(row.seat),
+                    won=won,
+                    win_count=int(won),
+                    tsumo_win=False,
+                    dealt_in=dealt,
+                    deal_in_count=int(dealt),
+                    win_gain=change if won else 0,
+                    deal_in_loss=-change if dealt else 0,
+                    tsumo_loss=0,
+                    draw_transfer=0 if (won or dealt) else change,
+                    riichi_deposit=0,
+                    final_award=0,
+                    riichi_declared=False,
+                    riichi_accepted=False,
+                    riichi_turn=None,
+                    open_call_count=0,
+                    yakuhai_pon_count=0,
+                    kan_count=0,
+                    calls=(),
+                    tenpai_at_exhaustive_draw=None,
+                    start_points=25_000,
+                    end_points=row.score,
+                )
+            )
+        kyoku = KyokuRecord(
+            index=0,
+            bakaze="E",
+            kyoku=1,
+            honba=0,
+            oya=0,
+            kyotaku_before=0,
+            kyotaku_after=0,
+            outcome="hora",
+            ryukyoku_reason=None,
+            known_riichienv_364_signature=False,
+            tenpai_reconstruction_mismatch=False,
+            seats=tuple(seats),
+        )
+        records.append(
+            {
+                "seed": seed,
+                "rotation": rotation,
+                "seat_identities": [r.policy_identity for r in game],
+                "scores": [r.score for r in game],
+                "ranks": [r.rank for r in game],
+                "raw_event_count": 3,
+                "raw_events_sha256": "0" * 64,
+                "final_award_seat": None,
+                "final_award": 0,
+                "kyokus": [dataclasses.asdict(kyoku)],
+            }
+        )
+    return tuple(to_json_native(record) for record in records)
+
+
 def lock_document(
     directory: Path,
     *,

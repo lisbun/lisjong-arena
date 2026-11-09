@@ -52,6 +52,35 @@ V2 lock creation additionally requires `--ml-runtime-package torch` and
 the `lisjong-arena` pin against the final merged PR commit and the underlying
 `lisjong` / `lisjong-engine` pins before lock.
 
+## Kyoku-level objective records (#586)
+
+Lock v2 also requires two write-once destinations, `kyoku_records` and
+`kyoku_summary`, included in the lock digest (v1 unchanged). The v2 run
+executes each game with the `LocalGameRunner` trace sink and derives per-kyoku
+results **in the same run** with the #432 accounting
+(`aabb_kyoku_diagnostic.accounting.account_game`); no later replay. Before any
+file is written, the records must match the comparison exactly: one row per
+game in seed -> rotation order, AABB seat identities, scores/ranks equal to the
+seat results, kyoku-to-kyoku point continuity ending at the final score, and
+per-seat point components summing to the change. Any capture, accounting or
+consistency failure STOPs the whole event (nothing is adopted).
+
+Diagnostics never override the primary mean-rank classification. They use
+the definitions and weighting of #432, direction `Learning - Heuristic`:
+
+- win rate / deal-in rate: per participating seat-kyoku (draws included in
+  the denominator; multi-ron counts each winner once, the discarder once)
+- mean win value: `win_gain` (incl. honba and collected deposits) / wins
+- mean deal-in loss: `deal_in_loss` (incl. honba) / deal-ins; riichi deposits
+  are a separate component
+- paired rates: pooled per seed over 4 rotations, then seed-equal mean ±
+  1.96·SD/√N; conditional values are pooled descriptive values without an
+  interval. Kyoku / seat-kyoku counts are never treated as independent samples.
+
+`verify` for a v2 bundle requires `--kyoku-records` and `--kyoku-summary`,
+re-checks the records against the comparison and re-derives the summary.
+Raw events are not stored (SHA-256 only).
+
 ## Why an operational preflight is essential
 
 The existing Overall generic executor is based on **RiichiEnv** and creates
@@ -140,6 +169,8 @@ python -m lisjong_arena.overall_champion_aabb lock \
   --out <NEW_LOCK> \
   --comparison-artifact <NEW_COMPARISON_PATH> \
   --overall-result <NEW_RESULT_PATH> \
+  --kyoku-records <NEW_KYOKU_RECORDS_PATH> \
+  --kyoku-summary <NEW_KYOKU_SUMMARY_PATH> \
   --heuristic-identity placement-aware-speed-call \
   --heuristic-factory lisjong_arena.policy_catalog:create_placement_aware_speed_call \
   --heuristic-source lisjong --heuristic-revision <PINNED_LISJONG> \
@@ -154,7 +185,9 @@ python -m lisjong_arena.overall_champion_aabb run \
 
 python -m lisjong_arena.overall_champion_aabb verify \
   --lock <NEW_LOCK> --comparison <NEW_COMPARISON_PATH> \
-  --result <NEW_RESULT_PATH>
+  --result <NEW_RESULT_PATH> \
+  --kyoku-records <NEW_KYOKU_RECORDS_PATH> \
+  --kyoku-summary <NEW_KYOKU_SUMMARY_PATH>
 ```
 
 **Do not run this sketch as-is**: placeholders must be replaced only from
@@ -166,7 +199,8 @@ external watchdog/timeout/quarantine conditions must already be active.
 - [ ] PR #585 CI/Ruff/unit tests PASS + independent review
 - [ ] v1 historical lock and #281 bundle strict-read regression PASS
 - [ ] v2 lock two-model hashes/pre+post attestation and tamper regression PASS
-- [ ] WSL actual RiichiEnv compat development smoke (16 games max) PASS
+- [x] WSL actual RiichiEnv compat development smoke (16 games max) PASS
+- [ ] #586 kyoku-level records in the same run + development check
 - [ ] Stage A / Stage B exact watchdog/instance/cleanup wiring and budget
 - [ ] Explicit operator approval for paid Stage A/B and formal seeds
 - [ ] Formal one-shot 400/400 + strict verify / cleanup (not this PR)
