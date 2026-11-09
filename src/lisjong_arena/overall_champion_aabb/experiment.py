@@ -38,8 +38,15 @@ from lisjong_arena.artifact import save_comparison_artifact
 from lisjong_arena.comparison import run_comparison, run_comparison_parallel
 from lisjong_arena.model import ComparisonPlan, ComparisonResult, PolicySpec
 
+from .kyoku import (
+    OverallKyokuRecordError,
+    execute_with_kyoku_records,
+    save_kyoku_files,
+    summarize_kyoku_records,
+    validate_kyoku_records,
+)
 from .lock import (
-    REQUIRED_DESTINATIONS,
+    LOCK_VERSION_V2,
     OverallChampionLockError,
     load_lock_document,
     locked_destinations,
@@ -76,6 +83,8 @@ class OverallEvaluationOutcome:
     comparison_artifact_path: Path
     overall_result_path: Path
     overall_result: dict[str, object]
+    kyoku_records_path: Path | None = None
+    kyoku_summary_path: Path | None = None
 
     @property
     def classification(self) -> dict[str, object]:
@@ -157,6 +166,9 @@ def run_overall_evaluation(
     heuristic_spec: PolicySpec,
     learning_spec: PolicySpec,
     execute: Callable[..., ComparisonResult] = default_execute,
+    execute_kyoku: Callable[
+        ..., tuple[ComparisonResult, tuple[dict[str, object], ...]]
+    ] = execute_with_kyoku_records,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> OverallEvaluationOutcome:
     """lockされたone-shot Overall formal eventを実行し、strict evidenceを残す。
@@ -173,8 +185,13 @@ def run_overall_evaluation(
     元のbytesへ戻されるadversarial mutationはここでは検出対象にしない。
     検出するにはimmutable snapshotか各factory invocationでのhashingが必要で、
     Issue #250のbounded implementationを超える。
+
+    lock v2（#583 L2a event）では``execute_kyoku``で同じ実行中に局単位の記録も
+    取り（#586）、comparisonと整合することを検査してから書き出す。局記録の
+    取得・整合のどれかが失敗した場合も、何も書かずにevent全体を失敗させる。
     """
     lock = load_lock_document(lock_path)
+    with_kyoku = lock["lock_version"] == LOCK_VERSION_V2
     live_before = require_live_execution_target(lock)
     heuristic_binding, learning_binding = locked_participants(lock)
     require_spec_matches_binding(heuristic_spec, heuristic_binding, role="heuristic")
@@ -184,7 +201,7 @@ def run_overall_evaluation(
     destinations = locked_destinations(lock)
     try:
         require_new_artifact_destinations(
-            destinations, required_names=REQUIRED_DESTINATIONS
+            destinations, required_names=tuple(destinations)
         )
     except ExecutionSafetyError as exc:
         raise OverallChampionLockError(str(exc)) from exc
@@ -194,14 +211,24 @@ def run_overall_evaluation(
         learning_spec=learning_spec,
         seeds=seeds,
     )
+    run = execute_kyoku if with_kyoku else execute
     if progress_callback is None:
-        result = execute(plan, max_workers=worker_count)
+        returned = run(plan, max_workers=worker_count)
     else:
-        result = execute(
+        returned = run(
             plan,
             max_workers=worker_count,
             progress_callback=progress_callback,
         )
+    kyoku_records: tuple[dict[str, object], ...] = ()
+    if with_kyoku:
+        if type(returned) is not tuple or len(returned) != 2:
+            raise OverallChampionResultError(
+                "v2 execution must return a ComparisonResult and kyoku records"
+            )
+        result, kyoku_records = returned
+    else:
+        result = returned
     if not isinstance(result, ComparisonResult):
         raise OverallChampionResultError("execution must return a ComparisonResult")
     if len(result.seat_results) != SEAT_RESULT_COUNT:
@@ -219,6 +246,24 @@ def run_overall_evaluation(
             "live execution target changed while the formal event was running"
         )
 
+    kyoku_summary: dict[str, object] | None = None
+    if with_kyoku:
+        try:
+            kyoku_records = validate_kyoku_records(
+                kyoku_records,
+                seeds=seeds,
+                heuristic_identity=heuristic_spec.identity,
+                learning_identity=learning_spec.identity,
+                seat_results=result.seat_results,
+            )
+            kyoku_summary = summarize_kyoku_records(
+                kyoku_records,
+                heuristic_identity=heuristic_spec.identity,
+                learning_identity=learning_spec.identity,
+            )
+        except OverallKyokuRecordError as exc:
+            raise OverallChampionResultError(str(exc)) from exc
+
     comparison_path = destinations["comparison_artifact"]
     save_comparison_artifact(result, comparison_path)
     comparison = load_bundle_comparison(comparison_path)
@@ -234,18 +279,33 @@ def run_overall_evaluation(
         comparison_artifact=comparison,
         comparison_artifact_path=comparison_path,
     )
+    kyoku_paths: dict[str, Path] = {}
+    if kyoku_summary is not None:
+        kyoku_paths = {
+            "kyoku_records_path": destinations["kyoku_records"],
+            "kyoku_summary_path": destinations["kyoku_summary"],
+        }
+        save_kyoku_files(
+            records=kyoku_records,
+            summary=kyoku_summary,
+            lock_identity=str(lock["lock_identity"]),
+            records_path=kyoku_paths["kyoku_records_path"],
+            summary_path=kyoku_paths["kyoku_summary_path"],
+        )
     result_path = destinations["overall_result"]
     save_overall_result(document, result_path)
     verified = verify_overall_bundle(
         lock_path=lock_path,
         comparison_path=comparison_path,
         result_path=result_path,
+        **kyoku_paths,
     )
     return OverallEvaluationOutcome(
         worker_count=worker_count,
         comparison_artifact_path=comparison_path,
         overall_result_path=result_path,
         overall_result=verified,
+        **kyoku_paths,
     )
 
 
