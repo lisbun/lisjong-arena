@@ -15,6 +15,7 @@ binding compatible with a two-artifact L2a participant. That is tracked by #583.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from functools import cache
 from pathlib import Path
@@ -81,6 +82,51 @@ def create_current_learning_champion_policy():
     return _runtime().create_policy()
 
 
+def _file_sha256(path: Path) -> str:
+    """Re-hash the served bytes at each formal pre/post-execution gate."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def served_current_learning_champion_artifacts() -> dict[str, dict[str, str]]:
+    """Attest BOTH served M1/R1 files from the actual strict-loaded runtime.
+
+    This is an exact top-level binding for Overall #583. It never searches for
+    a checkpoint and re-hashes the files on every call (including the post-run
+    check), rather than trusting caller-supplied digests or cached file bytes.
+    Paths are intentionally excluded from the portable formal identity.
+    """
+    runtime = current_learning_champion_runtime()
+    bound = (
+        ("discard", DISCARD_ARTIFACT_ENV, runtime.discard, DISCARD_IDENTITY),
+        ("reaction", REACTION_ARTIFACT_ENV, runtime.reaction, REACTION_IDENTITY),
+    )
+    result: dict[str, dict[str, str]] = {}
+    for role, env_var, scorer, identity in bound:
+        if scorer.artifact.identity != identity:
+            raise LearningChampionBindingError(
+                f"served {role} identity differs from the frozen #582 artifact"
+            )
+        root = _artifact_path(env_var)
+        manifest = root / "manifest.json"
+        weights = root / "weights.f32"
+        manifest_digest = _file_sha256(manifest)
+        weights_digest = _file_sha256(weights)
+        if scorer.artifact.manifest["files"]["weights.f32"]["sha256"] != weights_digest:
+            raise LearningChampionBindingError(
+                f"served {role} weights changed after strict load"
+            )
+        result[role] = {
+            "identity": identity,
+            "manifest_sha256": manifest_digest,
+            "weights_sha256": weights_digest,
+        }
+    return result
+
+
 __all__ = [
     "DISCARD_ARTIFACT_ENV",
     "REACTION_ARTIFACT_ENV",
@@ -89,5 +135,6 @@ __all__ = [
     "POLICY_IDENTITY",
     "LearningChampionBindingError",
     "current_learning_champion_runtime",
+    "served_current_learning_champion_artifacts",
     "create_current_learning_champion_policy",
 ]
