@@ -51,10 +51,10 @@ from lisjong_arena.single_round_artifact import (
     parse_execution_provenance,
 )
 
+from .model_pair import BINDING as MODEL_PAIR_BINDING
+from .model_pair import FACTORY as CURRENT_LEARNING_FACTORY
+from .model_pair import POLICY_IDENTITY as CURRENT_LEARNING_IDENTITY
 from .model_pair import (
-    BINDING as MODEL_PAIR_BINDING,
-    FACTORY as CURRENT_LEARNING_FACTORY,
-    POLICY_IDENTITY as CURRENT_LEARNING_IDENTITY,
     OverallModelPairError,
     live_pair_document,
     require_live_pair,
