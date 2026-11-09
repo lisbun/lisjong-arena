@@ -105,6 +105,14 @@ def _lock(arguments: argparse.Namespace) -> int:
         destinations={
             "comparison_artifact": arguments.comparison_artifact,
             "overall_result": arguments.overall_result,
+            **{
+                name: value
+                for name, value in (
+                    ("kyoku_records", arguments.kyoku_records),
+                    ("kyoku_summary", arguments.kyoku_summary),
+                )
+                if value is not None
+            },
         },
         heuristic=_binding(arguments, "heuristic"),
         learning=_binding(arguments, "learning"),
@@ -149,6 +157,9 @@ def _run(arguments: argparse.Namespace) -> int:
     _report(outcome.overall_result)
     print(f"comparison_artifact={outcome.comparison_artifact_path}")
     print(f"overall_result={outcome.overall_result_path}")
+    if outcome.kyoku_records_path is not None:
+        print(f"kyoku_records={outcome.kyoku_records_path}")
+        print(f"kyoku_summary={outcome.kyoku_summary_path}")
     return 0
 
 
@@ -157,6 +168,8 @@ def _verify(arguments: argparse.Namespace) -> int:
         lock_path=arguments.lock,
         comparison_path=arguments.comparison,
         result_path=arguments.result,
+        kyoku_records_path=arguments.kyoku_records,
+        kyoku_summary_path=arguments.kyoku_summary,
     )
     _report(document)
     return 0
@@ -186,6 +199,12 @@ def _parser() -> argparse.ArgumentParser:
     lock.add_argument("--workers", type=int, required=True)
     lock.add_argument("--comparison-artifact", type=Path, required=True)
     lock.add_argument("--overall-result", type=Path, required=True)
+    lock.add_argument(
+        "--kyoku-records", type=Path, default=None, help="required for lock v2"
+    )
+    lock.add_argument(
+        "--kyoku-summary", type=Path, default=None, help="required for lock v2"
+    )
     lock.add_argument("--ml-runtime-package", action="append", default=None)
     lock.add_argument("--learning-artifact-binding", default=None)
     for family in ("heuristic", "learning"):
@@ -213,6 +232,8 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--lock", type=Path, required=True)
     verify.add_argument("--comparison", type=Path, required=True)
     verify.add_argument("--result", type=Path, required=True)
+    verify.add_argument("--kyoku-records", type=Path, default=None)
+    verify.add_argument("--kyoku-summary", type=Path, default=None)
     verify.set_defaults(handler=_verify)
     return parser
 
