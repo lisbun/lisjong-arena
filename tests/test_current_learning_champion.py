@@ -119,7 +119,6 @@ class CurrentLearningChampionTest(unittest.TestCase):
             champion.create_current_learning_champion_policy()
         runtime.create_policy.assert_not_called()
 
-
     def test_serving_attests_both_files_and_detects_postload_mutation(self) -> None:
         with TemporaryDirectory() as temp:
             root = Path(temp)
@@ -145,9 +144,7 @@ class CurrentLearningChampionTest(unittest.TestCase):
                         },
                     )
                 )
-            runtime = SimpleNamespace(
-                discard=scorers["m1"], reaction=scorers["r1"]
-            )
+            runtime = SimpleNamespace(discard=scorers["m1"], reaction=scorers["r1"])
             env = {
                 champion.DISCARD_ARTIFACT_ENV: str(root / "m1"),
                 champion.REACTION_ARTIFACT_ENV: str(root / "r1"),
@@ -155,7 +152,8 @@ class CurrentLearningChampionTest(unittest.TestCase):
             with (
                 mock.patch.dict(os.environ, env),
                 mock.patch.object(
-                    champion, "current_learning_champion_runtime",
+                    champion,
+                    "current_learning_champion_runtime",
                     return_value=runtime,
                 ),
             ):
