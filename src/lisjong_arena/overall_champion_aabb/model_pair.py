@@ -10,12 +10,10 @@ from __future__ import annotations
 from .protocol import resolve_binding_callable
 
 BINDING = (
-    "lisjong_arena.current_learning_champion:"
-    "served_current_learning_champion_artifacts"
+    "lisjong_arena.current_learning_champion:served_current_learning_champion_artifacts"
 )
 FACTORY = (
-    "lisjong_arena.current_learning_champion:"
-    "create_current_learning_champion_policy"
+    "lisjong_arena.current_learning_champion:create_current_learning_champion_policy"
 )
 POLICY_IDENTITY = (
     "lisjong-l2a:"
@@ -46,24 +44,34 @@ class OverallModelPairError(ValueError):
 def require_components(value: object) -> dict[str, dict[str, str]]:
     """Validate independent, strictly typed M1 and R1 component attestations."""
     if type(value) is not dict or set(value) != set(EXPECTED_COMPONENTS):
-        raise OverallModelPairError("learning model pair must contain discard and reaction")
+        raise OverallModelPairError(
+            "learning model pair must contain discard and reaction"
+        )
     for role, expected in EXPECTED_COMPONENTS.items():
         actual = value[role]
         if type(actual) is not dict or set(actual) != set(expected):
             raise OverallModelPairError(f"{role} model binding fields differ")
-        if any(type(actual[k]) is not str or actual[k] != v for k, v in expected.items()):
+        if any(
+            type(actual[k]) is not str or actual[k] != v for k, v in expected.items()
+        ):
             raise OverallModelPairError(f"{role} model binding differs from #582")
     return value
 
 
 def require_pair_document(value: object) -> dict[str, object]:
     """Strict v2 lock document readback, without accessing private artifacts."""
-    if type(value) is not dict or set(value) != {"pair_version", "binding", "components"}:
+    if type(value) is not dict or set(value) != {
+        "pair_version",
+        "binding",
+        "components",
+    }:
         raise OverallModelPairError("learning_artifacts v2 fields differ")
     if value["pair_version"] != PAIR_VERSION or type(value["pair_version"]) is not str:
         raise OverallModelPairError("unsupported learning artifact pair version")
     if value["binding"] != BINDING or type(value["binding"]) is not str:
-        raise OverallModelPairError("learning artifact resolver differs from current Champion")
+        raise OverallModelPairError(
+            "learning artifact resolver differs from current Champion"
+        )
     require_components(value["components"])
     return value
 
@@ -74,7 +82,9 @@ def live_pair_document() -> dict[str, object]:
         resolver = resolve_binding_callable(BINDING)
         live = resolver()
     except Exception as exc:
-        raise OverallModelPairError("cannot attest current Learning Champion models") from exc
+        raise OverallModelPairError(
+            "cannot attest current Learning Champion models"
+        ) from exc
     require_components(live)
     return {
         "pair_version": PAIR_VERSION,
