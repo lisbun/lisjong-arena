@@ -83,6 +83,19 @@ EXECUTION_TARGET_TYPE = "reviewed-merged-main-v1"
 REQUIRED_DESTINATIONS = ("comparison_artifact", "overall_result")
 """bundleのwrite-once destination。``overall-lock.json``自体は別pathへ書く。"""
 
+KYOKU_DESTINATIONS = ("kyoku_records", "kyoku_summary")
+"""lock v2だけが追加で要求する局単位記録のdestination（#586）。v1は変えない。"""
+
+REQUIRED_DESTINATIONS_V2 = REQUIRED_DESTINATIONS + KYOKU_DESTINATIONS
+
+
+def required_destinations(lock_version: int) -> tuple[str, ...]:
+    """lock versionごとのwrite-once destination名。"""
+    if lock_version == LOCK_VERSION_V2:
+        return REQUIRED_DESTINATIONS_V2
+    return REQUIRED_DESTINATIONS
+
+
 NO_RESCUE_BOUNDARY = (
     "locked 100 seed blocks are never extended, replaced, or dropped after "
     "result exposure",
@@ -304,6 +317,16 @@ def build_lock_document(
         except OverallModelPairError as exc:
             raise OverallChampionLockError(str(exc)) from exc
 
+    lock_version = LOCK_VERSION_V2 if model_pair is not None else LOCK_VERSION
+    destination_names = required_destinations(lock_version)
+    if not isinstance(destinations, dict) or set(destinations) != set(
+        destination_names
+    ):
+        raise OverallChampionLockError(
+            f"lock v{lock_version} requires exactly the destinations "
+            f"{list(destination_names)}"
+        )
+
     try:
         _require_environment_consistent()
         provenance = collect_execution_provenance()
@@ -314,7 +337,7 @@ def build_lock_document(
             )
         require_merged_arena_revision(head, branch=EXECUTION_BRANCH)
         require_new_artifact_destinations(
-            destinations, required_names=REQUIRED_DESTINATIONS
+            destinations, required_names=destination_names
         )
     except ExecutionSafetyError as exc:
         raise OverallChampionLockError(str(exc)) from exc
@@ -322,14 +345,14 @@ def build_lock_document(
 
     payload: dict[str, object] = {
         "artifact_destinations": {
-            name: str(destinations[name]) for name in REQUIRED_DESTINATIONS
+            name: str(destinations[name]) for name in destination_names
         },
         "execution_target": {
             "branch": EXECUTION_BRANCH,
             "revision": head,
             "target_type": EXECUTION_TARGET_TYPE,
         },
-        "lock_version": LOCK_VERSION_V2 if model_pair is not None else LOCK_VERSION,
+        "lock_version": lock_version,
         "max_workers": max_workers,
         "ml_runtime": ml_runtime,
         "no_rescue_boundary": list(NO_RESCUE_BOUNDARY),
@@ -475,13 +498,14 @@ def _parse_lock_document(value: object) -> dict[str, object]:
             "lock execution revision differs from recorded provenance"
         )
 
+    destination_names = required_destinations(version)
     destinations = expect_object(
         raw["artifact_destinations"],
-        set(REQUIRED_DESTINATIONS),
+        set(destination_names),
         "lock.artifact_destinations",
     )
     resolved: dict[Path, str] = {}
-    for name in REQUIRED_DESTINATIONS:
+    for name in destination_names:
         path = Path(
             expect_str(destinations[name], f"lock.artifact_destinations.{name}")
         ).resolve(strict=False)
@@ -551,7 +575,8 @@ def locked_destinations(document: dict[str, object]) -> dict[str, Path]:
     parsed = parse_lock_document(document)
     raw = parsed["artifact_destinations"]
     assert isinstance(raw, dict)
-    return {name: Path(str(raw[name])) for name in REQUIRED_DESTINATIONS}
+    names = required_destinations(int(parsed["lock_version"]))  # type: ignore[arg-type]
+    return {name: Path(str(raw[name])) for name in names}
 
 
 def locked_provenance(document: dict[str, object]) -> SingleRoundExecutionProvenance:
@@ -629,9 +654,12 @@ def require_comparison_provenance(
 
 __all__ = [
     "EXECUTION_TARGET_TYPE",
+    "KYOKU_DESTINATIONS",
     "LOCK_VERSION",
+    "LOCK_VERSION_V2",
     "NO_RESCUE_BOUNDARY",
     "REQUIRED_DESTINATIONS",
+    "REQUIRED_DESTINATIONS_V2",
     "OverallChampionLockError",
     "build_lock_document",
     "collect_ml_runtime",
@@ -647,5 +675,6 @@ __all__ = [
     "require_live_ml_runtime",
     "require_participant_sources",
     "require_live_execution_target",
+    "required_destinations",
     "save_lock_document",
 ]
