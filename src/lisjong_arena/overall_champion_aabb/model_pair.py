@@ -7,8 +7,6 @@ weights digests for both heads. Never collapse the pair into one checkpoint.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 from .protocol import OverallChampionProtocolError, resolve_binding_callable
 
 BINDING = (
@@ -75,7 +73,7 @@ def live_pair_document() -> dict[str, object]:
     try:
         resolver = resolve_binding_callable(BINDING)
         live = resolver()
-    except (OverallChampionProtocolError, Exception) as exc:
+    except Exception as exc:
         raise OverallModelPairError("cannot attest current Learning Champion models") from exc
     require_components(live)
     return {
