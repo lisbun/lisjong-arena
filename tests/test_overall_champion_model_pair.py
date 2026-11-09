@@ -148,6 +148,7 @@ class OverallV2LockTest(unittest.TestCase):
             save_synthetic_comparison,
             uniform_profile,
         )
+
         from lisjong_arena.overall_champion_aabb.result import (
             build_overall_result,
             load_bundle_comparison,
