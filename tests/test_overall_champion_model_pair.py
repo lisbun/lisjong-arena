@@ -205,6 +205,95 @@ class OverallV2LockTest(unittest.TestCase):
                     max_workers=1,
                 )
 
+    def test_v1_cannot_claim_l2a_identity_with_an_alias_factory(self) -> None:
+        # The original bug: a current Champion identity with another factory
+        # was accepted as a no-checkpoint v1 participant.
+        for binding in (
+            learning_binding(
+                policy_identity=POLICY_IDENTITY,
+                factory_binding="lisjong_arena.initial_learning_champion:"
+                "create_initial_learning_champion_policy",
+                checkpoint_binding=None,
+                checkpoint_identity=None,
+                checkpoint_digest=None,
+            ),
+            learning_binding(
+                policy_identity="an-alias-learning-policy",
+                factory_binding=FACTORY,
+                checkpoint_binding=None,
+                checkpoint_identity=None,
+                checkpoint_digest=None,
+            ),
+        ):
+            with self.subTest(binding=binding), merged_main_execution():
+                with self.assertRaisesRegex(OverallChampionLockError, "requires"):
+                    build_lock_document(
+                        destinations=destinations(self.path),
+                        heuristic=heuristic_binding(),
+                        learning=binding,
+                        seeds=seeds(),
+                        max_workers=8,
+                    )
+
+    def test_v2_rejects_both_identity_factory_mismatch_directions(self) -> None:
+        for binding in (
+            learning_binding(
+                policy_identity=POLICY_IDENTITY,
+                factory_binding="lisjong_arena.initial_learning_champion:"
+                "create_initial_learning_champion_policy",
+                checkpoint_binding=None,
+                checkpoint_identity=None,
+                checkpoint_digest=None,
+            ),
+            learning_binding(
+                policy_identity="an-alias-learning-policy",
+                factory_binding=FACTORY,
+                checkpoint_binding=None,
+                checkpoint_identity=None,
+                checkpoint_digest=None,
+            ),
+        ):
+            with (
+                self.subTest(binding=binding),
+                merged_main_execution(),
+                mock.patch.object(
+                    lock_module,
+                    "collect_ml_runtime",
+                    return_value={"torch": "2.13.0+cpu"},
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    OverallChampionLockError, "frozen #582 factory and pair"
+                ):
+                    build_lock_document(
+                        destinations=destinations(self.path),
+                        heuristic=heuristic_binding(),
+                        learning=binding,
+                        seeds=seeds(),
+                        max_workers=8,
+                        ml_runtime_packages=("torch",),
+                        learning_artifact_binding=BINDING,
+                    )
+
+    def test_resealed_v1_historical_schema_cannot_claim_l2a(self) -> None:
+        from _overall_champion_aabb_fixtures import install_checkpoint, lock_document
+
+        install_checkpoint(self.path)
+        self.addCleanup(__import__("_overall_champion_aabb_fixtures").clear_checkpoint)
+        original = lock_document(self.path)
+        self.assertEqual(parse_lock_document(original), original)
+        for field, replacement in (
+            ("policy_identity", POLICY_IDENTITY),
+            ("factory_binding", FACTORY),
+        ):
+            forged = copy.deepcopy(original)
+            forged["participants"]["learning"][field] = replacement
+            payload = {key: value for key, value in forged.items() if key != "lock_identity"}
+            forged["lock_identity"] = document_identity(payload)
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(OverallChampionLockError, "v1 cannot"):
+                    parse_lock_document(forged)
+
     def test_v2_requires_torch_and_exact_champion_factory(self) -> None:
         with (
             merged_main_execution(),
