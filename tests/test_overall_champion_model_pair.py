@@ -7,7 +7,6 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from _overall_champion_aabb_fixtures import (
-    ARENA_REVISION,
     destinations,
     heuristic_binding,
     learning_binding,
