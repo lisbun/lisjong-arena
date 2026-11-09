@@ -5,9 +5,12 @@ the frozen identity pair can be selected. Actual artifact load/readback is a
 separate operator gate before promotion is completed.
 """
 
+import hashlib
 import os
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import mock
 
 from lisjong_arena import current_learning_champion as champion
@@ -115,6 +118,60 @@ class CurrentLearningChampionTest(unittest.TestCase):
         ):
             champion.create_current_learning_champion_policy()
         runtime.create_policy.assert_not_called()
+
+    def test_serving_attests_both_files_and_detects_postload_mutation(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            scorers = {}
+            for role, identity in (
+                ("m1", champion.DISCARD_IDENTITY),
+                ("r1", champion.REACTION_IDENTITY),
+            ):
+                directory = root / role
+                directory.mkdir()
+                (directory / "manifest.json").write_bytes(f"manifest-{role}".encode())
+                weights = f"weights-{role}".encode()
+                (directory / "weights.f32").write_bytes(weights)
+                scorers[role] = SimpleNamespace(
+                    artifact=SimpleNamespace(
+                        identity=identity,
+                        manifest={
+                            "files": {
+                                "weights.f32": {
+                                    "sha256": hashlib.sha256(weights).hexdigest()
+                                }
+                            }
+                        },
+                    )
+                )
+            runtime = SimpleNamespace(discard=scorers["m1"], reaction=scorers["r1"])
+            env = {
+                champion.DISCARD_ARTIFACT_ENV: str(root / "m1"),
+                champion.REACTION_ARTIFACT_ENV: str(root / "r1"),
+            }
+            with (
+                mock.patch.dict(os.environ, env),
+                mock.patch.object(
+                    champion,
+                    "current_learning_champion_runtime",
+                    return_value=runtime,
+                ),
+            ):
+                bound = champion.served_current_learning_champion_artifacts()
+                self.assertEqual(set(bound), {"discard", "reaction"})
+                self.assertEqual(
+                    bound["discard"]["manifest_sha256"],
+                    hashlib.sha256(b"manifest-m1").hexdigest(),
+                )
+                self.assertEqual(
+                    bound["reaction"]["weights_sha256"],
+                    hashlib.sha256(b"weights-r1").hexdigest(),
+                )
+                (root / "r1" / "weights.f32").write_bytes(b"replaced")
+                with self.assertRaisesRegex(
+                    champion.LearningChampionBindingError, "changed after strict load"
+                ):
+                    champion.served_current_learning_champion_artifacts()
 
     def test_factory_is_resolvable_without_loading_private_artifacts(self) -> None:
         factory = champion.create_current_learning_champion_policy

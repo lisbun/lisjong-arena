@@ -51,6 +51,15 @@ from lisjong_arena.single_round_artifact import (
     parse_execution_provenance,
 )
 
+from .model_pair import BINDING as MODEL_PAIR_BINDING
+from .model_pair import FACTORY as CURRENT_LEARNING_FACTORY
+from .model_pair import POLICY_IDENTITY as CURRENT_LEARNING_IDENTITY
+from .model_pair import (
+    OverallModelPairError,
+    live_pair_document,
+    require_live_pair,
+    require_pair_document,
+)
 from .protocol import (
     EXECUTION_BRANCH,
     HEURISTIC_FAMILY,
@@ -68,6 +77,7 @@ from .protocol import (
 )
 
 LOCK_VERSION = 1
+LOCK_VERSION_V2 = 2
 EXECUTION_TARGET_TYPE = "reviewed-merged-main-v1"
 
 REQUIRED_DESTINATIONS = ("comparison_artifact", "overall_result")
@@ -248,6 +258,7 @@ def build_lock_document(
     seeds: object,
     max_workers: int,
     ml_runtime_packages: object = (),
+    learning_artifact_binding: str | None = None,
 ) -> dict[str, object]:
     """result exposure前のOverall lock documentを構築する。
 
@@ -262,6 +273,36 @@ def build_lock_document(
     except OverallChampionProtocolError as exc:
         raise OverallChampionLockError(str(exc)) from exc
     ml_runtime = collect_ml_runtime(ml_runtime_packages)
+
+    # The promoted L2a identity and its exact factory must be attested as
+    # one pair. Neither a forged identity nor an alias factory may fall back
+    # to the historical v1 no-checkpoint contract.
+    claims_l2a = (
+        learning_binding.policy_identity == CURRENT_LEARNING_IDENTITY
+        or learning_binding.factory_binding == CURRENT_LEARNING_FACTORY
+    )
+    if claims_l2a != (learning_artifact_binding is not None):
+        raise OverallChampionLockError(
+            "current L2a Learning Champion requires the exact v2 artifact binding"
+        )
+    model_pair: dict[str, object] | None = None
+    if learning_artifact_binding is not None:
+        if (
+            learning_artifact_binding != MODEL_PAIR_BINDING
+            or learning_binding.policy_identity != CURRENT_LEARNING_IDENTITY
+            or learning_binding.factory_binding != CURRENT_LEARNING_FACTORY
+            or learning_binding.implementation_source != "lisjong-arena"
+            or learning_binding.has_checkpoint
+        ):
+            raise OverallChampionLockError(
+                "v2 Learning participant must use the frozen #582 factory and pair"
+            )
+        if "torch" not in ml_runtime:
+            raise OverallChampionLockError("v2 formal lock must bind torch runtime")
+        try:
+            model_pair = live_pair_document()
+        except OverallModelPairError as exc:
+            raise OverallChampionLockError(str(exc)) from exc
 
     try:
         _require_environment_consistent()
@@ -288,7 +329,7 @@ def build_lock_document(
             "revision": head,
             "target_type": EXECUTION_TARGET_TYPE,
         },
-        "lock_version": LOCK_VERSION,
+        "lock_version": LOCK_VERSION_V2 if model_pair is not None else LOCK_VERSION,
         "max_workers": max_workers,
         "ml_runtime": ml_runtime,
         "no_rescue_boundary": list(NO_RESCUE_BOUNDARY),
@@ -301,6 +342,8 @@ def build_lock_document(
         "result_exposed": False,
         "runtime": _runtime_document(),
     }
+    if model_pair is not None:
+        payload["learning_artifacts"] = model_pair
     document = dict(payload)
     document["lock_identity"] = document_identity(payload)
     return document
@@ -348,9 +391,15 @@ def parse_lock_document(value: object) -> dict[str, object]:
 
 
 def _parse_lock_document(value: object) -> dict[str, object]:
-    raw = expect_object(value, _LOCK_FIELDS, "lock")
-    if expect_int(raw["lock_version"], "lock.lock_version") != LOCK_VERSION:
+    if type(value) is not dict or "lock_version" not in value:
+        raise OverallChampionLockError("lock must declare a version")
+    version = expect_int(value["lock_version"], "lock.lock_version")
+    if version not in (LOCK_VERSION, LOCK_VERSION_V2):
         raise OverallChampionLockError("unsupported lock version")
+    fields = _LOCK_FIELDS | (
+        {"learning_artifacts"} if version == LOCK_VERSION_V2 else set()
+    )
+    raw = expect_object(value, fields, "lock")
     if expect_bool(raw["result_exposed"], "lock.result_exposed"):
         raise OverallChampionLockError(
             "pre-execution lock must record result_exposed=false"
@@ -374,15 +423,35 @@ def _parse_lock_document(value: object) -> dict[str, object]:
     )
     require_participants(heuristic, learning)
 
+    if version == LOCK_VERSION_V2:
+        if (
+            learning.factory_binding != CURRENT_LEARNING_FACTORY
+            or learning.policy_identity != CURRENT_LEARNING_IDENTITY
+            or learning.implementation_source != "lisjong-arena"
+            or learning.has_checkpoint
+        ):
+            raise OverallChampionLockError("v2 Learning Champion identity differs")
+        try:
+            require_pair_document(raw["learning_artifacts"])
+        except OverallModelPairError as exc:
+            raise OverallChampionLockError(str(exc)) from exc
+    elif (
+        learning.policy_identity == CURRENT_LEARNING_IDENTITY
+        or learning.factory_binding == CURRENT_LEARNING_FACTORY
+    ):
+        raise OverallChampionLockError("v1 cannot bind the two-artifact L2a Champion")
+
     if raw["no_rescue_boundary"] != list(NO_RESCUE_BOUNDARY):
         raise OverallChampionLockError("lock no-rescue boundary drifted")
 
     ml_runtime = raw["ml_runtime"]
     if type(ml_runtime) is not dict:
         raise OverallChampionLockError("lock.ml_runtime must be an object")
-    for name, version in ml_runtime.items():
+    for name, package_version in ml_runtime.items():
         expect_str(name, "lock.ml_runtime key")
-        expect_str(version, f"lock.ml_runtime.{name}")
+        expect_str(package_version, f"lock.ml_runtime.{name}")
+    if version == LOCK_VERSION_V2 and "torch" not in ml_runtime:
+        raise OverallChampionLockError("v2 lock must bind torch runtime")
 
     execution_target = expect_object(
         raw["execution_target"],
@@ -521,6 +590,11 @@ def require_live_execution_target(
     require_live_ml_runtime(document)
     heuristic, learning = locked_participants(document)
     require_participant_sources(heuristic, learning, live)
+    if document["lock_version"] == LOCK_VERSION_V2:
+        try:
+            require_live_pair(document["learning_artifacts"])
+        except OverallModelPairError as exc:
+            raise OverallChampionLockError(str(exc)) from exc
     return live
 
 

@@ -111,6 +111,7 @@ def _lock(arguments: argparse.Namespace) -> int:
         seeds=arguments.seeds,
         max_workers=arguments.workers,
         ml_runtime_packages=tuple(arguments.ml_runtime_package or ()),
+        learning_artifact_binding=arguments.learning_artifact_binding,
     )
     path = save_lock_document(document, arguments.out)
     print(f"lock_identity={document['lock_identity']}")
@@ -186,6 +187,7 @@ def _parser() -> argparse.ArgumentParser:
     lock.add_argument("--comparison-artifact", type=Path, required=True)
     lock.add_argument("--overall-result", type=Path, required=True)
     lock.add_argument("--ml-runtime-package", action="append", default=None)
+    lock.add_argument("--learning-artifact-binding", default=None)
     for family in ("heuristic", "learning"):
         lock.add_argument(f"--{family}-identity", required=True)
         lock.add_argument(f"--{family}-factory", required=True)
