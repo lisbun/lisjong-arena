@@ -288,7 +288,9 @@ class OverallV2LockTest(unittest.TestCase):
         ):
             forged = copy.deepcopy(original)
             forged["participants"]["learning"][field] = replacement
-            payload = {key: value for key, value in forged.items() if key != "lock_identity"}
+            payload = {
+                key: value for key, value in forged.items() if key != "lock_identity"
+            }
             forged["lock_identity"] = document_identity(payload)
             with self.subTest(field=field):
                 with self.assertRaisesRegex(OverallChampionLockError, "v1 cannot"):
