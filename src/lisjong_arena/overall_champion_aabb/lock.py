@@ -391,7 +391,9 @@ def _parse_lock_document(value: object) -> dict[str, object]:
     version = expect_int(value["lock_version"], "lock.lock_version")
     if version not in (LOCK_VERSION, LOCK_VERSION_V2):
         raise OverallChampionLockError("unsupported lock version")
-    fields = _LOCK_FIELDS | ({"learning_artifacts"} if version == LOCK_VERSION_V2 else set())
+    fields = _LOCK_FIELDS | (
+        {"learning_artifacts"} if version == LOCK_VERSION_V2 else set()
+    )
     raw = expect_object(value, fields, "lock")
     if expect_bool(raw["result_exposed"], "lock.result_exposed"):
         raise OverallChampionLockError(
