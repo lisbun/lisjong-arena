@@ -140,6 +140,49 @@ class OverallV2LockTest(unittest.TestCase):
             parse_lock_document(__import__("json").loads(out.read_text())), doc
         )
 
+    def test_v2_synthetic_400_game_bundle_remains_strictly_verifiable(self) -> None:
+        from _overall_champion_aabb_fixtures import (
+            HEURISTIC_ADVANTAGE,
+            HEURISTIC_IDENTITY,
+            comparison_result,
+            save_synthetic_comparison,
+            uniform_profile,
+        )
+        from lisjong_arena.overall_champion_aabb.result import (
+            build_overall_result,
+            load_bundle_comparison,
+            save_overall_result,
+            verify_overall_bundle,
+        )
+
+        doc = self._build()
+        lock_path = self.path / "overall-lock.json"
+        save_lock_document(doc, lock_path)
+        comparison_path = self.path / "comparison.json"
+        result_path = self.path / "overall-result.json"
+        synthetic = comparison_result(
+            seeds(),
+            uniform_profile(HEURISTIC_ADVANTAGE),
+            heuristic_identity=HEURISTIC_IDENTITY,
+            learning_identity=POLICY_IDENTITY,
+        )
+        save_synthetic_comparison(synthetic, comparison_path)
+        result = build_overall_result(
+            lock_document=doc,
+            comparison_artifact=load_bundle_comparison(comparison_path),
+            comparison_artifact_path=comparison_path,
+        )
+        save_overall_result(result, result_path)
+        reread = verify_overall_bundle(
+            lock_path=lock_path,
+            comparison_path=comparison_path,
+            result_path=result_path,
+        )
+        self.assertEqual(reread["lock_identity"], doc["lock_identity"])
+        self.assertEqual(
+            reread["classification"]["label"], "HEURISTIC CHAMPION SUPERIOR"
+        )
+
     def test_malformed_pair_rejected_even_if_lock_digest_recomputed(self) -> None:
         for field in ("manifest_sha256", "weights_sha256"):
             doc = copy.deepcopy(self._build())
