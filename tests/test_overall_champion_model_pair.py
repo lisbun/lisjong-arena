@@ -88,7 +88,8 @@ class ModelPairBindingTest(unittest.TestCase):
         changed = copy.deepcopy(EXPECTED_COMPONENTS)
         changed["reaction"]["weights_sha256"] = "e" * 64
         with mock.patch.object(
-            model_pair, "resolve_binding_callable",
+            model_pair,
+            "resolve_binding_callable",
             return_value=lambda: changed,
         ):
             with self.assertRaises(OverallModelPairError):
