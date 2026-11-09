@@ -1,8 +1,9 @@
-"""Project #54 current Learning Championのexact Overall serving binding。
+"""Project #54 initial Learning Champion (#211 Arm Y)のexact serving binding。
 
-#211 Arm Yのcheckpoint / inference semanticsは再実装せず、既存のstrict loaderと
-SourcePilotRuntimeへ薄くbindする。checkpointはrepository外のoperator-owned artifact
-であり、1つの明示的environment variableだけで指定する。
+#127のL2a昇格後も、歴史的なOverall #281等のpredecessor checkpointに対する
+strict readbackを維持する。これはdynamicなcurrent Learning Champion aliasではない。
+#211 Arm Yのinference semanticsは再実装せず、既存strict loaderと
+SourcePilotRuntimeへ薄くbindする。artifactはrepository外のoperator-owned fileである。
 """
 
 from __future__ import annotations
