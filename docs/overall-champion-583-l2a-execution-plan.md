@@ -66,13 +66,15 @@ runner with separate per-worker model load. Therefore:
   are a predeclared runtime limitation, not permission to tune weights or
   evaluate with mixed CPU/torch identities.
 
-Preliminary no-charge preflight: reuse the already-exposed **development-only
-seed set**, and run at most **4 seed blocks × 4 rotations = 16 hanchans** in
-the *generic RiichiEnv comparison path*, not in the locked 100-seed formal
-runner. Freeze the exact seed values before this preflight, have the operator
-record the source/usage ledger and label all 16 DEVELOPMENT; no previously
-unused formal seeds, no testing on held-out #582 / #281 TEST. External
-system timeout 40 minutes; fail on missing action, incompatible Policy,
+Preliminary no-charge preflight: reuse **exact development seeds
+472005 and 472006** (already used in Arena #582's 18-game preflight).
+Run **two independent replays of each seed's four AABB rotations =
+16 hanchans total** on the generic RiichiEnv comparison path, not in the
+locked 100-seed formal runner. The two replays are for action/result
+reproducibility, not independent statistical samples. Record the source
+allocation/usage ledger and label all 16 DEVELOPMENT; no previously unused
+formal seeds, no testing on held-out #582 / #281 TEST. External system
+timeout 40 minutes; fail on missing legal action, incompatible Policy,
 assertion, mismatch, reproduction failure, or time cap. Tests on synthetic
 comparison fixtures do not launch these games.
 
@@ -82,7 +84,7 @@ comparison fixtures do not launch these games.
   (16 vCPU, 32 GiB), eight workers; encrypted gp3 40 GiB; IMDSv2,
   SSM-only no inbound access; fail-safe termination and no residual resource.
 - Stage A, **paid operational smoke only after WSL preflight PASS**:
-  2 previously used dev seed blocks × four rotations = **8 games**;
+  exact already-used dev seeds 472005/472006 × four rotations = **8 games**;
   1.5h instance TTL and cgroup/torch/lock/wheel/operator wiring check.
   No formal seed allocation. Same 6GiB cgroup `memory.peak` soft STOP and
   8GiB hard cap / swap0 as #582 are **proposed operating limits**, not the
