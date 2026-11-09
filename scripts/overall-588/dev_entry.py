@@ -11,6 +11,10 @@ touching unused formal seeds or running 400 games.
 Everything it writes describes a different, reduced protocol (``seed_block_count`` N
 in the lock and result) and is never a formal Overall result. The supervisor refuses
 this entry for a FORMAL plan. The production protocol module is not changed.
+
+It also skips the lock's "Arena revision is contained in main" step so a branch head
+can be exercised before merge; the clean-worktree requirement and the exact head in
+the lock stay in force.
 """
 
 import sys
@@ -38,6 +42,16 @@ def _reduce(seed_blocks: int) -> None:
             if hasattr(module, name):
                 setattr(module, name, value)
 
+    # A development event may run a reviewed-but-unmerged branch head. The lock
+    # still requires a clean worktree and records that exact head; only the
+    # "contained in main" step is skipped, and only in this entry.
+    from lisjong_arena.overall_champion_aabb import lock
+
+    def development_revision(revision: str, *, branch: str = "main") -> str:
+        return revision
+
+    lock.require_merged_arena_revision = development_revision
+
 
 def main(argv: list[str]) -> int:
     if len(argv) < 3 or argv[0] != "--seed-blocks" or not argv[1].isdecimal():
@@ -52,7 +66,7 @@ def main(argv: list[str]) -> int:
     _reduce(seed_blocks)
     print(
         f"DEVELOPMENT reduced Overall entry: seed_blocks={seed_blocks} "
-        "(not the formal protocol)",
+        "(not the formal protocol; merged-main containment not required)",
         file=sys.stderr,
     )
     from lisjong_arena.overall_champion_aabb.__main__ import main as overall_main
