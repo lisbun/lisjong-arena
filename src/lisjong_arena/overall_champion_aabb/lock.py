@@ -274,10 +274,14 @@ def build_lock_document(
         raise OverallChampionLockError(str(exc)) from exc
     ml_runtime = collect_ml_runtime(ml_runtime_packages)
 
-    # Historical v1 is strict-read compatible, but can never silently claim
-    # to bind the new two-artifact Learning Champion through a null checkpoint.
-    is_l2a = learning_binding.factory_binding == CURRENT_LEARNING_FACTORY
-    if is_l2a != (learning_artifact_binding is not None):
+    # The promoted L2a identity and its exact factory must be attested as
+    # one pair. Neither a forged identity nor an alias factory may fall back
+    # to the historical v1 no-checkpoint contract.
+    claims_l2a = (
+        learning_binding.policy_identity == CURRENT_LEARNING_IDENTITY
+        or learning_binding.factory_binding == CURRENT_LEARNING_FACTORY
+    )
+    if claims_l2a != (learning_artifact_binding is not None):
         raise OverallChampionLockError(
             "current L2a Learning Champion requires the exact v2 artifact binding"
         )
@@ -286,6 +290,7 @@ def build_lock_document(
         if (
             learning_artifact_binding != MODEL_PAIR_BINDING
             or learning_binding.policy_identity != CURRENT_LEARNING_IDENTITY
+            or learning_binding.factory_binding != CURRENT_LEARNING_FACTORY
             or learning_binding.implementation_source != "lisjong-arena"
             or learning_binding.has_checkpoint
         ):
@@ -430,7 +435,10 @@ def _parse_lock_document(value: object) -> dict[str, object]:
             require_pair_document(raw["learning_artifacts"])
         except OverallModelPairError as exc:
             raise OverallChampionLockError(str(exc)) from exc
-    elif learning.factory_binding == CURRENT_LEARNING_FACTORY:
+    elif (
+        learning.policy_identity == CURRENT_LEARNING_IDENTITY
+        or learning.factory_binding == CURRENT_LEARNING_FACTORY
+    ):
         raise OverallChampionLockError("v1 cannot bind the two-artifact L2a Champion")
 
     if raw["no_rescue_boundary"] != list(NO_RESCUE_BOUNDARY):
