@@ -489,6 +489,20 @@ class SupervisorEventTests(unittest.TestCase):
         self.assertFalse((event / "published").exists())
         self.assertNotEqual(sup.check_event(event), 0)
 
+    def test_publish_failure_after_rename_is_withdrawn(self):
+        real_sums = sup._sums
+        calls = []
+
+        def sums(directory):
+            calls.append(directory)
+            return real_sums(directory) if len(calls) == 1 else "changed\n"
+
+        with patch.object(sup, "_sums", sums):
+            code, receipt, event = self.event(_plan())
+        self.assertEqual(code, sup.EXIT_INVALID)
+        self.assert_not_published(receipt, event, "INVALID", "publish-error")
+        self.assertIn(sup.SUMS_NAME, receipt["quarantine"]["contents"])
+
     def test_injected_monitor_and_disk_faults(self):
         for inject, reason in (
             ("cgroup-unreadable", "monitor-unreadable"),

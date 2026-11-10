@@ -920,9 +920,14 @@ def _quarantine(event: Event) -> tuple[dict | None, str | None]:
         _write_once(paths["quarantine"], "injected: quarantine target occupied\n")
         event._note("cleanup-fail")
     try:
-        if not paths["staging"].exists():
+        source = paths["staging"]
+        if not source.exists() and paths["published"].exists():
+            # publication failed after the rename: withdraw it as well
+            source = paths["published"]
+            source.chmod(0o755)
+        if not source.exists():
             return None, None
-        os.rename(paths["staging"], paths["quarantine"])
+        os.rename(source, paths["quarantine"])
         contents = sorted(entry.name for entry in paths["quarantine"].iterdir())
         return {"path": str(paths["quarantine"]), "contents": contents}, None
     except OSError as error:
