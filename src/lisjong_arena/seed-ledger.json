@@ -89,6 +89,28 @@
       "state": "RETIRED"
     },
     {
+      "allocation_identity": "7e5ba0aca0c78f07f56c2eb1f2b2231f18278a963c50914897785e2322cf91ee",
+      "allocation_timestamp": "2026-11-10T03:18:38.252373Z",
+      "arena_revision": "2bd613dc4d7c0ba9e2272b6c100fd44f6d3e1f25",
+      "owner_issue": "lisbun/lisjong#377",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "riichi-response-377-select",
+      "protocol": "lisjong-377-kyoku1-paired-screen-v1",
+      "protocol_revision": "lisjong-377-kyoku1-paired-screen-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/377",
+      "purpose": "lisjong #377 riichi-response SELECT: first-kyoku paired development screen",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 377000,
+        "kind": "range",
+        "last": 378199
+      },
+      "seed_membership_identity": "0fa460dd31b1d1bc032cd1754f74f6778621010bd27684c00e0d4cb9d37abfbe",
+      "split": "DEVELOPMENT-SELECT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "9535bfdb951ef59824f3786ac864409c05f5f6520af314b1ba6743e09ee58224",
       "allocation_timestamp": "2026-10-22T00:58:49.783768Z",
       "arena_revision": "c0a155c6eb789e0405998d3fbf153076885d3e8b",
