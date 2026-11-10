@@ -133,6 +133,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "ddc056a24df1f90536beb76660764cd30059a4fc531235c82963d774d660068b",
+      "allocation_timestamp": "2026-11-10T22:58:33.963730Z",
+      "arena_revision": "2bd613dc4d7c0ba9e2272b6c100fd44f6d3e1f25",
+      "owner_issue": "lisbun/lisjong#379",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidates-379-confirm",
+      "protocol": "lisjong-379-kyoku1-paired-screen-v1",
+      "protocol_revision": "lisjong-379-kyoku1-paired-screen-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/379",
+      "purpose": "lisjong #379 four fixed Heuristic candidates: first-kyoku paired development confirmation",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 380000,
+        "kind": "range",
+        "last": 385999
+      },
+      "seed_membership_identity": "ef9fcd9d866597bda62dad3eaab635f6f14abc4f413fc4858fc3012d6a00b052",
+      "split": "DEVELOPMENT-CONFIRM",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "9535bfdb951ef59824f3786ac864409c05f5f6520af314b1ba6743e09ee58224",
       "allocation_timestamp": "2026-10-22T00:58:49.783768Z",
       "arena_revision": "c0a155c6eb789e0405998d3fbf153076885d3e8b",
