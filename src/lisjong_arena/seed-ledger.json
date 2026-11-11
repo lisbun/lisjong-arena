@@ -1211,6 +1211,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "dc6c818afec16e3214327981c5fbddd3885ff05776576ec339a4bffe9e543a0c",
+      "allocation_timestamp": "2026-11-11T16:12:19.955106Z",
+      "arena_revision": "b8a277565e950ca630a83ff73823621ff70b2b87",
+      "owner_issue": "lisbun/lisjong-arena#588",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "overall-champion-aabb-588",
+      "protocol": "arena-overall-champion-aabb-half-v1",
+      "protocol_revision": "arena-overall-champion-aabb-half-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/588#issuecomment-6800891021",
+      "purpose": "#583/#588 Overall v2 Learning vs Heuristic Champion AABB one-shot formal 100 blocks (400 hanchans), WSL supervised",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "riichienv-4p-red-half-hanchan-v1",
+      "seed_membership": {
+        "first": 588000,
+        "kind": "range",
+        "last": 588099
+      },
+      "seed_membership_identity": "e1c07674213153d35731bf69770f7a7420f895f860ea642b9486d8f52b6be20d",
+      "split": "FORMAL-EVAL",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "1605bf2f461a69d9018144583c6c287d3f3b57717cd4c644fea2cfb309ac9ed4",
       "allocation_timestamp": null,
       "arena_revision": null,
