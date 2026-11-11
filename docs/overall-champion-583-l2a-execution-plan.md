@@ -137,6 +137,8 @@ comparison fixtures do not launch these games.
   if later verification or guard fails; neither path alone makes the
   partial output valid. Refuse a successful event if `quarantine_error`
   is non-null or guard outputs remain after a failed stage.
+  The #588 supervisor implements this; see
+  [`overall-588-formal-run-safety.md`](overall-588-formal-run-safety.md).
 
 ## Proposed budget and explicit approval gate
 
@@ -200,7 +202,8 @@ external watchdog/timeout/quarantine conditions must already be active.
 - [ ] v1 historical lock and #281 bundle strict-read regression PASS
 - [ ] v2 lock two-model hashes/pre+post attestation and tamper regression PASS
 - [x] WSL actual RiichiEnv compat development smoke (16 games max) PASS
-- [ ] #586 kyoku-level records in the same run + development check
+- [x] #586 kyoku-level records in the same run + development check
 - [ ] Stage A / Stage B exact watchdog/instance/cleanup wiring and budget
+  (#588 supervisor, staging/quarantine and runtime selection)
 - [ ] Explicit operator approval for paid Stage A/B and formal seeds
 - [ ] Formal one-shot 400/400 + strict verify / cleanup (not this PR)

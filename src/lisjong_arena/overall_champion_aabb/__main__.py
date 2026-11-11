@@ -154,7 +154,8 @@ def _run(arguments: argparse.Namespace) -> int:
     finally:
         if progress_reporter is not None:
             progress_reporter.close()
-    _report(outcome.overall_result)
+    if not arguments.no_report:
+        _report(outcome.overall_result)
     print(f"comparison_artifact={outcome.comparison_artifact_path}")
     print(f"overall_result={outcome.overall_result_path}")
     if outcome.kyoku_records_path is not None:
@@ -171,7 +172,12 @@ def _verify(arguments: argparse.Namespace) -> int:
         kyoku_records_path=arguments.kyoku_records,
         kyoku_summary_path=arguments.kyoku_summary,
     )
-    _report(document)
+    if arguments.no_report:
+        # #588: an outside supervisor publishes the event only after all of
+        # its own gates pass, so the classification is not printed here.
+        print(f"result_identity={document['result_identity']}")
+    else:
+        _report(document)
     return 0
 
 
@@ -226,6 +232,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show completed hanchan, elapsed time, ETA, and finish time on stderr",
     )
+    run.add_argument(
+        "--no-report",
+        action="store_true",
+        help="do not print the classification (#588 supervised events)",
+    )
     run.set_defaults(handler=_run)
 
     verify = commands.add_parser("verify", help="strictly verify a finished bundle")
@@ -234,6 +245,11 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--result", type=Path, required=True)
     verify.add_argument("--kyoku-records", type=Path, default=None)
     verify.add_argument("--kyoku-summary", type=Path, default=None)
+    verify.add_argument(
+        "--no-report",
+        action="store_true",
+        help="print only result_identity, not the classification (#588)",
+    )
     verify.set_defaults(handler=_verify)
     return parser
 
