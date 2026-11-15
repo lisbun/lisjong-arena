@@ -122,13 +122,14 @@ class ComparisonIntegrationTest(unittest.TestCase):
         # Arena #544でlisjong #357（R1 wrapper）のrevisionへ、
         # Arena #548でlisjong #360（R1学習）のrevisionへ、
         # Arena #553でlisjong #363（P1 wrapper）のrevisionへ、
-        # Arena #556でlisjong #366（P1学習）のrevisionへ更新した。
+        # Arena #556でlisjong #366（P1学習）のrevisionへ、
+        # Arena #591でlisjong #377（リーチ下1向聴の押し引き候補）を含むrevisionへ更新した。
         # Issue #196のdiagnosticsが固定する
         # `OPEN_HAND_DIAGNOSTIC_LISJONG_REVISION`はcurrent pinではなく完了済み
         # runのlocked evidence boundaryであり、ここでは追随しない。
         self.assertEqual(
             artifact.provenance.lisjong_revision,
-            "a341257f199e284a3519e17b458e06ced9f04c67",
+            "e7156eeb9ec609fc0a57aba427bc5fb95f4f21b5",
         )
 
 

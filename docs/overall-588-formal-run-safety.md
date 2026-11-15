@@ -139,9 +139,13 @@ the outer bound; this needs its own approval and budget.
 
 - OS / kernel / Python / torch CPU build, as recorded in the receipt `environment`
 - Arena: the merged `main` commit that contains this supervisor; clean worktree
-- `lisjong` a341257f199e284a3519e17b458e06ced9f04c67 and `lisjong-engine`
-  91af75e3aa11520c3b0543719dc74bb4c517ee06 (the pyproject pins; the lock checks
-  consistency), RiichiEnv as installed in the same environment
+- `lisjong` and `lisjong-engine` at the pyproject pins of that Arena commit (the
+  lock checks consistency), RiichiEnv as installed in the same environment. The
+  operational proof below ran at `lisjong` a341257f199e284a3519e17b458e06ced9f04c67
+  and `lisjong-engine` 91af75e3aa11520c3b0543719dc74bb4c517ee06. #591 moved the
+  `lisjong` pin to e7156eeb9ec609fc0a57aba427bc5fb95f4f21b5; the `src` difference is
+  two added Heuristic candidate modules and their exports, so the Champion policies
+  are unchanged, but the FORMAL plan must record and install the pin it locks
 - 8 workers; M1/R1 manifest and weights SHA-256 from #583 / #127 (the v2 lock
   re-hashes them before and after the run)
 - the supervisor SHA-256 (in the receipt)

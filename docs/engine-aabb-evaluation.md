@@ -551,3 +551,46 @@ D armがRの結果に依存するため、実行枠（write-once、live gate、1
 wall、RSS、`STOP-INCOMPLETE`で何も公開しない）は§9の`run_tasks`を2段（R → D arm）で使う専用の枠にした。
 Rの局記録は#513の`project_row`（専用layout、placement 0・4席Champion）で検査する。D armは`run_policy_hanchan`へ
 追加した`on_delivery`の受け渡しで対象局の精算後に打ち切る（engineは変更しない。既定値では従来の呼び出しと同じ）。
+
+## 14. リーチ下1向聴の押し引き候補の半荘開発比較（#591）
+
+Issue: [lisbun/lisjong-arena#591](https://github.com/lisbun/lisjong-arena/issues/591)（候補 lisbun/lisjong#377、
+東1局の確認実験 lisbun/lisjong#379）。実装は `riichi_response_hanchan.py`。
+
+> Status: **DEVELOPMENT**。正式評価・Champion変更の根拠にしない。計画（K = 500、AI作業環境、判定規則）は
+> 2026-11-15にユーザー承認済み。結果は#591を正本とする。
+
+A = `placement-aware-speed-call-riichi-response-v1.push-dora-1.push-wall-24.fold-dora-1`（lisjong側のパラメータidentity
+`…:push-dora-1:push-wall-24:fold-dora-1` の `:` を `.` に書き換えたcatalog identity。パラメータはfactoryに固定）、
+B = `placement-aware-speed-call`（現Heuristic Champion）。配置・主指標・block統計は§2〜§5と同じ
+（1 seed × 6配置、engine `final_points`、`D(s) = (S_A − S_B) / 120`）。正式lock・`FORMAL-EVAL`検査は使わず、
+別schemaのplan（`arena-riichi-response-hanchan-development-plan-v1`）を使う。
+
+| 項目 | 値 |
+| --- | --- |
+| measurement | K = 500 block（3,000半荘）。seedはSeed Registryのallocation（owner #591、population `heuristic-candidate-engine-aabb-riichi-response-591`、split `DEVELOPMENT-CONFIRM`）をplanがbindし、各stageの実行前にlive ledgerへ照合する |
+| rehearsal | 既使用の開発用seed 472005, 472006（registry外）の12半荘。時間・記録経路の確認だけで、区間・判定は出さない |
+| stage | ordered seedsを5 block = 30半荘（rehearsalは1 block）ずつに分けた実行単位。measurementは100 stage。stageごとに `stage-NNN/`（`raw/`・`timings.json`・`stage.json`）をwrite-onceで保存する |
+| 判定 | 平均D > 0 かつ 95%区間（`mean ± 1.96 × SD(K−1) / √K`）の下限 > 0 → `SUPPORTED-DEVELOPMENT`、平均D > 0 かつ区間が0を含む → `INCONCLUSIVE-DEVELOPMENT`、平均D <= 0 → `NOT-SUPPORTED-DEVELOPMENT`。planの `decision_rule` に固定し、正式protocolのclassification labelは出さない |
+| 副指標 | §10.5・§10.6の役割別副指標（和了率・放銃率・平均和了打点・平均放銃失点など、`summarize_secondary_metrics`）。主判定を上書きしない |
+
+stageに分ける理由は、既存executorが1 workerの直列実行であること、AI作業環境の1回の実行が2時間までであることの
+2点。各半荘は(seed, 配置)だけで決まり、Policy instanceは半荘・席ごとに新規生成するので、複数stageを別processで
+同時に実行しても結果は直列実行と同じになる。集計（`rr-hanchan-summarize`）は全stageがそろってから1回だけ行い、
+1 stageでも欠けていれば失敗する。stageの途中経過として収支を集計するcommandは持たない。
+
+実行環境の照合は `local_environment_document` で行う。`executor.environment_document` との違いは、wheelを凍結した
+main CI wheelのSHA-256と照合しない点だけで、installedなnativeとwheelのbyte一致・native `SOURCE_REVISION` とpinの一致・
+clean HEADとplanの一致は要求する。理由と範囲は[現行のpin・wheel](lisjong-native-wheel-current.md)に書いた。
+
+```bash
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-plan --mode rehearsal \
+  --wheel <wheel> --timeout-seconds 600 --output <dir>/plan.json
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-run-stage \
+  --plan <dir>/plan.json --stage 0 --output-root <dir>/run
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-summarize --plan <dir>/plan.json --output-root <dir>/run
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-verify --plan <dir>/plan.json --output-root <dir>/run
+# measurement: --mode measurement --seeds <500個、順序つき> --allocation-identity <id> --ledger <live ledger>
+```
+
+例外・timeout・環境不一致が出たstageは何も書かずに止まる。その場合は再試行や条件変更をせずに#591へ報告する。
