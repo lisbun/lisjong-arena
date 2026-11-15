@@ -1,7 +1,7 @@
 """#591 リーチ下1向聴の押し引き候補の半荘開発比較（plan・stage・集計・verify、合成値）。
 
 実engine・実Policyの代わりに、spawn workerで#513のfixture半荘を返す``fake_play*``を使う。
-Kは500の代わりに3、stageは10 blockの代わりに2 blockへ差し替える（module定数をpatch。
+Kは500の代わりに3、stageは5 blockの代わりに2 blockへ差し替える（module定数をpatch。
 workerはこれらを参照しない）。合成値であり、強さの結果ではない。
 """
 

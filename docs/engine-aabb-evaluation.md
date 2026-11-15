@@ -570,7 +570,7 @@ B = `placement-aware-speed-call`（現Heuristic Champion）。配置・主指標
 | --- | --- |
 | measurement | K = 500 block（3,000半荘）。seedはSeed Registryのallocation（owner #591、population `heuristic-candidate-engine-aabb-riichi-response-591`、split `DEVELOPMENT-CONFIRM`）をplanがbindし、各stageの実行前にlive ledgerへ照合する |
 | rehearsal | 既使用の開発用seed 472005, 472006（registry外）の12半荘。時間・記録経路の確認だけで、区間・判定は出さない |
-| stage | ordered seedsを10 block（rehearsalは1 block）ずつに分けた実行単位。stageごとに `stage-NNN/`（`raw/`・`timings.json`・`stage.json`）をwrite-onceで保存する |
+| stage | ordered seedsを5 block = 30半荘（rehearsalは1 block）ずつに分けた実行単位。measurementは100 stage。stageごとに `stage-NNN/`（`raw/`・`timings.json`・`stage.json`）をwrite-onceで保存する |
 | 判定 | 平均D > 0 かつ 95%区間（`mean ± 1.96 × SD(K−1) / √K`）の下限 > 0 → `SUPPORTED-DEVELOPMENT`、平均D > 0 かつ区間が0を含む → `INCONCLUSIVE-DEVELOPMENT`、平均D <= 0 → `NOT-SUPPORTED-DEVELOPMENT`。planの `decision_rule` に固定し、正式protocolのclassification labelは出さない |
 | 副指標 | §10.5・§10.6の役割別副指標（和了率・放銃率・平均和了打点・平均放銃失点など、`summarize_secondary_metrics`）。主判定を上書きしない |
 
