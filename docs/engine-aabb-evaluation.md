@@ -559,6 +559,10 @@ Issue: [lisbun/lisjong-arena#591](https://github.com/lisbun/lisjong-arena/issues
 
 > Status: **DEVELOPMENT**。正式評価・Champion変更の根拠にしない。計画（K = 500、AI作業環境、判定規則）は
 > 2026-11-15にユーザー承認済み。結果は#591を正本とする。
+>
+> 結果（2026-11-15）: **INCONCLUSIVE-DEVELOPMENT**。K = 500、平均 D = +0.854 pt、SD = 17.10 pt、
+> 95%区間 [−0.645, +2.352]。seed 591000..591499はCOMMITTED。
+> [記録](https://github.com/lisbun/lisjong-arena/issues/591#issuecomment-6898904723)。
 
 A = `placement-aware-speed-call-riichi-response-v1.push-dora-1.push-wall-24.fold-dora-1`（lisjong側のパラメータidentity
 `…:push-dora-1:push-wall-24:fold-dora-1` の `:` を `.` に書き換えたcatalog identity。パラメータはfactoryに固定）、
