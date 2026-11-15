@@ -504,7 +504,7 @@
       },
       "seed_membership_identity": "8329ebcf95d4e85d0a70292ac9cde5309b2241a8ef713ab51c5fee95cf7fce42",
       "split": "DEVELOPMENT-CONFIRM",
-      "state": "RESERVED"
+      "state": "COMMITTED"
     },
     {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
