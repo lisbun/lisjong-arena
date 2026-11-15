@@ -7,7 +7,9 @@
 ``placement-aware-speed-call-kobalab-0004-belief-paijia``、#436の
 ``one-shanten-defense-placement-aware-speed-call``、#520の開発比較候補
 ``placement-aware-speed-call-suited-paijia-tie-v1``（lisjong #330）、#524の開発候補
-``placement-aware-speed-call-single-open-genbutsu-v1``（lisjong #343）の13個である。
+``placement-aware-speed-call-single-open-genbutsu-v1``（lisjong #343）、#591の開発比較候補
+``placement-aware-speed-call-riichi-response-v1.push-dora-1.push-wall-24.fold-dora-1``
+（lisjong #377）の14個である。
 登録は名前解決のためであり、候補のChampion昇格・default変更を意味しない。
 ほかのfirst-party Policyが``lisjong.policies``からimport可能でも、stable /
 curated aliasとして認知するまではここへは追加しない。
@@ -44,6 +46,7 @@ if TYPE_CHECKING:
         PlacementAwareSpeedCallKobalab0004BeliefPaijiaDiscardPolicy,
         PlacementAwareSpeedCallPolicy,
         PlacementAwareSpeedCallSuitedPaijiaTiePolicy,
+        RiichiResponsePlacementAwareSpeedCallPolicy,
         SingleOpenGenbutsuPlacementAwareSpeedCallPolicy,
         TargetedHonorReleaseTerminalProgressionPolicy,
     )
@@ -145,6 +148,26 @@ def create_placement_aware_speed_call_single_open_genbutsu() -> (
     return SingleOpenGenbutsuPlacementAwareSpeedCallPolicy()
 
 
+def create_placement_aware_speed_call_riichi_response_push1_wall24_fold1() -> (
+    RiichiResponsePlacementAwareSpeedCallPolicy
+):
+    # #591 development comparison candidate (lisjong #377 / #379). The parameters
+    # are the ones lisjong #377 selected and #379 confirmed; they are fixed here and
+    # are not caller-configurable. The catalog identity is the lisjong parameter
+    # identity with ":" written as "." (the engine AABB identity grammar has no ":").
+    # Lazy import keeps environments that predate lisjong 165314f importable.
+    from lisjong.policies import (
+        RiichiResponseParameters,
+        RiichiResponsePlacementAwareSpeedCallPolicy,
+    )
+
+    return RiichiResponsePlacementAwareSpeedCallPolicy(
+        RiichiResponseParameters(
+            push_minimum_dora=1, push_minimum_live_wall=24, fold_maximum_dora=1
+        )
+    )
+
+
 POLICY_CATALOG: dict[str, PolicySpec] = {
     "one-shanten-defense-placement-aware-speed-call": PolicySpec(
         identity="one-shanten-defense-placement-aware-speed-call",
@@ -185,6 +208,10 @@ POLICY_CATALOG: dict[str, PolicySpec] = {
         identity="placement-aware-speed-call-single-open-genbutsu-v1",
         factory=create_placement_aware_speed_call_single_open_genbutsu,
     ),
+    "placement-aware-speed-call-riichi-response-v1.push-dora-1.push-wall-24.fold-dora-1": PolicySpec(
+        identity="placement-aware-speed-call-riichi-response-v1.push-dora-1.push-wall-24.fold-dora-1",
+        factory=create_placement_aware_speed_call_riichi_response_push1_wall24_fold1,
+    ),
 }
 """登録名 -> ``PolicySpec``。各keyは対応する``PolicySpec.identity``と一致する。"""
 
@@ -199,6 +226,7 @@ __all__ = [
     "create_placement_aware_speed_call",
     "create_one_shanten_defense_placement_aware_speed_call",
     "create_placement_aware_speed_call_kobalab_0004_belief_paijia",
+    "create_placement_aware_speed_call_riichi_response_push1_wall24_fold1",
     "create_placement_aware_speed_call_single_open_genbutsu",
     "create_placement_aware_speed_call_suited_paijia_tie",
     "create_targeted_honor_release_terminal_progression",

@@ -63,14 +63,15 @@ RECORDED_BACKENDS = (PYTHON_BACKEND, RUST_BACKEND)
 EXECUTION_BACKENDS = (RUST_BACKEND,)
 """Backends that new execution accepts (#531)."""
 
-EXPECTED_LISJONG_REVISION = "a341257f199e284a3519e17b458e06ced9f04c67"
-"""lisjong#366 merge (PR #367) on ``main``; the project pin and the wheel build source."""
+EXPECTED_LISJONG_REVISION = "e7156eeb9ec609fc0a57aba427bc5fb95f4f21b5"
+"""lisjong#381 merge on ``main`` (RiichiResponse candidate of lisjong#377 included);
+the project pin and the wheel build source."""
 
 EXPECTED_WHEEL_FILENAME = "lisjong_native-0.1.0-cp314-cp314-manylinux_2_28_x86_64.whl"
 EXPECTED_WHEEL_SHA256 = (
-    "01d2476cf433f1a3be3d336679366364929d84299f439b19a83f07a087ebd1d5"
+    "c6a386d2e4eedf6a4c7264b57af515738c86f5eed32af5c9dc270b2401466e58"
 )
-"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 41655510786
+"""``lisjong-native-wheel-<revision>`` artifact of lisjong CI run 43057436450
 (push to ``main``)."""
 
 EXPECTED_NATIVE_API_VERSION = 3
@@ -117,6 +118,21 @@ def verify_installed_native(path: str | Path) -> dict[str, object]:
     byte for byte with the file next to the imported module.
     """
     wheel = verify_wheel_file(path)
+    compared = compare_installed_native(path)
+    return {
+        **wheel,
+        "installed_directory": str(Path(sys.modules[NATIVE_MODULE].__file__).parent),
+        "files": compared,
+    }
+
+
+def compare_installed_native(path: str | Path) -> list[str]:
+    """Compare the loaded ``_lisjong_native`` files byte for byte with a wheel's.
+
+    This does not check that ``path`` is the frozen CI wheel; callers that need
+    that identity use ``verify_installed_native``. Arena #591 binds a wheel built
+    from the pinned source by its recorded SHA-256 and uses only this comparison.
+    """
     native = sys.modules.get(NATIVE_MODULE)
     if native is None or getattr(native, "__file__", None) is None:
         raise ShantenBackendVerificationError(
@@ -148,7 +164,7 @@ def verify_installed_native(path: str | Path) -> dict[str, object]:
                     "reinstall the wheel with --force-reinstall"
                 )
             compared.append(name)
-    return {**wheel, "installed_directory": str(package_directory), "files": compared}
+    return compared
 
 
 def require_execution_backend(name: object) -> str:

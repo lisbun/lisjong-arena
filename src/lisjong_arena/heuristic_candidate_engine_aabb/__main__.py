@@ -22,6 +22,12 @@ python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-run --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-verify --plan P
 python -m lisjong_arena.heuristic_candidate_engine_aabb calibration-report --plan P
 
+#591 リーチ下1向聴の押し引き候補の半荘開発比較（DEVELOPMENT。正式結果ではない）
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-plan --mode M --wheel W --timeout-seconds T --output P ...
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-run-stage --plan P --stage N --output-root D
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-summarize --plan P --output-root D
+python -m lisjong_arena.heuristic_candidate_engine_aabb rr-hanchan-verify --plan P --output-root D
+
 #520 同点数牌paijia候補の開発比較（DEVELOPMENT。正式結果ではない）
 python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-plan --stage S --run-kind R ...
 python -m lisjong_arena.heuristic_candidate_engine_aabb paijia-activation-run --plan P
@@ -106,6 +112,7 @@ from . import (
     riichi_first_dama_plan,
     riichi_first_dama_source,
     riichi_first_dama_source_plan,
+    riichi_response_hanchan,
     rust_only_gate,
     single_open_genbutsu_activation,
     single_open_genbutsu_plan,
@@ -152,6 +159,39 @@ def _seeds(text: str) -> list[int]:
 
 def _progress(done: int, total: int) -> None:
     print(f"hanchan {done}/{total}", file=sys.stderr, flush=True)
+
+
+def _riichi_response_hanchan(args) -> int:
+    """#591: リーチ下1向聴の押し引き候補の半荘開発比較（plan / stage / 集計 / 検証）。"""
+    module = riichi_response_hanchan
+    if args.command == "rr-hanchan-plan":
+        document = module.build_plan(
+            mode=args.mode,
+            ordered_seeds=None if args.seeds is None else _seeds(args.seeds),
+            allocation_identity=args.allocation_identity,
+            timeout_seconds=args.timeout_seconds,
+            wheel_path=str(Path(args.wheel).resolve()),
+            ledger_path=args.ledger,
+        )
+        module.save_plan(document, args.output)
+        print(f"{document['plan_digest']} stages={module.stage_count(document)}")
+        return 0
+    if args.command == "rr-hanchan-run-stage":
+        marker = module.run_stage(
+            args.plan,
+            args.stage,
+            args.output_root,
+            ledger_path=args.ledger,
+            on_hanchan=_progress,
+        )
+        print(f"STAGE {marker['stage']} {marker['raw_manifest_sha256']}")
+        return 0
+    if args.command == "rr-hanchan-summarize":
+        summary = module.write_summary(args.plan, args.output_root)
+    else:
+        summary = module.verify_summary(args.plan, args.output_root)
+    print(f"{summary['status']} {summary['summary_digest']} (not a formal result)")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -592,7 +632,36 @@ def main(argv: list[str] | None = None) -> int:
     pon_source_estimate.add_argument("--from-block")
     pon_source_estimate.add_argument("--output", required=True)
 
+    rr_plan = sub.add_parser(
+        "rr-hanchan-plan", help="#591: write the riichi-response hanchan plan"
+    )
+    rr_plan.add_argument(
+        "--mode",
+        choices=(
+            riichi_response_hanchan.MODE_REHEARSAL,
+            riichi_response_hanchan.MODE_MEASUREMENT,
+        ),
+        required=True,
+    )
+    rr_plan.add_argument("--seeds", help="measurement only; comma separated, in order")
+    rr_plan.add_argument("--allocation-identity", help="measurement only")
+    rr_plan.add_argument("--timeout-seconds", type=int, required=True)
+    rr_plan.add_argument("--wheel", required=True)
+    rr_plan.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    rr_plan.add_argument("--output", required=True)
+    rr_stage = sub.add_parser("rr-hanchan-run-stage", help="#591: run one stage")
+    rr_stage.add_argument("--plan", required=True)
+    rr_stage.add_argument("--stage", type=int, required=True)
+    rr_stage.add_argument("--output-root", required=True)
+    rr_stage.add_argument("--ledger", default=str(seed_registry.DEFAULT_LEDGER_PATH))
+    for name in ("rr-hanchan-summarize", "rr-hanchan-verify"):
+        command = sub.add_parser(name)
+        command.add_argument("--plan", required=True)
+        command.add_argument("--output-root", required=True)
+
     args = parser.parse_args(argv)
+    if args.command.startswith("rr-hanchan-"):
+        return _riichi_response_hanchan(args)
     if args.command.startswith("pon-first-source-"):
         return _pon_first_source(args)
     if args.command.startswith("pon-first-"):

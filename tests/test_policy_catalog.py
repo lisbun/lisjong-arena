@@ -46,6 +46,7 @@ from lisjong_arena.policy_catalog import (
     create_mechanism_riichi_defense,
     create_placement_aware_speed_call,
     create_placement_aware_speed_call_kobalab_0004_belief_paijia,
+    create_placement_aware_speed_call_riichi_response_push1_wall24_fold1,
     create_placement_aware_speed_call_single_open_genbutsu,
     create_placement_aware_speed_call_suited_paijia_tie,
     create_targeted_honor_release_terminal_progression,
@@ -57,7 +58,7 @@ from lisjong_arena.single_round_evaluation import ROTATION_COUNT
 
 
 class CatalogContentsTest(unittest.TestCase):
-    def test_catalog_has_exactly_thirteen_registered_policies(self) -> None:
+    def test_catalog_has_exactly_fourteen_registered_policies(self) -> None:
         self.assertEqual(
             set(POLICY_CATALOG),
             {
@@ -74,6 +75,7 @@ class CatalogContentsTest(unittest.TestCase):
                 "one-shanten-defense-placement-aware-speed-call",
                 "placement-aware-speed-call-suited-paijia-tie-v1",
                 "placement-aware-speed-call-single-open-genbutsu-v1",
+                "placement-aware-speed-call-riichi-response-v1.push-dora-1.push-wall-24.fold-dora-1",
             },
         )
 
@@ -354,6 +356,45 @@ class SingleOpenGenbutsuCandidateTest(unittest.TestCase):
             binding,
             "lisjong_arena.policy_catalog:"
             "create_placement_aware_speed_call_single_open_genbutsu",
+        )
+        self.assertIs(resolve_binding_callable(binding), factory)
+
+
+class RiichiResponseCandidateTest(unittest.TestCase):
+    """#591: lisjong #377の候補を、#379で確認した固定パラメータで登録する。"""
+
+    def test_candidate_binding_is_fresh_fixed_and_spawn_safe(self) -> None:
+        from lisjong.policies import (
+            RiichiResponseParameters,
+            RiichiResponsePlacementAwareSpeedCallPolicy,
+        )
+
+        identity = (
+            "placement-aware-speed-call-riichi-response-v1"
+            ".push-dora-1.push-wall-24.fold-dora-1"
+        )
+        spec = POLICY_CATALOG[identity]
+        factory = create_placement_aware_speed_call_riichi_response_push1_wall24_fold1
+        self.assertEqual(spec.identity, identity)
+        self.assertIs(spec.factory, factory)
+        first, second = factory(), factory()
+        self.assertIs(type(first), RiichiResponsePlacementAwareSpeedCallPolicy)
+        self.assertIsNot(first, second)
+        self.assertEqual(
+            first.parameters,
+            RiichiResponseParameters(
+                push_minimum_dora=1, push_minimum_live_wall=24, fold_maximum_dora=1
+            ),
+        )
+        # catalog identityはlisjong側のパラメータidentityの":"を"."に書き換えたもの
+        self.assertEqual(first.parameters.identity.replace(":", "."), identity)
+        # 対照Bは同じrevisionの現Champion（exact parent）
+        self.assertIsInstance(first, PlacementAwareSpeedCallPolicy)
+        check_policy_spec_serializable(spec)
+        binding = factory_binding_of(factory)
+        self.assertEqual(
+            binding,
+            "lisjong_arena.policy_catalog:create_placement_aware_speed_call_riichi_response_push1_wall24_fold1",
         )
         self.assertIs(resolve_binding_callable(binding), factory)
 
