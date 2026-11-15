@@ -485,6 +485,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "59b3b4c3f926ba5563f81f5ec3f3f8fc752dc1a45d9a46a110b7573ac8011043",
+      "allocation_timestamp": "2026-11-15T01:22:39.245537Z",
+      "arena_revision": "e8ba1676dc41e37757d90e9afaa7e320d450cc93",
+      "owner_issue": "lisbun/lisjong-arena#591",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "heuristic-candidate-engine-aabb-riichi-response-591",
+      "protocol": "arena-heuristic-candidate-engine-aabb-half-v1",
+      "protocol_revision": "arena-riichi-response-hanchan-development-plan-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong-arena/issues/591",
+      "purpose": "Arena #591 riichi-response candidate vs Heuristic Champion: hanchan development comparison (K=500)",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 591000,
+        "kind": "range",
+        "last": 591499
+      },
+      "seed_membership_identity": "8329ebcf95d4e85d0a70292ac9cde5309b2241a8ef713ab51c5fee95cf7fce42",
+      "split": "DEVELOPMENT-CONFIRM",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "196ab0bd5969ed851ff713765c6a8321c3ff5f8ac5770e5301419d1924c7c81d",
       "allocation_timestamp": "2026-09-24T22:50:21.494309Z",
       "arena_revision": "bfa578d276555852fd5fac273d5d3f29b7ee9d09",
