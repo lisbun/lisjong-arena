@@ -155,6 +155,28 @@
       "state": "COMMITTED"
     },
     {
+      "allocation_identity": "a299249d70bd7fd097961a664925bb8dc6adcdfea8162f2ea5fe85e8856e2fea",
+      "allocation_timestamp": "2026-11-17T23:23:45.223823Z",
+      "arena_revision": "a0a12cb634a84bec6dd5cf602010f3ed00f98b5b",
+      "owner_issue": "lisbun/lisjong#384",
+      "owner_repository": "lisbun/lisjong-arena",
+      "population": "riichi-response-hand-value-384-select",
+      "protocol": "lisjong-384-kyoku1-paired-screen-v1",
+      "protocol_revision": "lisjong-384-kyoku1-paired-screen-v1",
+      "provenance_reference": "https://github.com/lisbun/lisjong/issues/384",
+      "purpose": "lisjong #384 hand-value riichi response SELECT: first-kyoku paired development screen vs the dora candidate",
+      "schema_version": "arena-seed-allocation-v1",
+      "seed_domain": "lisjong-engine-project-standard-v1-hanchan-v1",
+      "seed_membership": {
+        "first": 386000,
+        "kind": "range",
+        "last": 388399
+      },
+      "seed_membership_identity": "6bcd2ac44fd5ee2b52f7f6089c26f0595dae1e1dfdc57a445cdf98c0bb1921f5",
+      "split": "DEVELOPMENT-SELECT",
+      "state": "RESERVED"
+    },
+    {
       "allocation_identity": "9535bfdb951ef59824f3786ac864409c05f5f6520af314b1ba6743e09ee58224",
       "allocation_timestamp": "2026-10-22T00:58:49.783768Z",
       "arena_revision": "c0a155c6eb789e0405998d3fbf153076885d3e8b",
