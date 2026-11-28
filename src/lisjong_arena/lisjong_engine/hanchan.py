@@ -17,12 +17,16 @@ rotation、metricsはこのmoduleの責務ではない。
 optionalな観測hook（#514、#540）:
 
 - `on_round_evidence_complete`: engine `run_hanchan()`の同名callbackへそのまま渡す
-  （局ごとのplayer-safe evidence）。privilegedな`on_transaction_observation`は渡さない
+  （局ごとのplayer-safe evidence）
 - `on_delivery`: engine `run_hanchan()`の同名callbackへそのまま渡す（player-safeな
   progress fact・局と半荘のcompletion fact）。callbackの例外はengineの契約どおり
   そのまま呼び出し元へ伝播する（#540のD armは対象局の精算後にこれで打ち切る）
 - `on_selector_call`: selectorが呼ばれるたびにengine `Seat`を渡す。selectorの入出力は
   変えない
+- `on_transaction_observation`（#596、opt-in）: engine `run_hanchan()`の同名callbackへ
+  そのまま渡す。値は全席の手牌を含むprivileged observationであり、渡し先は
+  オフライン保存用のcapture（`live_draw_capture`）に限る。Policy・selector・
+  player-safe deliveryへは渡さない。省略時はengineへ渡さない（従来どおり）
 
 すべて`None`なら従来と同じ呼び出しになる。
 """
@@ -53,6 +57,7 @@ def run_policy_hanchan(
     on_round_evidence_complete: Callable[[object], None] | None = None,
     on_selector_call: Callable[[EngineSeat], None] | None = None,
     on_delivery: Callable[[tuple], None] | None = None,
+    on_transaction_observation: Callable[[object], None] | None = None,
 ) -> CompletedMatch:
     """4席のlisjong Policyでfixed seedの半荘を完走させ、`CompletedMatch`を返す。"""
     if type(seed) is not int:
@@ -63,6 +68,10 @@ def run_policy_hanchan(
         raise TypeError("on_selector_call must be callable or None")
     if on_delivery is not None and not callable(on_delivery):
         raise TypeError("on_delivery must be callable or None")
+    if on_transaction_observation is not None and not callable(
+        on_transaction_observation
+    ):
+        raise TypeError("on_transaction_observation must be callable or None")
 
     selectors = build_seat_selectors(policies)
     if on_selector_call is not None:
@@ -76,4 +85,6 @@ def run_policy_hanchan(
         callbacks["on_round_evidence_complete"] = on_round_evidence_complete
     if on_delivery is not None:
         callbacks["on_delivery"] = on_delivery
+    if on_transaction_observation is not None:
+        callbacks["on_transaction_observation"] = on_transaction_observation
     return run_hanchan(match_state, selectors, **callbacks)
