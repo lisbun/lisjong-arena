@@ -13,8 +13,12 @@
 - `minimum_blocks`はplanの値を使う（callerは変えられない）
 - D・XはFractionで、floatやNaNは拒否する（非有限値は入らない）。上限・縮小は設けない
 - 凍結artifactはcanonical JSONのbytesで読み戻し、Ĉov・V̂ar・Kから分岐とκ̂を再導出して照合する
+- 凍結artifactを公開する入口は`freeze_kappa(path, plan_path=..., train_path=...)`だけで、planと
+  TRAINのpaired filesを自分で読み戻し、join・推定してから書く（呼び出し側が作ったblockや推定値を
+  受け取らない）。`estimate_kappa`は読み戻したblockに対する算術である
 """
 
+import re
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -31,8 +35,11 @@ from lisjong_arena.learning_candidate_engine_aabb.protocol import (
     RULES_DIGEST,
 )
 
-from .join import JoinedBlocks
-from .plan import TRAIN, CorrectionPlan, read_canonical_document
+from .join import JoinedBlocks, join_paired
+from .paired_run import read_paired_split
+from .plan import TRAIN, CorrectionPlan, read_canonical_document, read_plan
+
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 FROZEN_KAPPA_SCHEMA = "arena-draw-correction-frozen-kappa-v2"
 ESTIMATION_RULE_ID = "draw-correction-kappa-max0-cov-over-var-sample-v1"
@@ -206,7 +213,17 @@ def _plan_fields(plan: CorrectionPlan) -> dict:
     }
 
 
-def write_frozen_kappa(
+def freeze_kappa(path: Path, *, plan_path: Path, train_path: Path) -> FrozenKappa:
+    """planとTRAINのpaired filesを読み戻し、join・推定して凍結artifactをwrite-onceで書く。"""
+    plan = read_plan(plan_path)
+    split = read_paired_split(train_path, plan)
+    if split.role != TRAIN:
+        raise DrawCorrectionKappaError("kappa can only be frozen from the TRAIN split")
+    train = join_paired(split)
+    return _write_frozen_kappa(path, plan, train, estimate_kappa(plan, train))
+
+
+def _write_frozen_kappa(
     path: Path, plan: CorrectionPlan, train: JoinedBlocks, estimate: KappaEstimate
 ) -> FrozenKappa:
     """κ̂の凍結artifactをwrite-onceで書き、strict readbackした値を返す。"""
@@ -257,7 +274,7 @@ def read_frozen_kappa(
                 f"frozen kappa {field} differs from the plan"
             )
     manifest_sha = document["train_paired_manifest_sha256"]
-    if type(manifest_sha) is not str or len(manifest_sha) != 64:
+    if type(manifest_sha) is not str or not _HEX64.fullmatch(manifest_sha):
         raise DrawCorrectionKappaError("train_paired_manifest_sha256 is invalid")
 
     k = document["k"]
@@ -303,8 +320,8 @@ __all__ = [
     "FrozenKappa",
     "KappaEstimate",
     "estimate_kappa",
+    "freeze_kappa",
     "kappa_rule",
     "read_frozen_kappa",
     "sample_covariance",
-    "write_frozen_kappa",
 ]

@@ -19,7 +19,7 @@ paired_run.read_paired_split()       planとの一致と、同じ実行のbindin
        └─ lisjong.draw_correction    p・V1・単位補正（κ = 1、lisjongが所有）
 join.join_paired()                   seed blockごとの D と X（JoinedBlocks: planのidentity・split role付き）
 kappa.estimate_kappa(plan, TRAIN)    planのTRAIN splitだけから κ̂（下限はplanの値）
-kappa.write_frozen_kappa()           write-onceの凍結artifact（bytesでstrict readback）
+kappa.freeze_kappa()                 planとTRAINのpaired filesを読み戻してjoin・推定し、write-onceで凍結
 analysis.analyze_correction()        plan・凍結κ（事前に記録したdigest）・EVALを自分で読み戻して照合し、
                                      D'、r、paired block bootstrap、補正の記述統計
 ```
@@ -39,13 +39,28 @@ planはcanonical JSONのwrite-once fileで、identityはそのbytesのSHA-256。
 | field | 内容 |
 | --- | --- |
 | `protocol_id` / `rules_digest` | learning engine AABBの値（protocol invariant、callerは変えられない） |
-| `participants` | `candidate` / `incumbent`のPolicy identity（異なる値） |
+| `participants` | `candidate` / `incumbent`のbinding: `policy_identity`、`kind`（`constructor` / `loader`）、`factory`（`module:qualname`）、`artifacts`（name → SHA-256、loaderのとき）。両roleは異なる値 |
 | `revisions` | `arena` / `engine` / `lisjong`（40桁） |
 | `value_definition` | lisjongの`v1_definition()` |
 | `minimum_blocks` | κ推定の下限（2以上） |
 | `splits` | `TRAIN` / `EVAL`のordered seed list（空でない、重複なし、互いに素） |
 
 具体的なseed番号・下限はpilot計画で固定する（testはfixture用の値だけを使う）。
+
+### 実行前のgate（`participants.py`）
+
+planがbindするのはcallerが渡すlabelではなく、実際に使うものから作り直したbindingである
+（learning engine AABBの`participants.py`と同じ考え方）。`produce_paired_split`は、1半荘目を始める前に次を要求し、
+どれかが違えば何も実行・保存しない。
+
+- 渡された`ParticipantSource`（実際のfactory objectとartifact path）から、`module:qualname`（objectから読み、
+  importし直して同じobjectであること。lambdaや局所関数は拒否）とartifact fileのbytesのSHA-256を計算し、
+  planのbindingと完全一致する。同じplanでcandidate / incumbentのfactoryを取り違えた場合や、同じloaderに
+  別のweightsを渡した場合は、ここで拒否される
+- 測った実行環境（`measure_environment`: cleanなArena worktreeのHEAD、installedなlisjong-engine / lisjongの
+  VCS commit、native `SOURCE_REVISION` = lisjong）がplanの`revisions`と一致する
+- `loader`は`factory(**artifact_paths)`が「各半荘・各席で新しいPolicyを返すfactory」を返す契約。実pilotの
+  participant（L2a・Arm Y等）のloaderとartifactは、実行Issueでplanに固定する
 
 ## 1.2 同じ実行のpair（`paired_run.py`、`arena-draw-correction-paired-run-v1`）
 
@@ -128,7 +143,9 @@ Xが正（Bに悪いツモ・Aに良いツモ）ならDも正に寄る。した�
 - 凍結artifact（`arena-draw-correction-frozen-kappa-v2`、canonical JSON、write-once）に記録するもの:
   planのSHA-256、protocol id・rules digest・participant・revision・V1の定義・下限・TRAINのseed列（planと同じ値）、
   推定規則id、K、Ĉov・V̂ar・κ̂（既約分数）、status・分岐、TRAINのpaired manifestのSHA-256
-- 書き込み時に、渡された推定値がplanのTRAIN blockから再計算した値と一致することを要求する
+- 凍結artifactを公開する入口は`freeze_kappa(path, plan_path=..., train_path=...)`だけで、planとTRAINの
+  paired filesを自分で読み戻し、join・推定してから書く。呼び出し側が作ったblockや推定値は受け取らないので、
+  凍結値の由来は実ファイルに結び付く（`estimate_kappa`は読み戻したblockに対する算術）
 - readbackは**bytes**でcanonical JSONを照合し、未知・欠落field、schema・規則、planの値との一致、
   Kとseed数の一致、分数の既約性を検査して、**Ĉov・V̂ar・Kから分岐とκ̂を再導出**する
 

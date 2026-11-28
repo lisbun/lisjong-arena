@@ -1,7 +1,7 @@
 """captureと半荘結果を同じ実行から作るoffline paired producer（#598 P1-1）。
 
 ```text
-produce_paired_split(destination, plan, role, policy_factories)
+produce_paired_split(destination, plan, role, participants)
   for seed in plan.seeds(role), placement 0..5:
       capture_live_draw_hanchan(...)   1回の実行から CompletedMatch と CapturedHanchan
   build_records(...)                   同じ CompletedMatch から第1層の半荘row
@@ -20,12 +20,17 @@ captureへ差し替えたものは、digestが合わずに拒否される（署�
 通常ツモは各局の最初に親が必ず行うので、captureの行がない局はない。bindingは半荘単位の
 digestで、行による局ごとの照合（親・場風）とは独立に働く。
 
+実行前のgate（`participants.py`）: 渡された`ParticipantSource`（実際のfactory object・artifact file）
+からbindingを作り直してplanと完全一致すること、測った実行環境（cleanなArena HEAD、installedな
+engine / lisjong、native SOURCE_REVISION）がplanのrevisionと一致することを要求し、一致しなければ
+1半荘も実行しない。seatへ記録するPolicy identityは、照合済みのbindingの値である。
+
 このmoduleは対局を実行する。実際のseedでの実行はpilot計画（別承認）で行う。
 """
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -70,6 +75,8 @@ from lisjong_arena.lisjong_engine.live_draw_store import (
     write_live_draw_capture,
 )
 
+from . import participants as participant_binding
+from .participants import ParticipantBindingError
 from .plan import (
     ROLES,
     CorrectionPlan,
@@ -180,27 +187,33 @@ def produce_paired_split(
     plan: CorrectionPlan,
     role: str,
     *,
-    policy_factories: Mapping[str, Callable[[], object]],
+    participants: Mapping[str, participant_binding.ParticipantSource],
     access: str,
     retention: str,
 ) -> PairedSplit:
     """planのsplit roleの全seed × 6配置を1回ずつ実行し、paired artifactを書く。
 
-    `policy_factories`は`{"candidate": factory, "incumbent": factory}`で、Policyは各半荘・
-    各席ごとに新しく作る。identityとの対応はplanの`participants`をそのまま記録する。
+    `participants`は`{"candidate": ParticipantSource, "incumbent": ParticipantSource}`。
+    実行前に、そこから作り直したbindingと測った実行環境がplanと一致することを要求する
+    （一致しなければ1半荘も実行しない）。Policyは各半荘・各席ごとに新しく作る。
     """
     destination = Path(destination)
     _require_role(plan, role)
     if destination.exists():
         raise FileExistsError(f"destination already exists: {destination}")
-    if not isinstance(policy_factories, Mapping) or set(policy_factories) != {
-        "candidate",
-        "incumbent",
-    }:
-        raise PairedRunError("policy_factories must be {candidate, incumbent}")
     for text, name in ((access, "access"), (retention, "retention")):
         if type(text) is not str or not text.strip():
             raise PairedRunError(f"{name} must be a non-empty string")
+    makers = participant_binding.require_participants(
+        {name: plan.participant(name) for name in ("candidate", "incumbent")},
+        participants,
+    )
+    measured = participant_binding.measure_environment()
+    if measured != dict(plan.revisions):
+        differing = sorted(k for k in measured if measured[k] != plan.revision(k))
+        raise ParticipantBindingError(
+            f"the execution environment differs from the plan ({differing})"
+        )
 
     schedule = _schedule(plan.seeds(role))
     captures = []
@@ -209,8 +222,7 @@ def produce_paired_split(
         roles = placement_roles(placement)
         names = ["candidate" if r == ROLE_CANDIDATE else "incumbent" for r in roles]
         policies = {
-            seat: policy_factories[name]()
-            for seat, name in zip(Seat, names, strict=True)
+            seat: makers[name]() for seat, name in zip(Seat, names, strict=True)
         }
         calls = dict.fromkeys(Seat, 0)
 
@@ -227,7 +239,7 @@ def produce_paired_split(
                 seed=seed,
                 placement=placement,
                 seats=tuple(
-                    SeatAssignment(r, plan.participant(name))
+                    SeatAssignment(r, plan.policy_identity(name))
                     for r, name in zip(roles, names, strict=True)
                 ),
                 selector_call_counts=counts,
@@ -345,6 +357,13 @@ def read_paired_split(source: Path, plan: CorrectionPlan) -> PairedSplit:
         raise PairedRunError("capture producer revisions differ from the plan")
     if capture.manifest["rules"] != RULES_DIGEST:
         raise PairedRunError("capture rules differ from the plan")
+    if (capture.manifest["access"], capture.manifest["retention"]) != (
+        manifest["access"],
+        manifest["retention"],
+    ):
+        raise PairedRunError(
+            "capture access / retention differ from the paired manifest"
+        )
 
     # 結果row
     results_info = manifest["results"]
@@ -377,7 +396,7 @@ def read_paired_split(source: Path, plan: CorrectionPlan) -> PairedSplit:
     for row in rows:
         for assignment in row["seats"]:
             name = "candidate" if assignment["role"] == ROLE_CANDIDATE else "incumbent"
-            if assignment["policy_identity"] != plan.participant(name):
+            if assignment["policy_identity"] != plan.policy_identity(name):
                 raise PairedRunError(
                     f"seed {row['seed']} placement {row['placement']}: "
                     "participant differs from the plan"

@@ -19,6 +19,7 @@ from lisjong.policies import MinimalPolicy, ShantenPolicy
 
 import lisjong_arena.draw_correction.join as join_module
 from lisjong_arena.draw_correction import paired_run
+from lisjong_arena.draw_correction import participants as participant_binding
 from lisjong_arena.draw_correction.analysis import (
     CI_ESTABLISHED,
     CI_NOT_ESTABLISHED,
@@ -41,16 +42,24 @@ from lisjong_arena.draw_correction.kappa import (
     NOT_ESTABLISHED,
     DrawCorrectionKappaError,
     estimate_kappa,
+    freeze_kappa,
     kappa_rule,
     read_frozen_kappa,
     sample_covariance,
-    write_frozen_kappa,
 )
 from lisjong_arena.draw_correction.paired_run import (
     RESULTS_FILENAME,
     PairedRunError,
     produce_paired_split,
     read_paired_split,
+)
+from lisjong_arena.draw_correction.participants import (
+    KIND_CONSTRUCTOR,
+    KIND_LOADER,
+    ParticipantBindingError,
+    ParticipantSource,
+    binding_from_source,
+    require_participants,
 )
 from lisjong_arena.draw_correction.plan import (
     EVAL,
@@ -69,11 +78,43 @@ from lisjong_arena.learning_candidate_engine_aabb.statistics import block_rank_t
 
 _TRAIN_SEEDS = (598101, 598102)
 _EVAL_SEEDS = (598103,)
-_PARTICIPANTS = {"candidate": "shanten-policy@test", "incumbent": "minimal-policy@test"}
-_SWAPPED = {"candidate": "minimal-policy@test", "incumbent": "shanten-policy@test"}
 _REVISIONS = {"arena": "a" * 40, "engine": "e" * 40, "lisjong": "1" * 40}
-_FACTORIES = {"candidate": ShantenPolicy, "incumbent": MinimalPolicy}
-_SWAPPED_FACTORIES = {"candidate": MinimalPolicy, "incumbent": ShantenPolicy}
+
+
+def _constructor(policy_class, identity):
+    return {
+        "artifacts": {},
+        "factory": f"{policy_class.__module__}:{policy_class.__qualname__}",
+        "kind": KIND_CONSTRUCTOR,
+        "policy_identity": identity,
+    }
+
+
+_SHANTEN = _constructor(ShantenPolicy, "shanten-policy@test")
+_MINIMAL = _constructor(MinimalPolicy, "minimal-policy@test")
+_PARTICIPANTS = {"candidate": _SHANTEN, "incumbent": _MINIMAL}
+_SWAPPED = {"candidate": _MINIMAL, "incumbent": _SHANTEN}
+_SOURCES = {
+    "candidate": ParticipantSource(ShantenPolicy),
+    "incumbent": ParticipantSource(MinimalPolicy),
+}
+_SWAPPED_SOURCES = {
+    "candidate": ParticipantSource(MinimalPolicy),
+    "incumbent": ParticipantSource(ShantenPolicy),
+}
+
+
+def load_weighted_minimal(weights):
+    """fixture用のloader（artifactのbytesはbindingのSHA-256にだけ使う）。"""
+    Path(weights).read_bytes()
+    return MinimalPolicy
+
+
+def _measured(revisions=_REVISIONS):
+    return patch.object(
+        participant_binding, "measure_environment", return_value=dict(revisions)
+    )
+
 
 _ROOT = None
 _STATE = {}
@@ -102,19 +143,24 @@ def setUpModule():
     )
     _STATE["plan"] = plan
     _STATE["other_plan"] = other
-    for name, target_plan, role, factories in (
-        ("train", plan, TRAIN, _FACTORIES),
-        ("eval", plan, EVAL, _FACTORIES),
-        ("other_eval", other, EVAL, _SWAPPED_FACTORIES),
+    for name, target_plan, role, sources in (
+        ("train", plan, TRAIN, _SOURCES),
+        ("eval", plan, EVAL, _SOURCES),
+        ("other_eval", other, EVAL, _SWAPPED_SOURCES),
     ):
-        _STATE[name] = produce_paired_split(
-            root / name,
-            target_plan,
-            role,
-            policy_factories=factories,
-            access="test-only",
-            retention="test-only",
-        )
+        # fixtureの実行環境は、planのダミーrevisionを測ったことにする（testだけのpatch）
+        with _measured():
+            _STATE[name] = produce_paired_split(
+                root / name,
+                target_plan,
+                role,
+                participants=sources,
+                access="test-only",
+                retention="test-only",
+            )
+    _STATE["frozen"] = freeze_kappa(
+        root / "kappa.json", plan_path=root / "plan.json", train_path=root / "train"
+    )
 
 
 def tearDownModule():
@@ -162,7 +208,18 @@ class PlanTest(unittest.TestCase):
             "overlap": {"evaluation_seeds": [2, 3]},
             "duplicate": {"train_seeds": [1, 1]},
             "empty": {"evaluation_seeds": []},
-            "same_participants": {"participants": {"candidate": "x", "incumbent": "x"}},
+            "same_participants": {
+                "participants": {"candidate": _SHANTEN, "incumbent": _SHANTEN}
+            },
+            "label_only_participant": {
+                "participants": {"candidate": "shanten", "incumbent": _MINIMAL}
+            },
+            "constructor_with_artifacts": {
+                "participants": {
+                    "candidate": {**_SHANTEN, "artifacts": {"w": "0" * 64}},
+                    "incumbent": _MINIMAL,
+                }
+            },
             "bad_revision": {"revisions": {**_REVISIONS, "engine": "short"}},
             "minimum": {"minimum_blocks": 1},
         }
@@ -192,7 +249,7 @@ class PairedRunTest(unittest.TestCase):
                 _root() / "train",
                 _STATE["plan"],
                 TRAIN,
-                policy_factories=_FACTORIES,
+                participants=_SOURCES,
                 access="test-only",
                 retention="test-only",
             )
@@ -400,6 +457,92 @@ class JoinTest(unittest.TestCase):
                 join_module._join_blocks(case_artifact, case_rows)
 
 
+class ParticipantGateTest(unittest.TestCase):
+    """実際に使うfactory・artifact・実行環境がplanと一致しなければ1半荘も実行しない。"""
+
+    def _produce(self, role=EVAL, sources=_SOURCES, revisions=_REVISIONS):
+        destination = Path(tempfile.mkdtemp(dir=_root())) / "run"
+        with (
+            _measured(revisions),
+            patch.object(
+                paired_run,
+                "capture_live_draw_hanchan",
+                side_effect=AssertionError("no hanchan may run"),
+            ) as runner,
+        ):
+            with self.assertRaises(ParticipantBindingError):
+                produce_paired_split(
+                    destination,
+                    _STATE["plan"],
+                    role,
+                    participants=sources,
+                    access="test-only",
+                    retention="test-only",
+                )
+        runner.assert_not_called()
+        self.assertFalse(destination.exists())
+
+    def test_swapped_factories_under_the_same_plan_are_rejected_before_running(self):
+        # 同じplan・同じrole / seedで、factoryだけを取り違えた場合（TRAINは正しく実行済み）
+        self._produce(EVAL, _SWAPPED_SOURCES)
+        self._produce(TRAIN, _SWAPPED_SOURCES)
+
+    def test_another_execution_environment_is_rejected_before_running(self):
+        for name in ("arena", "engine", "lisjong"):
+            with self.subTest(revision=name):
+                self._produce(revisions={**_REVISIONS, name: "f" * 40})
+
+    def test_other_factory_shapes_are_rejected(self):
+        for sources in (
+            {
+                "candidate": ParticipantSource(lambda: ShantenPolicy()),
+                "incumbent": _SOURCES["incumbent"],
+            },
+            {"candidate": _SOURCES["candidate"]},
+            {"candidate": ShantenPolicy, "incumbent": MinimalPolicy},
+        ):
+            with self.assertRaises(ParticipantBindingError):
+                require_participants(_PARTICIPANTS, sources)
+
+    def test_measure_environment_reads_installed_revisions(self):
+        import _lisjong_native
+
+        with patch(
+            "lisjong_arena._execution_safety.require_clean_arena_head",
+            return_value="b" * 40,
+        ):
+            measured = participant_binding.measure_environment()
+        self.assertEqual(set(measured), {"arena", "engine", "lisjong"})
+        self.assertEqual(measured["arena"], "b" * 40)
+        self.assertEqual(measured["lisjong"], _lisjong_native.SOURCE_REVISION)
+        self.assertRegex(measured["engine"], r"^[0-9a-f]{40}$")
+
+    def test_loader_artifacts_are_bound_by_their_bytes(self):
+        directory = Path(tempfile.mkdtemp(dir=_root()))
+        (directory / "w1.bin").write_bytes(b"weights-1")
+        (directory / "w2.bin").write_bytes(b"weights-2")
+        source = ParticipantSource(
+            load_weighted_minimal, {"weights": directory / "w1.bin"}
+        )
+        binding = binding_from_source(
+            source, policy_identity="loaded@test", kind=KIND_LOADER
+        )
+        self.assertEqual(binding["factory"], f"{__name__}:load_weighted_minimal")
+        plan_bindings = {"candidate": binding, "incumbent": _MINIMAL}
+        makers = require_participants(
+            plan_bindings, {"candidate": source, "incumbent": _SOURCES["incumbent"]}
+        )
+        self.assertIsInstance(makers["candidate"](), MinimalPolicy)
+        # 同じloaderで別のweightsを渡した場合（モデル重みの取り違え）
+        wrong = ParticipantSource(
+            load_weighted_minimal, {"weights": directory / "w2.bin"}
+        )
+        with self.assertRaisesRegex(ParticipantBindingError, "artifacts"):
+            require_participants(
+                plan_bindings, {"candidate": wrong, "incumbent": _SOURCES["incumbent"]}
+            )
+
+
 class KappaRuleTest(unittest.TestCase):
     def test_rule_branches(self):
         # D = (1, 2, 3)、X = (1, 1, 4): Cov = 3/2、Var(X) = 3 -> κ = 1/2
@@ -471,46 +614,56 @@ class KappaTest(unittest.TestCase):
                     self.plan, dataclasses.replace(self.train, blocks=blocks)
                 )
 
-    def test_frozen_round_trip_and_recorded_digest(self):
-        estimate = estimate_kappa(self.plan, self.train)
-        frozen = write_frozen_kappa(
-            self.directory / "kappa.json", self.plan, self.train, estimate
+    def test_freeze_reads_plan_and_train_files(self):
+        frozen = _STATE["frozen"]
+        # 凍結値は、TRAINのpaired filesを読み戻してjoin・推定した値と一致する
+        expected = estimate_kappa(
+            self.plan, join_paired(read_paired_split(_root() / "train", self.plan))
         )
-        self.assertEqual(frozen.estimate, estimate)
+        self.assertEqual(frozen.estimate, expected)
         self.assertEqual(frozen.train_seeds, _TRAIN_SEEDS)
+        self.assertEqual(
+            frozen.train_paired_manifest_sha256, _STATE["train"].manifest_sha256
+        )
         again = read_frozen_kappa(
-            self.directory / "kappa.json", self.plan, expected_sha256=frozen.sha256
+            _root() / "kappa.json", self.plan, expected_sha256=frozen.sha256
         )
         self.assertEqual(again, frozen)
         with self.assertRaises(DrawCorrectionKappaError):
             read_frozen_kappa(
-                self.directory / "kappa.json", self.plan, expected_sha256="0" * 64
+                _root() / "kappa.json", self.plan, expected_sha256="0" * 64
             )
         with self.assertRaises(DrawCorrectionKappaError):
-            read_frozen_kappa(self.directory / "kappa.json", _STATE["other_plan"])
+            read_frozen_kappa(_root() / "kappa.json", _STATE["other_plan"])
+
+    def test_freeze_is_write_once(self):
         with self.assertRaises(FileExistsError):
-            write_frozen_kappa(
-                self.directory / "kappa.json", self.plan, self.train, estimate
+            freeze_kappa(
+                _root() / "kappa.json",
+                plan_path=_root() / "plan.json",
+                train_path=_root() / "train",
             )
 
-    def test_estimate_must_match_train(self):
-        estimate = dataclasses.replace(
-            estimate_kappa(self.plan, self.train), kappa=Fraction(7)
-        )
-        with self.assertRaises(DrawCorrectionKappaError):
-            write_frozen_kappa(
-                self.directory / "k.json", self.plan, self.train, estimate
-            )
-        self.assertFalse((self.directory / "k.json").exists())
+    def test_freeze_rejects_files_outside_the_plan_train_split(self):
+        cases = {
+            "evaluation_as_train": (_root() / "plan.json", _root() / "eval"),
+            "another_plan_artifact": (_root() / "plan.json", _root() / "other_eval"),
+            "train_under_another_plan": (
+                _root() / "other-plan.json",
+                _root() / "train",
+            ),
+        }
+        for name, (plan_path, train_path) in cases.items():
+            with self.subTest(case=name):
+                path = self.directory / f"{name}.json"
+                with self.assertRaises(
+                    (DrawCorrectionPlanError, DrawCorrectionKappaError)
+                ):
+                    freeze_kappa(path, plan_path=plan_path, train_path=train_path)
+                self.assertFalse(path.exists())
 
     def test_tampered_frozen_artifacts_are_rejected(self):
-        estimate = estimate_kappa(self.plan, self.train)
-        write_frozen_kappa(
-            self.directory / "kappa.json", self.plan, self.train, estimate
-        )
-        original = json.loads(
-            (self.directory / "kappa.json").read_text(encoding="utf-8")
-        )
+        original = json.loads((_root() / "kappa.json").read_text(encoding="utf-8"))
         tamperings = {
             "kappa": lambda d: d.update(kappa={"denominator": 1, "numerator": 99}),
             "status": lambda d: d.update(
@@ -522,6 +675,7 @@ class KappaTest(unittest.TestCase):
             "plan": lambda d: d.update(plan_sha256="0" * 64),
             "value_definition": lambda d: d["value_definition"].update(version=2),
             "unknown_field": lambda d: d.update(extra=1),
+            "train_manifest": lambda d: d.update(train_paired_manifest_sha256="X" * 64),
             "not_lowest_terms": lambda d: d.update(
                 kappa={"denominator": 4, "numerator": 2}
             ),
@@ -540,14 +694,8 @@ class KappaTest(unittest.TestCase):
                     read_frozen_kappa(path, self.plan)
 
     def test_non_canonical_bytes_are_rejected(self):
-        estimate = estimate_kappa(self.plan, self.train)
-        write_frozen_kappa(
-            self.directory / "kappa.json", self.plan, self.train, estimate
-        )
         path = self.directory / "crlf.json"
-        path.write_bytes(
-            (self.directory / "kappa.json").read_bytes().replace(b"\n", b"\r\n")
-        )
+        path.write_bytes((_root() / "kappa.json").read_bytes().replace(b"\n", b"\r\n"))
         with self.assertRaises(DrawCorrectionKappaError):
             read_frozen_kappa(path, self.plan)
 
@@ -557,17 +705,12 @@ class AnalysisEntryTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.directory = Path(tempfile.mkdtemp(dir=_root()))
-        plan = _STATE["plan"]
-        train = join_paired(_STATE["train"])
-        cls.frozen = write_frozen_kappa(
-            cls.directory / "kappa.json", plan, train, estimate_kappa(plan, train)
-        )
+        cls.frozen = _STATE["frozen"]
 
     def _analyze(self, **overrides):
         arguments = dict(
             plan_path=_root() / "plan.json",
-            frozen_path=self.directory / "kappa.json",
+            frozen_path=_root() / "kappa.json",
             frozen_sha256=self.frozen.sha256,
             evaluation_path=_root() / "eval",
             bootstrap_resamples=20,

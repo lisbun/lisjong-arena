@@ -22,6 +22,7 @@ splitであることを要求する。
 
 import math
 import random
+import re
 from collections.abc import Sequence
 from fractions import Fraction
 from pathlib import Path
@@ -186,7 +187,9 @@ def analyze_correction(
     extreme_count: int = 5,
 ) -> dict:
     """plan・凍結κ・評価のpaired artifactを読み戻して照合し、評価blockの補正を分析する。"""
-    if type(frozen_sha256) is not str or len(frozen_sha256) != 64:
+    if type(frozen_sha256) is not str or not re.fullmatch(
+        r"[0-9a-f]{64}", frozen_sha256
+    ):
         raise DrawCorrectionKappaError(
             "frozen_sha256 must be the recorded 64-hex digest"
         )

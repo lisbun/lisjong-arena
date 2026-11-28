@@ -4,7 +4,8 @@ TRAIN推定・凍結・評価のすべてが、同じplanへ結び付くこと�
 
 ```text
 protocol_id / rules_digest       learning engine AABB（protocol invariant）
-participants                     candidate / incumbent のPolicy identity
+participants                     candidate / incumbent のbinding（Policy identity・factory・artifactのSHA-256、
+                                 `participants.py`）
 revisions                        Arena / lisjong-engine / lisjong（40桁）
 value_definition                 lisjong V1の特徴定義（`v1_definition()`）
 minimum_blocks                   κ推定の下限（2以上）
@@ -23,7 +24,6 @@ from pathlib import Path
 from lisjong.draw_correction import v1_definition
 
 from lisjong_arena._artifact_io import (
-    ArtifactValidationError,
     canonical_json_text,
     parse_json_text,
     sha256_bytes,
@@ -33,6 +33,9 @@ from lisjong_arena.learning_candidate_engine_aabb.protocol import (
     PROTOCOL_ID,
     RULES_DIGEST,
 )
+
+from .errors import DrawCorrectionPlanError
+from .participants import validate_binding
 
 PLAN_SCHEMA = "arena-draw-correction-plan-v1"
 TRAIN = "TRAIN"
@@ -56,23 +59,23 @@ _PARTICIPANT_FIELDS = ("candidate", "incumbent")
 _REVISION_FIELDS = ("arena", "engine", "lisjong")
 
 
-class DrawCorrectionPlanError(ArtifactValidationError):
-    """planが契約を満たさない、又はartifactがplanに結び付かない場合。"""
-
-
 @dataclass(frozen=True)
 class CorrectionPlan:
     """読み戻したplan。`sha256`はfileのbytesのSHA-256（planのidentity）。"""
 
     sha256: str
-    participants: tuple[tuple[str, str], ...]
+    participants: tuple[tuple[str, dict], ...]
     revisions: tuple[tuple[str, str], ...]
     minimum_blocks: int
     train_seeds: tuple[int, ...]
     evaluation_seeds: tuple[int, ...]
 
-    def participant(self, role: str) -> str:
-        return dict(self.participants)[role]
+    def participant(self, role: str) -> dict:
+        """roleのbinding document（Policy identity・factory・artifact）。"""
+        return dict(dict(self.participants)[role])
+
+    def policy_identity(self, role: str) -> str:
+        return dict(self.participants)[role]["policy_identity"]
 
     def revision(self, name: str) -> str:
         return dict(self.revisions)[name]
@@ -85,15 +88,19 @@ class CorrectionPlan:
         raise DrawCorrectionPlanError(f"unknown split role: {split!r}")
 
 
-def _participants(value: object) -> dict[str, str]:
+def _participants(value: object) -> dict[str, dict]:
     if not isinstance(value, Mapping) or set(value) != set(_PARTICIPANT_FIELDS):
         raise DrawCorrectionPlanError("participants must be {candidate, incumbent}")
-    for role in _PARTICIPANT_FIELDS:
-        if type(value[role]) is not str or not value[role].strip():
-            raise DrawCorrectionPlanError(f"participants.{role} must be non-empty")
-    if value["candidate"] == value["incumbent"]:
+    bindings = {
+        role: validate_binding(value[role], f"participants.{role}")
+        for role in _PARTICIPANT_FIELDS
+    }
+    if bindings["candidate"] == bindings["incumbent"] or (
+        bindings["candidate"]["policy_identity"]
+        == bindings["incumbent"]["policy_identity"]
+    ):
         raise DrawCorrectionPlanError("candidate and incumbent must differ")
-    return {role: value[role] for role in _PARTICIPANT_FIELDS}
+    return bindings
 
 
 def _revisions(value: object) -> dict[str, str]:
@@ -153,7 +160,7 @@ def _validate(document: object) -> dict:
 def write_plan(
     path: Path,
     *,
-    participants: Mapping[str, str],
+    participants: Mapping[str, Mapping],
     revisions: Mapping[str, str],
     minimum_blocks: int,
     train_seeds: Sequence[int],
