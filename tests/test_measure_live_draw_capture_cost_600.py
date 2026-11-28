@@ -1,6 +1,6 @@
 """#600 capture費用測定scriptのtest。
 
-workerは差し替え（fork）で、停止・削除・同一性の分岐を高速に固定する。実engineは
+workerは差し替え（spawn）で、停止・削除・同一性の分岐を高速に固定する。実engineは
 既知development seed 472005の1組（2半荘）だけで、記録・照合・削除の経路を通す。
 """
 
@@ -22,7 +22,8 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 
 import measure_live_draw_capture_cost_600 as cost  # noqa: E402
 
-FORK = multiprocessing.get_context("fork")
+# 監視threadがworker起動前から動くので、forkではなくspawnを使う
+SPAWN = multiprocessing.get_context("spawn")
 ONE_PAIR = [(0, 472_005, 0, (cost.C0, cost.C1))]
 
 
@@ -104,7 +105,7 @@ def fake_error(conn, config):
     _fake(conn, config, error="LiveDrawCaptureError")
 
 
-def _run(target, **kwargs):
+def _run(target, temp_root, **kwargs):
     kwargs.setdefault("schedule", cost.pair_schedule((1, 2)))
     kwargs.setdefault("limits", dict(cost.LIMITS, hanchan_timeout_seconds=5))
     return cost.run_measurement(
@@ -114,7 +115,8 @@ def _run(target, **kwargs):
         arena_revision="a" * 40,
         engine_revision="b" * 40,
         target=target,
-        context=FORK,
+        context=SPAWN,
+        temp_root=temp_root,
         **kwargs,
     )
 
@@ -162,12 +164,21 @@ class ScheduleTest(unittest.TestCase):
 
 
 class StopAndCleanupTest(unittest.TestCase):
+    def setUp(self):
+        # testの一時directoryはこのtest専用のrootの下にだけ作る（他の実行に触れない）
+        holder = tempfile.TemporaryDirectory(prefix="arena-600-test-")
+        self.addCleanup(holder.cleanup)
+        self.root = holder.name
+
+    def run_fake(self, target, **kwargs):
+        return _run(target, self.root, **kwargs)
+
     def assert_cleaned(self, report):
         self.assertTrue(report["cleanup"]["removed"])
         self.assertFalse(report["cleanup"]["exists"])
 
     def test_completed_report_has_costs_and_no_digests(self):
-        report = _run(fake_ok)
+        report = self.run_fake(fake_ok)
         self.assertEqual(report["status"], cost.STATUS_COMPLETED)
         self.assert_cleaned(report)
         self.assertEqual(report["temp_directory_mode"], "0o700")
@@ -184,28 +195,46 @@ class StopAndCleanupTest(unittest.TestCase):
         )
         self.assertIsNotNone(report["probe"])
         self.assertIsNotNone(report["phase2"])
+        self.assertEqual(summary["retained_memory"], "MEASURED")
+        harness = report["harness"]
+        for key in (
+            "worker_startup_wall_seconds",
+            "ipc_residual_wall_seconds",
+            "probe_wall_seconds",
+            "cleanup_wall_seconds",
+            "monitor_thread_cpu_seconds",
+            "parent_process_cpu_seconds",
+        ):
+            self.assertIn(key, harness)
+        self.assertEqual(
+            set(harness["worker_startup_wall_seconds"]), {cost.C0, cost.C1}
+        )
+        self.assertEqual(report["workers_stopped"], {cost.C0: True, cost.C1: True})
+        self.assertEqual(list(Path(self.root).iterdir()), [])
 
     def test_identity_mismatch_stops_invalid(self):
-        report = _run(fake_mismatch)
+        report = self.run_fake(fake_mismatch)
         self.assertEqual(report["status"], cost.STATUS_INVALID)
         self.assertIn("match_digest", report["stop_reason"])
         self.assertEqual(report["pairs"], [])
         self.assert_cleaned(report)
 
     def test_hanchan_timeout_stops(self):
-        report = _run(fake_slow, limits=dict(cost.LIMITS, hanchan_timeout_seconds=1))
+        report = self.run_fake(
+            fake_slow, limits=dict(cost.LIMITS, hanchan_timeout_seconds=1)
+        )
         self.assertEqual(report["status"], cost.STATUS_LIMIT)
         self.assertIn("timed out", report["stop_reason"])
         self.assert_cleaned(report)
 
     def test_worker_error_reports_type_name_only(self):
-        report = _run(fake_error)
+        report = self.run_fake(fake_error)
         self.assertEqual(report["status"], cost.STATUS_FAILED)
         self.assertEqual(report["stop_reason"], "C0 worker raised LiveDrawCaptureError")
         self.assert_cleaned(report)
 
     def test_rss_limit_stops(self):
-        report = _run(fake_slow, limits=dict(cost.LIMITS, rss_kib=1))
+        report = self.run_fake(fake_slow, limits=dict(cost.LIMITS, rss_kib=1))
         self.assertEqual(report["status"], cost.STATUS_LIMIT)
         self.assertIn("VmRSS", report["stop_reason"])
         self.assert_cleaned(report)
@@ -219,13 +248,13 @@ class StopAndCleanupTest(unittest.TestCase):
             raise OSError("unreadable")
 
         with mock.patch.object(cost, "proc_status_kib", broken):
-            report = _run(fake_slow)
+            report = self.run_fake(fake_slow)
         self.assertEqual(report["status"], cost.STATUS_FAILED)
         self.assertEqual(report["stop_reason"], "monitoring failed: OSError")
         self.assert_cleaned(report)
 
     def test_first_pair_projection_over_budget_stops(self):
-        report = _run(
+        report = self.run_fake(
             fake_ok,
             limits=dict(cost.LIMITS, wall_seconds=60),
             projection_pairs=10**9,
@@ -234,19 +263,121 @@ class StopAndCleanupTest(unittest.TestCase):
         self.assertEqual(len(report["pairs"]), 1)
         self.assert_cleaned(report)
 
-    def test_cleanup_failure_is_reported(self):
+    def test_cleanup_failure_is_reported_with_its_location(self):
         def failing(directory):
             raise PermissionError("denied")
 
-        report = _run(fake_ok, remover=failing)
-        try:
-            self.assertEqual(report["status"], cost.STATUS_FAILED)
-            self.assertFalse(report["cleanup"]["removed"])
-            self.assertTrue(report["cleanup"]["exists"])
-            self.assertIn("do not run again", report["stop_reason"])
-        finally:
-            for path in Path(tempfile.gettempdir()).glob("arena-600-*"):
-                shutil.rmtree(path, ignore_errors=True)
+        report = self.run_fake(fake_ok, remover=failing)
+        remaining = list(Path(self.root).iterdir())
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(report["status"], cost.STATUS_FAILED)
+        self.assertFalse(report["cleanup"]["removed"])
+        self.assertEqual(report["cleanup"]["path"], str(remaining[0]))
+        self.assertIn(str(remaining[0]), report["stop_reason"])
+        self.assertIn("do not run again", report["stop_reason"])
+
+    def test_cleanup_exception_is_a_failure_even_if_the_directory_is_gone(self):
+        def removes_then_raises(directory):
+            shutil.rmtree(directory)
+            raise OSError("late error")
+
+        report = self.run_fake(fake_ok, remover=removes_then_raises)
+        self.assertFalse(report["cleanup"]["removed"])
+        self.assertFalse(report["cleanup"]["exists"])
+        self.assertEqual(report["status"], cost.STATUS_FAILED)
+
+    def test_stop_after_the_last_response_is_not_completed(self):
+        # 段階2の応答と同時に一時diskが上限を超えた状況。最後の同期sampleで止める
+        original = cost.tree_bytes
+
+        def large_once_phase2_exists(root):
+            if (Path(root) / "phase2").exists():
+                return 10**12
+            return original(root)
+
+        with mock.patch.object(cost, "tree_bytes", large_once_phase2_exists):
+            report = self.run_fake(fake_ok)
+        self.assertEqual(report["status"], cost.STATUS_LIMIT)
+        self.assertIn("temporary disk", report["stop_reason"])
+        self.assert_cleaned(report)
+
+    def test_disk_scan_failure_stops(self):
+        def unreadable(root):
+            raise PermissionError("scan")
+
+        with mock.patch.object(cost, "tree_bytes", unreadable):
+            report = self.run_fake(fake_slow)
+        self.assertEqual(report["status"], cost.STATUS_FAILED)
+        self.assertEqual(report["stop_reason"], "monitoring failed: PermissionError")
+        self.assert_cleaned(report)
+
+    def test_worker_that_does_not_stop_is_a_failure(self):
+        original = cost.Worker.close
+
+        def reports_alive(worker):
+            original(worker)  # 実際には止め、止まらなかった報告だけを模す
+            return False
+
+        with mock.patch.object(cost.Worker, "close", reports_alive):
+            report = self.run_fake(fake_ok)
+        self.assertEqual(report["status"], cost.STATUS_FAILED)
+        self.assertIn("did not stop", report["stop_reason"])
+
+
+class RequestRaceTest(unittest.TestCase):
+    def test_response_after_a_trip_is_not_accepted(self):
+        class TripsAfterReceive:
+            calls = 0
+
+            def check(self):
+                self.calls += 1
+                if self.calls >= 3:
+                    raise cost.MeasurementStop(cost.STATUS_LIMIT, "tripped")
+
+        parent, child = SPAWN.Pipe()
+        child.send(("ok", {"wall_seconds": 0.0}))
+        worker = cost.Worker.__new__(cost.Worker)
+        worker.condition = cost.C1
+        worker.conn = parent
+        worker.process = mock.Mock(is_alive=mock.Mock(return_value=True))
+        worker.ipc_wall_seconds = 0.0
+        with self.assertRaises(cost.MeasurementStop) as stopped:
+            worker.request(None, 5, TripsAfterReceive())
+        self.assertEqual(stopped.exception.status, cost.STATUS_LIMIT)
+
+
+class TreeBytesTest(unittest.TestCase):
+    def test_missing_directory_fails_closed(self):
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaises(OSError):
+                cost.tree_bytes(Path(root) / "missing")
+
+
+class SummaryTest(unittest.TestCase):
+    def report_with_growth(self, step):
+        pairs = [
+            {
+                "index": i,
+                cost.C0: dict(_played(), rss_after_kib=1000, live_draw_rows=None),
+                cost.C1: dict(
+                    _played(), rss_after_kib=1000 + step * i, live_draw_rows=40
+                ),
+            }
+            for i in range(3)
+        ]
+        return {"pairs": pairs, "phase2": None}
+
+    def test_negative_zero_positive_growth(self):
+        for step, established in ((-5, False), (0, False), (7, True)):
+            with self.subTest(step=step):
+                summary = cost.summarize(self.report_with_growth(step))
+                retained = summary["extrapolation"]["360"]["retained_rss_kib"]
+                if established:
+                    self.assertEqual(summary["retained_memory"], "MEASURED")
+                    self.assertEqual(retained, 7 * 360 * cost.EXTRAPOLATION_SAFETY)
+                else:
+                    self.assertEqual(summary["retained_memory"], "NOT-ESTABLISHED")
+                    self.assertIsNone(retained)
 
 
 class RealEngineSmokeTest(unittest.TestCase):
@@ -258,6 +389,9 @@ class RealEngineSmokeTest(unittest.TestCase):
             execution_provenance_to_dict,
         )
 
+        holder = tempfile.TemporaryDirectory(prefix="arena-600-test-")
+        self.addCleanup(holder.cleanup)
+        root = holder.name
         provenance = execution_provenance_to_dict(collect_execution_provenance())
         candidate, incumbent = cost.participants(provenance["lisjong_revision"])
         report = cost.run_measurement(
@@ -267,6 +401,7 @@ class RealEngineSmokeTest(unittest.TestCase):
             arena_revision="0" * 40,
             engine_revision=provenance["lisjong_engine_revision"],
             schedule=ONE_PAIR,
+            temp_root=root,
         )
         self.assertEqual(report["status"], cost.STATUS_COMPLETED, report["stop_reason"])
         self.assertTrue(report["cleanup"]["removed"])
