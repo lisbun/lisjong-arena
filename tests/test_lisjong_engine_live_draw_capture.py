@@ -23,9 +23,10 @@ from lisjong_engine import action_descriptor as descriptors
 from lisjong_engine.driver import run_hanchan
 from lisjong_engine.match_state import MatchState
 from lisjong_engine.round_event import DrawSource, TileDrawnEvent
+from lisjong_engine.round_phase import RoundPhase
 from lisjong_engine.rules import RuleSet
 from lisjong_engine.seat import Seat as EngineSeat
-from lisjong_engine.tile import STANDARD_TILES
+from lisjong_engine.tile import STANDARD_TILES, Tile
 from lisjong_engine.transaction_observation import TransactionStepKind
 
 from lisjong_arena.lisjong_engine.hanchan import run_policy_hanchan
@@ -33,6 +34,8 @@ from lisjong_arena.lisjong_engine.live_draw_capture import (
     TOTAL_TILE_COUNT,
     LiveDrawCapture,
     LiveDrawCaptureError,
+    _require_post_matches,
+    _tile,
     capture_live_draw_hanchan,
     validate_row,
     visible_tile_ids,
@@ -76,8 +79,10 @@ def _scripted_selector(log=None):
     return select
 
 
-def _run_engine(seed, *, observer=None, evidence=None, log=None):
+def _run_engine(seed, *, observer=None, evidence=None, log=None, delivery=None):
     callbacks = {}
+    if delivery is not None:
+        callbacks["on_delivery"] = delivery
     if observer is not None:
         callbacks["on_transaction_observation"] = observer
     if evidence is not None:
@@ -337,6 +342,62 @@ class CaptureRejectsTamperedStreamTest(_EngineCaptureFixture):
         )
         self.assert_rejected(self.observations[: last_round_start + 3])
 
+    def _round_slice(self, ordinal):
+        indexes = [
+            index
+            for index, observation in enumerate(self.observations)
+            if observation.round_ordinal == ordinal
+        ]
+        return indexes[0], indexes[-1] + 1
+
+    def test_revision_offset_for_a_whole_round_is_rejected(self) -> None:
+        start, end = self._round_slice(1)
+        observations = list(self.observations)
+        for index in range(start, end):
+            observations[index] = dataclasses.replace(
+                observations[index], revision=observations[index].revision + 5
+            )
+        self.assert_rejected(observations)
+
+    def test_round_end_without_finished_phase_is_rejected(self) -> None:
+        _, end = self._round_slice(1)
+        observations = list(self.observations)
+        last = observations[end - 1]
+        self.assertIs(last.phase, RoundPhase.FINISHED)
+        observations[end - 1] = dataclasses.replace(
+            last, phase=RoundPhase.AWAITING_DISCARD
+        )
+        self.assert_rejected(observations)
+
+    def test_tampered_evidence_identity_is_rejected(self) -> None:
+        for field, value in (
+            ("hand_number", self.completions[0].hand_number + 1),
+            ("honba", self.completions[0].honba + 1),
+            ("dealer_seat", self.completions[1].dealer_seat),
+        ):
+            with self.subTest(field=field):
+                if getattr(self.completions[0], field) == value:
+                    self.skipTest("tampered value equals the original")
+                completions = list(self.completions)
+                completions[0] = dataclasses.replace(completions[0], **{field: value})
+                self.assert_rejected(self.observations, completions)
+
+    def test_tampered_match_history_identity_is_rejected(self) -> None:
+        history = list(self.completed.history)
+        first = history[0]
+        history[0] = dataclasses.replace(
+            first,
+            position_before=dataclasses.replace(
+                first.position_before, honba=first.position_before.honba + 1
+            ),
+        )
+        with self.assertRaises(LiveDrawCaptureError):
+            _replay(
+                self.observations,
+                self.completions,
+                dataclasses.replace(self.completed, history=tuple(history)),
+            )
+
     def test_capture_cannot_be_reused_after_finish(self) -> None:
         capture = LiveDrawCapture(seed=_SEED, placement=0)
         for observation in self.observations:
@@ -389,6 +450,51 @@ class RowValidationTest(_EngineCaptureFixture):
         seat["drawn_tile_source"] = "live_wall"
         self.assert_invalid(row)
 
+    def test_drawn_tile_source_without_tile_is_rejected(self) -> None:
+        row = self._row()
+        row["pre_draw"]["checkpoint"]["seats"][0]["drawn_tile_source"] = "live_wall"
+        self.assert_invalid(row)
+
+    def test_post_draw_must_clear_temporary_furiten_only(self) -> None:
+        row = self._row()
+        drawer = row["identity"]["drawer_seat"]
+        tile = row["realized"]["tile"]
+        pre = copy.deepcopy(row["pre_draw"]["checkpoint"])
+        post = copy.deepcopy(pre)
+        post["live_tiles_remaining"] -= 1
+        post["seats"][drawer]["hand_tiles"].append(tile)
+        post["seats"][drawer]["drawn_tile"] = tile
+        post["seats"][drawer]["drawn_tile_source"] = "live_wall"
+        cases = (
+            ("temporary", None, True),
+            ("temporary", "temporary", False),
+            ("riichi", "riichi", True),
+            ("riichi", None, False),
+            (None, "temporary", False),
+        )
+        for before, after, accepted in cases:
+            with self.subTest(before=before, after=after):
+                pre["seats"][drawer]["missed_ron_furiten"] = before
+                post["seats"][drawer]["missed_ron_furiten"] = after
+                if accepted:
+                    _require_post_matches(pre, post, drawer=drawer, tile=tile)
+                else:
+                    with self.assertRaises(LiveDrawCaptureError):
+                        _require_post_matches(pre, post, drawer=drawer, tile=tile)
+
+    def test_tile_with_a_non_standard_red_attribute_is_rejected(self) -> None:
+        red = next(tile for tile in STANDARD_TILES if tile.is_red)
+        self.assertEqual(_tile(red), red.id)
+        with self.assertRaises(LiveDrawCaptureError):
+            _tile(Tile(red.tile_type, red.copy_index, is_red=False))
+        plain = next(
+            tile
+            for tile in STANDARD_TILES
+            if tile.tile_type == red.tile_type and not tile.is_red
+        )
+        with self.assertRaises(LiveDrawCaptureError):
+            _tile(Tile(plain.tile_type, plain.copy_index, is_red=True))
+
     def test_wrong_phase_or_drawer_is_rejected(self) -> None:
         row = self._row()
         row["pre_draw"]["phase"] = "awaiting_discard"
@@ -426,19 +532,26 @@ class CaptureDoesNotChangeExecutionTest(unittest.TestCase):
     """engine scripted selector: captureの有無で観測・選択・結果が一致する。"""
 
     def test_engine_execution_is_identical_with_and_without_capture(self) -> None:
+        # `CompletedMatch`の等価性は、局記録（その射影）の一致も含意する。
+        # player-safeなdelivery列も別に比べる。
         plain_log = []
-        plain = _run_engine(_SEED, log=plain_log)
+        plain_deliveries = []
+        plain = _run_engine(_SEED, log=plain_log, delivery=plain_deliveries.append)
         captured_log = []
+        captured_deliveries = []
         capture = LiveDrawCapture(seed=_SEED, placement=0)
         observed = _run_engine(
             _SEED,
             observer=capture.on_transaction_observation,
             evidence=capture.on_round_evidence_complete,
             log=captured_log,
+            delivery=captured_deliveries.append,
         )
         capture.finish(observed)
         self.assertEqual(plain, observed)
         self.assertEqual(plain_log, captured_log)
+        self.assertEqual(plain_deliveries, captured_deliveries)
+        self.assertTrue(plain_deliveries)
 
 
 class _RecordingPolicy:
@@ -499,6 +612,7 @@ class LiveDrawStoreTest(_EngineCaptureFixture):
             "rules": "project-standard-v1",
             "access": "test fixture only",
             "retention": "deleted with the temporary directory",
+            "plan": [(_SEED, 0)],
         }
         arguments.update(overrides)
         return write_live_draw_capture(
@@ -519,6 +633,50 @@ class LiveDrawStoreTest(_EngineCaptureFixture):
             artifact.manifest["information_class"], "privileged-offline-only"
         )
         self.assertEqual(read_live_draw_capture(self.destination), artifact)
+
+    def _second_placement(self):
+        rows = copy.deepcopy(list(self.captured.rows))
+        for row in rows:
+            row["identity"]["placement"] = 1
+        return dataclasses.replace(self.captured, placement=1, rows=tuple(rows))
+
+    def test_missing_planned_hanchan_is_rejected(self) -> None:
+        with self.assertRaises(LiveDrawCaptureError):
+            self._write(plan=[(_SEED, 0), (_SEED, 1)])
+        with self.assertRaises(LiveDrawCaptureError):
+            self._write(plan=[(_SEED, 0), (_SEED + 1, 0)])
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_unplanned_hanchan_is_rejected(self) -> None:
+        with self.assertRaises(LiveDrawCaptureError):
+            self._write(plan=[(_SEED + 1, 0)])
+        with self.assertRaises(LiveDrawCaptureError):
+            self._write(hanchans=[self.captured, self._second_placement()])
+        self.assertFalse(self.destination.exists())
+
+    def test_plan_order_and_uniqueness_are_enforced(self) -> None:
+        second = self._second_placement()
+        with self.assertRaises(LiveDrawCaptureError):
+            self._write(hanchans=[second, self.captured], plan=[(_SEED, 0), (_SEED, 1)])
+        with self.assertRaises(LiveDrawCaptureError):
+            self._write(plan=[(_SEED, 0), (_SEED, 0)])
+        self.assertFalse(self.destination.exists())
+        artifact = self._write(
+            hanchans=[self.captured, second], plan=[(_SEED, 0), (_SEED, 1)]
+        )
+        self.assertEqual(artifact.manifest["plan"], [[_SEED, 0], [_SEED, 1]])
+
+    def test_manifest_plan_mismatch_is_rejected_on_read(self) -> None:
+        self._write()
+        manifest_path = self.destination / MANIFEST_FILENAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["plan"].append([_SEED, 1])
+        manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8"
+        )
+        with self.assertRaises(LiveDrawCaptureError):
+            read_live_draw_capture(self.destination)
 
     def test_existing_destination_is_not_overwritten(self) -> None:
         self._write()

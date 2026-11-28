@@ -9,6 +9,10 @@
 - 正式result・局記録・`GameTrace`とは別のschema・別の保存先にする。行は
   `identity`（seed等）と`realized`（実現牌）を含み、全体としては未来を
   再構成できる情報を持つため、manifestに`access`と`retention`を必ず記録する
+- 書き込みには、実行前に決めた半荘の計画（`(seed, placement)`の順序つき列）を
+  capture結果とは独立に渡す。captureした半荘がその計画と過不足・重複・順序違いなく
+  一致しない場合は何も公開しない（完全なseed blockだけを公開する）。計画はmanifestへ
+  記録し、読込時も半荘の列と一致することを検査する
 - destinationは新規に限る。同じparentのstagingへ書き、読み戻し検査に通った
   場合だけ公開する（失敗時は何も公開しない）
 - 読込時は作成時と同じ行検査（`live_draw_capture.validate_row`）を行い、
@@ -55,6 +59,7 @@ _MANIFEST_FIELDS = {
     "hanchans",
     "information_class",
     "payload",
+    "plan",
     "producer",
     "retention",
     "row_schema",
@@ -169,6 +174,38 @@ def _check_rows_against_hanchans(
         raise LiveDrawCaptureError("payload has more rows than declared")
 
 
+def _validate_plan(value: object) -> list[tuple[int, int]]:
+    """計画（`(seed, placement)`の順序つき列）の形と一意性を検査する。"""
+    if type(value) not in (list, tuple) or not value:
+        raise LiveDrawCaptureError("the hanchan plan must be a non-empty sequence")
+    plan = []
+    for index, item in enumerate(value):
+        if type(item) not in (list, tuple) or len(item) != 2:
+            raise LiveDrawCaptureError(f"plan[{index}] must be (seed, placement)")
+        seed, placement = item
+        if type(seed) is not int:
+            raise LiveDrawCaptureError(f"plan[{index}] seed must be an integer")
+        if type(placement) is not int or placement < 0:
+            raise LiveDrawCaptureError(f"plan[{index}] placement is invalid")
+        plan.append((seed, placement))
+    if len(set(plan)) != len(plan):
+        raise LiveDrawCaptureError("the hanchan plan must not repeat (seed, placement)")
+    return plan
+
+
+def _require_plan_match(
+    plan: Sequence[tuple[int, int]], captured: Sequence[tuple[int, int]]
+) -> None:
+    missing = [key for key in plan if key not in captured]
+    extra = [key for key in captured if key not in plan]
+    if missing or extra:
+        raise LiveDrawCaptureError(
+            f"captured hanchans differ from the plan (missing={missing}, extra={extra})"
+        )
+    if list(captured) != list(plan):
+        raise LiveDrawCaptureError("captured hanchans must follow the plan order")
+
+
 def _validate_hanchans(value: object) -> list[dict[str, object]]:
     if type(value) is not list or not value:
         raise LiveDrawCaptureError("manifest.hanchans must be a non-empty array")
@@ -197,6 +234,7 @@ def write_live_draw_capture(
     destination: Path,
     hanchans: Sequence[CapturedHanchan],
     *,
+    plan: Sequence[tuple[int, int]],
     arena_revision: str,
     engine_revision: str,
     rules: str,
@@ -205,6 +243,8 @@ def write_live_draw_capture(
 ) -> LiveDrawArtifact:
     """captureした半荘列をwrite-onceで保存し、strict readbackした結果を返す。
 
+    `plan`は実行前に決めた`(seed, placement)`の順序つき列で、capture結果とは
+    独立に渡す。過不足・重複・順序違いがあれば何も公開しない。
     `access`（誰が読めるか）と`retention`（いつまで保持するか）は必須の記述値。
     """
     destination = Path(destination)
@@ -215,6 +255,7 @@ def write_live_draw_capture(
     _require_text(rules, "rules")
     _require_text(access, "access")
     _require_text(retention, "retention")
+    expected = _validate_plan(plan)
     hanchans = tuple(hanchans)
     if not hanchans:
         raise LiveDrawCaptureError("at least one captured hanchan is required")
@@ -223,6 +264,10 @@ def write_live_draw_capture(
     for hanchan in hanchans:
         if any(not isinstance(item, CapturedRound) for item in hanchan.rounds):
             raise LiveDrawCaptureError("rounds must be CapturedRound values")
+
+    _require_plan_match(
+        expected, [(hanchan.seed, hanchan.placement) for hanchan in hanchans]
+    )
 
     rows = [row for hanchan in hanchans for row in hanchan.rows]
     for row in rows:
@@ -242,6 +287,7 @@ def write_live_draw_capture(
             "rows": len(rows),
             "sha256": sha256_bytes(payload_bytes),
         },
+        "plan": [[seed, placement] for seed, placement in expected],
         "producer": {
             "arena_revision": arena_revision,
             "engine_revision": engine_revision,
@@ -289,6 +335,10 @@ def read_live_draw_capture(source: Path) -> LiveDrawArtifact:
     _require_revision(producer["arena_revision"], "producer.arena_revision")
     _require_revision(producer["engine_revision"], "producer.engine_revision")
     hanchans = _validate_hanchans(manifest["hanchans"])
+    _require_plan_match(
+        _validate_plan(manifest["plan"]),
+        [(hanchan["seed"], hanchan["placement"]) for hanchan in hanchans],
+    )
     payload = manifest["payload"]
     if type(payload) is not dict or set(payload) != _PAYLOAD_FIELDS:
         raise LiveDrawCaptureError("manifest.payload fields are invalid")

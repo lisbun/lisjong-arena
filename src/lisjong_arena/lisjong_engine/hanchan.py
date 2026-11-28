@@ -26,7 +26,7 @@ optionalな観測hook（#514、#540）:
 - `on_transaction_observation`（#596、opt-in）: engine `run_hanchan()`の同名callbackへ
   そのまま渡す。値は全席の手牌を含むprivileged observationであり、渡し先は
   オフライン保存用のcapture（`live_draw_capture`）に限る。Policy・selector・
-  player-safe deliveryへは渡さない。省略時はengineへ渡さない（従来どおり）
+  deliveryへは渡さない。省略時はengineへ渡さない（従来どおり）
 
 すべて`None`なら従来と同じ呼び出しになる。
 """

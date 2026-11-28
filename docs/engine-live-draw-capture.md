@@ -18,9 +18,9 @@ DLVAT型の通常ツモ補正の入力として、lisjong-engine経路の半荘�
 capture_live_draw_hanchan(policies, seed, placement)
   └─ run_policy_hanchan(..., on_transaction_observation=capture, on_round_evidence_complete=capture)
        on_transaction_observation  privileged（全席の手牌）→ 行を作る
-       on_round_evidence_complete  player-safe（別経路）    → 完全性の照合
+       on_round_evidence_complete  viewer別projectionの束（別経路）→ 完全性・局identityの照合
   └─ LiveDrawCapture.finish(CompletedMatch) → CapturedHanchan
-write_live_draw_capture(destination, hanchans, ...) → privileged artifact
+write_live_draw_capture(destination, hanchans, plan=..., ...) → privileged artifact（計画と完全一致した場合だけ公開）
 read_live_draw_capture(source) → LiveDrawArtifact（行をidentity / pre_draw / realizedに分けて返す）
 ```
 
@@ -51,9 +51,14 @@ transactionの**直前に受け取った観測**の最後のstepの`RoundCheckpo
 | --- | --- | --- |
 | `identity` | `seed`、`placement`（呼び出し側が決める0以上の整数）、`round_ordinal`、`revision`（DRAW transaction）、`draw_index`（局内の通常ツモの番号、0始まり）、`drawer_seat` | **不可**（照合と結合のためだけ） |
 | `pre_draw` | `revision`・`phase`・`current_seat`（直前の観測）、`checkpoint`（下記） | 許可されたfieldだけを射影して渡す（射影の定義はlisjong） |
-| `realized` | `tile`（実現牌）、`source`（常に`live_wall`）、`post_draw_checkpoint_sha256`（事後盤面のcanonical JSONのSHA-256。将来の照合用） | **不可**。反実仮想の候補 a とは別の引数として扱う |
+| `realized` | `tile`（実現牌）、`source`（常に`live_wall`）、`post_draw_checkpoint_sha256`（事後盤面のcanonical JSONのSHA-256） | **不可**。反実仮想の候補 a とは別の引数として扱う |
 
-`checkpoint`は`RoundCheckpoint`全体をserializeしたもの。
+`post_draw_checkpoint_sha256`は、将来同じrevisionで再実行したときの照合用である。
+事後盤面そのものは保存しないので、読込時に事後盤面の意味（「ツモ直前 + 実現牌」との整合）を
+再検証することはできない。その整合は**作成時の検査**（§4）で保証する。
+
+`checkpoint`は`RoundCheckpoint`をversioned capture projectionとして射影したもの
+（下記）。pending状態は保存せず、`riichi_finalizations`は必要なfieldだけに射影する。
 
 - 牌は136枚ID（`Tile.id`、0..135）。赤五は標準牌集合の`copy_index == 0`で、
   `STANDARD_TILES[id]`から牌種と赤を復元できる
@@ -81,14 +86,18 @@ lisjong側で固定する。
 ### 観測列（作成時）
 
 - 各局の最初の観測が`ROUND_STARTED`（単独のtransaction）で、`round_ordinal`は1から連続。
-  途中から始まった観測・局をまたぐ観測を拒否する
+  `revision == 1`、`phase == AWAITING_DRAW`、`current_seat`が局開始checkpointの親、
+  どの席も`drawn_tile`を持たない。途中から始まった観測・局をまたぐ観測を拒否する
+- 局の終わりは`ROUND_ENDED`が最後のstepで、`phase == FINISHED`。`ROUND_ENDED`のない
+  `FINISHED`も拒否する
 - 同じ局の観測は`revision`が連続する（欠落・重複・順序違いを拒否）
 - DRAW stepは単独のtransactionで、`TileDrawnEvent`ちょうど1つ。DRAW以外のstepに
   ツモeventがあれば拒否する
 - 通常ツモの直前の観測は`phase == AWAITING_DRAW`かつ`current_seat == drawer`
 - 事後盤面との整合: drawerの`hand_tiles` = ツモ直前の手牌 + 実現牌（多重集合）、
   `drawn_tile`が実現牌、`live_tiles_remaining`が1減る。ほかの席・河・副露・表示牌・
-  立直の解決は変わらない。drawerの同巡見逃しフリテン（`temporary`）の解除だけを許す。
+  立直の解決は変わらない。engineはツモ時に必ず同巡見逃しフリテンを解除するので、
+  drawerの`missed_ron_furiten`は`temporary`なら`null`になり、それ以外の値は変わらない。
   `hand_tiles`はツモ牌を含むので二重に数えない
 - 嶺上ツモは行を作らず、局ごとに件数だけを数える
 
@@ -96,7 +105,8 @@ lisjong側で固定する。
 
 - 未知・欠落field、型、enum、席・牌IDの範囲
 - `pre_draw.revision == identity.revision - 1`、phaseと席
-- どの席も`drawn_tile`を持たない
+- どの席も`drawn_tile`を持たない。`drawn_tile`と`drawn_tile_source`は両方`null`か
+  両方値を持つ
 - 物理tileの一意性: 手牌・副露・**鳴かれていない**河・公開表示牌の間で重複しない
 - 鳴かれた河の牌（`called_by`）は、鳴いた席の副露の`called_tile` / `source_seat`と
   1対1で対応する
@@ -110,17 +120,28 @@ lisjong側で固定する。
 
 ### 完全性（`finish`、別経路との照合）
 
-captureの自己カウンタではなく、player-safeな`on_round_evidence_complete`の
-`DrawEvidence`と照合する。
+captureの自己カウンタではなく、`on_round_evidence_complete`の`DrawEvidence`と照合する。
+`RoundEvidenceCompletion`の各viewer projectionは**そのviewerに対してだけ**player-safeで、
+4席分を束ねたbundle全体は単一playerにsafeではない（他家のツモ牌を集合として含む）。
+captureはbundleを照合にだけ使い、保存しない。
 
 - 局数 = `CompletedMatch.history`の局数 = evidenceの局数
+- 局identity: `CompletedRound.random_provenance.round_ordinal`がcaptureの局と一致し、
+  evidenceの場風・局番号・親・本場が`CompletedRound.position_before`と一致し、
+  局開始checkpointの親・場風も`position_before`と一致する
 - 局ごとに、通常ツモの席の列がevidenceと一致する（4 viewerのevidenceが互いに一致することも要求）
-- drawer自身のviewerのevidenceが持つ牌（牌種と赤）が実現牌と一致する
+- drawer自身のviewerのevidenceが持つ牌（牌種と赤）が実現牌と一致する。evidenceは
+  物理copyを識別しないので、copy ID（`Tile.id`）まではこの経路で照合できない
 - 嶺上ツモの件数がevidenceと一致する
 
 ### artifact（読込時）
 
+- 書き込み時: 実行前に決めた計画（`plan`、`(seed, placement)`の順序つき列）を
+  capture結果とは独立に渡す。captureした半荘が計画と過不足・重複・順序違いなく
+  一致しない場合は、何も公開しない（完全なseed blockだけを公開する）。1半荘のfixtureは
+  1件だけの計画として扱う
 - file集合が`manifest.json`と`live-draws.jsonl`だけ
+- manifestの`plan`と半荘の列が一致する
 - manifestのschema、`information_class == "privileged-offline-only"`、`access` /
   `retention` / `rules`が空でない、producerのrevisionが40桁
 - payloadのbytes・SHA-256・行数、各行がcanonical JSON
@@ -147,6 +168,19 @@ captureの自己カウンタではなく、player-safeな`on_round_evidence_comp
     他のrotation・終局結果・将来の行を渡さない
 - 補正の計算・価値関数・射影の定義はlisjongが所有する。既存の正式結果をsidecarで
   再分類しない
+
+### 保存先・access・retention（gate）
+
+本実装はcaptureと保存・読込の関数だけを提供し、保存先の基盤（S3・ACL等）は
+実装しない。writerは`access` / `retention`の記述を必須にするが、その内容の正しさは
+検査できない。そのため利用を次のように区切る。
+
+| 利用 | 条件 |
+| --- | --- |
+| fixture・unit test | 一時directoryだけに書き、test終了時に削除する。repositoryへcommitしない |
+| それ以外（development pilot等） | **実行計画のIssueで、実行前に次を固定し、ユーザーの承認を得てからでなければ書かない**: (1) 正式artifact・局記録・既存の評価保存物と分離した保存root、(2) 読める主体の範囲（ACL）、(3) 保持期限と削除の責任者、(4) V / pの学習・評価でのTRAIN / 評価のseed block分離。固定した値をそのまま`access` / `retention`に記録する |
+
+保存rootはrepositoryの外に置き、正式評価のartifact directoryと共有しない。
 
 ## 6. 範囲外
 

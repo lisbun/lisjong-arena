@@ -7,7 +7,7 @@ lisjong-engineの`run_hanchan(on_transaction_observation=...)`が渡すprivilege
 ```text
 run_hanchan
   on_transaction_observation ──> LiveDrawCapture（一方向のobserver）
-  on_round_evidence_complete ──> LiveDrawCapture（独立した件数照合用、player-safe）
+  on_round_evidence_complete ──> LiveDrawCapture（独立した件数照合用、viewer別projection）
         ↓ finish(CompletedMatch)
 CapturedHanchan（行と局ごとの件数）
         ↓ live_draw_store.write_live_draw_capture()
@@ -23,9 +23,14 @@ privileged artifact（正式result・局記録・GameTraceとは別）
   価値関数・条件付き分布の入力へは`pre_draw`から射影したfieldだけを渡す
   （射影の定義はlisjongの次段階）
 - 嶺上ツモ（`DrawSource.RINSHAN`）は行を作らず、局ごとの件数だけを数える
-- 完全性は、captureの自己カウンタではなく、player-safeな
-  `on_round_evidence_complete`の`DrawEvidence`（別経路）と照合する
-- 観測はPolicy・selector・player-safe deliveryへ渡さない。observerの例外は
+- 完全性は、captureの自己カウンタではなく、`on_round_evidence_complete`の
+  `DrawEvidence`（別経路）と照合する。`RoundEvidenceCompletion`は各viewerの
+  projectionがそのviewerに対してだけplayer-safeな値で、4席分を束ねたbundle全体は
+  単一playerにsafeではない（他家のツモ牌を集合として含む）。capture内の照合にだけ
+  使い、保存しない
+- 局のidentity（場風・局番号・親・本場・round ordinal）は、局開始checkpoint・
+  evidence・`CompletedMatch.history`の`position_before`の3つで照合する
+- 観測はPolicy・selector・deliveryへ渡さない。observerの例外は
   engineの契約どおり実行全体を失敗させ、成功分だけの結果を作らない
 """
 
@@ -37,7 +42,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from lisjong_engine.match_state import CompletedMatch
+from lisjong_engine.match_state import CompletedMatch, CompletedRound
 from lisjong_engine.meld import Ankan, Chi, Daiminkan, Kakan, Pon
 from lisjong_engine.round_event import DrawSource, TileDrawnEvent
 from lisjong_engine.round_evidence import DrawEvidence
@@ -295,6 +300,10 @@ def _validate_seat_shape(raw: object, index: int) -> dict[str, object]:
     _enum(seat["seat_wind"], _WINDS, f"{context}.seat_wind")
     _tiles(seat["hand_tiles"], f"{context}.hand_tiles")
     _optional_tile(seat["drawn_tile"], f"{context}.drawn_tile")
+    if (seat["drawn_tile"] is None) is not (seat["drawn_tile_source"] is None):
+        raise LiveDrawCaptureError(
+            f"{context}.drawn_tile and drawn_tile_source must be set together"
+        )
     if seat["drawn_tile_source"] is not None:
         _enum(seat["drawn_tile_source"], _DRAW_SOURCES, f"{context}.drawn_tile_source")
     for position, discard in enumerate(_list(seat["discards"], f"{context}.discards")):
@@ -490,6 +499,8 @@ class CapturedHanchan:
 @dataclass
 class _RoundState:
     round_ordinal: int
+    dealer_seat: int
+    prevailing_wind: str
     last: TransactionObservation
     live_draws: list[tuple[int, int]]  # (drawer seat, tile id)
     rinshan_draws: int = 0
@@ -499,7 +510,8 @@ class LiveDrawCapture:
     """1半荘分の一方向observer。`run_hanchan`の2つのcallbackへ渡す。
 
     `on_transaction_observation`（privileged）から行を作り、
-    `on_round_evidence_complete`（player-safe、別経路）を完全性の照合に使う。
+    `on_round_evidence_complete`（viewer別projectionの束、別経路）を完全性と
+    局identityの照合に使う。
     受け取った値はこのobject内のbufferだけへ保持し、どこにも返さない
     （`finish()`の結果だけを返す）。
     """
@@ -515,6 +527,7 @@ class LiveDrawCapture:
         self._rounds: list[CapturedRound] = []
         self._current: _RoundState | None = None
         self._closed_round_draws: list[list[tuple[int, int]]] = []
+        self._round_starts: list[tuple[int, str]] = []
         self._evidence: list[RoundEvidenceCompletion] = []
         self._finished = False
 
@@ -556,10 +569,19 @@ class LiveDrawCapture:
                         "a draw event appeared outside a DRAW step"
                     )
         current.last = observation
-        if any(
-            step.kind is TransactionStepKind.ROUND_ENDED for step in observation.steps
-        ):
+        ended = [
+            index
+            for index, step in enumerate(observation.steps)
+            if step.kind is TransactionStepKind.ROUND_ENDED
+        ]
+        if ended:
+            if ended != [len(observation.steps) - 1]:
+                raise LiveDrawCaptureError("ROUND_ENDED must be the final step")
+            if observation.phase is not RoundPhase.FINISHED:
+                raise LiveDrawCaptureError("a round must end in the FINISHED phase")
             self._close_round(current)
+        elif observation.phase is RoundPhase.FINISHED:
+            raise LiveDrawCaptureError("a FINISHED round must carry ROUND_ENDED")
 
     def _start_round(self, observation: TransactionObservation) -> None:
         if len(observation.steps) != 1:
@@ -572,8 +594,19 @@ class LiveDrawCapture:
                 "round ordinals must start at 1 and be contiguous "
                 "(a resumed round is not supported)"
             )
+        checkpoint = observation.steps[0].checkpoint
+        if observation.revision != 1:
+            raise LiveDrawCaptureError("ROUND_STARTED must be revision 1 of its round")
+        if observation.phase is not RoundPhase.AWAITING_DRAW:
+            raise LiveDrawCaptureError("ROUND_STARTED must await the dealer draw")
+        if observation.current_seat is not checkpoint.dealer_seat:
+            raise LiveDrawCaptureError("the dealer must draw first")
+        if any(seat.drawn_tile is not None for seat in checkpoint.seats):
+            raise LiveDrawCaptureError("no seat may hold a drawn tile at round start")
         self._current = _RoundState(
             round_ordinal=observation.round_ordinal,
+            dealer_seat=_seat(checkpoint.dealer_seat),
+            prevailing_wind=checkpoint.prevailing_wind.value,
             last=observation,
             live_draws=[],
         )
@@ -641,6 +674,7 @@ class LiveDrawCapture:
         current.live_draws.append((drawer, tile))
 
     def _close_round(self, current: _RoundState) -> None:
+        self._round_starts.append((current.dealer_seat, current.prevailing_wind))
         self._rounds.append(
             CapturedRound(
                 round_ordinal=current.round_ordinal,
@@ -680,6 +714,12 @@ class LiveDrawCapture:
         for index, (captured, evidence) in enumerate(
             zip(self._rounds, self._evidence, strict=True)
         ):
+            _require_round_identity(
+                captured,
+                completed.history[index],
+                evidence,
+                self._round_starts[index],
+            )
             live, rinshan = _evidence_draws(evidence)
             draws = self._closed_round_draws[index]
             if [seat for seat, _ in draws] != [seat for seat, _ in live]:
@@ -710,6 +750,37 @@ class LiveDrawCapture:
             raise LiveDrawCaptureError("capture is already finished")
 
 
+def _require_round_identity(
+    captured: CapturedRound,
+    completed_round: CompletedRound,
+    evidence: RoundEvidenceCompletion,
+    start: tuple[int, str],
+) -> None:
+    """局開始checkpoint・evidence・`CompletedRound`の局identityが一致することを検査する。"""
+    context = f"round {captured.round_ordinal}"
+    if completed_round.random_provenance.round_ordinal != captured.round_ordinal:
+        raise LiveDrawCaptureError(f"{context}: round ordinal differs from the match")
+    position = completed_round.position_before
+    if (
+        evidence.prevailing_wind,
+        evidence.hand_number,
+        evidence.dealer_seat,
+        evidence.honba,
+    ) != (
+        position.prevailing_wind,
+        position.hand_number,
+        position.dealer_seat,
+        position.honba,
+    ):
+        raise LiveDrawCaptureError(
+            f"{context}: evidence identity differs from the match"
+        )
+    if start != (_seat(position.dealer_seat), position.prevailing_wind.value):
+        raise LiveDrawCaptureError(
+            f"{context}: round start dealer or wind differs from the match"
+        )
+
+
 def _public_key(tile_id: int) -> tuple[int, bool]:
     tile = STANDARD_TILES[tile_id]
     return (tile.tile_type.id, tile.is_red)
@@ -721,7 +792,8 @@ def _evidence_draws(
     """4 viewerの`DrawEvidence`から、通常ツモの(席, 自席viewerの牌)列と嶺上件数を作る。
 
     4 viewerで席・取得元の列が一致することを要求する。牌はdrawer自身のviewerの
-    evidenceにだけ含まれる（player-safeな契約）。
+    evidenceにだけ含まれる（各projectionはそのviewerに対してだけplayer-safe）。
+    evidenceの牌は牌種と赤だけで、物理copy IDは照合できない。
     """
     sequences = []
     own_tiles: dict[int, list[tuple[int, bool]]] = {}
@@ -765,8 +837,9 @@ def _require_post_matches(
     """事後盤面 = ツモ直前盤面 + 実現牌（drawerの手牌だけ）であることを検査する。
 
     `hand_tiles`はツモ牌を含むので、drawerの手牌は多重集合として
-    pre + {tile}と一致し、ほかの席・河・副露・表示牌は変わらない。同巡見逃し
-    フリテンの解除（drawerの`missed_ron_furiten`がTEMPORARYからNoneへ）だけは許す。
+    pre + {tile}と一致し、ほかの席・河・副露・表示牌は変わらない。engineは
+    ツモ時に必ず同巡見逃しフリテンを解除するので、drawerの`missed_ron_furiten`は
+    TEMPORARYならNoneへ変わり、それ以外の値は変わらない。
     """
     if post["live_tiles_remaining"] != pre["live_tiles_remaining"] - 1:
         raise LiveDrawCaptureError("a live-wall draw must consume one live tile")
@@ -795,11 +868,15 @@ def _require_post_matches(
         for key in ("discards", "melds", "riichi_status", "is_ippatsu", "seat_wind"):
             if after[key] != before[key]:
                 raise LiveDrawCaptureError(f"a draw must not change drawer {key}")
-        if after["missed_ron_furiten"] != before["missed_ron_furiten"] and not (
-            before["missed_ron_furiten"] == "temporary"
-            and after["missed_ron_furiten"] is None
-        ):
-            raise LiveDrawCaptureError("a draw may only clear temporary furiten")
+        expected_furiten = (
+            None
+            if before["missed_ron_furiten"] == "temporary"
+            else before["missed_ron_furiten"]
+        )
+        if after["missed_ron_furiten"] != expected_furiten:
+            raise LiveDrawCaptureError(
+                "a draw must clear temporary furiten and keep other reasons"
+            )
 
 
 def capture_live_draw_hanchan(
