@@ -145,7 +145,11 @@ the outer bound; this needs its own approval and budget.
   and `lisjong-engine` 91af75e3aa11520c3b0543719dc74bb4c517ee06. #591 moved the
   `lisjong` pin to e7156eeb9ec609fc0a57aba427bc5fb95f4f21b5; the `src` difference is
   two added Heuristic candidate modules and their exports, so the Champion policies
-  are unchanged, but the FORMAL plan must record and install the pin it locks
+  are unchanged, but the FORMAL plan must record and install the pin it locks.
+  #598 moved the pin to f4cb807b317517c4bbdbbc5c47837639163cc585; the `src`
+  difference adds one Heuristic candidate module (lisjong #384), its export and
+  the offline `lisjong.draw_correction` module (lisjong #391), so the Champion
+  policies are again unchanged
 - 8 workers; M1/R1 manifest and weights SHA-256 from #583 / #127 (the v2 lock
   re-hashes them before and after the run)
 - the supervisor SHA-256 (in the receipt)

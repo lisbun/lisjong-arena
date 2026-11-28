@@ -5,6 +5,7 @@ Issue: [lisbun/lisjong-arena#514](https://github.com/lisbun/lisjong-arena/issues
 仕様: [`heuristic-candidate-engine-aabb-half.md`](heuristic-candidate-engine-aabb-half.md) §2〜§5、§7、§9〜§12
 局単位record（#513）: [`engine-aabb-kyoku-record.md`](engine-aabb-kyoku-record.md)
 通常ツモのopt-in capture（#596、privileged・評価経路の外）: [`engine-live-draw-capture.md`](engine-live-draw-capture.md)
+通常ツモ補正の射影・join・κ・置換不変性fixture（#598、診断用・評価経路の外）: [`draw-correction.md`](draw-correction.md)
 
 > Status: **実装のみ**。正式eventは実行していない。seed予約、校正、K・timeoutの決定（J1 / J2）、
 > AWS入口、Champion変更は行っていない。開始条件（§7）がそろうまで正式評価は始めない。

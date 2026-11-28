@@ -7,6 +7,8 @@ parent [lisbun/lisjong-project#134](https://github.com/lisbun/lisjong-project/is
 > Status: **captureと保存・読込の実装だけ**。補正値の計算、価値関数、条件付き分布の
 > 射影はlisjongの次段階で扱う。容量・時間・RSSの実測は、別に承認される
 > fresh development pilotで行う。既存の評価経路と正式protocolは変えない。
+>
+> 射影・join・κの推定と凍結・置換不変性fixtureは#598で実装した（[`draw-correction.md`](draw-correction.md)）。
 
 ## 1. 目的と構成
 

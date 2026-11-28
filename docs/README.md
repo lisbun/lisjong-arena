@@ -71,6 +71,7 @@ repository READMEは入口に留め、本ページで「いま正本として読
 - [L2a合成Policyの動作確認](l2a-runtime-smoke-507.md) — Issue #507（親lisjong#318）。凍結したL2a 1席 + C0 3席の16半荘で、完走・全判断の合法・推論時間・RSSを記録する（強さの比較はしない）
 - [リーチ下1向聴の押し引き候補の半荘開発比較](engine-aabb-evaluation.md#14-リーチ下1向聴の押し引き候補の半荘開発比較591) — Issue #591（候補lisjong#377、東1局の確認lisjong#379）。固定候補と現Heuristic Championのengine AABB、K = 500・stage分割実行・事前固定の判定規則（DEVELOPMENT。正式評価・昇格の根拠ではない）
 - [Learning family昇格評価：engine AABB](learning-candidate-engine-aabb.md) — Issue #562（設計lisjong#368）。L2a合成Policy対Learning Champion Arm Yのengine全6配置・K = 100・平均最終順位のprotocol・3 artifact binding・lock・result・strict verify・局記録（実装のみ。準備gateと正式実行は別Issue）
+- [通常ツモ補正の射影・join・κ・置換不変性fixture](draw-correction.md) — Issue #598（設計lisjong#390、API lisjong#391、capture #596）。learning engine AABBの順位差だけを対象に、`pre_draw`の射影・半荘結果とのjoin・D / Xのcontrast・κの推定とwrite-once凍結・split検査・補正の分析（r・paired block bootstrap）と、pのgateである未公開牌の置換不変性fixture（実装のみ。pilotは別承認）
 - [#245 待ち確率推定器の正式test](riichi-wait-formal-245.md) — Issue #447（owner lisjong#245）の予約済み新規seed 932000..932099の生成・`select`・`test`をAWS 1台で実行する経路（actual runはmerge後のoperator作業）
 - [聴牌PUSH/FOLDの対比較source producerとpilot](tenpai-push-fold-source-476.md) — Issue #476（owner lisjong#254）。lisjong#288のwire契約どおりに押す／降りるの局の結果を対で記録する経路と、16半荘pilotの固定値（pilotの実行はmerge後のoperator作業）
 - [聴牌PUSH/FOLDの対比較source 本生成](tenpai-push-fold-source-475.md) — Issue #475。400半荘（train 200 / valid 200）の固定値と、AWS 1台で生成する経路（actual runはmerge後のoperator作業）
