@@ -27,6 +27,7 @@ import unittest
 from unittest.mock import patch
 
 from lisjong_engine.action_projection import project_legal_actions
+from lisjong_engine.dora import dora_tile_type
 from lisjong_engine.legal_action import (
     AnkanLegalAction,
     ChiLegalAction,
@@ -87,7 +88,7 @@ def _start(live, dead):
 def _chooser(discard_preference=()):
     preferred = list(discard_preference)
 
-    def choose(seat, actions):
+    def choose(seat, actions, state):
         for kind in _PRIORITY:
             offered = [action for action in actions if type(action) is kind]
             if not offered:
@@ -99,6 +100,28 @@ def _chooser(discard_preference=()):
                         return action
             return offered[0]
         raise AssertionError(f"{seat} has no legal action")
+
+    return choose
+
+
+def _riichi_chooser(riichi_seat, riichi_discard):
+    """立直する席だけ立直し、他の席は反応をすべてPass・打牌はツモ切りにする。"""
+
+    def choose(seat, actions, state):
+        kinds = {type(action): action for action in actions}
+        for kind in (TsumoLegalAction, RonLegalAction):
+            if kind in kinds:
+                return kinds[kind]
+        if seat is riichi_seat and RiichiLegalAction in kinds:
+            return kinds[RiichiLegalAction]
+        discards = [a for a in actions if type(a) is DiscardLegalAction]
+        if discards:
+            for wanted in (riichi_discard, state.drawn_tile_id):
+                for action in discards:
+                    if action.tile_id == wanted:
+                        return action
+            return discards[0]
+        return kinds[PassLegalAction]
 
     return choose
 
@@ -118,12 +141,12 @@ def _advance(state, choose):
         return ("rinshan",)
     if phase in _TURN_PHASES:
         seat = state.current_seat
-        action = choose(seat, state.legal_actions(seat).actions)
+        action = choose(seat, state.legal_actions(seat).actions, state)
         state.apply(seat, action, expected_revision=state.revision)
         return ("turn", seat, action)
     if phase in _REACTION_PHASES:
         choices = {
-            seat: choose(seat, state.legal_actions(seat).actions)
+            seat: choose(seat, state.legal_actions(seat).actions, state)
             for seat in state.reacting_seats
         }
         state.resolve_reactions(choices, expected_revision=state.revision)
@@ -225,21 +248,23 @@ def _permuted_wall(live, dead, hidden, rng):
 
 
 class _Coverage:
+    """1 scenario内で実際に比べた時点の記録（scenarioごとにassertする）。"""
+
     def __init__(self):
         self.points = 0
         self.kinds = set()
         self.pending_kan_dora = 0
         self.unrevealed_slot_changed = 0
-        self.scenarios = set()
+        self.riichi_tsumo = 0
 
 
-def _check_round(test, live, dead, *, choose, coverage, rng, limit=None):
-    """局を進め、各decision時点で置換したW'と比べる。比べた時点数を返す。"""
+def _check_round(test, live, dead, *, choose, rng, limit=None):
+    """局を進め、各decision時点で置換したW'と比べる。比べた時点の記録を返す。"""
     match, state = _start(live, dead)
+    coverage = _Coverage()
     steps = []
-    checked = 0
     while state.phase is not RoundPhase.FINISHED:
-        if _is_decision(state) and (limit is None or checked < limit):
+        if _is_decision(state) and (limit is None or coverage.points < limit):
             hidden = _hidden_ids(state)
             test.assertGreaterEqual(len(hidden), 2)
             live2, dead2 = _permuted_wall(live, dead, hidden, rng)
@@ -259,15 +284,15 @@ def _check_round(test, live, dead, *, choose, coverage, rng, limit=None):
             if _unrevealed_dead_slots(state) != _unrevealed_dead_slots(state2):
                 coverage.unrevealed_slot_changed += 1
             for seat in Seat:
-                coverage.kinds.update(
-                    type(a) for a in state.legal_actions(seat).actions
-                )
+                kinds = {type(a) for a in state.legal_actions(seat).actions}
+                coverage.kinds |= kinds
+                if TsumoLegalAction in kinds and state.is_riichi_established(seat):
+                    coverage.riichi_tsumo += 1
             if state.pending_kan_dora_reveals:
                 coverage.pending_kan_dora += 1
             coverage.points += 1
-            checked += 1
         steps.append(_advance(state, choose))
-    return match, state, checked
+    return match, state, coverage
 
 
 # ---------------------------------------------------------------------------
@@ -340,21 +365,26 @@ def _ids(pool, kinds):
 
 
 class PermutationInvarianceTest(unittest.TestCase):
-    """各scenarioで、未公開の牌を入れ替えても非終局の合法手・観測が変わらない。"""
+    """各scenarioで、未公開の牌を入れ替えても非終局の合法手・観測が変わらない。
 
-    coverage = _Coverage()
+    各scenarioは、自分の中で実際に比べた時点にprobeが現れたことをassertする
+    （test順やskipに依存しない）。
+    """
 
-    def _run(self, live, dead, *, discard_preference=(), limit=None, seed=0):
-        self.coverage.scenarios.add(self._testMethodName)
-        return _check_round(
+    def _run(
+        self, live, dead, *, discard_preference=(), limit=None, seed=0, choose=None
+    ):
+        _, state, coverage = _check_round(
             self,
             live,
             dead,
-            choose=_chooser(discard_preference),
-            coverage=self.coverage,
+            choose=choose or _chooser(discard_preference),
             rng=random.Random(seed),
             limit=limit,
         )
+        self.assertGreater(coverage.points, 0)
+        self.assertGreater(coverage.unrevealed_slot_changed, 0)
+        return state, coverage
 
     def test_nine_terminals_probe(self):
         pool = _Pool()
@@ -383,7 +413,8 @@ class PermutationInvarianceTest(unittest.TestCase):
         self.assertIn(
             NineTerminalsLegalAction, {type(a) for a in state.legal_actions(E).actions}
         )
-        self._run(live, dead, limit=6, seed=1)
+        _, coverage = self._run(live, dead, limit=6, seed=1)
+        self.assertIn(NineTerminalsLegalAction, coverage.kinds)
 
     def test_tsumo_probe_with_hidden_ura_and_kan_indicators(self):
         hand = [
@@ -418,7 +449,8 @@ class PermutationInvarianceTest(unittest.TestCase):
                 self.assertIn(
                     TsumoLegalAction, {type(a) for a in state.legal_actions(E).actions}
                 )
-                self._run(live, dead, limit=3, seed=2)
+                _, coverage = self._run(live, dead, limit=3, seed=2)
+                self.assertIn(TsumoLegalAction, coverage.kinds)
 
     def test_ron_probe_without_yaku_is_not_made_legal_by_hidden_dora(self):
         # 南: 234m 678m 345p 678p + 9s単騎（役なし）。東の初打9s。
@@ -468,9 +500,7 @@ class PermutationInvarianceTest(unittest.TestCase):
                 pool.free -= set(rest)
                 dead = rest[:4] + rest[4:5] + [dora8[0]] + [dora8[1]] + rest[5:12]
                 live, dead = _scripted(pool, {E: east, S: south}, draw, dead)
-                _, state, _ = self._run(
-                    live, dead, discard_preference=east_nine, limit=4, seed=3
-                )
+                self._run(live, dead, discard_preference=east_nine, limit=4, seed=3)
                 match, state = _start(live, dead)
                 state.draw(E)
                 state.apply(
@@ -530,7 +560,10 @@ class PermutationInvarianceTest(unittest.TestCase):
             E, DiscardLegalAction(east_five[0]), expected_revision=state.revision
         )
         self.assertIn(RonLegalAction, {type(a) for a in state.legal_actions(S).actions})
-        self._run(live, dead, discard_preference=east_five, limit=3, seed=4)
+        _, coverage = self._run(
+            live, dead, discard_preference=east_five, limit=3, seed=4
+        )
+        self.assertIn(RonLegalAction, coverage.kinds)
 
     def test_delayed_open_kan_dora_is_hidden_until_revealed(self):
         # 東の初打7p、南が7p×3で大明槓。槓ドラは南の打牌がロン以外で解決するまで未公開。
@@ -556,9 +589,11 @@ class PermutationInvarianceTest(unittest.TestCase):
         )
         draw = _ids(pool, [_z(5)])
         live, dead = _scripted(pool, {E: east, S: south}, draw)
-        before = self.coverage.pending_kan_dora
-        self._run(live, dead, discard_preference=east_seven, limit=8, seed=5)
-        self.assertGreater(self.coverage.pending_kan_dora, before)
+        _, coverage = self._run(
+            live, dead, discard_preference=east_seven, limit=8, seed=5
+        )
+        self.assertIn(DaiminkanLegalAction, coverage.kinds)
+        self.assertGreater(coverage.pending_kan_dora, 0)
 
     def test_random_walls_full_round(self):
         for wall_seed in (598001, 598002):
@@ -566,29 +601,54 @@ class PermutationInvarianceTest(unittest.TestCase):
                 order = list(range(136))
                 random.Random(wall_seed).shuffle(order)
                 live, dead = order[:-DEAD_WALL_SIZE], order[-DEAD_WALL_SIZE:]
-                _, state, checked = self._run(live, dead, seed=wall_seed)
+                state, coverage = self._run(live, dead, seed=wall_seed)
                 self.assertIs(state.phase, RoundPhase.FINISHED)
-                self.assertGreater(checked, 20)
+                self.assertGreater(coverage.points, 20)
 
-    def test_zz_coverage_of_probes(self):
-        """上のscenario全体で、ツモ・ロン・九種のprobe、遅延槓ドラ、未公開表示牌の変更を比べた。"""
-        coverage = self.coverage
-        scenarios = {
-            name
-            for name in dir(self)
-            if name.startswith("test_") and name != "test_zz_coverage_of_probes"
-        }
-        if coverage.scenarios != scenarios:
-            self.skipTest("coverage is only meaningful after every scenario ran")
-        for kind in (
-            TsumoLegalAction,
-            RonLegalAction,
-            NineTerminalsLegalAction,
-            DaiminkanLegalAction,
-        ):
-            self.assertIn(kind, coverage.kinds)
-        self.assertGreater(coverage.pending_kan_dora, 0)
-        self.assertGreater(coverage.unrevealed_slot_changed, 0)
+    def test_riichi_tsumo_probe_with_effective_ura_dora(self):
+        # 東: 123m 456m 789m 23p 55p。第1ツモ北を立直宣言牌にして1p-4p待ちで立直、
+        # 他家はツモ切り・全員Pass、東の第2ツモ1pでツモ（立直成立後の和了probe）。
+        # 公開中の表示牌の裏を4p（5pが裏ドラ2枚）/ 中（裏ドラ0枚）にした2つの合法な状態で、
+        # どちらもツモがofferされ、裏ドラ枚数が実際に変わることを確かめる。
+        hand = [_m(r) for r in range(1, 10)] + [_p(2), _p(3), _p(5), _p(5)]
+        ura_counts = {}
+        for ura_kind in (_p(4), _z(7)):
+            with self.subTest(ura=ura_kind):
+                pool = _Pool()
+                east = _ids(pool, hand)
+                riichi_discard = _ids(pool, [_z(4)])
+                draws = riichi_discard + _ids(pool, [_z(3), _z(2), _z(1), _p(1)])
+                indicator = _ids(pool, [_z(5)])
+                ura = _ids(pool, [ura_kind])
+                rest = sorted(pool.free)[:12]
+                pool.free -= set(rest)
+                dead = rest[:4] + indicator + ura + rest[4:12]
+                live, dead = _scripted(pool, {E: east}, draws, dead)
+                choose = _riichi_chooser(E, riichi_discard[0])
+
+                match, state = _start(live, dead)
+                # 配牌52枚のあと、東・南・西・北・東の5回ツモした東の手番まで進める
+                while not (
+                    state.phase is RoundPhase.AWAITING_DISCARD
+                    and state.current_seat is E
+                    and state.remaining_count == len(live) - 52 - 5
+                ):
+                    _advance(state, choose)
+                self.assertTrue(state.is_riichi_established(E))
+                self.assertIn(
+                    TsumoLegalAction, {type(a) for a in state.legal_actions(E).actions}
+                )
+                ura_types = [
+                    dora_tile_type(tile)
+                    for tile in state.corresponding_ura_dora_indicators
+                ]
+                ura_counts[ura_kind] = sum(
+                    tile.tile_type in ura_types for tile in state.hand_tiles(E)
+                )
+
+                _, coverage = self._run(live, dead, seed=6, choose=choose)
+                self.assertGreater(coverage.riichi_tsumo, 0)
+        self.assertEqual(ura_counts, {_p(4): 2, _z(7): 0})
 
 
 if __name__ == "__main__":

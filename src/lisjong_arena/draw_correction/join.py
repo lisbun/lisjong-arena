@@ -12,6 +12,9 @@ X(s)         (X_B(s) − X_A(s)) / 12          X_role = roleの12 seat-resultに
 ```
 
 部分的なblock、計画外の半荘、局・席の不一致はfail closedする（成功分だけを返さない）。
+
+公開の入口は`join_paired()`だけで、planと照合済みの`PairedSplit`（同じ実行から作ったcaptureと
+結果のpair）だけを受け取る。
 """
 
 from collections.abc import Sequence
@@ -36,6 +39,7 @@ from lisjong_arena.learning_candidate_engine_aabb.protocol import (
 from lisjong_arena.learning_candidate_engine_aabb.statistics import block_rank_totals
 from lisjong_arena.lisjong_engine.live_draw_store import LiveDrawArtifact
 
+from .paired_run import PairedSplit
 from .projection import project_record
 
 PLACEMENTS = len(PLACEMENT_CANDIDATE_SEATS)
@@ -62,13 +66,14 @@ class BlockContrast:
 
 @dataclass(frozen=True)
 class JoinedBlocks:
-    """join済みのseed block列と、そのcaptureのprovenance。"""
+    """join済みのseed block列と、そのpaired artifact・planのidentity。"""
 
+    plan_sha256: str
+    role: str
+    paired_manifest_sha256: str
     protocol_id: str
-    blocks: tuple[BlockContrast, ...]
-    capture_payload_sha256: str
-    capture_producer: dict
     value_definition: dict
+    blocks: tuple[BlockContrast, ...]
 
     @property
     def seeds(self) -> tuple[int, ...]:
@@ -122,9 +127,28 @@ def _seat_corrections(
     return totals, drawer_corrections
 
 
-def join_capture_with_hanchans(
+def join_paired(split: PairedSplit) -> JoinedBlocks:
+    """planと照合済みのpaired artifactから、seed blockごとのD・Xを返す。"""
+    if not isinstance(split, PairedSplit):
+        raise DrawCorrectionJoinError(
+            "join requires a PairedSplit read against its plan"
+        )
+    blocks = _join_blocks(split.capture, split.rows)
+    if tuple(block.seed for block in blocks) != split.seeds:
+        raise DrawCorrectionJoinError("joined seed blocks differ from the plan split")
+    return JoinedBlocks(
+        plan_sha256=split.plan_sha256,
+        role=split.role,
+        paired_manifest_sha256=split.manifest_sha256,
+        protocol_id=PROTOCOL_ID,
+        value_definition=v1_definition(),
+        blocks=blocks,
+    )
+
+
+def _join_blocks(
     artifact: LiveDrawArtifact, hanchans: Sequence[dict]
-) -> JoinedBlocks:
+) -> tuple[BlockContrast, ...]:
     """captureのartifactを、同じ実行の第1層の半荘row列へ結び、seed blockごとのD・Xを返す。"""
     if not isinstance(artifact, LiveDrawArtifact):
         raise DrawCorrectionJoinError("artifact must be a LiveDrawArtifact")
@@ -199,18 +223,12 @@ def join_capture_with_hanchans(
                 drawer_corrections=tuple(drawer_corrections),
             )
         )
-    return JoinedBlocks(
-        protocol_id=PROTOCOL_ID,
-        blocks=tuple(blocks),
-        capture_payload_sha256=manifest["payload"]["sha256"],
-        capture_producer=dict(manifest["producer"]),
-        value_definition=v1_definition(),
-    )
+    return tuple(blocks)
 
 
 __all__ = [
     "BlockContrast",
     "DrawCorrectionJoinError",
     "JoinedBlocks",
-    "join_capture_with_hanchans",
+    "join_paired",
 ]

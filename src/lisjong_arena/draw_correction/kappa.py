@@ -1,4 +1,4 @@
-"""κの推定（TRAIN）、write-onceの凍結artifact、splitの検査（lisjong#390 §1）。
+"""κの推定（TRAIN）とwrite-onceの凍結artifact（lisjong#390 §1、#598 P1-2）。
 
 ```text
 κ̂ = max(0, Ĉov(D, X) / V̂ar(X))     標本共分散・標本分散（分母 K − 1）、Fractionで厳密に計算
@@ -8,16 +8,13 @@
   それ以外                        -> κ̂ = Ĉov / V̂ar、ESTABLISHED（covariance-over-variance）
 ```
 
-- `minimum_blocks`は2以上で、実際の値はpilot計画で固定して渡す（defaultを持たない）
-- 入力はjoin済みの`JoinedBlocks`だけ。D・XはFractionで、非有限値は型として入らない
-  （floatやNaNを渡した場合も拒否する）
-- 上限・縮小は設けない。κ̂は凍結artifactへ書き、評価はそのartifactを読み戻した値だけを使う
+- 推定・凍結・読み戻しは、事前固定のplan（`plan.py`）へ結び付く。TRAINとして受け付けるのは、
+  そのplanのTRAIN roleのpaired artifactからjoinしたblockだけで、seed列はplanのTRAIN seedと一致する
+- `minimum_blocks`はplanの値を使う（callerは変えられない）
+- D・XはFractionで、floatやNaNは拒否する（非有限値は入らない）。上限・縮小は設けない
+- 凍結artifactはcanonical JSONのbytesで読み戻し、Ĉov・V̂ar・Kから分岐とκ̂を再導出して照合する
 """
 
-import hashlib
-import json
-import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -27,7 +24,6 @@ from lisjong.draw_correction import v1_definition
 from lisjong_arena._artifact_io import (
     ArtifactValidationError,
     canonical_json_text,
-    read_json_document,
     write_new_artifact_file,
 )
 from lisjong_arena.learning_candidate_engine_aabb.protocol import (
@@ -36,8 +32,9 @@ from lisjong_arena.learning_candidate_engine_aabb.protocol import (
 )
 
 from .join import JoinedBlocks
+from .plan import TRAIN, CorrectionPlan, read_canonical_document
 
-FROZEN_KAPPA_SCHEMA = "arena-draw-correction-frozen-kappa-v1"
+FROZEN_KAPPA_SCHEMA = "arena-draw-correction-frozen-kappa-v2"
 ESTIMATION_RULE_ID = "draw-correction-kappa-max0-cov-over-var-sample-v1"
 ESTABLISHED = "ESTABLISHED"
 NOT_ESTABLISHED = "KAPPA-NOT-ESTABLISHED"
@@ -45,39 +42,35 @@ BRANCH_RATIO = "covariance-over-variance"
 BRANCH_NON_POSITIVE = "non-positive-covariance"
 BRANCH_ZERO_VARIANCE = "zero-variance"
 BRANCH_INSUFFICIENT = "insufficient-blocks"
-ARITHMETIC_MINIMUM_BLOCKS = 2
-"""標本共分散が定義できる下限。pilot計画の下限はこれ以上でなければならない。"""
 
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_REVISION = re.compile(r"^[0-9a-f]{40}$")
 _FIELDS = {
     "branch",
-    "capture",
     "covariance",
     "estimation_rule",
     "k",
     "kappa",
     "minimum_blocks",
     "participants",
+    "plan_sha256",
     "protocol_id",
+    "revisions",
     "rules_digest",
     "schema",
-    "split",
     "status",
+    "train_paired_manifest_sha256",
+    "train_seeds",
     "value_definition",
     "variance",
 }
-_SPLIT_FIELDS = {"role", "train_seeds", "train_seeds_sha256"}
-_CAPTURE_FIELDS = {"payload_sha256", "producer"}
-_PARTICIPANT_FIELDS = {"candidate", "incumbent"}
 
 
 class DrawCorrectionKappaError(ArtifactValidationError):
-    """κの推定・凍結・splitが契約を満たさない場合。"""
+    """κの推定・凍結・適用が契約を満たさない場合。"""
 
 
 @dataclass(frozen=True)
 class KappaEstimate:
+    plan_sha256: str
     k: int
     minimum_blocks: int
     covariance: Fraction | None
@@ -89,14 +82,12 @@ class KappaEstimate:
 
 @dataclass(frozen=True)
 class FrozenKappa:
-    """凍結artifactを読み戻した値。評価はこの型だけを受け取る。"""
+    """凍結artifactを読み戻した値。評価は凍結fileを自分で読み戻して使う（`analysis.py`）。"""
 
-    path: Path
-    document: dict
+    sha256: str
     estimate: KappaEstimate
     train_seeds: tuple[int, ...]
-    participants: dict
-    value_definition: dict
+    train_paired_manifest_sha256: str
 
 
 def _exact(value: object, context: str) -> Fraction:
@@ -112,17 +103,10 @@ def sample_covariance(xs, ys) -> Fraction:
     k = len(xs)
     mean_x = sum(xs, Fraction(0)) / k
     mean_y = sum(ys, Fraction(0)) / k
-    return sum(
+    total = sum(
         ((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True)), Fraction(0)
-    ) / (k - 1)
-
-
-def _minimum_blocks(value: object) -> int:
-    if type(value) is not int or value < ARITHMETIC_MINIMUM_BLOCKS:
-        raise DrawCorrectionKappaError(
-            f"minimum_blocks must be an int >= {ARITHMETIC_MINIMUM_BLOCKS}"
-        )
-    return value
+    )
+    return total / (k - 1)
 
 
 def kappa_rule(
@@ -138,65 +122,53 @@ def kappa_rule(
     return covariance / variance, ESTABLISHED, BRANCH_RATIO
 
 
-def estimate_kappa(train: JoinedBlocks, *, minimum_blocks: int) -> KappaEstimate:
-    """TRAINのseed blockから κ̂ を推定する。"""
+def _require_plan(plan: object) -> CorrectionPlan:
+    if not isinstance(plan, CorrectionPlan):
+        raise DrawCorrectionKappaError(
+            "plan must be a CorrectionPlan read from its file"
+        )
+    return plan
+
+
+def _require_train(plan: CorrectionPlan, train: object) -> JoinedBlocks:
     if not isinstance(train, JoinedBlocks):
         raise DrawCorrectionKappaError("train must be JoinedBlocks")
-    minimum = _minimum_blocks(minimum_blocks)
+    if train.plan_sha256 != plan.sha256:
+        raise DrawCorrectionKappaError("train blocks belong to another plan")
+    if train.role != TRAIN:
+        raise DrawCorrectionKappaError(
+            "kappa can only be estimated from the TRAIN split"
+        )
+    if train.seeds != plan.train_seeds:
+        raise DrawCorrectionKappaError("train seed blocks differ from the plan")
+    if train.protocol_id != PROTOCOL_ID or train.value_definition != v1_definition():
+        raise DrawCorrectionKappaError("train protocol / value definition differ")
+    return train
+
+
+def estimate_kappa(plan: CorrectionPlan, train: JoinedBlocks) -> KappaEstimate:
+    """planのTRAIN splitのblockから κ̂ を推定する（下限はplanの値）。"""
+    plan = _require_plan(plan)
+    train = _require_train(plan, train)
     ds = [_exact(block.d, f"block {block.seed} D") for block in train.blocks]
     xs = [_exact(block.x, f"block {block.seed} X") for block in train.blocks]
     k = len(ds)
-    if k == 0:
-        raise DrawCorrectionKappaError("train must hold at least one seed block")
-    if len(set(train.seeds)) != k:
-        raise DrawCorrectionKappaError("train seed blocks must be unique")
-    if k >= ARITHMETIC_MINIMUM_BLOCKS:
+    if k >= 2:
         covariance = sample_covariance(ds, xs)
         variance = sample_covariance(xs, xs)
     else:
         covariance = variance = None
-    kappa, status, branch = kappa_rule(k, minimum, covariance, variance)
+    kappa, status, branch = kappa_rule(k, plan.minimum_blocks, covariance, variance)
     return KappaEstimate(
+        plan_sha256=plan.sha256,
         k=k,
-        minimum_blocks=minimum,
+        minimum_blocks=plan.minimum_blocks,
         covariance=covariance,
         variance=variance,
         kappa=kappa,
         status=status,
         branch=branch,
     )
-
-
-# ---------------------------------------------------------------------------
-# split
-# ---------------------------------------------------------------------------
-
-
-def require_disjoint_split(train_seeds, evaluation_seeds) -> None:
-    """TRAINと評価のseedが互いに素で、どちらも重複しないことを要求する。
-
-    seed blockはjoinが全6配置の完全なblockだけを作るので、seedが互いに素であれば
-    同じseedの全placementは同じsplitにある（片方へ一部だけ置いたblockはjoinが拒否する）。
-    """
-    train = list(train_seeds)
-    evaluation = list(evaluation_seeds)
-    for name, seeds in (("train", train), ("evaluation", evaluation)):
-        if not seeds:
-            raise DrawCorrectionKappaError(f"{name} must hold at least one seed block")
-        if any(type(seed) is not int for seed in seeds):
-            raise DrawCorrectionKappaError(f"{name} seeds must be ints")
-        if len(set(seeds)) != len(seeds):
-            raise DrawCorrectionKappaError(f"{name} seeds must be unique")
-    overlap = sorted(set(train) & set(evaluation))
-    if overlap:
-        raise DrawCorrectionKappaError(
-            f"train and evaluation share seed blocks: {overlap}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 凍結artifact
-# ---------------------------------------------------------------------------
 
 
 def _fraction_value(value: Fraction | None) -> dict | None:
@@ -221,174 +193,108 @@ def _read_fraction(
     return fraction
 
 
-def _seeds_digest(seeds) -> str:
-    text = json.dumps(list(seeds), separators=(",", ":"))
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _participants(value: object) -> dict:
-    if not isinstance(value, Mapping) or set(value) != _PARTICIPANT_FIELDS:
-        raise DrawCorrectionKappaError("participants must be {candidate, incumbent}")
-    for role in _PARTICIPANT_FIELDS:
-        if type(value[role]) is not str or not value[role].strip():
-            raise DrawCorrectionKappaError(
-                f"participants.{role} must be a non-empty string"
-            )
-    return {role: value[role] for role in sorted(_PARTICIPANT_FIELDS)}
+def _plan_fields(plan: CorrectionPlan) -> dict:
+    return {
+        "minimum_blocks": plan.minimum_blocks,
+        "participants": dict(plan.participants),
+        "plan_sha256": plan.sha256,
+        "protocol_id": PROTOCOL_ID,
+        "revisions": dict(plan.revisions),
+        "rules_digest": RULES_DIGEST,
+        "train_seeds": list(plan.train_seeds),
+        "value_definition": v1_definition(),
+    }
 
 
 def write_frozen_kappa(
-    path: Path,
-    train: JoinedBlocks,
-    estimate: KappaEstimate,
-    *,
-    participants: Mapping[str, str],
+    path: Path, plan: CorrectionPlan, train: JoinedBlocks, estimate: KappaEstimate
 ) -> FrozenKappa:
     """κ̂の凍結artifactをwrite-onceで書き、strict readbackした値を返す。"""
     path = Path(path)
-    if not isinstance(train, JoinedBlocks) or not isinstance(estimate, KappaEstimate):
-        raise DrawCorrectionKappaError("train / estimate have invalid types")
-    recomputed = estimate_kappa(train, minimum_blocks=estimate.minimum_blocks)
-    if recomputed != estimate:
-        raise DrawCorrectionKappaError("estimate does not match the train blocks")
-    if train.value_definition != v1_definition():
-        raise DrawCorrectionKappaError("train blocks used another value definition")
-    seeds = sorted(train.seeds)
+    plan = _require_plan(plan)
+    train = _require_train(plan, train)
+    if not isinstance(estimate, KappaEstimate) or estimate != estimate_kappa(
+        plan, train
+    ):
+        raise DrawCorrectionKappaError(
+            "estimate does not match the plan's train blocks"
+        )
     document = {
+        **_plan_fields(plan),
         "branch": estimate.branch,
-        "capture": {
-            "payload_sha256": train.capture_payload_sha256,
-            "producer": dict(train.capture_producer),
-        },
         "covariance": _fraction_value(estimate.covariance),
         "estimation_rule": ESTIMATION_RULE_ID,
         "k": estimate.k,
         "kappa": _fraction_value(estimate.kappa),
-        "minimum_blocks": estimate.minimum_blocks,
-        "participants": _participants(participants),
-        "protocol_id": train.protocol_id,
-        "rules_digest": RULES_DIGEST,
         "schema": FROZEN_KAPPA_SCHEMA,
-        "split": {
-            "role": "TRAIN",
-            "train_seeds": seeds,
-            "train_seeds_sha256": _seeds_digest(seeds),
-        },
         "status": estimate.status,
-        "value_definition": train.value_definition,
+        "train_paired_manifest_sha256": train.paired_manifest_sha256,
         "variance": _fraction_value(estimate.variance),
     }
-    _validate_document(document)
     write_new_artifact_file(path, canonical_json_text(document))
-    return read_frozen_kappa(path)
+    return read_frozen_kappa(path, plan)
 
 
-def _validate_document(document: object) -> tuple[KappaEstimate, tuple[int, ...]]:
-    if type(document) is not dict or set(document) != _FIELDS:
-        raise DrawCorrectionKappaError("frozen kappa fields are invalid")
-    if document["schema"] != FROZEN_KAPPA_SCHEMA:
-        raise DrawCorrectionKappaError("frozen kappa schema is unknown")
+def read_frozen_kappa(
+    path: Path, plan: CorrectionPlan, *, expected_sha256: str | None = None
+) -> FrozenKappa:
+    """凍結artifactをbytesでstrictに読み戻し、planとの一致と規則の再導出を検査する。
+
+    `expected_sha256`を渡した場合（評価の入口）、凍結fileのbytesが事前に記録した
+    digestと一致することも要求する。
+    """
+    plan = _require_plan(plan)
+    document, digest = read_canonical_document(path, DrawCorrectionKappaError)
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise DrawCorrectionKappaError("frozen kappa differs from the recorded digest")
+    if set(document) != _FIELDS or document["schema"] != FROZEN_KAPPA_SCHEMA:
+        raise DrawCorrectionKappaError("frozen kappa fields / schema are invalid")
     if document["estimation_rule"] != ESTIMATION_RULE_ID:
         raise DrawCorrectionKappaError("frozen kappa estimation rule is unknown")
-    if (
-        document["protocol_id"] != PROTOCOL_ID
-        or document["rules_digest"] != RULES_DIGEST
-    ):
-        raise DrawCorrectionKappaError("frozen kappa protocol / rules differ")
-    if document["value_definition"] != v1_definition():
-        raise DrawCorrectionKappaError(
-            "frozen kappa value definition differs from lisjong V1"
-        )
-    _participants(document["participants"])
-
-    capture = document["capture"]
-    if type(capture) is not dict or set(capture) != _CAPTURE_FIELDS:
-        raise DrawCorrectionKappaError("frozen kappa capture fields are invalid")
-    if type(capture["payload_sha256"]) is not str or not _SHA256.fullmatch(
-        capture["payload_sha256"]
-    ):
-        raise DrawCorrectionKappaError("capture.payload_sha256 is invalid")
-    producer = capture["producer"]
-    if type(producer) is not dict or set(producer) != {
-        "arena_revision",
-        "engine_revision",
-    }:
-        raise DrawCorrectionKappaError("capture.producer fields are invalid")
-    if any(type(v) is not str or not _REVISION.fullmatch(v) for v in producer.values()):
-        raise DrawCorrectionKappaError("capture.producer revisions are invalid")
-
-    split = document["split"]
-    if (
-        type(split) is not dict
-        or set(split) != _SPLIT_FIELDS
-        or split["role"] != "TRAIN"
-    ):
-        raise DrawCorrectionKappaError("frozen kappa split fields are invalid")
-    seeds = split["train_seeds"]
-    if (
-        type(seeds) is not list
-        or not seeds
-        or any(type(seed) is not int for seed in seeds)
-        or seeds != sorted(set(seeds))
-    ):
-        raise DrawCorrectionKappaError("split.train_seeds must be sorted unique ints")
-    if split["train_seeds_sha256"] != _seeds_digest(seeds):
-        raise DrawCorrectionKappaError("split.train_seeds_sha256 does not match")
+    for field, value in _plan_fields(plan).items():
+        if document[field] != value:
+            raise DrawCorrectionKappaError(
+                f"frozen kappa {field} differs from the plan"
+            )
+    manifest_sha = document["train_paired_manifest_sha256"]
+    if type(manifest_sha) is not str or len(manifest_sha) != 64:
+        raise DrawCorrectionKappaError("train_paired_manifest_sha256 is invalid")
 
     k = document["k"]
-    if type(k) is not int or k != len(seeds):
-        raise DrawCorrectionKappaError("k must equal the number of train seed blocks")
-    minimum = _minimum_blocks(document["minimum_blocks"])
+    if type(k) is not int or k != len(plan.train_seeds):
+        raise DrawCorrectionKappaError("k must equal the number of plan TRAIN seeds")
     covariance = _read_fraction(document["covariance"], "covariance", optional=True)
     variance = _read_fraction(document["variance"], "variance", optional=True)
-    if (covariance is None) != (k < ARITHMETIC_MINIMUM_BLOCKS) or (
-        variance is None
-    ) != (k < ARITHMETIC_MINIMUM_BLOCKS):
+    if (covariance is None) != (k < 2) or (variance is None) != (k < 2):
         raise DrawCorrectionKappaError("covariance / variance presence is inconsistent")
     if variance is not None and variance < 0:
         raise DrawCorrectionKappaError("variance must be non-negative")
     kappa = _read_fraction(document["kappa"], "kappa")
-    expected = kappa_rule(k, minimum, covariance, variance)
+    expected = kappa_rule(k, plan.minimum_blocks, covariance, variance)
     if (kappa, document["status"], document["branch"]) != expected:
         raise DrawCorrectionKappaError("kappa / status / branch differ from the rule")
-    return (
-        KappaEstimate(
+    return FrozenKappa(
+        sha256=digest,
+        estimate=KappaEstimate(
+            plan_sha256=plan.sha256,
             k=k,
-            minimum_blocks=minimum,
+            minimum_blocks=plan.minimum_blocks,
             covariance=covariance,
             variance=variance,
             kappa=kappa,
             status=document["status"],
             branch=document["branch"],
         ),
-        tuple(seeds),
-    )
-
-
-def read_frozen_kappa(path: Path) -> FrozenKappa:
-    """凍結artifactをstrictに読み戻す。canonical JSONのbytesも照合する。"""
-    path = Path(path)
-    try:
-        document = read_json_document(path)
-    except (OSError, ValueError) as error:
-        raise DrawCorrectionKappaError(
-            f"frozen kappa cannot be read: {error}"
-        ) from error
-    estimate, seeds = _validate_document(document)
-    if path.read_text(encoding="utf-8") != canonical_json_text(document):
-        raise DrawCorrectionKappaError("frozen kappa is not canonical JSON")
-    return FrozenKappa(
-        path=path,
-        document=document,
-        estimate=estimate,
-        train_seeds=seeds,
-        participants=dict(document["participants"]),
-        value_definition=dict(document["value_definition"]),
+        train_seeds=tuple(plan.train_seeds),
+        train_paired_manifest_sha256=manifest_sha,
     )
 
 
 __all__ = [
-    "ARITHMETIC_MINIMUM_BLOCKS",
+    "BRANCH_INSUFFICIENT",
+    "BRANCH_NON_POSITIVE",
+    "BRANCH_RATIO",
+    "BRANCH_ZERO_VARIANCE",
     "ESTABLISHED",
     "ESTIMATION_RULE_ID",
     "FROZEN_KAPPA_SCHEMA",
@@ -399,7 +305,6 @@ __all__ = [
     "estimate_kappa",
     "kappa_rule",
     "read_frozen_kappa",
-    "require_disjoint_split",
     "sample_covariance",
     "write_frozen_kappa",
 ]

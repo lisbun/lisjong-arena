@@ -1,40 +1,36 @@
-"""通常ツモ補正の射影・join・rank contrast・κの推定と凍結・分析（#598）。
+"""通常ツモ補正のplan・paired producer・射影・join・κの推定と凍結・分析（#598）。
 
-実engineの1 seed block（A = ShantenPolicy、B = MinimalPolicy、6配置）をcaptureし、
-局recordの第1層rowと結ぶ。κ・splitの規則は手計算できる合成blockで固定する。
+実engineで、fixture用のplan（TRAIN 2 seed block、EVAL 1 seed block、A = ShantenPolicy、
+B = MinimalPolicy）をpaired producerで実行し、同じseedを別のparticipantで実行した
+paired artifactを「別の実行」として使う。κの規則と分析の算術は手計算できる合成値で固定する。
 """
 
 import dataclasses
-import functools
 import json
+import shutil
 import tempfile
 import unittest
 from fractions import Fraction
 from pathlib import Path
 from unittest.mock import patch
 
-from lisjong.draw_correction import (
-    draw_probabilities,
-    unit_draw_corrections,
-    v1_definition,
-)
+from lisjong.draw_correction import draw_probabilities, unit_draw_corrections
 from lisjong.policies import MinimalPolicy, ShantenPolicy
-from lisjong_engine.seat import Seat
 
 import lisjong_arena.draw_correction.join as join_module
+from lisjong_arena.draw_correction import paired_run
 from lisjong_arena.draw_correction.analysis import (
     CI_ESTABLISHED,
     CI_NOT_ESTABLISHED,
     R_ESTABLISHED,
     R_NOT_ESTABLISHED,
     analyze_correction,
-    corrected_differences,
+    summarize_blocks,
 )
 from lisjong_arena.draw_correction.join import (
     BlockContrast,
     DrawCorrectionJoinError,
-    JoinedBlocks,
-    join_capture_with_hanchans,
+    join_paired,
 )
 from lisjong_arena.draw_correction.kappa import (
     BRANCH_INSUFFICIENT,
@@ -45,9 +41,23 @@ from lisjong_arena.draw_correction.kappa import (
     NOT_ESTABLISHED,
     DrawCorrectionKappaError,
     estimate_kappa,
+    kappa_rule,
     read_frozen_kappa,
-    require_disjoint_split,
+    sample_covariance,
     write_frozen_kappa,
+)
+from lisjong_arena.draw_correction.paired_run import (
+    RESULTS_FILENAME,
+    PairedRunError,
+    produce_paired_split,
+    read_paired_split,
+)
+from lisjong_arena.draw_correction.plan import (
+    EVAL,
+    TRAIN,
+    DrawCorrectionPlanError,
+    read_plan,
+    write_plan,
 )
 from lisjong_arena.draw_correction.projection import (
     DrawProjectionError,
@@ -55,96 +65,209 @@ from lisjong_arena.draw_correction.projection import (
     project_record,
     tile_category,
 )
-from lisjong_arena.heuristic_candidate_engine_aabb.kyoku_record import (
-    SeatAssignment,
-    placement_roles,
-)
-from lisjong_arena.heuristic_candidate_engine_aabb.record_store import (
-    HanchanCapture,
-    build_records,
-)
-from lisjong_arena.learning_candidate_engine_aabb.protocol import PROTOCOL_ID
 from lisjong_arena.learning_candidate_engine_aabb.statistics import block_rank_totals
-from lisjong_arena.lisjong_engine.live_draw_capture import capture_live_draw_hanchan
-from lisjong_arena.lisjong_engine.live_draw_store import (
-    read_live_draw_capture,
-    write_live_draw_capture,
-)
 
-_SEED = 598101
-_REVISION = "0" * 40
+_TRAIN_SEEDS = (598101, 598102)
+_EVAL_SEEDS = (598103,)
 _PARTICIPANTS = {"candidate": "shanten-policy@test", "incumbent": "minimal-policy@test"}
+_SWAPPED = {"candidate": "minimal-policy@test", "incumbent": "shanten-policy@test"}
+_REVISIONS = {"arena": "a" * 40, "engine": "e" * 40, "lisjong": "1" * 40}
+_FACTORIES = {"candidate": ShantenPolicy, "incumbent": MinimalPolicy}
+_SWAPPED_FACTORIES = {"candidate": MinimalPolicy, "incumbent": ShantenPolicy}
+
+_ROOT = None
+_STATE = {}
 
 
-def _policies(placement):
-    return {
-        seat: ShantenPolicy() if role == "A" else MinimalPolicy()
-        for seat, role in zip(Seat, placement_roles(placement), strict=True)
-    }
-
-
-@functools.cache
-def _engine_block():
-    """1 seed block（6配置）のcaptureと、同じ実行の`CompletedMatch`。"""
-    results = []
-    for placement in range(6):
-        completed, captured = capture_live_draw_hanchan(
-            _policies(placement), seed=_SEED, placement=placement
-        )
-        results.append((placement, completed, captured))
-    return tuple(results)
-
-
-def _hanchan_rows(block=None):
-    captures = [
-        HanchanCapture(
-            match=completed,
-            seed=_SEED,
-            placement=placement,
-            seats=tuple(
-                SeatAssignment(
-                    role, _PARTICIPANTS["candidate" if role == "A" else "incumbent"]
-                )
-                for role in placement_roles(placement)
-            ),
-            selector_call_counts=(1, 1, 1, 1),
-            policy_call_counts=(1, 1, 1, 1),
-            round_evidence=None,
-        )
-        for placement, completed, _ in (block or _engine_block())
-    ]
-    rows, _, _ = build_records(captures, event_facts_required=False)
-    return rows
-
-
-def _write_capture(directory, placements=range(6)):
-    destination = Path(directory) / "capture"
-    write_live_draw_capture(
-        destination,
-        [captured for p, _, captured in _engine_block() if p in placements],
-        plan=[(_SEED, p) for p in placements],
-        arena_revision=_REVISION,
-        engine_revision=_REVISION,
-        rules="RuleSet.default()",
-        access="test-only",
-        retention="test-only",
+def setUpModule():
+    """fixture planの全splitを1回だけ実行する（module内の全testで共有する）。"""
+    global _ROOT
+    _ROOT = tempfile.TemporaryDirectory()
+    root = Path(_ROOT.name)
+    plan = write_plan(
+        root / "plan.json",
+        participants=_PARTICIPANTS,
+        revisions=_REVISIONS,
+        minimum_blocks=2,
+        train_seeds=_TRAIN_SEEDS,
+        evaluation_seeds=_EVAL_SEEDS,
     )
-    return read_live_draw_capture(destination)
+    other = write_plan(
+        root / "other-plan.json",
+        participants=_SWAPPED,
+        revisions=_REVISIONS,
+        minimum_blocks=2,
+        train_seeds=(598901,),
+        evaluation_seeds=_EVAL_SEEDS,
+    )
+    _STATE["plan"] = plan
+    _STATE["other_plan"] = other
+    for name, target_plan, role, factories in (
+        ("train", plan, TRAIN, _FACTORIES),
+        ("eval", plan, EVAL, _FACTORIES),
+        ("other_eval", other, EVAL, _SWAPPED_FACTORIES),
+    ):
+        _STATE[name] = produce_paired_split(
+            root / name,
+            target_plan,
+            role,
+            policy_factories=factories,
+            access="test-only",
+            retention="test-only",
+        )
 
 
-class _EngineBlockFixture(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory()
-        cls.artifact = _write_capture(cls._tmp.name)
-        cls.rows = _hanchan_rows()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._tmp.cleanup()
+def tearDownModule():
+    _ROOT.cleanup()
 
 
-class ProjectionTest(_EngineBlockFixture):
+def _root() -> Path:
+    return Path(_ROOT.name)
+
+
+def _copy(name: str) -> Path:
+    target = Path(tempfile.mkdtemp(dir=_root())) / name
+    shutil.copytree(_root() / name, target)
+    return target
+
+
+class PlanTest(unittest.TestCase):
+    def test_round_trip_and_identity(self):
+        plan = read_plan(_root() / "plan.json")
+        self.assertEqual(plan, _STATE["plan"])
+        self.assertEqual(plan.train_seeds, _TRAIN_SEEDS)
+        self.assertEqual(plan.evaluation_seeds, _EVAL_SEEDS)
+        self.assertNotEqual(plan.sha256, _STATE["other_plan"].sha256)
+
+    def test_write_once(self):
+        with self.assertRaises(FileExistsError):
+            write_plan(
+                _root() / "plan.json",
+                participants=_PARTICIPANTS,
+                revisions=_REVISIONS,
+                minimum_blocks=2,
+                train_seeds=_TRAIN_SEEDS,
+                evaluation_seeds=_EVAL_SEEDS,
+            )
+
+    def test_invalid_plans_are_rejected(self):
+        base = dict(
+            participants=_PARTICIPANTS,
+            revisions=_REVISIONS,
+            minimum_blocks=2,
+            train_seeds=[1, 2],
+            evaluation_seeds=[3],
+        )
+        cases = {
+            "overlap": {"evaluation_seeds": [2, 3]},
+            "duplicate": {"train_seeds": [1, 1]},
+            "empty": {"evaluation_seeds": []},
+            "same_participants": {"participants": {"candidate": "x", "incumbent": "x"}},
+            "bad_revision": {"revisions": {**_REVISIONS, "engine": "short"}},
+            "minimum": {"minimum_blocks": 1},
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                with self.assertRaises(DrawCorrectionPlanError):
+                    write_plan(Path(directory) / "plan.json", **{**base, **change})
+
+    def test_non_canonical_plan_bytes_are_rejected(self):
+        path = _root() / "crlf-plan.json"
+        text = (_root() / "plan.json").read_bytes().replace(b"\n", b"\r\n")
+        path.write_bytes(text)
+        with self.assertRaises(DrawCorrectionPlanError):
+            read_plan(path)
+
+
+class PairedRunTest(unittest.TestCase):
+    def test_read_back_matches_the_plan(self):
+        split = read_paired_split(_root() / "train", _STATE["plan"])
+        self.assertEqual(split.role, TRAIN)
+        self.assertEqual(split.seeds, _TRAIN_SEEDS)
+        self.assertEqual(len(split.rows), 12)
+
+    def test_write_once(self):
+        with self.assertRaises(FileExistsError):
+            produce_paired_split(
+                _root() / "train",
+                _STATE["plan"],
+                TRAIN,
+                policy_factories=_FACTORIES,
+                access="test-only",
+                retention="test-only",
+            )
+
+    def test_results_from_another_run_with_the_same_seeds_are_rejected(self):
+        # 同じseed・全6配置・同じ局identityでも、別のparticipantで実行した有効な結果row
+        target = _copy("eval")
+        shutil.copyfile(
+            _root() / "other_eval" / RESULTS_FILENAME, target / RESULTS_FILENAME
+        )
+        with self.assertRaises(PairedRunError):
+            read_paired_split(target, _STATE["plan"])
+
+    def test_capture_from_another_run_with_the_same_seeds_is_rejected(self):
+        target = _copy("eval")
+        shutil.rmtree(target / "capture")
+        shutil.copytree(_root() / "other_eval" / "capture", target / "capture")
+        with self.assertRaises(PairedRunError):
+            read_paired_split(target, _STATE["plan"])
+
+    def test_consistent_artifact_with_another_participant_is_rejected(self):
+        # manifestのdigestまで書き直した「内部では整合した」artifactでも、
+        # 結果rowのparticipantがplanと違えば拒否する
+        target = _copy("eval")
+        manifest_path = target / paired_run.PAIRED_MANIFEST_FILENAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        rows = [
+            json.loads(line)
+            for line in (target / RESULTS_FILENAME)
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        for row in rows:
+            for seat in row["seats"]:
+                if seat["role"] == "B":
+                    seat["policy_identity"] = "another-policy@test"
+        text = "".join(paired_run._line(row) for row in rows)
+        (target / RESULTS_FILENAME).write_text(text, encoding="utf-8", newline="\n")
+        data = text.encode("utf-8")
+        manifest["results"].update(
+            bytes=len(data), sha256=paired_run.sha256_bytes(data)
+        )
+        for entry, row in zip(manifest["hanchans"], rows, strict=True):
+            entry["result_row_sha256"] = paired_run._digest_lines([row])
+        manifest_path.write_text(
+            paired_run.canonical_json_text(manifest), encoding="utf-8", newline="\n"
+        )
+        with self.assertRaisesRegex(PairedRunError, "participant"):
+            read_paired_split(target, _STATE["plan"])
+
+    def test_artifact_of_another_plan_is_rejected(self):
+        with self.assertRaises(PairedRunError):
+            read_paired_split(_root() / "other_eval", _STATE["plan"])
+
+    def test_tampered_manifest_field_is_rejected(self):
+        for field, value in (
+            ("role", TRAIN),
+            ("seeds", list(_TRAIN_SEEDS)),
+            ("revisions", {**_REVISIONS, "engine": "f" * 40}),
+        ):
+            with self.subTest(field=field):
+                target = _copy("eval")
+                path = target / paired_run.PAIRED_MANIFEST_FILENAME
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+                manifest[field] = value
+                path.write_text(
+                    paired_run.canonical_json_text(manifest),
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                with self.assertRaises(PairedRunError):
+                    read_paired_split(target, _STATE["plan"])
+
+
+class ProjectionTest(unittest.TestCase):
     def test_tile_category_folds_copies_and_separates_red_fives(self):
         self.assertEqual(tile_category(16), 34)  # 赤5m（5mのcopy 0）
         self.assertEqual(tile_category(52), 35)  # 赤5p
@@ -158,7 +281,7 @@ class ProjectionTest(_EngineBlockFixture):
 
     def test_projection_matches_board_and_realized_tile_is_in_support(self):
         called_seen = False
-        for record in self.artifact.records:
+        for record in _STATE["train"].capture.records:
             projected = project_record(record)
             checkpoint = record.pre_draw["checkpoint"]
             drawer = record.pre_draw["current_seat"]
@@ -182,7 +305,7 @@ class ProjectionTest(_EngineBlockFixture):
         self.assertTrue(called_seen, "the fixture should contain a called discard")
 
     def test_projection_uses_pre_draw_only(self):
-        record = self.artifact.records[0]
+        record = _STATE["train"].capture.records[0]
         probability, value = project_pre_draw(record.pre_draw)
         self.assertEqual(project_record(record).probability, probability)
         self.assertEqual(project_record(record).value, value)
@@ -190,21 +313,28 @@ class ProjectionTest(_EngineBlockFixture):
             project_record({"pre_draw": record.pre_draw})
 
 
-class JoinTest(_EngineBlockFixture):
+class JoinTest(unittest.TestCase):
     def test_rank_contrast_and_correction_contrast_use_the_same_weights(self):
-        joined = join_capture_with_hanchans(self.artifact, self.rows)
-        self.assertEqual(joined.protocol_id, PROTOCOL_ID)
-        self.assertEqual(joined.value_definition, v1_definition())
-        (block,) = joined.blocks
-        rank = block_rank_totals(self.rows)[0]
-        self.assertEqual(block.d, Fraction(rank["difference_ranks"], 12))
+        split = _STATE["train"]
+        joined = join_paired(split)
+        self.assertEqual(
+            (joined.role, joined.plan_sha256), (TRAIN, _STATE["plan"].sha256)
+        )
+        self.assertEqual(joined.seeds, _TRAIN_SEEDS)
+        ranks = block_rank_totals(list(split.rows))
+        for block, rank in zip(joined.blocks, ranks, strict=True):
+            self.assertEqual(block.d, Fraction(rank["difference_ranks"], 12))
 
-        # 手で再計算: 席ごとの Σ_t c_t を role へ割り当て、(X_B − X_A) / 12
+        # 手で再計算（最初のblock）: 席ごとの Σ_t c_t を role へ割り当て、(X_B − X_A) / 12
+        seed = _TRAIN_SEEDS[0]
         totals = {"A": Fraction(0), "B": Fraction(0)}
-        for row in self.rows:
+        for row in split.rows[:6]:
             seat_sums = [Fraction(0)] * 4
-            for record in self.artifact.records:
-                if record.identity["placement"] != row["placement"]:
+            for record in split.capture.records:
+                if (record.identity["seed"], record.identity["placement"]) != (
+                    seed,
+                    row["placement"],
+                ):
                     continue
                 projected = project_record(record)
                 c = unit_draw_corrections(
@@ -213,18 +343,18 @@ class JoinTest(_EngineBlockFixture):
                 seat_sums = [a + b for a, b in zip(seat_sums, c, strict=True)]
             for seat, assignment in enumerate(row["seats"]):
                 totals[assignment["role"]] += seat_sums[seat]
-        self.assertEqual(block.x, (totals["B"] - totals["A"]) / 12)
-        self.assertEqual(block.draw_count, len(self.artifact.records))
-        self.assertNotEqual(block.x, 0)
+        self.assertEqual(joined.blocks[0].x, (totals["B"] - totals["A"]) / 12)
+        self.assertNotEqual(joined.blocks[0].x, 0)
 
     def test_placement_weights_and_sign(self):
         # 全ツモで seat 0 にだけ +1 の補正 -> seat 0 の role は A,A,A,B,B,B
+        split = _STATE["eval"]
         with patch.object(
             join_module, "unit_draw_corrections", return_value=(1, 0, 0, 0)
         ):
-            (block,) = join_capture_with_hanchans(self.artifact, self.rows).blocks
+            (block,) = join_paired(split).blocks
         draws = [0] * 6
-        for record in self.artifact.records:
+        for record in split.capture.records:
             draws[record.identity["placement"]] += 1
         self.assertEqual(block.x, Fraction(sum(draws[3:]) - sum(draws[:3]), 12))
 
@@ -232,205 +362,166 @@ class JoinTest(_EngineBlockFixture):
         with patch.object(
             join_module, "unit_draw_corrections", return_value=(0, 0, 0, 0)
         ):
-            (block,) = join_capture_with_hanchans(self.artifact, self.rows).blocks
+            (block,) = join_paired(_STATE["eval"]).blocks
         self.assertEqual(block.x, 0)
 
-    def test_missing_placement_is_rejected(self):
-        with tempfile.TemporaryDirectory() as directory:
-            partial = _write_capture(directory, placements=range(5))
+    def test_join_requires_a_paired_split(self):
         with self.assertRaises(DrawCorrectionJoinError):
-            join_capture_with_hanchans(partial, self.rows[:5])
+            join_paired(_STATE["eval"].capture)
 
-    def test_seed_split_across_artifacts_is_rejected(self):
-        # 同じseedのplacement 0..2だけをTRAIN側のartifactへ置いた場合（残りは別split）
-        with tempfile.TemporaryDirectory() as directory:
-            first_half = _write_capture(directory, placements=range(3))
-        with self.assertRaises(DrawCorrectionJoinError):
-            join_capture_with_hanchans(first_half, self.rows[:3])
-
-    def test_unplanned_or_reordered_hanchans_are_rejected(self):
-        for name, rows in {
-            "extra": [*self.rows, self.rows[0]],
-            "missing": self.rows[:5],
-            "reordered": [self.rows[1], self.rows[0], *self.rows[2:]],
-        }.items():
-            with self.subTest(case=name), self.assertRaises(DrawCorrectionJoinError):
-                join_capture_with_hanchans(self.artifact, rows)
-
-    def test_result_from_another_run_is_rejected(self):
-        rows = json.loads(json.dumps(self.rows))
-        other = dict(rows[2])
-        other["seed"] = _SEED + 1
-        rows[2] = other
-        with self.assertRaises(DrawCorrectionJoinError):
-            join_capture_with_hanchans(self.artifact, rows)
-
-    def test_round_identity_mismatch_is_rejected(self):
-        manifest = json.loads(json.dumps(self.artifact.manifest))
-        manifest["hanchans"][0]["rounds"].append(
-            {"live_draw_count": 0, "rinshan_draw_count": 0, "round_ordinal": 99}
-        )
-        tampered = dataclasses.replace(self.artifact, manifest=manifest)
-        with self.assertRaises(DrawCorrectionJoinError):
-            join_capture_with_hanchans(tampered, self.rows)
-
-    def test_capture_dealer_mismatch_is_rejected(self):
-        records = list(self.artifact.records)
-        first = records[0]
-        pre_draw = json.loads(json.dumps(first.pre_draw))
+    def test_incomplete_or_mismatched_inputs_are_rejected(self):
+        # 公開入口の手前の内部照合（paired artifactの読込を通った後の防御）
+        split = _STATE["eval"]
+        artifact, rows = split.capture, list(split.rows)
+        partial = json.loads(json.dumps(artifact.manifest))
+        partial["plan"] = partial["plan"][:5]
+        records = list(artifact.records)
+        pre_draw = json.loads(json.dumps(records[0].pre_draw))
         pre_draw["checkpoint"]["dealer_seat"] = (
             pre_draw["checkpoint"]["dealer_seat"] + 1
         ) % 4
-        records[0] = dataclasses.replace(first, pre_draw=pre_draw)
-        tampered = dataclasses.replace(self.artifact, records=tuple(records))
-        with self.assertRaises(DrawCorrectionJoinError):
-            join_capture_with_hanchans(tampered, self.rows)
-
-
-# ---------------------------------------------------------------------------
-# 合成block（κ・split・分析）
-# ---------------------------------------------------------------------------
-
-
-def _blocks(pairs, *, first_seed=1000):
-    return JoinedBlocks(
-        protocol_id=PROTOCOL_ID,
-        blocks=tuple(
-            BlockContrast(
-                seed=first_seed + index,
-                d=Fraction(d),
-                x=Fraction(x),
-                rank_sum_a=30,
-                rank_sum_b=30,
-                draw_count=1,
-                drawer_corrections=(Fraction(x),),
-            )
-            for index, (d, x) in enumerate(pairs)
-        ),
-        capture_payload_sha256="0" * 64,
-        capture_producer={"arena_revision": _REVISION, "engine_revision": _REVISION},
-        value_definition=v1_definition(),
-    )
+        records[0] = dataclasses.replace(records[0], pre_draw=pre_draw)
+        extra_round = json.loads(json.dumps(artifact.manifest))
+        extra_round["hanchans"][0]["rounds"].append(
+            {"live_draw_count": 0, "rinshan_draw_count": 0, "round_ordinal": 99}
+        )
+        cases = {
+            "missing_placement": (
+                dataclasses.replace(artifact, manifest=partial),
+                rows,
+            ),
+            "extra_row": (artifact, [*rows, rows[0]]),
+            "reordered": (artifact, [rows[1], rows[0], *rows[2:]]),
+            "dealer": (dataclasses.replace(artifact, records=tuple(records)), rows),
+            "round_count": (dataclasses.replace(artifact, manifest=extra_round), rows),
+        }
+        for name, (case_artifact, case_rows) in cases.items():
+            with self.subTest(case=name), self.assertRaises(DrawCorrectionJoinError):
+                join_module._join_blocks(case_artifact, case_rows)
 
 
 class KappaRuleTest(unittest.TestCase):
-    def test_positive_covariance_gives_exact_ratio(self):
+    def test_rule_branches(self):
         # D = (1, 2, 3)、X = (1, 1, 4): Cov = 3/2、Var(X) = 3 -> κ = 1/2
-        estimate = estimate_kappa(_blocks([(1, 1), (2, 1), (3, 4)]), minimum_blocks=2)
-        self.assertEqual(estimate.covariance, Fraction(3, 2))
-        self.assertEqual(estimate.variance, 3)
-        self.assertEqual(estimate.kappa, Fraction(1, 2))
+        ds = [Fraction(v) for v in (1, 2, 3)]
+        xs = [Fraction(v) for v in (1, 1, 4)]
+        covariance, variance = sample_covariance(ds, xs), sample_covariance(xs, xs)
+        self.assertEqual((covariance, variance), (Fraction(3, 2), 3))
         self.assertEqual(
-            (estimate.status, estimate.branch), (ESTABLISHED, BRANCH_RATIO)
+            kappa_rule(3, 2, covariance, variance),
+            (Fraction(1, 2), ESTABLISHED, BRANCH_RATIO),
         )
-
-    def test_negative_covariance_gives_zero(self):
-        estimate = estimate_kappa(_blocks([(1, 3), (2, 2), (3, 1)]), minimum_blocks=2)
-        self.assertEqual(estimate.kappa, 0)
         self.assertEqual(
-            (estimate.status, estimate.branch), (ESTABLISHED, BRANCH_NON_POSITIVE)
+            kappa_rule(3, 2, Fraction(-1), Fraction(1)),
+            (0, ESTABLISHED, BRANCH_NON_POSITIVE),
         )
-
-    def test_zero_variance_is_not_established(self):
-        estimate = estimate_kappa(_blocks([(1, 2), (3, 2), (5, 2)]), minimum_blocks=2)
-        self.assertEqual(estimate.kappa, 0)
         self.assertEqual(
-            (estimate.status, estimate.branch), (NOT_ESTABLISHED, BRANCH_ZERO_VARIANCE)
+            kappa_rule(3, 2, Fraction(0), Fraction(0)),
+            (0, NOT_ESTABLISHED, BRANCH_ZERO_VARIANCE),
         )
-
-    def test_insufficient_blocks_is_not_established(self):
-        estimate = estimate_kappa(_blocks([(1, 1), (2, 3), (4, 4)]), minimum_blocks=4)
         self.assertEqual(
-            (estimate.kappa, estimate.status, estimate.branch),
+            kappa_rule(3, 4, covariance, variance),
             (0, NOT_ESTABLISHED, BRANCH_INSUFFICIENT),
         )
-        single = estimate_kappa(_blocks([(1, 1)]), minimum_blocks=2)
-        self.assertIsNone(single.covariance)
-        self.assertEqual(single.status, NOT_ESTABLISHED)
+        self.assertEqual(
+            kappa_rule(1, 2, None, None), (0, NOT_ESTABLISHED, BRANCH_INSUFFICIENT)
+        )
 
-    def test_minimum_blocks_must_be_at_least_two(self):
-        for bad in (0, 1, 2.0, True):
-            with self.subTest(bad=bad), self.assertRaises(DrawCorrectionKappaError):
-                estimate_kappa(_blocks([(1, 1), (2, 2)]), minimum_blocks=bad)
+
+class KappaTest(unittest.TestCase):
+    def setUp(self):
+        self.plan = _STATE["plan"]
+        self.train = join_paired(_STATE["train"])
+        self.directory = Path(tempfile.mkdtemp(dir=_root()))
+
+    def test_estimate_uses_plan_minimum_and_train_blocks(self):
+        estimate = estimate_kappa(self.plan, self.train)
+        self.assertEqual((estimate.k, estimate.minimum_blocks), (2, 2))
+        ds = [block.d for block in self.train.blocks]
+        xs = [block.x for block in self.train.blocks]
+        self.assertEqual(
+            (estimate.kappa, estimate.status, estimate.branch),
+            kappa_rule(2, 2, sample_covariance(ds, xs), sample_covariance(xs, xs)),
+        )
+
+    def test_role_plan_and_seed_mismatches_are_rejected(self):
+        evaluation = join_paired(_STATE["eval"])
+        other = join_paired(_STATE["other_eval"])
+        cases = {
+            "evaluation_as_train": (self.plan, evaluation),
+            "another_plan": (self.plan, other),
+            "seed_subset": (
+                self.plan,
+                dataclasses.replace(self.train, blocks=self.train.blocks[:1]),
+            ),
+            "plan_of_other": (_STATE["other_plan"], self.train),
+        }
+        for name, (plan, blocks) in cases.items():
+            with self.subTest(case=name), self.assertRaises(DrawCorrectionKappaError):
+                estimate_kappa(plan, blocks)
 
     def test_non_finite_or_inexact_values_are_rejected(self):
-        blocks = _blocks([(1, 1), (2, 2)])
         for bad in (float("nan"), float("inf"), 0.5):
-            tampered = dataclasses.replace(
-                blocks,
-                blocks=(dataclasses.replace(blocks.blocks[0], x=bad), blocks.blocks[1]),
+            blocks = (
+                dataclasses.replace(self.train.blocks[0], x=bad),
+                self.train.blocks[1],
             )
             with self.subTest(bad=bad), self.assertRaises(DrawCorrectionKappaError):
-                estimate_kappa(tampered, minimum_blocks=2)
+                estimate_kappa(
+                    self.plan, dataclasses.replace(self.train, blocks=blocks)
+                )
 
-    def test_duplicate_train_blocks_are_rejected(self):
-        blocks = _blocks([(1, 1), (2, 2)])
-        duplicated = dataclasses.replace(
-            blocks, blocks=(blocks.blocks[0], blocks.blocks[0])
+    def test_frozen_round_trip_and_recorded_digest(self):
+        estimate = estimate_kappa(self.plan, self.train)
+        frozen = write_frozen_kappa(
+            self.directory / "kappa.json", self.plan, self.train, estimate
         )
+        self.assertEqual(frozen.estimate, estimate)
+        self.assertEqual(frozen.train_seeds, _TRAIN_SEEDS)
+        again = read_frozen_kappa(
+            self.directory / "kappa.json", self.plan, expected_sha256=frozen.sha256
+        )
+        self.assertEqual(again, frozen)
         with self.assertRaises(DrawCorrectionKappaError):
-            estimate_kappa(duplicated, minimum_blocks=2)
-
-
-class SplitTest(unittest.TestCase):
-    def test_overlapping_or_duplicate_seeds_are_rejected(self):
-        require_disjoint_split([1, 2], [3, 4])
-        for train, evaluation in (
-            ([1, 2], [2, 3]),
-            ([1, 1], [3]),
-            ([1], [3, 3]),
-            ([], [1]),
-        ):
-            with self.subTest(train=train, evaluation=evaluation):
-                with self.assertRaises(DrawCorrectionKappaError):
-                    require_disjoint_split(train, evaluation)
-
-
-class FrozenKappaTest(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.path = Path(self._tmp.name) / "kappa.json"
-        self.train = _blocks([(1, 1), (2, 1), (3, 4)])
-        self.estimate = estimate_kappa(self.train, minimum_blocks=2)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _write(self):
-        return write_frozen_kappa(
-            self.path, self.train, self.estimate, participants=_PARTICIPANTS
-        )
-
-    def test_strict_readback_round_trip(self):
-        frozen = self._write()
-        self.assertEqual(frozen.estimate, self.estimate)
-        self.assertEqual(frozen.train_seeds, (1000, 1001, 1002))
-        self.assertEqual(frozen.value_definition, v1_definition())
-        self.assertEqual(read_frozen_kappa(self.path).document, frozen.document)
-        self.assertEqual(frozen.document["participants"], _PARTICIPANTS)
-
-    def test_write_once(self):
-        self._write()
+            read_frozen_kappa(
+                self.directory / "kappa.json", self.plan, expected_sha256="0" * 64
+            )
+        with self.assertRaises(DrawCorrectionKappaError):
+            read_frozen_kappa(self.directory / "kappa.json", _STATE["other_plan"])
         with self.assertRaises(FileExistsError):
-            self._write()
+            write_frozen_kappa(
+                self.directory / "kappa.json", self.plan, self.train, estimate
+            )
 
     def test_estimate_must_match_train(self):
-        other = estimate_kappa(_blocks([(1, 3), (2, 2), (3, 1)]), minimum_blocks=2)
+        estimate = dataclasses.replace(
+            estimate_kappa(self.plan, self.train), kappa=Fraction(7)
+        )
         with self.assertRaises(DrawCorrectionKappaError):
-            write_frozen_kappa(self.path, self.train, other, participants=_PARTICIPANTS)
-        self.assertFalse(self.path.exists())
+            write_frozen_kappa(
+                self.directory / "k.json", self.plan, self.train, estimate
+            )
+        self.assertFalse((self.directory / "k.json").exists())
 
-    def test_tampered_artifacts_are_rejected(self):
-        self._write()
-        original = json.loads(self.path.read_text(encoding="utf-8"))
+    def test_tampered_frozen_artifacts_are_rejected(self):
+        estimate = estimate_kappa(self.plan, self.train)
+        write_frozen_kappa(
+            self.directory / "kappa.json", self.plan, self.train, estimate
+        )
+        original = json.loads(
+            (self.directory / "kappa.json").read_text(encoding="utf-8")
+        )
         tamperings = {
-            "kappa": lambda d: d.update(kappa={"denominator": 1, "numerator": 1}),
-            "status": lambda d: d.update(status=NOT_ESTABLISHED),
-            "seeds": lambda d: d["split"].update(train_seeds=[1000, 1001, 9999]),
-            "k": lambda d: d.update(k=4),
+            "kappa": lambda d: d.update(kappa={"denominator": 1, "numerator": 99}),
+            "status": lambda d: d.update(
+                status=ESTABLISHED if d["status"] != ESTABLISHED else NOT_ESTABLISHED
+            ),
+            "train_seeds": lambda d: d.update(train_seeds=[598101]),
+            "participants": lambda d: d.update(participants=_SWAPPED),
+            "revisions": lambda d: d["revisions"].update(engine="f" * 40),
+            "plan": lambda d: d.update(plan_sha256="0" * 64),
             "value_definition": lambda d: d["value_definition"].update(version=2),
             "unknown_field": lambda d: d.update(extra=1),
-            "protocol": lambda d: d.update(protocol_id="other"),
             "not_lowest_terms": lambda d: d.update(
                 kappa={"denominator": 4, "numerator": 2}
             ),
@@ -439,73 +530,113 @@ class FrozenKappaTest(unittest.TestCase):
             with self.subTest(case=name):
                 document = json.loads(json.dumps(original))
                 tamper(document)
-                path = Path(self._tmp.name) / f"{name}.json"
+                path = self.directory / f"{name}.json"
                 path.write_text(
-                    json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False)
-                    + "\n",
+                    paired_run.canonical_json_text(document),
                     encoding="utf-8",
+                    newline="\n",
                 )
                 with self.assertRaises(DrawCorrectionKappaError):
-                    read_frozen_kappa(path)
+                    read_frozen_kappa(path, self.plan)
 
     def test_non_canonical_bytes_are_rejected(self):
-        self._write()
-        path = Path(self._tmp.name) / "compact.json"
-        path.write_text(json.dumps(json.loads(self.path.read_text())), encoding="utf-8")
+        estimate = estimate_kappa(self.plan, self.train)
+        write_frozen_kappa(
+            self.directory / "kappa.json", self.plan, self.train, estimate
+        )
+        path = self.directory / "crlf.json"
+        path.write_bytes(
+            (self.directory / "kappa.json").read_bytes().replace(b"\n", b"\r\n")
+        )
         with self.assertRaises(DrawCorrectionKappaError):
-            read_frozen_kappa(path)
+            read_frozen_kappa(path, self.plan)
 
 
-class AnalysisTest(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.train = _blocks([(1, 1), (2, 1), (3, 4)])
+class AnalysisEntryTest(unittest.TestCase):
+    """評価の入口: plan・凍結κ（記録したdigest）・EVALを自分で読み戻して照合する。"""
 
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _frozen(self, train=None, name="kappa.json"):
-        train = train or self.train
-        estimate = estimate_kappa(train, minimum_blocks=2)
-        return write_frozen_kappa(
-            Path(self._tmp.name) / name, train, estimate, participants=_PARTICIPANTS
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = Path(tempfile.mkdtemp(dir=_root()))
+        plan = _STATE["plan"]
+        train = join_paired(_STATE["train"])
+        cls.frozen = write_frozen_kappa(
+            cls.directory / "kappa.json", plan, train, estimate_kappa(plan, train)
         )
 
+    def _analyze(self, **overrides):
+        arguments = dict(
+            plan_path=_root() / "plan.json",
+            frozen_path=self.directory / "kappa.json",
+            frozen_sha256=self.frozen.sha256,
+            evaluation_path=_root() / "eval",
+            bootstrap_resamples=20,
+            bootstrap_seed=1,
+        )
+        arguments.update(overrides)
+        return analyze_correction(**arguments)
+
+    def test_evaluation_of_the_plan_eval_split(self):
+        result = self._analyze()
+        self.assertEqual(result["plan_sha256"], _STATE["plan"].sha256)
+        self.assertEqual(result["frozen_kappa_sha256"], self.frozen.sha256)
+        self.assertEqual(result["evaluation_seeds"], list(_EVAL_SEEDS))
+        # EVALは1 block（fixture）-> r は定義されない（正常な退化）
+        self.assertEqual(result["ratio"]["status"], R_NOT_ESTABLISHED)
+        json.dumps(result, allow_nan=False)
+
+    def test_wrong_inputs_are_rejected(self):
+        cases = {
+            "frozen_digest": {"frozen_sha256": "0" * 64},
+            "train_as_evaluation": {"evaluation_path": _root() / "train"},
+            "evaluation_of_another_plan": {"evaluation_path": _root() / "other_eval"},
+            "another_plan": {"plan_path": _root() / "other-plan.json"},
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                with self.assertRaises(
+                    (DrawCorrectionPlanError, DrawCorrectionKappaError)
+                ):
+                    self._analyze(**change)
+
+
+def _synthetic(pairs, *, first_seed=2000):
+    return tuple(
+        BlockContrast(
+            seed=first_seed + index,
+            d=Fraction(d),
+            x=Fraction(x),
+            rank_sum_a=30,
+            rank_sum_b=30,
+            draw_count=1,
+            drawer_corrections=(Fraction(x),),
+        )
+        for index, (d, x) in enumerate(pairs)
+    )
+
+
+class SummaryArithmeticTest(unittest.TestCase):
     def test_kappa_zero_leaves_d_unchanged(self):
-        frozen = self._frozen(_blocks([(1, 3), (2, 2), (3, 1)]))  # κ = 0
-        evaluation = _blocks([(1, 5), (-2, 7), (Fraction(1, 12), -3)], first_seed=2000)
-        self.assertEqual(
-            corrected_differences(frozen, evaluation), [b.d for b in evaluation.blocks]
-        )
-        result = analyze_correction(
-            frozen, evaluation, bootstrap_resamples=50, bootstrap_seed=1
+        blocks = _synthetic([(1, 5), (-2, 7), (Fraction(1, 12), -3)])
+        result = summarize_blocks(
+            Fraction(0), blocks, bootstrap_resamples=50, bootstrap_seed=1
         )
         self.assertEqual(result["ratio"]["r_exact"], "1/1")
+        self.assertEqual(result["mean_d"], result["mean_d_adjusted"])
 
     def test_ratio_is_exact_and_bootstrap_is_deterministic(self):
-        frozen = self._frozen()  # κ = 1/2
-        evaluation = _blocks(
-            [(1, 2), (-1, -2), (2, 2), (0, 0), (1, 0), (-2, -2)], first_seed=2000
+        blocks = _synthetic([(1, 2), (-1, -2), (2, 2), (0, 0), (1, 0), (-2, -2)])
+        kappa = Fraction(1, 2)
+        first = summarize_blocks(
+            kappa, blocks, bootstrap_resamples=200, bootstrap_seed=7
         )
-        adjusted = [
-            Fraction(0),
-            Fraction(0),
-            Fraction(1),
-            Fraction(0),
-            Fraction(1),
-            Fraction(-1),
-        ]
-        self.assertEqual(corrected_differences(frozen, evaluation), adjusted)
-        first = analyze_correction(
-            frozen, evaluation, bootstrap_resamples=200, bootstrap_seed=7
-        )
-        again = analyze_correction(
-            frozen, evaluation, bootstrap_resamples=200, bootstrap_seed=7
+        again = summarize_blocks(
+            kappa, blocks, bootstrap_resamples=200, bootstrap_seed=7
         )
         self.assertEqual(first, again)
         ds = [Fraction(v) for v in (1, -1, 2, 0, 1, -2)]
-        mean = sum(ds) / 6
-        mean_a = sum(adjusted) / 6
+        adjusted = [Fraction(v) for v in (0, 0, 1, 0, 1, -1)]
+        mean, mean_a = sum(ds) / 6, sum(adjusted) / 6
         expected = sum((a - mean_a) ** 2 for a in adjusted) / sum(
             (d - mean) ** 2 for d in ds
         )
@@ -520,26 +651,23 @@ class AnalysisTest(unittest.TestCase):
         json.dumps(first, allow_nan=False)
 
     def test_degenerate_cases_are_reported_without_nan(self):
-        frozen = self._frozen()
-        flat = analyze_correction(
-            frozen,
-            _blocks([(1, 1), (1, 2), (1, 3)], first_seed=2000),
+        kappa = Fraction(1, 2)
+        flat = summarize_blocks(
+            kappa,
+            _synthetic([(1, 1), (1, 2), (1, 3)]),
             bootstrap_resamples=20,
             bootstrap_seed=1,
         )
         self.assertEqual(flat["ratio"]["status"], R_NOT_ESTABLISHED)
         self.assertIsNone(flat["ratio"]["r"])
         self.assertEqual(flat["bootstrap"]["status"], CI_NOT_ESTABLISHED)
-        single = analyze_correction(
-            frozen,
-            _blocks([(1, 1)], first_seed=2000),
-            bootstrap_resamples=20,
-            bootstrap_seed=1,
+        single = summarize_blocks(
+            kappa, _synthetic([(1, 1)]), bootstrap_resamples=20, bootstrap_seed=1
         )
         self.assertEqual(single["ratio"]["status"], R_NOT_ESTABLISHED)
-        two = analyze_correction(
-            frozen,
-            _blocks([(1, 1), (2, 1)], first_seed=2000),
+        two = summarize_blocks(
+            kappa,
+            _synthetic([(1, 1), (2, 1)]),
             bootstrap_resamples=200,
             bootstrap_seed=1,
         )
@@ -548,40 +676,10 @@ class AnalysisTest(unittest.TestCase):
         for result in (flat, single, two):
             json.dumps(result, allow_nan=False)
 
-    def test_evaluation_requires_frozen_kappa_and_disjoint_seeds(self):
-        frozen = self._frozen()
-        with self.assertRaises(DrawCorrectionKappaError):
-            analyze_correction(
-                frozen.estimate,
-                _blocks([(1, 1), (2, 2)], first_seed=2000),
-                bootstrap_resamples=10,
-                bootstrap_seed=1,
-            )
-        with self.assertRaises(DrawCorrectionKappaError):
-            analyze_correction(
-                frozen,
-                _blocks([(1, 1), (2, 2)], first_seed=1001),  # TRAINのseedを含む
-                bootstrap_resamples=10,
-                bootstrap_seed=1,
-            )
-
-    def test_evaluation_with_another_value_definition_is_rejected(self):
-        frozen = self._frozen()
-        evaluation = dataclasses.replace(
-            _blocks([(1, 1), (2, 2)], first_seed=2000),
-            value_definition={**v1_definition(), "version": 2},
-        )
-        with self.assertRaises(DrawCorrectionKappaError):
-            analyze_correction(
-                frozen, evaluation, bootstrap_resamples=10, bootstrap_seed=1
-            )
-
     def test_extremes_and_correction_summary(self):
-        frozen = self._frozen()  # κ = 1/2
-        evaluation = _blocks([(0, 4), (0, -6), (1, 2)], first_seed=2000)
-        result = analyze_correction(
-            frozen,
-            evaluation,
+        result = summarize_blocks(
+            Fraction(1, 2),
+            _synthetic([(0, 4), (0, -6), (1, 2)]),
             bootstrap_resamples=10,
             bootstrap_seed=1,
             extreme_count=2,
@@ -591,6 +689,20 @@ class AnalysisTest(unittest.TestCase):
             [{"kappa_x": "-3/1", "seed": 2001}, {"kappa_x": "2/1", "seed": 2000}],
         )
         self.assertEqual(result["corrections"]["block_kappa_x_mean"], "0/1")
+
+    def test_inexact_or_negative_inputs_are_rejected(self):
+        blocks = _synthetic([(1, 1), (2, 2)])
+        bad_block = (dataclasses.replace(blocks[0], d=float("nan")), blocks[1])
+        for kappa, case_blocks in (
+            (0.5, blocks),
+            (Fraction(-1), blocks),
+            (Fraction(1), bad_block),
+            (Fraction(1), ()),
+        ):
+            with self.subTest(kappa=kappa), self.assertRaises(DrawCorrectionKappaError):
+                summarize_blocks(
+                    kappa, case_blocks, bootstrap_resamples=10, bootstrap_seed=1
+                )
 
 
 if __name__ == "__main__":
