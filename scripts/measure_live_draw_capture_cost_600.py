@@ -167,13 +167,21 @@ def meminfo_kib(field: str) -> int:
     raise OSError(f"{field} is missing in /proc/meminfo")
 
 
+def _raise(error: OSError) -> None:
+    raise error
+
+
 def tree_bytes(root: Path) -> int:
+    """``root`` 配下のfileのbytes合計。走査できなければ例外（過小値を返さない）。"""
+    if not os.path.isdir(root):
+        raise OSError(f"{root} is not a readable directory")
     total = 0
-    for dirpath, _, filenames in os.walk(root):
+    for dirpath, _, filenames in os.walk(root, onerror=_raise):
         for name in filenames:
             try:
                 total += os.lstat(os.path.join(dirpath, name)).st_size
             except FileNotFoundError:
+                # 走査中にworkerが置き換えたstaging fileだけを許す
                 continue
     return total
 
@@ -310,19 +318,14 @@ def serialize_write_read(
 
     rows = [row for hanchan in captured for row in hanchan.rows]
 
-    def serialize() -> tuple[int, int]:
-        payload = "".join(_canonical_line(row) for row in rows).encode("utf-8")
-        return len(payload), len(gzip.compress(payload, compresslevel=6))
-
-    # gzipはSの時間に含めない（容量の参考値だけ）
-    (raw_bytes, _), _ = _timed(serialize)
-    payload_bytes_only, s_timing = _timed(
-        lambda: len("".join(_canonical_line(row) for row in rows).encode("utf-8"))
+    payload, s_timing = _timed(
+        lambda: "".join(_canonical_line(row) for row in rows).encode("utf-8")
     )
-    if payload_bytes_only != raw_bytes:
-        raise RuntimeError("serialization is not deterministic")
-    _, gzip_bytes = serialize()
     s_hwm = proc_status_kib("self", "VmHWM")
+    raw_bytes = len(payload)
+    # gzipはSの時間に含めない（容量の参考値だけ）。Sのbufferは書き出し前に手放す
+    gzip_bytes = len(gzip.compress(payload, compresslevel=6))
+    del payload
 
     destination = directory / "capture"
     _, w_timing = _timed(
@@ -410,11 +413,16 @@ def pair_schedule(seeds=SEEDS) -> list[tuple[int, int, int, tuple[str, str]]]:
 
 
 class Monitor(threading.Thread):
-    """全processのVmRSS合計・一時disk・wall timeを1秒ごとに見る（sampled soft STOP）。"""
+    """全processのVmRSS合計・一時disk・wall timeを1秒ごとに見る（sampled soft STOP）。
 
-    def __init__(self, pids, directory: Path, limits: dict, started: float) -> None:
+    起動直後（worker起動前）から親processを監視し、workerの準備ができたら
+    ``add_pid`` で対象に加える。異常・上限超過は ``tripped`` と ``reason`` に残す。
+    """
+
+    def __init__(self, directory: Path, limits: dict, started: float) -> None:
         super().__init__(daemon=True)
-        self.pids = list(pids)
+        self._lock = threading.Lock()
+        self._pids = [os.getpid()]
         self.directory = directory
         self.limits = limits
         self.started = started
@@ -423,12 +431,21 @@ class Monitor(threading.Thread):
         self.reason: tuple[str, str] | None = None
         self.peak_rss_kib = 0
         self.peak_disk_bytes = 0
+        self.samples = 0
+        self.cpu_seconds = 0.0
+
+    def add_pid(self, pid: int) -> None:
+        with self._lock:
+            self._pids.append(pid)
 
     def sample(self) -> None:
-        rss = sum(proc_status_kib(pid, "VmRSS") for pid in self.pids)
-        disk = tree_bytes(self.directory)
-        self.peak_rss_kib = max(self.peak_rss_kib, rss)
-        self.peak_disk_bytes = max(self.peak_disk_bytes, disk)
+        with self._lock:
+            pids = list(self._pids)
+            rss = sum(proc_status_kib(pid, "VmRSS") for pid in pids)
+            disk = tree_bytes(self.directory)
+            self.samples += 1
+            self.peak_rss_kib = max(self.peak_rss_kib, rss)
+            self.peak_disk_bytes = max(self.peak_disk_bytes, disk)
         if rss > self.limits["rss_kib"]:
             raise MeasurementStop(STATUS_LIMIT, f"total VmRSS {rss} KiB over the limit")
         if disk > self.limits["disk_bytes"]:
@@ -438,22 +455,33 @@ class Monitor(threading.Thread):
         if time.perf_counter() - self.started > self.limits["wall_seconds"]:
             raise MeasurementStop(STATUS_LIMIT, "total wall time over the limit")
 
+    def trip(self, status: str, reason: str) -> None:
+        if self.reason is None:
+            self.reason = (status, reason)
+        self.tripped.set()
+
+    def check(self) -> None:
+        """tripしていればその理由で止める。"""
+        if self.tripped.is_set():
+            raise MeasurementStop(*self.reason)
+
     def run(self) -> None:
-        while not self.finished.is_set():
-            try:
-                self.sample()
-            except MeasurementStop as stop:
-                self.reason = (stop.status, stop.reason)
-                self.tripped.set()
-                return
-            except Exception as error:  # noqa: BLE001 - 監視できないならSTOP
-                self.reason = (
-                    STATUS_FAILED,
-                    f"monitoring failed: {type(error).__name__}",
-                )
-                self.tripped.set()
-                return
-            self.finished.wait(POLL_SECONDS)
+        cpu0 = time.thread_time()
+        try:
+            while not self.finished.is_set():
+                try:
+                    self.sample()
+                except MeasurementStop as stop:
+                    self.trip(stop.status, stop.reason)
+                    return
+                except Exception as error:  # noqa: BLE001 - 監視できないならSTOP
+                    self.trip(
+                        STATUS_FAILED, f"monitoring failed: {type(error).__name__}"
+                    )
+                    return
+                self.finished.wait(POLL_SECONDS)
+        finally:
+            self.cpu_seconds = time.thread_time() - cpu0
 
 
 class Worker:
@@ -463,22 +491,31 @@ class Worker:
         self.process = context.Process(
             target=target, args=(child, config), name=f"capture-cost-{config.condition}"
         )
+        self.started = time.perf_counter()
         self.process.start()
         child.close()
+        self.ipc_wall_seconds = 0.0
+        """親で測った往復時間のうち、worker内で測った時間を除いた残差の合計（H）。"""
 
-    def request(self, message, timeout: float, monitor: Monitor | None):
+    def request(self, message, timeout: float, monitor: Monitor):
+        monitor.check()
+        sent = time.perf_counter()
         if message is not None:
             self.conn.send(message)
-        deadline = time.perf_counter() + timeout
+        deadline = sent + timeout
         while True:
-            if monitor is not None and monitor.tripped.is_set():
-                raise MeasurementStop(*monitor.reason)
+            monitor.check()
             if self.conn.poll(0.2):
                 kind, value = self.conn.recv()
+                # 応答と監視の停止通知が競合しても、tripしていれば応答を採用しない
+                monitor.check()
                 if kind == "error":
                     raise MeasurementStop(
                         STATUS_FAILED, f"{self.condition} worker raised {value}"
                     )
+                inner = value.get("wall_seconds") if isinstance(value, dict) else None
+                if isinstance(inner, (int, float)):
+                    self.ipc_wall_seconds += (time.perf_counter() - sent) - inner
                 return value
             if not self.process.is_alive():
                 raise MeasurementStop(STATUS_FAILED, f"{self.condition} worker exited")
@@ -487,7 +524,8 @@ class Worker:
                     STATUS_LIMIT, f"{self.condition} worker timed out"
                 )
 
-    def close(self) -> None:
+    def close(self) -> bool:
+        """workerを止める。``stop`` → terminate → killのあとも生きていればFalse。"""
         try:
             if self.process.is_alive():
                 self.conn.send(("stop",))
@@ -500,6 +538,7 @@ class Worker:
         if self.process.is_alive():
             self.process.kill()
             self.process.join(10)
+        return not self.process.is_alive()
 
 
 IDENTITY_FIELDS = (
@@ -535,6 +574,7 @@ def _public(played: dict) -> dict:
 
 
 def remove_directory(directory: Path, remover=shutil.rmtree) -> dict[str, object]:
+    """削除して残存を確認する。例外が出た場合は、結果によらず失敗として扱う。"""
     try:
         remover(directory)
     except Exception as error:  # noqa: BLE001 - 削除失敗は報告に残す
@@ -542,11 +582,14 @@ def remove_directory(directory: Path, remover=shutil.rmtree) -> dict[str, object
             "removed": False,
             "error": type(error).__name__,
             "exists": directory.exists(),
+            "path": str(directory),
         }
+    exists = directory.exists()
     return {
-        "removed": not directory.exists(),
+        "removed": not exists,
         "error": None,
-        "exists": directory.exists(),
+        "exists": exists,
+        "path": str(directory) if exists else None,
     }
 
 
@@ -557,6 +600,7 @@ def run_measurement(
     wheel_path: str | None,
     arena_revision: str,
     engine_revision: str,
+    expected_provenance: dict | None = None,
     schedule=None,
     limits: dict = LIMITS,
     temp_root: str | None = None,
@@ -565,10 +609,16 @@ def run_measurement(
     remover=shutil.rmtree,
     projection_pairs: int | None = None,
 ) -> dict[str, object]:
-    """測定本体。どの終わり方でもworkerを止め、一時directoryを削除して報告を返す。"""
+    """測定本体。どの終わり方でもworkerを止め、一時directoryを削除して報告を返す。
+
+    ``COMPLETED`` は、全組・段階2が終わり、最後の同期sampleが上限内で、監視が
+    tripしておらず、全workerが止まり、一時directoryが残っておらず、全体のwall timeが
+    上限内の場合だけである。
+    """
     context = context or multiprocessing.get_context("spawn")
     schedule = pair_schedule() if schedule is None else list(schedule)
     started = time.perf_counter()
+    parent_cpu0 = time.process_time()
     directory = Path(tempfile.mkdtemp(prefix="arena-600-", dir=temp_root))
     os.chmod(directory, 0o700)
     report: dict[str, object] = {
@@ -580,8 +630,16 @@ def run_measurement(
         "stop_reason": None,
         "temp_directory_mode": oct(directory.stat().st_mode & 0o777),
     }
+    harness: dict[str, object] = {
+        "note": (
+            "H is reported as directly timed parts and residuals; it is not an "
+            "exact non-overlapping decomposition of total_wall_seconds"
+        ),
+    }
     workers: dict[str, Worker] = {}
-    monitor = None
+    monitor = Monitor(directory, limits, started)
+    monitor.start()
+    measured = False
     try:
         for condition in (C0, C1):
             config = WorkerConfig(
@@ -594,18 +652,24 @@ def run_measurement(
             )
             workers[condition] = Worker(context, config, target)
         timeout = float(limits["hanchan_timeout_seconds"])
-        ready = {c: w.request(None, timeout, None) for c, w in workers.items()}
+        ready = {}
+        startup = {}
+        for condition, worker in workers.items():
+            ready[condition] = worker.request(None, timeout, monitor)
+            startup[condition] = time.perf_counter() - worker.started
+            monitor.add_pid(ready[condition]["pid"])
+        harness["worker_startup_wall_seconds"] = startup
         environments = {c: r["environment"] for c, r in ready.items()}
         if environments[C0] != environments[C1]:
             raise MeasurementStop(STATUS_INVALID, "worker environments differ")
+        if expected_provenance is not None and (
+            environments[C0] is None
+            or environments[C0].get("provenance") != expected_provenance
+        ):
+            raise MeasurementStop(
+                STATUS_INVALID, "worker provenance differs from the parent"
+            )
         report["worker_environment"] = environments[C0]
-        monitor = Monitor(
-            [os.getpid(), ready[C0]["pid"], ready[C1]["pid"]],
-            directory,
-            limits,
-            started,
-        )
-        monitor.start()
         for index, seed, placement, order in schedule:
             pair_started = time.perf_counter()
             played = {}
@@ -625,8 +689,10 @@ def run_measurement(
             if index == 0:
                 probe_dir = directory / "probe"
                 probe_dir.mkdir(mode=0o700)
+                probe_started = time.perf_counter()
                 probe = workers[C1].request(("probe", str(probe_dir)), timeout, monitor)
                 shutil.rmtree(probe_dir)
+                harness["probe_wall_seconds"] = time.perf_counter() - probe_started
                 report["probe"] = probe
                 pair_wall = time.perf_counter() - pair_started
                 pairs = projection_pairs or len(schedule)
@@ -647,32 +713,61 @@ def run_measurement(
         report["phase2"] = workers[C1].request(
             ("phase2", str(phase2_dir)), timeout * 2, monitor
         )
-        report["status"] = STATUS_COMPLETED
+        # 成功の最終確認: workerがまだ生きている時点で同期sampleを取り、監視の状態を照合する
+        monitor.check()
+        if not monitor.is_alive():
+            raise MeasurementStop(STATUS_FAILED, "the monitor stopped unexpectedly")
+        monitor.sample()
+        monitor.check()
+        measured = True
     except MeasurementStop as stop:
         report["status"], report["stop_reason"] = stop.status, stop.reason
     except Exception as error:  # noqa: BLE001 - 想定外も止めて記録する
         report["status"] = STATUS_FAILED
         report["stop_reason"] = f"parent raised {type(error).__name__}"
     finally:
-        if monitor is not None:
-            monitor.finished.set()
-            monitor.join(5)
-            report["monitor"] = {
-                "peak_total_rss_kib": monitor.peak_rss_kib,
-                "peak_temp_disk_bytes": monitor.peak_disk_bytes,
-                "poll_seconds": POLL_SECONDS,
-                "kind": "sampled soft stop (not a hard cap)",
-            }
-        for worker in workers.values():
-            worker.close()
+        stopped = {condition: worker.close() for condition, worker in workers.items()}
+        cleanup_started = time.perf_counter()
         report["cleanup"] = remove_directory(directory, remover)
+        harness["cleanup_wall_seconds"] = time.perf_counter() - cleanup_started
+        monitor.finished.set()
+        monitor.join(5)
+        report["monitor"] = {
+            "peak_total_rss_kib": monitor.peak_rss_kib,
+            "peak_temp_disk_bytes": monitor.peak_disk_bytes,
+            "samples": monitor.samples,
+            "poll_seconds": POLL_SECONDS,
+            "kind": "sampled soft stop (not a hard cap)",
+            "tripped": monitor.reason,
+        }
+        report["workers_stopped"] = stopped
         report["total_wall_seconds"] = time.perf_counter() - started
-    if report["cleanup"]["exists"]:
+        harness["ipc_residual_wall_seconds"] = {
+            condition: worker.ipc_wall_seconds for condition, worker in workers.items()
+        }
+        harness["monitor_thread_cpu_seconds"] = monitor.cpu_seconds
+        harness["parent_process_cpu_seconds"] = time.process_time() - parent_cpu0
+        report["harness"] = harness
+
+    problems = []
+    if not all(stopped.values()):
+        problems.append("a worker did not stop")
+    if not report["cleanup"]["removed"]:
+        problems.append(
+            f"temporary directory remains at {report['cleanup']['path']}; "
+            "remove it locally and do not run again"
+        )
+    if measured and report["total_wall_seconds"] > limits["wall_seconds"]:
+        report["status"] = STATUS_LIMIT
+        report["stop_reason"] = "total wall time including cleanup over the limit"
+    elif measured and monitor.reason is not None:
+        report["status"], report["stop_reason"] = monitor.reason
+    elif measured and not problems:
+        report["status"] = STATUS_COMPLETED
+    if problems:
         report["status"] = STATUS_FAILED
-        report["stop_reason"] = (
-            f"{report['stop_reason'] or ''} temporary directory remains; "
-            "do not run again"
-        ).strip()
+        previous = [report["stop_reason"]] if report["stop_reason"] else []
+        report["stop_reason"] = "; ".join(previous + problems)
     report["summary"] = summarize(report)
     return report
 
@@ -713,6 +808,11 @@ def summarize(report: dict) -> dict[str, object]:
             "total_ratio": total1 / total0 if total0 > 0 else None,
             "total_C0": total0,
             "total_C1": total1,
+            "note": (
+                "G0 and G1 both include the same identity hooks (Policy proxy, "
+                "on_delivery digest); the ratio is hook-inclusive, not the pure "
+                "production ratio and not the total DLVAT cost"
+            ),
         }
     growth = {c: _growth_per_hanchan(pairs, c) for c in (C0, C1)}
     summary["retained_rss_growth_kib_per_hanchan"] = growth
@@ -720,6 +820,8 @@ def summarize(report: dict) -> dict[str, object]:
     summary["live_draw_rows_per_hanchan"] = sum(rows) / len(rows)
     phase2 = report.get("phase2")
     c1_growth = growth[C1]
+    established = c1_growth is not None and c1_growth > 0
+    summary["retained_memory"] = "MEASURED" if established else "NOT-ESTABLISHED"
     extrapolation = {}
     for hanchans in EXTRAPOLATION_HANCHANS:
         item: dict[str, object] = {
@@ -729,17 +831,19 @@ def summarize(report: dict) -> dict[str, object]:
             ]
             / len(pairs)
             * hanchans,
+            "retained_rss_kib": (
+                c1_growth * hanchans * EXTRAPOLATION_SAFETY if established else None
+            ),
+            "retained_rss_note": (
+                "retained increment only; excludes the worker baseline and the "
+                "phase-2 peak, so it is not a memory requirement by itself"
+            ),
         }
-        item["retained_rss_kib"] = (
-            None if c1_growth is None else c1_growth * hanchans * EXTRAPOLATION_SAFETY
-        )
         if phase2:
             per = phase2["stored_bytes"] / phase2["hanchans"]
             item["stored_bytes"] = per * hanchans * EXTRAPOLATION_SAFETY
         extrapolation[str(hanchans)] = item
     summary["extrapolation"] = extrapolation
-    if c1_growth is None or c1_growth <= 0:
-        summary["retained_memory"] = "NOT-ESTABLISHED"
     return summary
 
 
@@ -813,6 +917,8 @@ def main(argv=None) -> int:
         parser.error("--output already exists")
     if top in output.parents:
         parser.error("--output must be outside the repository")
+    if not output.parent.is_dir() or not os.access(output.parent, os.W_OK):
+        parser.error("the parent of --output must be an existing writable directory")
     if _git("status", "--porcelain"):
         parser.error("the Arena checkout must be clean")
     provenance = execution_provenance_to_dict(collect_execution_provenance())
@@ -846,6 +952,7 @@ def main(argv=None) -> int:
             wheel_path=str(Path(args.wheel).resolve()),
             arena_revision=arena_revision,
             engine_revision=provenance["lisjong_engine_revision"],
+            expected_provenance=provenance,
         )
     )
     with open(output, "x", encoding="utf-8") as handle:
